@@ -262,53 +262,73 @@ export default function Equipe() {
         let serviceCount: Record<string, number> = {};
 
         transacoes.forEach((t: any) => {
-          const isDirectMatch = t.profissional?.id === profId;
+          // Trinks transações: profissional is NOT at root level
+          // It's in servicos[].idProfissionalQueRealizouServico and produtos[].IdProfissionalQueRealizouAVenda
+          const matchingServicos = (t.servicos || []).filter(
+            (s: any) => s.idProfissionalQueRealizouServico === profId
+          );
           const matchingProdutos = (t.produtos || []).filter(
-            (p: any) => p.profissional?.id === profId
+            (p: any) => p.IdProfissionalQueRealizouAVenda === profId
           );
 
-          if (isDirectMatch || matchingProdutos.length > 0) {
-            if (matchingProdutos.length > 0) {
-              matchingProdutos.forEach((p: any) => {
-                revenue += Number(p.valor || 0);
-                const svcName = p.produto?.nome || "Outros";
-                serviceCount[svcName] = (serviceCount[svcName] || 0) + 1;
-              });
-            } else if (isDirectMatch) {
-              revenue += Number(t.totalPagar || 0);
-            }
+          if (matchingServicos.length > 0 || matchingProdutos.length > 0) {
+            // Revenue from services performed by this professional
+            matchingServicos.forEach((s: any) => {
+              revenue += Number(s.preco || s.valor || 0);
+              const svcName = s.nome || "Serviço";
+              serviceCount[svcName] = (serviceCount[svcName] || 0) + 1;
+            });
 
-            // Payment methods — only for direct match
-            if (isDirectMatch) {
-              (t.formasPagamentos || []).forEach((fp: any) => {
-                const method = fp.formaPagamento?.nome || "Outros";
-                const shortMethod = method.includes("PIX")
-                  ? "Pix"
-                  : method.includes("CRÉD") || method.includes("CRED")
-                  ? "Cartão Crédito"
-                  : method.includes("DÉB") || method.includes("DEB")
-                  ? "Cartão Débito"
-                  : method.includes("DINH")
-                  ? "Dinheiro"
-                  : method;
-                paymentBreakdown[shortMethod] =
-                  (paymentBreakdown[shortMethod] || 0) +
-                  Number(fp.valor || 0);
-              });
-            }
+            // Revenue from products sold by this professional
+            matchingProdutos.forEach((p: any) => {
+              revenue += Number(p.valorUnitario || p.valor || 0) * Number(p.quantidade || 1);
+              const prodName = p.nome || "Produto";
+              serviceCount[prodName] = (serviceCount[prodName] || 0) + 1;
+            });
+
+            // Payment methods
+            (t.formasPagamentos || []).forEach((fp: any) => {
+              const method = (fp.nome || fp.formaPagamento?.nome || "Outros").toUpperCase();
+              const shortMethod = method.includes("PIX")
+                ? "Pix"
+                : method.includes("CRÉD") || method.includes("CRED")
+                ? "Cartão Crédito"
+                : method.includes("DÉB") || method.includes("DEB")
+                ? "Cartão Débito"
+                : method.includes("DINH")
+                ? "Dinheiro"
+                : fp.nome || "Outros";
+              // Proportional split of payment by this prof's share of the transaction
+              const totalTx = Number(t.totalPagar || 1);
+              const profShare = (matchingServicos.reduce((s: number, sv: any) => s + Number(sv.preco || sv.valor || 0), 0)
+                + matchingProdutos.reduce((s: number, p: any) => s + Number(p.valorUnitario || 0) * Number(p.quantidade || 1), 0));
+              const ratio = totalTx > 0 ? profShare / totalTx : 0;
+              paymentBreakdown[shortMethod] =
+                (paymentBreakdown[shortMethod] || 0) +
+                Number(fp.valor || 0) * ratio;
+            });
           }
         });
 
         // Count completed agendamentos
+        // status is an object { id, nome }, not a string
+        const validStatuses = ["finalizado", "confirmado", "ematendimento"];
         const profAgendamentos = agendamentos.filter(
-          (a: any) =>
-            a.profissional?.id === profId &&
-            ["Finalizado", "Confirmado", "EmAtendimento"].includes(a.status)
+          (a: any) => {
+            if (a.profissional?.id !== profId) return false;
+            const statusName = (a.status?.nome || a.status || "").toString().toLowerCase().replace(/\s/g, "");
+            return validStatuses.includes(statusName);
+          }
         );
         const clients = profAgendamentos.length;
 
         // Top services from agendamentos
         profAgendamentos.forEach((a: any) => {
+          // Trinks uses singular "servico" not plural "servicos"
+          if (a.servico?.nome) {
+            serviceCount[a.servico.nome] = (serviceCount[a.servico.nome] || 0) + 1;
+          }
+          // Also handle if there's a servicos array
           (a.servicos || []).forEach((s: any) => {
             const name = s.nome || "Serviço";
             serviceCount[name] = (serviceCount[name] || 0) + 1;

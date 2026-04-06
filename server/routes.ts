@@ -691,18 +691,70 @@ export async function registerRoutes(
   // ──────────────────────────────────────────────────────────────────
 
   // ─── GET /api/financeiro — Return all entries for current month
+  // Combines manual entries with auto-generated Trinks revenue entries
   app.get("/api/financeiro", (_req: Request, res: Response) => {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, "0");
     const monthPrefix = `${year}-${month}`;
     const monthEntries = financeEntries.filter(e => e.date.startsWith(monthPrefix));
+
+    // Auto-generate revenue entries from Trinks sync data
+    const trinksRevenue: FinanceEntry[] = [];
+    const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
+    if (syncCache) {
+      const transacoes = syncCache.transacoes || [];
+      // Group transacoes by day
+      const dailyMap: Record<string, { revenue: number; count: number; pix: number; cartao: number; dinheiro: number; outros: number }> = {};
+
+      transacoes.forEach((t: any) => {
+        const raw = t.dataHora || t.dataReferencia || t.data || "";
+        const date = typeof raw === "string" ? raw.split("T")[0] : "";
+        if (!date || !date.startsWith(monthPrefix)) return;
+
+        if (!dailyMap[date]) dailyMap[date] = { revenue: 0, count: 0, pix: 0, cartao: 0, dinheiro: 0, outros: 0 };
+        dailyMap[date].revenue += Number(t.totalPagar || 0);
+        dailyMap[date].count += 1;
+
+        (t.formasPagamentos || []).forEach((fp: any) => {
+          const nome = (fp.nome || "").toLowerCase();
+          const val = Number(fp.valor || 0);
+          if (nome.includes("pix")) dailyMap[date].pix += val;
+          else if (nome.includes("créd") || nome.includes("cred") || nome.includes("déb") || nome.includes("deb") || nome.includes("cart")) dailyMap[date].cartao += val;
+          else if (nome.includes("dinhe") || nome.includes("espécie")) dailyMap[date].dinheiro += val;
+          else dailyMap[date].outros += val;
+        });
+      });
+
+      Object.entries(dailyMap).forEach(([date, data]) => {
+        const paymentParts: string[] = [];
+        if (data.pix > 0) paymentParts.push(`Pix: R$${data.pix.toFixed(0)}`);
+        if (data.cartao > 0) paymentParts.push(`Cartão: R$${data.cartao.toFixed(0)}`);
+        if (data.dinheiro > 0) paymentParts.push(`Dinheiro: R$${data.dinheiro.toFixed(0)}`);
+        if (data.outros > 0) paymentParts.push(`Outros: R$${data.outros.toFixed(0)}`);
+
+        trinksRevenue.push({
+          id: `trinks-rev-${date}`,
+          date,
+          description: `Faturamento Trinks (${data.count} transações)`,
+          amount: data.revenue,
+          category: "receita",
+          subcategory: "Trinks",
+          recurrent: false,
+          notes: paymentParts.join(" | "),
+          createdAt: date + "T23:59:59.000Z",
+        });
+      });
+    }
+
+    // Combine manual entries + Trinks revenue, avoiding duplicates
+    const allEntries = [...monthEntries, ...trinksRevenue];
     // Sort by date descending, then by createdAt descending
-    monthEntries.sort((a, b) => {
+    allEntries.sort((a, b) => {
       if (b.date !== a.date) return b.date.localeCompare(a.date);
       return b.createdAt.localeCompare(a.createdAt);
     });
-    return res.json(monthEntries);
+    return res.json(allEntries);
   });
 
   // ─── POST /api/financeiro — Add single entry

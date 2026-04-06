@@ -550,8 +550,14 @@ export async function registerRoutes(
       if (!forceRefresh) {
         const cachedSync = getCached("full_sync");
         if (cachedSync) {
-          log("Sync: returning cached data (use ?force=true to refresh)", "trinks");
-          return res.json({ ...cachedSync, fromCache: true });
+          const cacheHasData = (cachedSync.agendamentos?.length > 0 || cachedSync.transacoes?.length > 0);
+          if (cacheHasData) {
+            log("Sync: returning cached data (use ?force=true to refresh)", "trinks");
+            return res.json({ ...cachedSync, fromCache: true });
+          } else {
+            log("Sync: memory cache has empty data, fetching fresh", "trinks");
+            invalidateCache("full_sync");
+          }
         }
       }
 
@@ -559,9 +565,14 @@ export async function registerRoutes(
       if (!forceRefresh) {
         const diskCache = loadSyncCacheFromDisk();
         if (diskCache) {
-          // Populate memory cache too
-          setCache("full_sync", diskCache);
-          return res.json({ ...diskCache, fromCache: true, fromDisk: true });
+          // Only use disk cache if it has actual data
+          const diskHasData = (diskCache.agendamentos?.length > 0 || diskCache.transacoes?.length > 0);
+          if (diskHasData) {
+            setCache("full_sync", diskCache);
+            return res.json({ ...diskCache, fromCache: true, fromDisk: true });
+          } else {
+            log("Sync: disk cache has empty data, fetching fresh", "trinks");
+          }
         }
       }
 
@@ -620,9 +631,14 @@ export async function registerRoutes(
 
       log(`Sync complete: ${syncResult.profissionais.length} profissionais, ${syncResult.servicos.length} servicos, ${syncResult.agendamentos.length} agendamentos, ${syncResult.transacoes.length} transacoes, ${syncResult.clientes.length} clientes`, "trinks");
 
-      // Cache the full sync result
-      setCache("full_sync", syncResult);
-      saveSyncCacheToDisk(syncResult);
+      // Only cache if we actually got data (avoid caching empty results)
+      const hasData = syncResult.agendamentos.length > 0 || syncResult.transacoes.length > 0;
+      if (hasData) {
+        setCache("full_sync", syncResult);
+        saveSyncCacheToDisk(syncResult);
+      } else {
+        log("Sync: skipping cache — agendamentos and transacoes are empty", "trinks");
+      }
 
       return res.json(syncResult);
     } catch (err: any) {

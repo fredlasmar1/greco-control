@@ -364,7 +364,7 @@ export default function Dashboard() {
   const monthLabelCapital = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 
   const handleSync = () => {
-    syncData();
+    syncData(true);
   };
 
   return (

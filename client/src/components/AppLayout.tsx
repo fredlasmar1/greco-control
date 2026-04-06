@@ -14,6 +14,7 @@ import {
   X,
   Bell,
   ClipboardCheck,
+  Calculator,
 } from "lucide-react";
 
 const navItems = [
@@ -22,6 +23,7 @@ const navItems = [
   { path: "/equipe", label: "Equipe", icon: Users },
   { path: "/raio-x", label: "Raio-X", icon: ClipboardCheck },
   { path: "/servicos", label: "Serviços", icon: Scissors },
+  { path: "/precificacao", label: "Precificação", icon: Calculator },
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
   { path: "/metas", label: "Metas", icon: Target },

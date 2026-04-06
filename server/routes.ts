@@ -53,6 +53,35 @@ const financeEntrySchema = z.object({
   notes: z.string().optional(),
 });
 
+// ─── Service Costs Data ──────────────────────────────────────
+interface ServiceCostEntry {
+  serviceId: string;
+  serviceName: string;
+  materialCost: number;
+  otherCost: number;
+}
+
+const SERVICE_COSTS_FILE = path.join(process.cwd(), ".service-costs.json");
+let serviceCosts: ServiceCostEntry[] = [];
+
+try {
+  if (fs.existsSync(SERVICE_COSTS_FILE)) {
+    const raw = fs.readFileSync(SERVICE_COSTS_FILE, "utf-8");
+    serviceCosts = JSON.parse(raw) || [];
+    log(`Service costs: loaded ${serviceCosts.length} entries from disk`, "costs");
+  }
+} catch (err) {
+  log("Service costs: could not load from disk, starting fresh", "costs");
+}
+
+function saveServiceCosts() {
+  try {
+    fs.writeFileSync(SERVICE_COSTS_FILE, JSON.stringify(serviceCosts, null, 2), "utf-8");
+  } catch (err) {
+    log("Service costs: could not save to disk", "costs");
+  }
+}
+
 // ─── Persistent Trinks config ─────────────────────────────
 const CONFIG_FILE = path.join(process.cwd(), ".trinks-config.json");
 const CACHE_FILE = path.join(process.cwd(), ".trinks-cache.json");
@@ -684,6 +713,30 @@ export async function registerRoutes(
     invalidateCache();
     log("All caches cleared manually", "trinks");
     return res.json({ ok: true, message: "Cache limpo. Próxima sincronização buscará dados novos." });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // SERVICE COSTS ROUTES
+  // ──────────────────────────────────────────────────────────────────
+
+  app.get("/api/service-costs", (_req: Request, res: Response) => {
+    return res.json(serviceCosts);
+  });
+
+  app.post("/api/service-costs", (req: Request, res: Response) => {
+    const { costs } = req.body;
+    if (!Array.isArray(costs)) {
+      return res.status(400).json({ error: "costs must be an array" });
+    }
+    serviceCosts = costs.map((c: any) => ({
+      serviceId: String(c.serviceId || ""),
+      serviceName: String(c.serviceName || ""),
+      materialCost: Number(c.materialCost || 0),
+      otherCost: Number(c.otherCost || 0),
+    }));
+    saveServiceCosts();
+    log(`Service costs: saved ${serviceCosts.length} entries`, "costs");
+    return res.json({ ok: true, count: serviceCosts.length });
   });
 
   // ──────────────────────────────────────────────────────────────────

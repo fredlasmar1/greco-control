@@ -11,6 +11,7 @@ import Dashboard from "@/pages/Dashboard";
 import Lancamentos from "@/pages/Lancamentos";
 import Equipe from "@/pages/Equipe";
 import Servicos from "@/pages/Servicos";
+import Precificacao from "@/pages/Precificacao";
 import Financeiro from "@/pages/Financeiro";
 import Fechamento from "@/pages/Fechamento";
 import Metas from "@/pages/Metas";
@@ -36,6 +37,7 @@ function AppRouter() {
         <Route path="/lancamentos" component={Lancamentos} />
         <Route path="/equipe" component={Equipe} />
         <Route path="/servicos" component={Servicos} />
+        <Route path="/precificacao" component={Precificacao} />
         <Route path="/financeiro" component={Financeiro} />
         <Route path="/fechamento" component={Fechamento} />
         <Route path="/metas" component={Metas} />

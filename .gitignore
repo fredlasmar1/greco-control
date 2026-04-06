@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+.trinks-config.json
+.trinks-cache.json
+.financeiro-data.json
+*.log

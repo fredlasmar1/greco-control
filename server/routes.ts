@@ -812,8 +812,109 @@ export async function registerRoutes(
       });
     }
 
-    // Combine manual entries + Trinks revenue, avoiding duplicates
-    const allEntries = [...monthEntries, ...trinksRevenue];
+    // Auto-generate commission entries per professional from agendamentos
+    const trinksCommissions: FinanceEntry[] = [];
+    const trinksMaterialCosts: FinanceEntry[] = [];
+
+    if (syncCache) {
+      const agendamentos = syncCache.agendamentos || [];
+      const COMMISSION_RATE = 0.40; // 40% default
+
+      // Group finalized agendamentos by professional per day
+      const profDayMap: Record<string, { name: string; revenue: number; count: number }> = {};
+
+      agendamentos.forEach((a: any) => {
+        const statusName = (a.status?.nome || "").toLowerCase();
+        if (statusName !== "finalizado") return;
+        const raw = a.dataHoraInicio || "";
+        const date = typeof raw === "string" ? raw.split("T")[0] : "";
+        if (!date || !date.startsWith(monthPrefix)) return;
+
+        const profName = a.profissional?.nome || "Profissional";
+        const profId = a.profissional?.id || "unknown";
+        const key = `${date}_${profId}`;
+        if (!profDayMap[key]) profDayMap[key] = { name: profName, revenue: 0, count: 0 };
+        profDayMap[key].revenue += Number(a.valor || 0);
+        profDayMap[key].count += 1;
+      });
+
+      // Group commissions by date (aggregate all professionals per day)
+      const commissionByDay: Record<string, { total: number; details: string[] }> = {};
+
+      Object.entries(profDayMap).forEach(([key, data]) => {
+        const date = key.split("_")[0];
+        const commission = data.revenue * COMMISSION_RATE;
+        if (commission <= 0) return;
+
+        if (!commissionByDay[date]) commissionByDay[date] = { total: 0, details: [] };
+        commissionByDay[date].total += commission;
+        const firstName = data.name.split(" ")[0];
+        commissionByDay[date].details.push(`${firstName}: R$${commission.toFixed(0)} (${data.count} atend.)`);
+      });
+
+      Object.entries(commissionByDay).forEach(([date, data]) => {
+        trinksCommissions.push({
+          id: `trinks-comm-${date}`,
+          date,
+          description: `Comissões do dia (40%)`,
+          amount: -data.total,
+          category: "variavel",
+          subcategory: "Comissões",
+          recurrent: false,
+          notes: data.details.join(" | "),
+          createdAt: date + "T23:59:58.000Z",
+        });
+      });
+
+      // Auto-generate material cost entries from service cost sheets
+      if (serviceCosts.length > 0) {
+        // Build a map of service cost per service ID
+        const costMap: Record<string, number> = {};
+        serviceCosts.forEach(sc => {
+          const total = (sc.items || []).reduce((s: number, item: any) =>
+            s + (Number(item.quantity) || 0) * (Number(item.unitCost) || 0), 0);
+          if (total > 0) costMap[sc.serviceId] = total;
+        });
+
+        if (Object.keys(costMap).length > 0) {
+          // Group material costs by day from agendamentos
+          const materialByDay: Record<string, { total: number; count: number }> = {};
+
+          agendamentos.forEach((a: any) => {
+            const statusName = (a.status?.nome || "").toLowerCase();
+            if (statusName !== "finalizado") return;
+            const raw = a.dataHoraInicio || "";
+            const date = typeof raw === "string" ? raw.split("T")[0] : "";
+            if (!date || !date.startsWith(monthPrefix)) return;
+
+            const svcId = String(a.servico?.id || "");
+            const cost = costMap[svcId];
+            if (cost && cost > 0) {
+              if (!materialByDay[date]) materialByDay[date] = { total: 0, count: 0 };
+              materialByDay[date].total += cost;
+              materialByDay[date].count += 1;
+            }
+          });
+
+          Object.entries(materialByDay).forEach(([date, data]) => {
+            trinksMaterialCosts.push({
+              id: `trinks-mat-${date}`,
+              date,
+              description: `Custo de material (${data.count} serviços)`,
+              amount: -data.total,
+              category: "variavel",
+              subcategory: "Material",
+              recurrent: false,
+              notes: "Calculado a partir das fichas técnicas de precificação",
+              createdAt: date + "T23:59:57.000Z",
+            });
+          });
+        }
+      }
+    }
+
+    // Combine manual entries + Trinks revenue + commissions + material costs
+    const allEntries = [...monthEntries, ...trinksRevenue, ...trinksCommissions, ...trinksMaterialCosts];
     // Sort by date descending, then by createdAt descending
     allEntries.sort((a, b) => {
       if (b.date !== a.date) return b.date.localeCompare(a.date);

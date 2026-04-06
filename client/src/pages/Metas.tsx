@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useStore } from "@/lib/store";
+import { useTrinksStore, getTrinksMonthTotals } from "@/lib/trinksStore";
 import { formatCurrency, formatPercent, monthlyGoals, getMonthTotals } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -7,20 +8,31 @@ import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle } from "lucide
 
 export default function Metas() {
   const { settings } = useStore();
-  const totals = useMemo(() => getMonthTotals(), []);
+  const { isConnected, trinks } = useTrinksStore();
+  const hasTrinksData = isConnected && trinks !== null;
+
+  const totals = useMemo(
+    () => hasTrinksData ? getTrinksMonthTotals(trinks!) : getMonthTotals(),
+    [hasTrinksData, trinks]
+  );
 
   const target = settings.monthlyTarget;
   const achieved = totals.totalRevenue;
   const percentage = (achieved / target) * 100;
   const remaining = target - achieved;
-  const daysInMonth = 31;
-  const dayOfMonth = 18;
+
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dayOfMonth = now.getDate();
   const remainingDays = daysInMonth - dayOfMonth;
 
   const dailyPace = remainingDays > 0 ? remaining / remainingDays : 0;
-  const currentDailyAvg = achieved / dayOfMonth;
+  const currentDailyAvg = dayOfMonth > 0 ? achieved / dayOfMonth : 0;
   const projection = currentDailyAvg * daysInMonth;
   const onTrack = projection >= target;
+
+  const monthLabel = now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const monthLabelCapital = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 
   // Circle progress visualization
   const circumference = 2 * Math.PI * 80;
@@ -66,7 +78,10 @@ export default function Metas() {
             {/* Goal details */}
             <div className="flex-1 space-y-4">
               <div>
-                <p className="text-sm text-muted-foreground">Meta de Março 2026</p>
+                <p className="text-sm text-muted-foreground">
+                  Meta de {monthLabelCapital}
+                  {hasTrinksData && <span className="text-[#01696F] ml-1">• Dados Trinks</span>}
+                </p>
                 <p className="text-2xl font-bold">{formatCurrency(target)}</p>
               </div>
 

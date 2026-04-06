@@ -175,7 +175,7 @@ export default function Servicos() {
         <Card className="bg-card border-card-border">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">
-              Serviços Mais Populares — Março 2026
+              Serviços Mais Populares
             </CardTitle>
           </CardHeader>
           <CardContent>

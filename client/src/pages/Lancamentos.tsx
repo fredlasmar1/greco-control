@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useStore } from "@/lib/store";
+import { useTrinksStore } from "@/lib/trinksStore";
 import { formatCurrency } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -148,8 +149,52 @@ function AddExpenseDialog() {
 }
 
 export default function Lancamentos() {
-  const { entries } = useStore();
+  const { entries: demoEntries } = useStore();
+  const { isConnected, trinks } = useTrinksStore();
+  const hasTrinksData = isConnected && trinks !== null;
   const [filter, setFilter] = useState<'todos' | 'receita' | 'despesa'>('todos');
+
+  // Derive entries from Trinks data when available
+  const entries = useMemo((): DailyEntry[] => {
+    if (!hasTrinksData) return demoEntries;
+
+    const transacoes = trinks!.transacoes || [];
+    const dailyMap: Record<string, { revenue: number; clients: number; pix: number; cartao: number; dinheiro: number }> = {};
+
+    transacoes.forEach((t: any) => {
+      const raw = t.dataHoraInicio || t.dataHora || t.dataReferencia || t.data || t.date || "";
+      const date = typeof raw === "string" ? raw.split("T")[0] : "";
+      if (!date) return;
+
+      if (!dailyMap[date]) dailyMap[date] = { revenue: 0, clients: 0, pix: 0, cartao: 0, dinheiro: 0 };
+      dailyMap[date].revenue += Number(t.totalPagar || t.valor || 0);
+      dailyMap[date].clients += 1;
+
+      const formas = t.formasPagamentos || t.formasPagamento || [];
+      if (Array.isArray(formas)) {
+        formas.forEach((fp: any) => {
+          const nome = (fp.nome || fp.descricao || fp.formaPagamento?.nome || "").toLowerCase();
+          const val = Number(fp.valor || 0);
+          if (nome.includes("pix")) dailyMap[date].pix += val;
+          else if (nome.includes("créd") || nome.includes("cred") || nome.includes("déb") || nome.includes("deb") || nome.includes("cart")) dailyMap[date].cartao += val;
+          else if (nome.includes("dinhe") || nome.includes("espécie")) dailyMap[date].dinheiro += val;
+        });
+      }
+    });
+
+    return Object.entries(dailyMap)
+      .map(([date, data]) => ({
+        id: `trinks-${date}`,
+        date,
+        type: 'receita' as const,
+        description: `Faturamento do dia`,
+        amount: data.revenue,
+        clients: data.clients,
+        pix: data.pix,
+        cartao: data.cartao,
+        dinheiro: data.dinheiro,
+      }));
+  }, [hasTrinksData, trinks, demoEntries]);
 
   const filtered = useMemo(() => {
     let list = [...entries];
@@ -160,13 +205,19 @@ export default function Lancamentos() {
   const totalReceita = entries.filter(e => e.type === 'receita').reduce((s, e) => s + e.amount, 0);
   const totalDespesa = entries.filter(e => e.type === 'despesa').reduce((s, e) => s + e.amount, 0);
 
+  const monthLabel = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const monthLabelCapital = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+
   return (
     <div className="space-y-6 max-w-[1400px]">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-lg font-semibold">Lançamentos</h2>
-          <p className="text-sm text-muted-foreground">Receitas e despesas de Março 2026</p>
+          <p className="text-sm text-muted-foreground">
+            Receitas e despesas de {monthLabelCapital}
+            {hasTrinksData && <span className="text-[#01696F] ml-1">• Dados Trinks</span>}
+          </p>
         </div>
         <div className="flex gap-2">
           <AddExpenseDialog />

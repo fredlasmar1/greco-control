@@ -360,6 +360,9 @@ export default function Dashboard() {
     ? totals.todayClients
     : chartData[chartData.length - 1]?.clients || 0;
 
+  const monthLabel = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const monthLabelCapital = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+
   const handleSync = () => {
     syncData();
   };
@@ -380,7 +383,7 @@ export default function Dashboard() {
       {/* Header row */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Março 2026</h2>
+          <h2 className="text-lg font-semibold">{monthLabelCapital}</h2>
           <p className="text-sm text-muted-foreground">
             Visão geral da barbearia
           </p>
@@ -421,7 +424,7 @@ export default function Dashboard() {
         <Card className="lg:col-span-2 bg-card border-card-border">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">
-              Faturamento Diário — Março 2026
+              Faturamento Diário — {monthLabelCapital}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -527,7 +530,7 @@ export default function Dashboard() {
         <Card className="bg-card border-card-border">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">
-              Ranking de Barbeiros — Março 2026
+              Ranking de Barbeiros — {monthLabelCapital}
             </CardTitle>
           </CardHeader>
           <CardContent>

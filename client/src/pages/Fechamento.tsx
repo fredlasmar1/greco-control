@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
+import { useTrinksStore } from "@/lib/trinksStore";
 import { formatCurrency, getRevenueByDayOfWeek } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,8 +8,91 @@ import { ArrowUp, ArrowDown, Users, DollarSign, TrendingUp, Minus } from "lucide
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 export default function Fechamento() {
-  const { weeklySummaries } = useStore();
-  const dayOfWeekData = useMemo(() => getRevenueByDayOfWeek(), []);
+  const { weeklySummaries: demoSummaries } = useStore();
+  const { isConnected, trinks } = useTrinksStore();
+  const hasTrinksData = isConnected && trinks !== null;
+
+  // Derive weekly summaries from Trinks data when available
+  const weeklySummaries = useMemo(() => {
+    if (!hasTrinksData) return demoSummaries;
+
+    const transacoes = trinks!.transacoes || [];
+    const agendamentos = trinks!.agendamentos || [];
+
+    // Group by week (ISO week starting Monday)
+    const weekMap: Record<string, { revenue: number; clients: number; startDate: string; endDate: string }> = {};
+
+    const getDate = (item: any): string => {
+      const raw = item.dataHoraInicio || item.dataHora || item.dataReferencia || item.data || item.date || "";
+      return typeof raw === "string" ? raw.split("T")[0] : "";
+    };
+
+    const getWeekKey = (dateStr: string) => {
+      const d = new Date(dateStr + "T12:00:00");
+      const day = d.getDay();
+      const mondayOffset = day === 0 ? -6 : 1 - day;
+      const monday = new Date(d);
+      monday.setDate(d.getDate() + mondayOffset);
+      return monday.toISOString().split("T")[0];
+    };
+
+    transacoes.forEach((t: any) => {
+      const date = getDate(t);
+      if (!date) return;
+      const weekKey = getWeekKey(date);
+      if (!weekMap[weekKey]) weekMap[weekKey] = { revenue: 0, clients: 0, startDate: weekKey, endDate: date };
+      weekMap[weekKey].revenue += Number(t.totalPagar || t.valor || 0);
+      if (date > weekMap[weekKey].endDate) weekMap[weekKey].endDate = date;
+    });
+
+    agendamentos.forEach((a: any) => {
+      const date = getDate(a);
+      if (!date) return;
+      const weekKey = getWeekKey(date);
+      if (!weekMap[weekKey]) weekMap[weekKey] = { revenue: 0, clients: 0, startDate: weekKey, endDate: date };
+      const st = (typeof a.status === 'string' ? a.status : a.status?.descricao || '').toLowerCase();
+      if (st === "finalizado" || st === "realizado" || st === "concluido" || st === "concluído" || st === "confirmado" || st === "ematendimento") {
+        weekMap[weekKey].clients += 1;
+      }
+      if (date > weekMap[weekKey].endDate) weekMap[weekKey].endDate = date;
+    });
+
+    return Object.entries(weekMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([weekKey, data], i) => {
+        const startLabel = new Date(data.startDate + "T12:00:00").toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        const endLabel = new Date(data.endDate + "T12:00:00").toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        return {
+          id: `week-${i + 1}`,
+          weekLabel: `${startLabel} a ${endLabel}`,
+          revenue: data.revenue,
+          expenses: 0,
+          profit: data.revenue,
+          clients: data.clients,
+          notes: '',
+        };
+      });
+  }, [hasTrinksData, trinks, demoSummaries]);
+
+  // Day of week data from Trinks
+  const dayOfWeekData = useMemo(() => {
+    if (!hasTrinksData) return getRevenueByDayOfWeek();
+
+    const transacoes = trinks!.transacoes || [];
+    const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    const dayTotals = [0, 0, 0, 0, 0, 0, 0];
+
+    transacoes.forEach((t: any) => {
+      const raw = t.dataHoraInicio || t.dataHora || t.dataReferencia || t.data || t.date || "";
+      const dateStr = typeof raw === "string" ? raw.split("T")[0] : "";
+      if (!dateStr) return;
+      const dayIndex = new Date(dateStr + "T12:00:00").getDay();
+      dayTotals[dayIndex] += Number(t.totalPagar || t.valor || 0);
+    });
+
+    return dayNames.map((name, i) => ({ name, total: dayTotals[i] }));
+  }, [hasTrinksData, trinks]);
+
   const [notes, setNotes] = useState(weeklySummaries[weeklySummaries.length - 1]?.notes || '');
 
   // Current week vs previous week

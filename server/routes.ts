@@ -53,12 +53,19 @@ const financeEntrySchema = z.object({
   notes: z.string().optional(),
 });
 
-// ─── Service Costs Data ──────────────────────────────────────
+// ─── Service Costs Data (Ficha Técnica) ─────────────────────
+interface CostItem {
+  id: string;
+  name: string;
+  category: string;
+  quantity: number;
+  unitCost: number;
+}
+
 interface ServiceCostEntry {
   serviceId: string;
   serviceName: string;
-  materialCost: number;
-  otherCost: number;
+  items: CostItem[];
 }
 
 const SERVICE_COSTS_FILE = path.join(process.cwd(), ".service-costs.json");
@@ -731,8 +738,13 @@ export async function registerRoutes(
     serviceCosts = costs.map((c: any) => ({
       serviceId: String(c.serviceId || ""),
       serviceName: String(c.serviceName || ""),
-      materialCost: Number(c.materialCost || 0),
-      otherCost: Number(c.otherCost || 0),
+      items: Array.isArray(c.items) ? c.items.map((item: any) => ({
+        id: String(item.id || ""),
+        name: String(item.name || ""),
+        category: String(item.category || "outro"),
+        quantity: Number(item.quantity || 0),
+        unitCost: Number(item.unitCost || 0),
+      })) : [],
     }));
     saveServiceCosts();
     log(`Service costs: saved ${serviceCosts.length} entries`, "costs");

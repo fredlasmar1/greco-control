@@ -28,7 +28,7 @@ const navItems = [
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
   { path: "/metas", label: "Metas", icon: Target },
-  { path: "/clientes-duplicados", label: "Duplicados", icon: UserX },
+  { path: "/duplicados", label: "Duplicados", icon: UserX },
   { path: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 

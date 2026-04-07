@@ -42,7 +42,7 @@ function AppRouter() {
         <Route path="/financeiro" component={Financeiro} />
         <Route path="/fechamento" component={Fechamento} />
         <Route path="/metas" component={Metas} />
-        <Route path="/clientes-duplicados" component={ClientesDuplicados} />
+        <Route path="/duplicados" component={ClientesDuplicados} />
         <Route path="/configuracoes" component={Configuracoes} />
         <Route path="/raio-x" component={RaioX} />
         <Route component={NotFound} />

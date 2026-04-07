@@ -16,6 +16,7 @@ import Financeiro from "@/pages/Financeiro";
 import Fechamento from "@/pages/Fechamento";
 import Metas from "@/pages/Metas";
 import Configuracoes from "@/pages/Configuracoes";
+import ClientesDuplicados from "@/pages/ClientesDuplicados";
 import RaioX from "@/pages/RaioX";
 import NotFound from "@/pages/not-found";
 
@@ -41,6 +42,7 @@ function AppRouter() {
         <Route path="/financeiro" component={Financeiro} />
         <Route path="/fechamento" component={Fechamento} />
         <Route path="/metas" component={Metas} />
+        <Route path="/clientes-duplicados" component={ClientesDuplicados} />
         <Route path="/configuracoes" component={Configuracoes} />
         <Route path="/raio-x" component={RaioX} />
         <Route component={NotFound} />

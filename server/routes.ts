@@ -723,6 +723,92 @@ export async function registerRoutes(
   });
 
   // ──────────────────────────────────────────────────────────────────
+  // CLIENT DUPLICATES ROUTES
+  // ──────────────────────────────────────────────────────────────────
+
+  app.get("/api/clientes/duplicados", async (_req: Request, res: Response) => {
+    try {
+      // Get clients from sync cache or fetch
+      let clientes: any[] = [];
+      const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
+      if (syncCache && Array.isArray(syncCache.clientes) && syncCache.clientes.length > 0) {
+        clientes = syncCache.clientes;
+      } else {
+        // Fetch fresh
+        clientes = await trinksFetchAll("clientes");
+        if (!Array.isArray(clientes)) clientes = [];
+      }
+
+      // Normalize phone number: strip everything except digits, take last 8-9 digits
+      function normalizePhone(ddd: string, telefone: string): string {
+        const full = (ddd || "") + (telefone || "");
+        const digits = full.replace(/\D/g, "");
+        // Take last 9 digits (Brazilian mobile) or 8 (landline)
+        return digits.length >= 9 ? digits.slice(-9) : digits.slice(-8);
+      }
+
+      // Group clients by normalized phone
+      const phoneMap: Record<string, any[]> = {};
+      let clientsWithPhone = 0;
+      let clientsWithoutPhone = 0;
+
+      clientes.forEach((c: any) => {
+        const phones = c.telefones || [];
+        if (phones.length === 0) {
+          clientsWithoutPhone++;
+          return;
+        }
+        clientsWithPhone++;
+
+        phones.forEach((p: any) => {
+          const normalized = normalizePhone(p.ddd || "", p.telefone || "");
+          if (normalized.length < 8) return;
+          if (!phoneMap[normalized]) phoneMap[normalized] = [];
+          // Avoid adding same client twice to same phone group
+          if (!phoneMap[normalized].find((x: any) => x.id === c.id)) {
+            phoneMap[normalized].push({
+              id: c.id,
+              nome: c.nome || "",
+              email: c.email || null,
+              dataCadastro: c.dataCadastro || "",
+              telefoneOriginal: `(${p.ddd || ""}) ${p.telefone || ""}`,
+              telefoneNormalizado: normalized,
+            });
+          }
+        });
+      });
+
+      // Find groups with more than one client (duplicates)
+      const duplicateGroups = Object.entries(phoneMap)
+        .filter(([_, clients]) => clients.length > 1)
+        .map(([phone, clients]) => ({
+          telefone: phone,
+          telefoneFormatado: clients[0]?.telefoneOriginal || phone,
+          count: clients.length,
+          clientes: clients.sort((a: any, b: any) =>
+            (a.dataCadastro || "").localeCompare(b.dataCadastro || "")
+          ),
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      const totalDuplicateClients = duplicateGroups.reduce((s, g) => s + g.count, 0);
+      const uniqueAfterMerge = duplicateGroups.length;
+
+      return res.json({
+        totalClientes: clientes.length,
+        clientsWithPhone,
+        clientsWithoutPhone,
+        totalGruposDuplicados: duplicateGroups.length,
+        totalClientesDuplicados: totalDuplicateClients,
+        potencialReducao: totalDuplicateClients - uniqueAfterMerge,
+        grupos: duplicateGroups,
+      });
+    } catch (err: any) {
+      return handleTrinksError(err, res);
+    }
+  });
+
+  // ──────────────────────────────────────────────────────────────────
   // SERVICE COSTS ROUTES
   // ──────────────────────────────────────────────────────────────────
 

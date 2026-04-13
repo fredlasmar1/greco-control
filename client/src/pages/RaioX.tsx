@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,10 +22,8 @@ import {
 } from "lucide-react";
 import { useTrinksStore, mapTrinksProfissionais, getTrinksMonthTotals } from "@/lib/trinksStore";
 import { formatCurrency, barbers as demoBarbers } from "@/lib/demoData";
+import { useStore } from "@/lib/store";
 import { useToast } from "@/hooks/use-toast";
-
-// ─── Constants ────────────────────────────────────────────
-const MONTHLY_GOAL = 150_000;
 
 // ─── Date helpers ─────────────────────────────────────────
 function formatDatePT(date: Date): string {
@@ -269,17 +267,20 @@ function BarberCard({
 // ─── Main Page ────────────────────────────────────────────
 export default function RaioX() {
   const today = useMemo(() => new Date(), []);
+  const todayStr = today.toISOString().split("T")[0];
   const dayOfMonth = getDayOfMonth(today);
   const daysInMonth = getDaysInMonth(today);
 
   const { toast } = useToast();
+  const { settings } = useStore();
+  const MONTHLY_GOAL = settings.monthlyTarget || 150000;
 
   // Trinks data
   const trinks = useTrinksStore((s) => s.trinks);
   const rateLimited = useTrinksStore((s) => s.rateLimited);
 
-  // Resolve barbers
-  const barbers: BarberData[] = useMemo(() => {
+  // Resolve barbers (with commission for proportional goal)
+  const barbersWithCommission = useMemo(() => {
     if (trinks && !rateLimited) {
       const mapped = mapTrinksProfissionais(trinks);
       if (mapped.length > 0) {
@@ -288,6 +289,7 @@ export default function RaioX() {
           name: b.name,
           initials: b.initials,
           revenue: b.revenue,
+          commission: b.commission || 40,
         }));
       }
     }
@@ -297,13 +299,25 @@ export default function RaioX() {
       name: b.name,
       initials: b.initials,
       revenue: b.revenue,
+      commission: b.commission || 40,
     }));
   }, [trinks, rateLimited]);
 
+  const barbers: BarberData[] = barbersWithCommission;
+
   const usingDemoData = !trinks || rateLimited || barbers.every((b) => b.revenue === 0 && trinks === null);
 
-  // Meta per barber
-  const metaPerBarber = barbers.length > 0 ? MONTHLY_GOAL / barbers.length : MONTHLY_GOAL / 8;
+  // Meta proporcional por comissão
+  const totalCommission = barbersWithCommission.reduce((s, b) => s + b.commission, 0) || 1;
+  const getMetaForBarber = useCallback((barberId: string) => {
+    const barber = barbersWithCommission.find(b => b.id === barberId);
+    if (!barber) return MONTHLY_GOAL / (barbersWithCommission.length || 1);
+    return (barber.commission / totalCommission) * MONTHLY_GOAL;
+  }, [barbersWithCommission, totalCommission, MONTHLY_GOAL]);
+
+  const metaPerBarber = barbersWithCommission.length > 0
+    ? MONTHLY_GOAL / barbersWithCommission.length
+    : MONTHLY_GOAL / 8;
 
   // Total revenue
   const totalRevenue = useMemo(() => {
@@ -332,7 +346,8 @@ export default function RaioX() {
   // Barbers behind (< 60% of expected progress)
   const expectedPct = (dayOfMonth / daysInMonth) * 100;
   const barbersBehind = barbers.filter((b) => {
-    const pct = (b.revenue / metaPerBarber) * 100;
+    const bMeta = getMetaForBarber(b.id);
+    const pct = bMeta > 0 ? (b.revenue / bMeta) * 100 : 0;
     return pct < expectedPct * 0.6;
   });
 
@@ -342,14 +357,80 @@ export default function RaioX() {
   const [socioOpen, setSocioOpen] = useState(true);
   const [briefingOpen, setBriefingOpen] = useState(true);
 
-  // Barber tasks state: { barberId: BarberTask }
-  const [barberTasks, setBarberTasks] = useState<Record<string, BarberTask>>(() => {
-    const init: Record<string, BarberTask> = {};
-    demoBarbers.forEach((b) => {
-      init[b.id] = { limpeza: false, reposicao: false, agenda: false };
-    });
-    return init;
+  // ─── Checklist persistence ─────────────────────────────────
+  const [barberTasks, setBarberTasks] = useState<Record<string, BarberTask>>({});
+  const [adminTasks, setAdminTasks] = useState<AdminTasks>({
+    aberturaCaixa: false,
+    verificarAgendamentos: false,
+    conferirEstoque: false,
+    pagamentosPendentes: false,
+    redesSociais: false,
+    fecharCaixa: false,
   });
+  const [socioNotes, setSocioNotes] = useState("");
+  const [checklistLoaded, setChecklistLoaded] = useState(false);
+
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+
+  // Load checklist from server on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/checklist/${todayStr}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.tasks) {
+          const tasks = data.tasks;
+          // Restore admin tasks
+          const restored: AdminTasks = {
+            aberturaCaixa: !!tasks["admin-aberturaCaixa"],
+            verificarAgendamentos: !!tasks["admin-verificarAgendamentos"],
+            conferirEstoque: !!tasks["admin-conferirEstoque"],
+            pagamentosPendentes: !!tasks["admin-pagamentosPendentes"],
+            redesSociais: !!tasks["admin-redesSociais"],
+            fecharCaixa: !!tasks["admin-fecharCaixa"],
+          };
+          setAdminTasks(restored);
+
+          // Restore barber tasks
+          const bTasks: Record<string, BarberTask> = {};
+          Object.keys(tasks).forEach(key => {
+            const match = key.match(/^barber-(.+)-(limpeza|reposicao|agenda)$/);
+            if (match) {
+              const [, barberId, field] = match;
+              if (!bTasks[barberId]) bTasks[barberId] = { limpeza: false, reposicao: false, agenda: false };
+              bTasks[barberId][field as keyof BarberTask] = !!tasks[key];
+            }
+          });
+          setBarberTasks(bTasks);
+
+          // Restore notes
+          if (tasks["socio-notes"]) setSocioNotes(tasks["socio-notes"]);
+        }
+        setChecklistLoaded(true);
+      })
+      .catch(() => setChecklistLoaded(true));
+  }, [todayStr, API_BASE]);
+
+  // Save checklist to server whenever tasks change
+  const saveChecklist = useCallback(() => {
+    if (!checklistLoaded) return;
+    const tasks: Record<string, any> = {};
+    // Admin tasks
+    Object.entries(adminTasks).forEach(([k, v]) => { tasks[`admin-${k}`] = v; });
+    // Barber tasks
+    Object.entries(barberTasks).forEach(([barberId, bt]) => {
+      Object.entries(bt).forEach(([field, v]) => { tasks[`barber-${barberId}-${field}`] = v; });
+    });
+    // Notes
+    if (socioNotes) tasks["socio-notes"] = socioNotes;
+
+    fetch(`${API_BASE}/api/checklist`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: todayStr, tasks }),
+    }).catch(() => {});
+  }, [adminTasks, barberTasks, socioNotes, todayStr, checklistLoaded, API_BASE]);
+
+  useEffect(() => { saveChecklist(); }, [saveChecklist]);
 
   function getBarberTask(id: string): BarberTask {
     return barberTasks[id] || { limpeza: false, reposicao: false, agenda: false };
@@ -362,22 +443,9 @@ export default function RaioX() {
     }));
   }
 
-  // Admin tasks
-  const [adminTasks, setAdminTasks] = useState<AdminTasks>({
-    aberturaCaixa: false,
-    verificarAgendamentos: false,
-    conferirEstoque: false,
-    pagamentosPendentes: false,
-    redesSociais: false,
-    fecharCaixa: false,
-  });
-
   function toggleAdmin(field: keyof AdminTasks) {
     setAdminTasks((prev) => ({ ...prev, [field]: !prev[field] }));
   }
-
-  // Sócio notes
-  const [socioNotes, setSocioNotes] = useState("");
 
   // Copied state
   const [copied, setCopied] = useState(false);
@@ -390,7 +458,8 @@ export default function RaioX() {
 
     const barberLines = barbers
       .map((b) => {
-        const pct = metaPerBarber > 0 ? (b.revenue / metaPerBarber) * 100 : 0;
+        const bMeta = getMetaForBarber(b.id);
+        const pct = bMeta > 0 ? (b.revenue / bMeta) * 100 : 0;
         const bExpectedPct = (dayOfMonth / daysInMonth) * 100;
         const onTrack = pct >= bExpectedPct * 0.9;
         const icon = onTrack ? "✅" : "⚠️";
@@ -431,7 +500,7 @@ ${adminLines}
 Meta: ${formatCurrency(totalRevenue)} / ${formatCurrency(MONTHLY_GOAL)} (${goalPct.toFixed(1)}%)
 Projeção: ${formatCurrency(projectedRevenue)}
 ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
-  }, [barbers, metaPerBarber, dayOfMonth, daysInMonth, today, adminTasks, totalRevenue, projectedRevenue, barbersBehind, socioNotes]);
+  }, [barbers, getMetaForBarber, dayOfMonth, daysInMonth, today, adminTasks, totalRevenue, MONTHLY_GOAL, projectedRevenue, barbersBehind, socioNotes]);
 
   async function copyBriefing() {
     try {
@@ -502,7 +571,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                   <BarberCard
                     key={barber.id}
                     barber={barber}
-                    meta={metaPerBarber}
+                    meta={getMetaForBarber(barber.id)}
                     dayOfMonth={dayOfMonth}
                     daysInMonth={daysInMonth}
                     tasks={getBarberTask(barber.id)}

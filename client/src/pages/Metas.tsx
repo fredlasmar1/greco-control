@@ -1,10 +1,18 @@
-import { useMemo } from "react";
+import { useMemo, useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
-import { useTrinksStore, getTrinksMonthTotals } from "@/lib/trinksStore";
-import { formatCurrency, formatPercent, monthlyGoals, getMonthTotals } from "@/lib/demoData";
+import { useTrinksStore, getTrinksMonthTotals, mapTrinksProfissionais } from "@/lib/trinksStore";
+import { formatCurrency, formatPercent, getMonthTotals, barbers as demoBarbers } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle } from "lucide-react";
+import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle, Users } from "lucide-react";
+
+interface MetaHistorico {
+  month: string;
+  target: number;
+  achieved: number;
+}
+
+const API_BASE = (globalThis as any).__API_BASE__ || "";
 
 export default function Metas() {
   const { settings } = useStore();
@@ -18,10 +26,11 @@ export default function Metas() {
 
   const target = settings.monthlyTarget;
   const achieved = totals.totalRevenue;
-  const percentage = (achieved / target) * 100;
-  const remaining = target - achieved;
+  const percentage = target > 0 ? (achieved / target) * 100 : 0;
+  const remaining = Math.max(0, target - achieved);
 
   const now = new Date();
+  const currentMonth = now.toISOString().slice(0, 7);
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const dayOfMonth = now.getDate();
   const remainingDays = daysInMonth - dayOfMonth;
@@ -34,9 +43,70 @@ export default function Metas() {
   const monthLabel = now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
   const monthLabelCapital = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
 
-  // Circle progress visualization
+  // Circle progress
   const circumference = 2 * Math.PI * 80;
   const strokeDashoffset = circumference - (Math.min(percentage, 100) / 100) * circumference;
+
+  // ─── Historical metas from API ─────────────────────────
+  const [historico, setHistorico] = useState<MetaHistorico[]>([]);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/metas`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) setHistorico(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Auto-save current month's target + achieved
+  useEffect(() => {
+    if (target > 0 && achieved >= 0) {
+      fetch(`${API_BASE}/api/metas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: currentMonth, target, achieved }),
+      }).catch(() => {});
+    }
+  }, [target, achieved, currentMonth]);
+
+  // Merge historical with current month for display
+  const displayHistorico = useMemo(() => {
+    const all = [...historico];
+    const currentIdx = all.findIndex(m => m.month === currentMonth);
+    if (currentIdx >= 0) {
+      all[currentIdx] = { month: currentMonth, target, achieved };
+    } else {
+      all.push({ month: currentMonth, target, achieved });
+    }
+    return all.sort((a, b) => a.month.localeCompare(b.month));
+  }, [historico, currentMonth, target, achieved]);
+
+  // ─── Barbers with proportional goals ───────────────────
+  const barbersData = useMemo(() => {
+    let list: { id: string; name: string; initials: string; revenue: number; commission: number }[];
+    if (hasTrinksData) {
+      const mapped = mapTrinksProfissionais(trinks!);
+      list = mapped.filter(b => b.active).map(b => ({
+        id: b.id, name: b.name, initials: b.initials,
+        revenue: b.revenue, commission: b.commission || 40,
+      }));
+      if (list.length === 0) list = demoBarbers.map(b => ({
+        id: b.id, name: b.name, initials: b.initials || b.name.slice(0, 2).toUpperCase(),
+        revenue: b.revenue, commission: b.commission || 40,
+      }));
+    } else {
+      list = demoBarbers.map(b => ({
+        id: b.id, name: b.name, initials: b.initials || b.name.slice(0, 2).toUpperCase(),
+        revenue: b.revenue, commission: b.commission || 40,
+      }));
+    }
+    const totalComm = list.reduce((s, b) => s + b.commission, 0) || 1;
+    return list.map(b => ({
+      ...b,
+      meta: (b.commission / totalComm) * target,
+    }));
+  }, [hasTrinksData, trinks, target]);
 
   return (
     <div className="space-y-6 max-w-[1400px]">
@@ -49,22 +119,14 @@ export default function Metas() {
       <Card className="bg-card border-card-border">
         <CardContent className="p-6">
           <div className="flex flex-col lg:flex-row items-center gap-8">
-            {/* Circle progress */}
             <div className="relative flex-shrink-0">
               <svg width="200" height="200" viewBox="0 0 200 200">
                 <circle cx="100" cy="100" r="80" fill="none" stroke="#222" strokeWidth="12" />
                 <circle
-                  cx="100"
-                  cy="100"
-                  r="80"
-                  fill="none"
-                  stroke="#1E3A5F"
-                  strokeWidth="12"
-                  strokeLinecap="round"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={strokeDashoffset}
-                  transform="rotate(-90 100 100)"
-                  className="transition-all duration-1000"
+                  cx="100" cy="100" r="80" fill="none"
+                  stroke="#1E3A5F" strokeWidth="12" strokeLinecap="round"
+                  strokeDasharray={circumference} strokeDashoffset={strokeDashoffset}
+                  transform="rotate(-90 100 100)" className="transition-all duration-1000"
                 />
                 <text x="100" y="90" textAnchor="middle" fill="#e5e5e5" fontSize="28" fontWeight="700" fontFamily="Inter">
                   {percentage.toFixed(1)}%
@@ -74,8 +136,6 @@ export default function Metas() {
                 </text>
               </svg>
             </div>
-
-            {/* Goal details */}
             <div className="flex-1 space-y-4">
               <div>
                 <p className="text-sm text-muted-foreground">
@@ -84,7 +144,6 @@ export default function Metas() {
                 </p>
                 <p className="text-2xl font-bold">{formatCurrency(target)}</p>
               </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs text-muted-foreground">Realizado</p>
@@ -95,7 +154,6 @@ export default function Metas() {
                   <p className="text-lg font-bold text-orange-400">{formatCurrency(remaining)}</p>
                 </div>
               </div>
-
               <Progress value={percentage} className="h-3 [&>div]:bg-primary" />
             </div>
           </div>
@@ -148,24 +206,31 @@ export default function Metas() {
             <p className="text-xs text-muted-foreground mt-1">
               {onTrack
                 ? 'Projeção acima da meta!'
-                : `Precisa aumentar ${formatPercent(((dailyPace / currentDailyAvg) - 1) * 100)} o ritmo`
+                : currentDailyAvg > 0
+                  ? `Precisa aumentar ${formatPercent(((dailyPace / currentDailyAvg) - 1) * 100)} o ritmo`
+                  : 'Sem dados suficientes'
               }
             </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Historical */}
+      {/* Per-barber goals */}
       <Card className="bg-card border-card-border">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">Histórico de Metas</CardTitle>
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-primary" />
+            <CardTitle className="text-sm font-medium">Metas por Barbeiro</CardTitle>
+            <span className="text-xs text-muted-foreground">(proporcional à comissão)</span>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  <th className="text-left p-3 text-xs text-muted-foreground font-medium">Mês</th>
+                  <th className="text-left p-3 text-xs text-muted-foreground font-medium">Barbeiro</th>
+                  <th className="text-right p-3 text-xs text-muted-foreground font-medium">Comissão</th>
                   <th className="text-right p-3 text-xs text-muted-foreground font-medium">Meta</th>
                   <th className="text-right p-3 text-xs text-muted-foreground font-medium">Realizado</th>
                   <th className="text-right p-3 text-xs text-muted-foreground font-medium">%</th>
@@ -173,23 +238,22 @@ export default function Metas() {
                 </tr>
               </thead>
               <tbody>
-                {monthlyGoals.map(goal => {
-                  const pct = (goal.achieved / goal.target) * 100;
-                  const hit = pct >= 100;
-                  const monthLabel = new Date(goal.month + '-15').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                {barbersData.map(b => {
+                  const bPct = b.meta > 0 ? (b.revenue / b.meta) * 100 : 0;
+                  const expectedPct = (dayOfMonth / daysInMonth) * 100;
+                  const bOnTrack = bPct >= expectedPct * 0.9;
                   return (
-                    <tr key={goal.month} className="border-b border-border/50 hover:bg-muted/30" data-testid={`goal-${goal.month}`}>
-                      <td className="p-3 font-medium capitalize">{monthLabel}</td>
-                      <td className="p-3 text-right">{formatCurrency(goal.target)}</td>
-                      <td className="p-3 text-right font-medium">{formatCurrency(goal.achieved)}</td>
+                    <tr key={b.id} className="border-b border-border/50 hover:bg-muted/30">
+                      <td className="p-3 font-medium">{b.name.split(" ").slice(0, 2).join(" ")}</td>
+                      <td className="p-3 text-right text-muted-foreground">{b.commission}%</td>
+                      <td className="p-3 text-right">{formatCurrency(b.meta)}</td>
+                      <td className="p-3 text-right font-medium">{formatCurrency(b.revenue)}</td>
                       <td className="p-3 text-right">
-                        <span className={hit ? 'text-green-500' : 'text-orange-400'}>{formatPercent(pct)}</span>
+                        <span className={bOnTrack ? 'text-green-500' : 'text-orange-400'}>{formatPercent(bPct)}</span>
                       </td>
                       <td className="p-3 text-center">
-                        {hit ? (
+                        {bOnTrack ? (
                           <CheckCircle className="w-4 h-4 text-green-500 inline" />
-                        ) : goal.month === '2026-03' ? (
-                          <span className="text-xs text-muted-foreground">Em andamento</span>
                         ) : (
                           <AlertTriangle className="w-4 h-4 text-orange-400 inline" />
                         )}
@@ -202,6 +266,63 @@ export default function Metas() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Historical */}
+      {displayHistorico.length > 0 && (
+        <Card className="bg-card border-card-border">
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-primary" />
+              <CardTitle className="text-sm font-medium">Histórico de Metas</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left p-3 text-xs text-muted-foreground font-medium">Mês</th>
+                    <th className="text-right p-3 text-xs text-muted-foreground font-medium">Meta</th>
+                    <th className="text-right p-3 text-xs text-muted-foreground font-medium">Realizado</th>
+                    <th className="text-right p-3 text-xs text-muted-foreground font-medium">%</th>
+                    <th className="text-center p-3 text-xs text-muted-foreground font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayHistorico.map(goal => {
+                    const pct = goal.target > 0 ? (goal.achieved / goal.target) * 100 : 0;
+                    const hit = pct >= 100;
+                    const isCurrent = goal.month === currentMonth;
+                    const mLabel = new Date(goal.month + '-15').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                    return (
+                      <tr key={goal.month} className="border-b border-border/50 hover:bg-muted/30">
+                        <td className="p-3 font-medium capitalize">
+                          {mLabel}
+                          {isCurrent && <span className="text-xs text-primary ml-2">• atual</span>}
+                        </td>
+                        <td className="p-3 text-right">{formatCurrency(goal.target)}</td>
+                        <td className="p-3 text-right font-medium">{formatCurrency(goal.achieved)}</td>
+                        <td className="p-3 text-right">
+                          <span className={hit ? 'text-green-500' : 'text-orange-400'}>{formatPercent(pct)}</span>
+                        </td>
+                        <td className="p-3 text-center">
+                          {hit ? (
+                            <CheckCircle className="w-4 h-4 text-green-500 inline" />
+                          ) : isCurrent ? (
+                            <span className="text-xs text-muted-foreground">Em andamento</span>
+                          ) : (
+                            <AlertTriangle className="w-4 h-4 text-orange-400 inline" />
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

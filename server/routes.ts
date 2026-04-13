@@ -22,8 +22,25 @@ interface FinanceEntry {
 
 const FINANCEIRO_FILE = path.join(process.cwd(), ".financeiro-data.json");
 const DUPLICADOS_RESOLVIDOS_FILE = path.join(process.cwd(), ".duplicados-resolvidos.json");
+const METAS_FILE = path.join(process.cwd(), ".metas-data.json");
+const CHECKLIST_FILE = path.join(process.cwd(), ".checklist-data.json");
 let financeEntries: FinanceEntry[] = [];
 let resolvedDuplicateIds: number[] = [];
+
+// ─── Metas Data ──────────────────────────────────────────
+interface MetaHistorico {
+  month: string; // YYYY-MM
+  target: number;
+  achieved: number;
+}
+let metasHistorico: MetaHistorico[] = [];
+
+// ─── Checklist Data ──────────────────────────────────────
+interface ChecklistDay {
+  date: string; // YYYY-MM-DD
+  tasks: Record<string, boolean>; // taskId → completed
+}
+let checklistData: Record<string, ChecklistDay> = {}; // keyed by date
 
 // Load on startup
 try {
@@ -61,6 +78,34 @@ function saveFinanceEntries() {
   } catch (err) {
     log("Financeiro: could not save data to disk", "financeiro");
   }
+}
+
+// Load metas on startup
+try {
+  if (fs.existsSync(METAS_FILE)) {
+    const raw = fs.readFileSync(METAS_FILE, "utf-8");
+    metasHistorico = JSON.parse(raw) || [];
+    log(`Metas: loaded ${metasHistorico.length} months from disk`, "metas");
+  }
+} catch { log("Metas: starting fresh", "metas"); }
+
+// Load checklist on startup
+try {
+  if (fs.existsSync(CHECKLIST_FILE)) {
+    const raw = fs.readFileSync(CHECKLIST_FILE, "utf-8");
+    checklistData = JSON.parse(raw) || {};
+    log(`Checklist: loaded ${Object.keys(checklistData).length} days from disk`, "checklist");
+  }
+} catch { log("Checklist: starting fresh", "checklist"); }
+
+function saveMetas() {
+  try { fs.writeFileSync(METAS_FILE, JSON.stringify(metasHistorico, null, 2), "utf-8"); }
+  catch { log("Metas: could not save to disk", "metas"); }
+}
+
+function saveChecklist() {
+  try { fs.writeFileSync(CHECKLIST_FILE, JSON.stringify(checklistData, null, 2), "utf-8"); }
+  catch { log("Checklist: could not save to disk", "checklist"); }
 }
 
 // Zod schema for entry validation
@@ -877,6 +922,66 @@ export async function registerRoutes(
     } catch (err: any) {
       return res.status(500).json({ error: "Erro ao desfazer resolução de duplicado." });
     }
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // METAS ROUTES
+  // ──────────────────────────────────────────────────────────────────
+
+  // GET /api/metas — load all historical metas
+  app.get("/api/metas", (_req: Request, res: Response) => {
+    return res.json(metasHistorico);
+  });
+
+  // POST /api/metas — save/update a month's meta
+  app.post("/api/metas", (req: Request, res: Response) => {
+    const { month, target, achieved } = req.body;
+    if (!month || target == null) {
+      return res.status(400).json({ error: "month and target are required" });
+    }
+    const existing = metasHistorico.find(m => m.month === month);
+    if (existing) {
+      existing.target = Number(target);
+      if (achieved != null) existing.achieved = Number(achieved);
+    } else {
+      metasHistorico.push({ month, target: Number(target), achieved: Number(achieved || 0) });
+    }
+    metasHistorico.sort((a, b) => a.month.localeCompare(b.month));
+    saveMetas();
+    return res.json({ ok: true, metas: metasHistorico });
+  });
+
+  // POST /api/metas/atualizar-atual — update current month's achieved from Trinks or manual
+  app.post("/api/metas/atualizar-atual", (req: Request, res: Response) => {
+    const { achieved } = req.body;
+    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const existing = metasHistorico.find(m => m.month === currentMonth);
+    if (existing) {
+      existing.achieved = Number(achieved || 0);
+    }
+    saveMetas();
+    return res.json({ ok: true });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // CHECKLIST ROUTES
+  // ──────────────────────────────────────────────────────────────────
+
+  // GET /api/checklist/:date — get checklist for a specific day
+  app.get("/api/checklist/:date", (req: Request, res: Response) => {
+    const { date } = req.params;
+    return res.json(checklistData[date] || { date, tasks: {} });
+  });
+
+  // POST /api/checklist — save checklist for a day
+  app.post("/api/checklist", (req: Request, res: Response) => {
+    const { date, tasks } = req.body;
+    if (!date || !tasks) {
+      return res.status(400).json({ error: "date and tasks are required" });
+    }
+    checklistData[date] = { date, tasks };
+    saveChecklist();
+    return res.json({ ok: true });
   });
 
   // ──────────────────────────────────────────────────────────────────

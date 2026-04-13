@@ -315,22 +315,27 @@ export default function Metas() {
                       <td className="p-3 text-right text-muted-foreground">{b.commission}%</td>
                       <td className="p-3 text-right">
                         {isEditing ? (
-                          <div className="flex items-center justify-end gap-1">
-                            <span className="text-xs text-muted-foreground">R$</span>
-                            <Input
-                              type="number"
-                              value={editValue}
-                              onChange={e => setEditValue(e.target.value)}
-                              onKeyDown={e => handleEditKeyDown(e, b.id)}
-                              className="h-7 w-24 text-xs text-right"
-                              autoFocus
-                            />
-                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-green-500" onClick={() => saveBarberMeta(b.id)}>
-                              <CheckCircle className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground" onClick={cancelEdit}>
-                              <X className="w-3.5 h-3.5" />
-                            </Button>
+                          <div className="flex items-center justify-end gap-2 flex-wrap">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-muted-foreground">R$</span>
+                              <Input
+                                type="number"
+                                inputMode="numeric"
+                                value={editValue}
+                                onChange={e => setEditValue(e.target.value)}
+                                onKeyDown={e => handleEditKeyDown(e, b.id)}
+                                className="h-9 w-28 text-sm text-right"
+                                autoFocus
+                              />
+                            </div>
+                            <div className="flex gap-1">
+                              <Button size="sm" className="h-9 px-3 bg-green-600 hover:bg-green-700 text-white text-xs" onClick={() => saveBarberMeta(b.id)}>
+                                Salvar
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-9 px-2 text-xs" onClick={cancelEdit}>
+                                <X className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
                           </div>
                         ) : (
                           formatCurrency(b.meta)

@@ -250,9 +250,11 @@
     inset: -1px;
   }
 
-  /* Mobile touch targets */
+  /* Mobile touch targets — only for primary interactive elements */
   @media (max-width: 640px) {
-    button, a, select, input {
+    nav button, nav a,
+    form button, form select, form input,
+    [data-testid] button {
       min-height: 44px;
     }
   }

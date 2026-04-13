@@ -373,7 +373,7 @@ export function getTrinksBarberRanking(trinks: TrinksData) {
 export function getTrinksPaymentMethodData(trinks: TrinksData) {
   const totals = getTrinksMonthTotals(trinks);
   const data = [
-    { name: "Pix", value: totals.totalPix, color: "#01696F" },
+    { name: "Pix", value: totals.totalPix, color: "#1E3A5F" },
     { name: "Cartão", value: totals.totalCartao, color: "#22c55e" },
     { name: "Dinheiro", value: totals.totalDinheiro, color: "#eab308" },
   ];

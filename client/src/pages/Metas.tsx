@@ -58,7 +58,7 @@ export default function Metas() {
                   cy="100"
                   r="80"
                   fill="none"
-                  stroke="#01696F"
+                  stroke="#1E3A5F"
                   strokeWidth="12"
                   strokeLinecap="round"
                   strokeDasharray={circumference}

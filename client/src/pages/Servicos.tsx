@@ -213,9 +213,9 @@ export default function Servicos() {
                         key={i}
                         fill={
                           i === 0
-                            ? "#01696F"
+                            ? "#1E3A5F"
                             : i < 3
-                              ? "#0C4E54"
+                              ? "#152D4A"
                               : "#1a3a3c"
                         }
                       />

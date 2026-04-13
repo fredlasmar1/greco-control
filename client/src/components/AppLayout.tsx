@@ -34,10 +34,7 @@ const navItems = [
 
 function GrecoLogo() {
   return (
-    <svg viewBox="0 0 40 40" className="w-8 h-8" aria-label="Greco Barbearia">
-      <rect x="2" y="2" width="36" height="36" rx="8" fill="#01696F" />
-      <text x="20" y="27" textAnchor="middle" fill="white" fontFamily="Inter" fontWeight="700" fontSize="20">G</text>
-    </svg>
+    <img src="/logo-greco.png" alt="Greco Barbearia" className="w-8 h-8 rounded-lg object-contain" />
   );
 }
 
@@ -98,7 +95,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer
                     transition-colors duration-150 mb-0.5
                     ${isActive
-                      ? "bg-primary/15 text-[#2dd4bf]"
+                      ? "bg-primary/15 text-[#5B8AC4]"
                       : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent"
                     }
                   `}

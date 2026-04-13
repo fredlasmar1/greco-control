@@ -57,7 +57,7 @@ function InitialsAvatar({ initials, size = "md" }: { initials: string; size?: "s
   const sizeClass = size === "sm" ? "w-8 h-8 text-xs" : "w-10 h-10 text-sm";
   return (
     <div
-      className={`${sizeClass} rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center font-bold text-[#2dd4bf] flex-shrink-0`}
+      className={`${sizeClass} rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center font-bold text-[#5B8AC4] flex-shrink-0`}
     >
       {initials}
     </div>
@@ -88,7 +88,7 @@ function SectionHeader({
         <span className="text-xl">{icon}</span>
         <span className="text-base font-semibold text-foreground flex-1 text-left">{title}</span>
         {badge !== undefined && (
-          <Badge variant="secondary" className="bg-primary/20 text-[#2dd4bf] border-primary/30 text-xs mr-2">
+          <Badge variant="secondary" className="bg-primary/20 text-[#5B8AC4] border-primary/30 text-xs mr-2">
             {badge}
           </Badge>
         )}
@@ -218,7 +218,7 @@ function BarberCard({
         <div className="mb-3">
           <div className="flex justify-between items-baseline mb-1.5">
             <span className="text-xs text-muted-foreground">Faturamento do mês</span>
-            <span className="text-xs font-semibold text-[#2dd4bf]">{pct.toFixed(0)}%</span>
+            <span className="text-xs font-semibold text-[#5B8AC4]">{pct.toFixed(0)}%</span>
           </div>
           <Progress
             value={pct}
@@ -476,7 +476,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
         <Button
           variant="outline"
           size="sm"
-          className="border-primary/40 text-[#2dd4bf] hover:bg-primary/10 hover:border-primary shrink-0"
+          className="border-primary/40 text-[#5B8AC4] hover:bg-primary/10 hover:border-primary shrink-0"
           onClick={copyBriefing}
           data-testid="btn-gerar-relatorio"
         >
@@ -543,7 +543,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                   <div className="mt-3 pt-3 border-t border-border">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-muted-foreground">Progresso</span>
-                      <span className="font-medium text-[#2dd4bf]">
+                      <span className="font-medium text-[#5B8AC4]">
                         {Object.values(adminTasks).filter(Boolean).length} / {adminTaskDefs.length} concluídas
                       </span>
                     </div>
@@ -700,7 +700,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                 <Button
                   size="sm"
                   variant="outline"
-                  className="absolute top-2 right-2 border-primary/40 text-[#2dd4bf] hover:bg-primary/10 hover:border-primary text-xs"
+                  className="absolute top-2 right-2 border-primary/40 text-[#5B8AC4] hover:bg-primary/10 hover:border-primary text-xs"
                   onClick={copyBriefing}
                   data-testid="btn-copiar-briefing"
                 >

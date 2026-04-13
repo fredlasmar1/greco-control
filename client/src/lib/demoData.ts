@@ -267,7 +267,7 @@ export function getRevenueByRange(startDate: string, endDate: string) {
 export function getPaymentMethodData() {
   const totals = getMonthTotals();
   return [
-    { name: 'Pix', value: totals.totalPix, color: '#01696F' },
+    { name: 'Pix', value: totals.totalPix, color: '#1E3A5F' },
     { name: 'Cartão', value: totals.totalCartao, color: '#22c55e' },
     { name: 'Dinheiro', value: totals.totalDinheiro, color: '#eab308' },
   ];

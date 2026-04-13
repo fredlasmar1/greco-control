@@ -191,7 +191,7 @@ export default function Fechamento() {
                   />
                   <Bar dataKey="total" radius={[4, 4, 0, 0]}>
                     {dayOfWeekData.map((entry, i) => (
-                      <Cell key={i} fill={entry.name === 'Sáb' ? '#01696F' : entry.name === 'Dom' ? '#333' : '#0C4E54'} />
+                      <Cell key={i} fill={entry.name === 'Sáb' ? '#1E3A5F' : entry.name === 'Dom' ? '#333' : '#152D4A'} />
                     ))}
                   </Bar>
                 </BarChart>

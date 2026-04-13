@@ -550,11 +550,11 @@ export default function Equipe() {
                         key={i}
                         fill={
                           i === 0
-                            ? "#01696F"
+                            ? "#1E3A5F"
                             : i === 1
                             ? "#018a91"
                             : i === 2
-                            ? "#0C4E54"
+                            ? "#152D4A"
                             : "#1a3a3c"
                         }
                       />

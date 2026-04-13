@@ -653,7 +653,7 @@ export default function Precificacao() {
                     ]}
                     contentStyle={{ backgroundColor: "#1a1a1a", border: "1px solid #333", borderRadius: "8px", fontSize: "12px" }}
                   />
-                  <Bar dataKey="lucro" stackId="a" fill="#01696F" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="lucro" stackId="a" fill="#1E3A5F" radius={[0, 4, 4, 0]} />
                   <Bar dataKey="custo" stackId="b" fill="#ef4444" radius={[0, 0, 0, 0]} />
                   <Bar dataKey="comissao" stackId="b" fill="#f97316" radius={[0, 4, 4, 0]} />
                 </BarChart>

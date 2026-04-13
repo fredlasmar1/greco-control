@@ -662,10 +662,10 @@ export default function Dashboard() {
                   <Line
                     type="monotone"
                     dataKey="revenue"
-                    stroke="#01696F"
+                    stroke="#1E3A5F"
                     strokeWidth={2}
-                    dot={{ r: 3, fill: "#01696F" }}
-                    activeDot={{ r: 5, fill: "#2dd4bf" }}
+                    dot={{ r: 3, fill: "#1E3A5F" }}
+                    activeDot={{ r: 5, fill: "#5B8AC4" }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -794,9 +794,9 @@ export default function Dashboard() {
                         key={index}
                         fill={
                           index === 0
-                            ? "#01696F"
+                            ? "#1E3A5F"
                             : index < 3
-                              ? "#0C4E54"
+                              ? "#152D4A"
                               : "#1a3a3c"
                         }
                       />

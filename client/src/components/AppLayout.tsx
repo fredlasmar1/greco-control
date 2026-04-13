@@ -1,4 +1,5 @@
 import { useLocation, Link } from "wouter";
+import grecoLogo from "../../logo-greco.png";
 import { useStore } from "@/lib/store";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 import {
@@ -34,7 +35,7 @@ const navItems = [
 
 function GrecoLogo() {
   return (
-    <img src="/logo-greco.png" alt="Greco Barbearia" className="w-8 h-8 rounded-lg object-contain" />
+    <img src={grecoLogo} alt="Greco Barbearia" className="w-8 h-8 rounded-lg object-contain" />
   );
 }
 

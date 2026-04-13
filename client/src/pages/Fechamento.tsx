@@ -119,7 +119,7 @@ export default function Fechamento() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-1">
               <p className="text-xs text-muted-foreground">Faturamento</p>
-              <DollarSign className="w-4 h-4 text-[#01696F]" />
+              <DollarSign className="w-4 h-4 text-primary" />
             </div>
             <p className="text-xl font-bold">{formatCurrency(currentWeek?.revenue || 0)}</p>
             {previousWeek && (
@@ -157,7 +157,7 @@ export default function Fechamento() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-1">
               <p className="text-xs text-muted-foreground">Atendimentos</p>
-              <Users className="w-4 h-4 text-[#01696F]" />
+              <Users className="w-4 h-4 text-primary" />
             </div>
             <p className="text-xl font-bold">{currentWeek?.clients || 0}</p>
             {previousWeek && (

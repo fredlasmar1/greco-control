@@ -80,7 +80,7 @@ export default function Metas() {
               <div>
                 <p className="text-sm text-muted-foreground">
                   Meta de {monthLabelCapital}
-                  {hasTrinksData && <span className="text-[#01696F] ml-1">• Dados Trinks</span>}
+                  {hasTrinksData && <span className="text-primary ml-1">• Dados Trinks</span>}
                 </p>
                 <p className="text-2xl font-bold">{formatCurrency(target)}</p>
               </div>
@@ -88,7 +88,7 @@ export default function Metas() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs text-muted-foreground">Realizado</p>
-                  <p className="text-lg font-bold text-[#01696F]">{formatCurrency(achieved)}</p>
+                  <p className="text-lg font-bold text-primary">{formatCurrency(achieved)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Faltam</p>
@@ -96,7 +96,7 @@ export default function Metas() {
                 </div>
               </div>
 
-              <Progress value={percentage} className="h-3 [&>div]:bg-[#01696F]" />
+              <Progress value={percentage} className="h-3 [&>div]:bg-primary" />
             </div>
           </div>
         </CardContent>
@@ -120,7 +120,7 @@ export default function Metas() {
         <Card className="bg-card border-card-border">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-4 h-4 text-[#01696F]" />
+              <TrendingUp className="w-4 h-4 text-primary" />
               <p className="text-xs text-muted-foreground font-medium">Projeção</p>
             </div>
             <p className={`text-xl font-bold ${onTrack ? 'text-green-500' : 'text-orange-400'}`}>

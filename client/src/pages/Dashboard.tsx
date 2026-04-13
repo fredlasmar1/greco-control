@@ -14,7 +14,6 @@ import {
   getMonthTotals,
   getDailyRevenueChartData,
   formatCurrency,
-  formatNumber,
   formatPercent,
   getBarberRankingData,
   getPaymentMethodData,
@@ -37,8 +36,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   TrendingUp,
-  TrendingDown,
-  DollarSign,
   Users,
   BarChart3,
   CalendarCheck,
@@ -63,8 +60,6 @@ import {
   BarChart,
   Bar,
   Cell,
-  PieChart,
-  Pie,
 } from "recharts";
 import { Link } from "wouter";
 
@@ -109,7 +104,7 @@ function KPICard({ title, value, trend, icon }: KPICardProps) {
               </span>
             </div>
           </div>
-          <div className="w-9 h-9 rounded-lg bg-[#01696F]/10 flex items-center justify-center flex-shrink-0">
+          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
             {icon}
           </div>
         </div>
@@ -161,7 +156,7 @@ function FecharDiaDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
-          className="bg-[#01696F] hover:bg-[#0C4E54] text-white"
+          className="bg-primary hover:bg-primary/80 text-white"
           data-testid="fechar-dia-btn"
         >
           <CalendarCheck className="w-4 h-4 mr-2" />
@@ -173,7 +168,7 @@ function FecharDiaDialog() {
           <DialogTitle>Fechar o Dia</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <Label className="text-xs">Total de Clientes</Label>
               <Input
@@ -199,7 +194,7 @@ function FecharDiaDialog() {
               />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <Label className="text-xs">Pix (R$)</Label>
               <Input
@@ -251,7 +246,7 @@ function FecharDiaDialog() {
           </div>
           <Button
             type="submit"
-            className="w-full bg-[#01696F] hover:bg-[#0C4E54] text-white"
+            className="w-full bg-primary hover:bg-primary/80 text-white"
             data-testid="submit-fechar-dia"
           >
             Salvar Fechamento
@@ -307,17 +302,17 @@ function SyncBanner({
 }) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 rounded-md bg-[#01696F]/10 border border-[#01696F]/20"
+      className="flex items-center gap-2 px-3 py-2 rounded-md bg-primary/10 border border-primary/20"
       data-testid="sync-banner"
     >
-      <Clock className="w-4 h-4 text-[#01696F] flex-shrink-0" />
-      <p className="text-xs text-[#01696F] flex-1">
+      <Clock className="w-4 h-4 text-primary flex-shrink-0" />
+      <p className="text-xs text-primary flex-1">
         Dados Trinks — Última sincronização: {formatLastSync(lastSync)}
       </p>
       <Button
         variant="ghost"
         size="sm"
-        className="h-6 px-2 text-[#01696F] hover:bg-[#01696F]/10"
+        className="h-6 px-2 text-primary hover:bg-primary/10"
         onClick={onSync}
         disabled={isSyncing}
       >
@@ -471,10 +466,10 @@ export default function Dashboard() {
       {/* Revenue Highlight */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-card border-card-border relative overflow-hidden">
-          <CardContent className="p-5">
+          <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-[#01696F]/10 flex items-center justify-center">
-                <Calendar className="w-4 h-4 text-[#01696F]" />
+              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Calendar className="w-4 h-4 text-primary" />
               </div>
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Hoje</span>
             </div>
@@ -485,10 +480,10 @@ export default function Dashboard() {
         </Card>
 
         <Card className="bg-card border-card-border relative overflow-hidden">
-          <CardContent className="p-5">
+          <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-[#01696F]/15 flex items-center justify-center">
-                <CalendarDays className="w-4 h-4 text-[#01696F]" />
+              <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+                <CalendarDays className="w-4 h-4 text-primary" />
               </div>
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Esta Semana</span>
             </div>
@@ -498,16 +493,16 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card border-card-border relative overflow-hidden border-[#01696F]/30">
-          <div className="absolute inset-0 bg-gradient-to-br from-[#01696F]/5 to-transparent pointer-events-none" />
-          <CardContent className="p-5 relative">
+        <Card className="bg-card border-card-border relative overflow-hidden border-primary/30">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
+          <CardContent className="p-4 relative">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-[#01696F]/20 flex items-center justify-center">
-                <CalendarRange className="w-4 h-4 text-[#01696F]" />
+              <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                <CalendarRange className="w-4 h-4 text-primary" />
               </div>
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Este Mês</span>
             </div>
-            <p className="text-2xl sm:text-3xl font-bold text-[#01696F]" data-testid="revenue-month">
+            <p className="text-2xl sm:text-3xl font-bold text-primary" data-testid="revenue-month">
               {formatCurrency(revenueSummary.monthRevenue)}
             </p>
           </CardContent>
@@ -537,7 +532,7 @@ export default function Dashboard() {
                   size="sm"
                   className={
                     periodFilter === p.key
-                      ? "bg-[#01696F] hover:bg-[#0C4E54] text-white h-7 text-xs"
+                      ? "bg-primary hover:bg-primary/80 text-white h-7 text-xs"
                       : "h-7 text-xs"
                   }
                   onClick={() => {
@@ -556,7 +551,7 @@ export default function Dashboard() {
                     size="sm"
                     className={
                       periodFilter === "custom"
-                        ? "bg-[#01696F] hover:bg-[#0C4E54] text-white h-7 text-xs"
+                        ? "bg-primary hover:bg-primary/80 text-white h-7 text-xs"
                         : "h-7 text-xs"
                     }
                   >
@@ -586,7 +581,7 @@ export default function Dashboard() {
                     </div>
                     <Button
                       size="sm"
-                      className="bg-[#01696F] hover:bg-[#0C4E54] text-white h-8 mt-4"
+                      className="bg-primary hover:bg-primary/80 text-white h-8 mt-4"
                       disabled={!customStart || !customEnd}
                       onClick={() => setPeriodFilter("custom")}
                     >
@@ -601,7 +596,7 @@ export default function Dashboard() {
             <div className="mt-3 pt-3 border-t border-card-border flex items-center justify-between">
               <div>
                 <p className="text-xs text-muted-foreground">{periodLabel}</p>
-                <p className="text-2xl font-bold text-[#01696F]" data-testid="revenue-period">
+                <p className="text-2xl font-bold text-primary" data-testid="revenue-period">
                   {formatCurrency(periodRevenue)}
                 </p>
               </div>
@@ -628,19 +623,19 @@ export default function Dashboard() {
           title="Ticket Médio"
           value={formatCurrency(totals.avgTicket)}
           trend={3.2}
-          icon={<BarChart3 className="w-4 h-4 text-[#01696F]" />}
+          icon={<BarChart3 className="w-4 h-4 text-primary" />}
         />
         <KPICard
           title="Taxa de Ocupação"
           value={formatPercent(totals.occupationRate)}
           trend={-1.5}
-          icon={<TrendingUp className="w-4 h-4 text-[#01696F]" />}
+          icon={<TrendingUp className="w-4 h-4 text-primary" />}
         />
         <KPICard
           title="Atendimentos Hoje"
           value={`${todayClients} clientes`}
           trend={12.0}
-          icon={<Users className="w-4 h-4 text-[#01696F]" />}
+          icon={<Users className="w-4 h-4 text-primary" />}
         />
       </div>
 
@@ -688,7 +683,7 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-center mb-3">
-                <p className="text-2xl font-bold text-[#01696F]">
+                <p className="text-2xl font-bold text-primary">
                   {formatPercent(progressPercent)}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -698,7 +693,7 @@ export default function Dashboard() {
               </div>
               <Progress
                 value={progressPercent}
-                className="h-2 [&>div]:bg-[#01696F]"
+                className="h-2 [&>div]:bg-primary"
               />
               <p className="text-xs text-muted-foreground mt-3 text-center">
                 Faltam {formatCurrency(target - totals.totalRevenue)} para a

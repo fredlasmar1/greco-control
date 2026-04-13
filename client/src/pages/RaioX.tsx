@@ -57,7 +57,7 @@ function InitialsAvatar({ initials, size = "md" }: { initials: string; size?: "s
   const sizeClass = size === "sm" ? "w-8 h-8 text-xs" : "w-10 h-10 text-sm";
   return (
     <div
-      className={`${sizeClass} rounded-full bg-[#01696F]/20 border border-[#01696F]/40 flex items-center justify-center font-bold text-[#2dd4bf] flex-shrink-0`}
+      className={`${sizeClass} rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center font-bold text-[#2dd4bf] flex-shrink-0`}
     >
       {initials}
     </div>
@@ -88,7 +88,7 @@ function SectionHeader({
         <span className="text-xl">{icon}</span>
         <span className="text-base font-semibold text-foreground flex-1 text-left">{title}</span>
         {badge !== undefined && (
-          <Badge variant="secondary" className="bg-[#01696F]/20 text-[#2dd4bf] border-[#01696F]/30 text-xs mr-2">
+          <Badge variant="secondary" className="bg-primary/20 text-[#2dd4bf] border-primary/30 text-xs mr-2">
             {badge}
           </Badge>
         )}
@@ -120,7 +120,7 @@ function ChecklistItem({
         id={id}
         checked={checked}
         onCheckedChange={(val) => onChange(!!val)}
-        className="border-[#01696F]/50 data-[state=checked]:bg-[#01696F] data-[state=checked]:border-[#01696F]"
+        className="border-primary/50 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
         data-testid={`checkbox-${id}`}
       />
       <label
@@ -222,7 +222,7 @@ function BarberCard({
           </div>
           <Progress
             value={pct}
-            className="h-1.5 bg-white/10 [&>div]:bg-[#01696F]"
+            className="h-1.5 bg-white/10 [&>div]:bg-primary"
           />
           <div className="flex justify-between mt-1">
             <span className="text-xs text-foreground font-medium">{formatCurrency(barber.revenue)}</span>
@@ -462,7 +462,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <ClipboardCheck className="w-5 h-5 text-[#01696F]" />
+            <ClipboardCheck className="w-5 h-5 text-primary" />
             <h1 className="text-xl font-bold text-foreground">Raio-X Diário</h1>
             {usingDemoData && (
               <Badge variant="outline" className="text-xs text-amber-400 border-amber-500/40 bg-amber-500/10">
@@ -476,7 +476,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
         <Button
           variant="outline"
           size="sm"
-          className="border-[#01696F]/40 text-[#2dd4bf] hover:bg-[#01696F]/10 hover:border-[#01696F] shrink-0"
+          className="border-primary/40 text-[#2dd4bf] hover:bg-primary/10 hover:border-primary shrink-0"
           onClick={copyBriefing}
           data-testid="btn-gerar-relatorio"
         >
@@ -549,7 +549,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                     </div>
                     <Progress
                       value={(Object.values(adminTasks).filter(Boolean).length / adminTaskDefs.length) * 100}
-                      className="h-1.5 mt-1.5 bg-white/10 [&>div]:bg-[#01696F]"
+                      className="h-1.5 mt-1.5 bg-white/10 [&>div]:bg-primary"
                     />
                   </div>
                 </CardContent>
@@ -584,7 +584,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                   </div>
                   <Progress
                     value={Math.min(100, totalGoalPct)}
-                    className="h-2 mb-2 bg-white/10 [&>div]:bg-[#01696F]"
+                    className="h-2 mb-2 bg-white/10 [&>div]:bg-primary"
                   />
                   <div className="flex justify-between text-xs text-muted-foreground">
                     <span>{totalGoalPct.toFixed(1)}% atingido</span>
@@ -598,7 +598,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                 <Card className="bg-background/50 border-border">
                   <CardContent className="p-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <CalendarDays className="w-4 h-4 text-[#01696F]" />
+                      <CalendarDays className="w-4 h-4 text-primary" />
                       <span className="text-xs text-muted-foreground font-medium">Agendados hoje</span>
                     </div>
                     <p className="text-2xl font-bold text-foreground" data-testid="today-appointments">
@@ -610,7 +610,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                 <Card className="bg-background/50 border-border">
                   <CardContent className="p-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <DollarSign className="w-4 h-4 text-[#01696F]" />
+                      <DollarSign className="w-4 h-4 text-primary" />
                       <span className="text-xs text-muted-foreground font-medium">Estimativa hoje</span>
                     </div>
                     <p className="text-lg font-bold text-foreground" data-testid="today-revenue-estimate">
@@ -700,7 +700,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                 <Button
                   size="sm"
                   variant="outline"
-                  className="absolute top-2 right-2 border-[#01696F]/40 text-[#2dd4bf] hover:bg-[#01696F]/10 hover:border-[#01696F] text-xs"
+                  className="absolute top-2 right-2 border-primary/40 text-[#2dd4bf] hover:bg-primary/10 hover:border-primary text-xs"
                   onClick={copyBriefing}
                   data-testid="btn-copiar-briefing"
                 >

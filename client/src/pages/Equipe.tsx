@@ -112,7 +112,7 @@ function AddBarberDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
-          className="bg-[#01696F] hover:bg-[#0C4E54] text-white"
+          className="bg-primary hover:bg-primary/80 text-white"
           data-testid="add-barber-btn"
         >
           <Plus className="w-4 h-4 mr-2" />
@@ -146,7 +146,7 @@ function AddBarberDialog() {
           </div>
           <Button
             type="submit"
-            className="w-full bg-[#01696F] hover:bg-[#0C4E54] text-white"
+            className="w-full bg-primary hover:bg-primary/80 text-white"
             data-testid="btn-save-barber"
           >
             Salvar
@@ -221,7 +221,7 @@ function ExpandedDetails({ barber }: { barber: ComputedBarber }) {
                 <span className="text-foreground truncate">{svc.name}</span>
                 <Badge
                   variant="secondary"
-                  className="ml-2 text-[10px] bg-[#01696F]/15 text-[#01696F] border-0"
+                  className="ml-2 text-[10px] bg-primary/15 text-primary border-0"
                 >
                   {svc.count}x
                 </Badge>
@@ -373,7 +373,7 @@ export default function Equipe() {
             {activeProfCount} barbeiro{activeProfCount !== 1 ? "s" : ""} ativo
             {activeProfCount !== 1 ? "s" : ""}
             {hasTrinksData && (
-              <span className="text-[#01696F] ml-1">• Dados Trinks</span>
+              <span className="text-primary ml-1">• Dados Trinks</span>
             )}
           </p>
         </div>
@@ -398,8 +398,8 @@ export default function Equipe() {
         <Card className="bg-card border-card-border">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-md bg-[#01696F]/15 flex items-center justify-center">
-                <DollarSign className="w-3.5 h-3.5 text-[#01696F]" />
+              <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center">
+                <DollarSign className="w-3.5 h-3.5 text-primary" />
               </div>
               <p className="text-xs text-muted-foreground">Faturamento Total</p>
             </div>
@@ -412,8 +412,8 @@ export default function Equipe() {
         <Card className="bg-card border-card-border">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-md bg-[#01696F]/15 flex items-center justify-center">
-                <UserCheck className="w-3.5 h-3.5 text-[#01696F]" />
+              <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center">
+                <UserCheck className="w-3.5 h-3.5 text-primary" />
               </div>
               <p className="text-xs text-muted-foreground">Total Atendimentos</p>
             </div>
@@ -426,8 +426,8 @@ export default function Equipe() {
         <Card className="bg-card border-card-border">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-md bg-[#01696F]/15 flex items-center justify-center">
-                <TrendingUp className="w-3.5 h-3.5 text-[#01696F]" />
+              <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center">
+                <TrendingUp className="w-3.5 h-3.5 text-primary" />
               </div>
               <p className="text-xs text-muted-foreground">Ticket Médio</p>
             </div>
@@ -440,8 +440,8 @@ export default function Equipe() {
         <Card className="bg-card border-card-border">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-md bg-[#01696F]/15 flex items-center justify-center">
-                <Users className="w-3.5 h-3.5 text-[#01696F]" />
+              <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center">
+                <Users className="w-3.5 h-3.5 text-primary" />
               </div>
               <p className="text-xs text-muted-foreground">Profissionais Ativos</p>
             </div>
@@ -455,7 +455,7 @@ export default function Equipe() {
       {/* ── Destaque do Mês ── */}
       {topBarber && (
         <Card
-          className="bg-gradient-to-r from-[#01696F]/20 to-[#0C4E54]/10 border border-[#01696F]/30"
+          className="bg-gradient-to-r from-primary/20 to-primary/10 border border-primary/30"
           data-testid="destaque-card"
         >
           <CardContent className="p-4 sm:p-5">
@@ -465,7 +465,7 @@ export default function Equipe() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="text-[10px] sm:text-[11px] font-semibold text-[#01696F] uppercase tracking-widest">
+                  <p className="text-[10px] sm:text-[11px] font-semibold text-primary uppercase tracking-widest">
                     Destaque do Mês
                   </p>
                   <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px]">
@@ -479,7 +479,7 @@ export default function Equipe() {
                 <div className="flex gap-4 mt-2 sm:hidden">
                   <div>
                     <p className="text-[10px] text-muted-foreground">Faturamento</p>
-                    <p className="text-sm font-bold text-[#01696F]">
+                    <p className="text-sm font-bold text-primary">
                       {formatCurrency(topBarber.revenue)}
                     </p>
                   </div>
@@ -492,7 +492,7 @@ export default function Equipe() {
               <div className="hidden sm:flex gap-6 flex-shrink-0">
                 <div className="text-right">
                   <p className="text-[10px] text-muted-foreground">Faturamento</p>
-                  <p className="text-base font-bold text-[#01696F]">
+                  <p className="text-base font-bold text-primary">
                     {formatCurrency(topBarber.revenue)}
                   </p>
                 </div>
@@ -511,7 +511,7 @@ export default function Equipe() {
         <Card className="bg-card border-card-border">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Award className="w-4 h-4 text-[#01696F]" />
+              <Award className="w-4 h-4 text-primary" />
               Faturamento por Profissional — {monthLabelCapital}
             </CardTitle>
           </CardHeader>
@@ -572,7 +572,7 @@ export default function Equipe() {
         <Card className="bg-card border-card-border overflow-hidden">
           <CardHeader className="pb-2 border-b border-card-border">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Star className="w-4 h-4 text-[#01696F]" />
+              <Star className="w-4 h-4 text-primary" />
               Ranking de Performance
             </CardTitle>
           </CardHeader>
@@ -626,7 +626,7 @@ export default function Equipe() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-full bg-[#01696F]/15 flex items-center justify-center text-[11px] font-bold text-[#01696F] flex-shrink-0">
+                            <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center text-[11px] font-bold text-primary flex-shrink-0">
                               {barber.initials}
                             </div>
                             <span className="text-sm font-medium">
@@ -659,7 +659,7 @@ export default function Equipe() {
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <span className="text-sm text-[#01696F] font-medium">
+                          <span className="text-sm text-primary font-medium">
                             {formatCurrency(commission)}
                           </span>
                         </td>
@@ -708,7 +708,7 @@ export default function Equipe() {
                 {/* Card header row */}
                 <div className="flex items-center gap-3 mb-3">
                   <RankBadge rank={index + 1} />
-                  <div className="w-9 h-9 rounded-full bg-[#01696F]/15 flex items-center justify-center text-[11px] font-bold text-[#01696F] flex-shrink-0">
+                  <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center text-[11px] font-bold text-primary flex-shrink-0">
                     {barber.initials}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -754,7 +754,7 @@ export default function Equipe() {
                     <p className="text-[10px] text-muted-foreground">
                       Comissão Est.
                     </p>
-                    <p className="text-sm font-medium text-[#01696F]">
+                    <p className="text-sm font-medium text-primary">
                       {formatCurrency(commission)}
                     </p>
                   </div>

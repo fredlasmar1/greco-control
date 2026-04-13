@@ -313,8 +313,8 @@ function AIAnalysisCard({ text }: { text: string }) {
         return (
           <div key={i} className="space-y-2">
             {heading && (
-              <h4 className="text-sm font-semibold text-[#01696F] flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#01696F] inline-block" />
+              <h4 className="text-sm font-semibold text-primary flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
                 {heading}
               </h4>
             )}
@@ -326,7 +326,7 @@ function AIAnalysisCard({ text }: { text: string }) {
                   if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
                     return (
                       <div key={j} className="flex items-start gap-2 py-0.5">
-                        <span className="text-[#01696F] mt-1 flex-shrink-0">•</span>
+                        <span className="text-primary mt-1 flex-shrink-0">•</span>
                         <span>{trimmed.slice(2)}</span>
                       </div>
                     );
@@ -607,7 +607,7 @@ export default function Financeiro() {
             variant={activeView === "extrato" ? "default" : "outline"}
             size="sm"
             className={activeView === "extrato"
-              ? "bg-[#01696F] hover:bg-[#015a5f] text-white h-8 text-xs"
+              ? "bg-primary hover:bg-primary/80 text-white h-8 text-xs"
               : "h-8 text-xs border-border"}
             onClick={() => setActiveView("extrato")}
             data-testid="btn-view-extrato"
@@ -619,7 +619,7 @@ export default function Financeiro() {
             variant={activeView === "lancamentos" ? "default" : "outline"}
             size="sm"
             className={activeView === "lancamentos"
-              ? "bg-[#01696F] hover:bg-[#015a5f] text-white h-8 text-xs"
+              ? "bg-primary hover:bg-primary/80 text-white h-8 text-xs"
               : "h-8 text-xs border-border"}
             onClick={() => setActiveView("lancamentos")}
             data-testid="btn-view-lancamentos"
@@ -682,7 +682,7 @@ export default function Financeiro() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs text-muted-foreground">Média Receita/Dia</p>
-                  <CalendarDays className="w-4 h-4 text-[#01696F]" />
+                  <CalendarDays className="w-4 h-4 text-primary" />
                 </div>
                 <p className="text-xl font-bold text-foreground">{formatCurrency(analysis.mediaReceitaDia)}</p>
                 <p className="text-[10px] text-muted-foreground mt-1">
@@ -1024,13 +1024,13 @@ export default function Financeiro() {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-[#01696F]" />
+                  <Sparkles className="w-4 h-4 text-primary" />
                   Análise de Fechamento com IA
                 </CardTitle>
                 <Button
                   onClick={handleAIAnalysis}
                   disabled={aiLoading || entries.length === 0}
-                  className="bg-[#01696F] hover:bg-[#015a5f] text-white h-8 text-xs"
+                  className="bg-primary hover:bg-primary/80 text-white h-8 text-xs"
                   data-testid="btn-ai-analyze"
                 >
                   {aiLoading ? (
@@ -1055,7 +1055,7 @@ export default function Financeiro() {
               <CardContent className="pt-0">
                 {aiLoading && (
                   <div className="flex items-center gap-3 py-6 text-muted-foreground">
-                    <Loader2 className="w-5 h-5 animate-spin text-[#01696F]" />
+                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
                     <div>
                       <p className="text-sm">Analisando seu extrato bancário...</p>
                       <p className="text-xs opacity-60 mt-0.5">Isso pode levar alguns segundos</p>
@@ -1074,10 +1074,10 @@ export default function Financeiro() {
                 )}
 
                 {aiAnalysis && !aiLoading && (
-                  <div className="rounded-lg border border-[#01696F]/20 bg-[#01696F]/5 p-4">
-                    <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[#01696F]/10">
-                      <Sparkles className="w-4 h-4 text-[#01696F]" />
-                      <span className="text-xs font-medium text-[#01696F]">Análise de fechamento gerada por IA</span>
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                    <div className="flex items-center gap-2 mb-4 pb-3 border-b border-primary/10">
+                      <Sparkles className="w-4 h-4 text-primary" />
+                      <span className="text-xs font-medium text-primary">Análise de fechamento gerada por IA</span>
                       <span className="text-xs text-muted-foreground ml-auto">
                         {new Date().toLocaleDateString("pt-BR")}
                       </span>
@@ -1099,10 +1099,10 @@ export default function Financeiro() {
 
           {/* ─── Resumo de Fechamento ────────────────────────── */}
           {entries.length > 0 && (
-            <Card className="bg-card border-card-border border-[#01696F]/30">
+            <Card className="bg-card border-card-border border-primary/30">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Receipt className="w-4 h-4 text-[#01696F]" />
+                  <Receipt className="w-4 h-4 text-primary" />
                   Resumo de Fechamento do Mês
                 </CardTitle>
               </CardHeader>
@@ -1132,13 +1132,13 @@ export default function Financeiro() {
                 <div className="mt-4 pt-3 border-t border-border">
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-xs text-muted-foreground">Meta mensal: R$ 150.000,00</span>
-                    <span className="text-xs font-medium text-[#01696F]">
+                    <span className="text-xs font-medium text-primary">
                       {((analysis.totalReceitas / 150000) * 100).toFixed(1)}%
                     </span>
                   </div>
                   <div className="w-full bg-muted/30 rounded-full h-2">
                     <div
-                      className="bg-[#01696F] h-2 rounded-full transition-all"
+                      className="bg-primary h-2 rounded-full transition-all"
                       style={{ width: `${Math.min(100, (analysis.totalReceitas / 150000) * 100)}%` }}
                     />
                   </div>
@@ -1161,7 +1161,7 @@ export default function Financeiro() {
           <Card className="bg-card border-card-border">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Upload className="w-4 h-4 text-[#01696F]" />
+                <Upload className="w-4 h-4 text-primary" />
                 Importar Extrato Bancário
               </CardTitle>
               <p className="text-xs text-muted-foreground">
@@ -1195,7 +1195,7 @@ export default function Financeiro() {
                   {parsedPreview.length > 0 && (
                     <Button
                       size="sm"
-                      className="bg-[#01696F] hover:bg-[#015a5f] text-white"
+                      className="bg-primary hover:bg-primary/80 text-white"
                       onClick={handleImportParsed}
                       disabled={bulkMutation.isPending}
                       data-testid="btn-import-parsed"
@@ -1244,7 +1244,7 @@ export default function Financeiro() {
           <Card className="bg-card border-card-border">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Plus className="w-4 h-4 text-[#01696F]" />
+                <Plus className="w-4 h-4 text-primary" />
                 Lançamento Manual
               </CardTitle>
             </CardHeader>
@@ -1257,7 +1257,7 @@ export default function Financeiro() {
                     key={item.label}
                     variant="outline"
                     size="sm"
-                    className="h-7 text-xs border-border hover:border-[#01696F] hover:text-[#01696F]"
+                    className="h-7 text-xs border-border hover:border-primary hover:text-primary"
                     onClick={() => handleQuickAdd(item)}
                     disabled={addMutation.isPending}
                     data-testid={`btn-quick-${item.label.toLowerCase()}`}
@@ -1346,7 +1346,7 @@ export default function Financeiro() {
                 <Button
                   onClick={handleAddEntry}
                   disabled={addMutation.isPending}
-                  className="bg-[#01696F] hover:bg-[#015a5f] text-white h-8 text-sm ml-auto"
+                  className="bg-primary hover:bg-primary/80 text-white h-8 text-sm ml-auto"
                   data-testid="btn-add-entry"
                 >
                   {addMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
@@ -1412,7 +1412,7 @@ export default function Financeiro() {
                           <td className="p-3 max-w-[180px]">
                             <span className="truncate block">{entry.description}</span>
                             {entry.recurrent && (
-                              <span className="text-[10px] text-[#01696F] opacity-70">↻ recorrente</span>
+                              <span className="text-[10px] text-primary opacity-70">↻ recorrente</span>
                             )}
                           </td>
                           <td className="p-3 text-xs text-muted-foreground hidden sm:table-cell">

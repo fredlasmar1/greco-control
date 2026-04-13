@@ -59,7 +59,7 @@ function AddServiceDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
-          className="bg-[#01696F] hover:bg-[#0C4E54] text-white"
+          className="bg-primary hover:bg-primary/80 text-white"
           data-testid="add-service-btn"
         >
           <Plus className="w-4 h-4 mr-2" />
@@ -113,7 +113,7 @@ function AddServiceDialog() {
           </div>
           <Button
             type="submit"
-            className="w-full bg-[#01696F] hover:bg-[#0C4E54] text-white"
+            className="w-full bg-primary hover:bg-primary/80 text-white"
           >
             Salvar
           </Button>
@@ -148,7 +148,7 @@ export default function Servicos() {
           <p className="text-sm text-muted-foreground">
             {services.length} serviços cadastrados
             {hasTrinksData && (
-              <span className="text-[#01696F] ml-1">• Dados Trinks</span>
+              <span className="text-primary ml-1">• Dados Trinks</span>
             )}
           </p>
         </div>
@@ -264,7 +264,7 @@ export default function Servicos() {
                   >
                     <td className="p-3">
                       <div className="flex items-center gap-2">
-                        <Scissors className="w-3.5 h-3.5 text-[#01696F]" />
+                        <Scissors className="w-3.5 h-3.5 text-primary" />
                         <span className="font-medium">{service.name}</span>
                       </div>
                     </td>

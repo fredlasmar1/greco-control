@@ -152,7 +152,7 @@ export default function Configuracoes() {
         <Card className="bg-card border-card-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Building className="w-4 h-4 text-[#01696F]" />
+              <Building className="w-4 h-4 text-primary" />
               Informações da Barbearia
             </CardTitle>
           </CardHeader>
@@ -188,7 +188,7 @@ export default function Configuracoes() {
         <Card className="bg-card border-card-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Key className="w-4 h-4 text-[#01696F]" />
+              <Key className="w-4 h-4 text-primary" />
               Integração Trinks
             </CardTitle>
           </CardHeader>
@@ -323,7 +323,7 @@ export default function Configuracoes() {
                 data-testid="sync-data-btn"
                 className={
                   isConnected
-                    ? "border-[#01696F]/30 text-[#01696F] hover:bg-[#01696F]/10"
+                    ? "border-primary/30 text-primary hover:bg-primary/10"
                     : ""
                 }
               >
@@ -440,7 +440,7 @@ export default function Configuracoes() {
         <Card className="bg-card border-card-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Settings className="w-4 h-4 text-[#01696F]" />
+              <Settings className="w-4 h-4 text-primary" />
               Parâmetros do Negócio
             </CardTitle>
           </CardHeader>
@@ -492,7 +492,7 @@ export default function Configuracoes() {
 
         <Button
           type="submit"
-          className="bg-[#01696F] hover:bg-[#0C4E54] text-white w-full"
+          className="bg-primary hover:bg-primary/80 text-white w-full"
           data-testid="save-settings"
         >
           Salvar Configurações

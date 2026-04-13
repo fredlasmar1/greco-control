@@ -98,16 +98,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer
                     transition-colors duration-150 mb-0.5
                     ${isActive
-                      ? "bg-[#01696F]/15 text-[#2dd4bf]"
+                      ? "bg-primary/15 text-[#2dd4bf]"
                       : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent"
                     }
                   `}
                   data-testid={`nav-${path.replace("/", "") || "dashboard"}`}
                 >
-                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#01696F]" : ""}`} />
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-primary" : ""}`} />
                   <span>{label}</span>
                   {isActive && (
-                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#01696F]" />
+                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />
                   )}
                 </div>
               </Link>
@@ -140,10 +140,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3">
             <button className="p-1.5 rounded-md hover:bg-muted relative" data-testid="notifications">
               <Bell className="w-4 h-4 text-muted-foreground" />
-              <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-[#01696F] rounded-full" />
+              <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-primary rounded-full" />
             </button>
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-[#01696F] flex items-center justify-center text-xs font-bold text-white" data-testid="user-avatar">
+              <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-white" data-testid="user-avatar">
                 FL
               </div>
               <span className="text-sm font-medium hidden sm:block" data-testid="user-name">Fred Lasmar</span>

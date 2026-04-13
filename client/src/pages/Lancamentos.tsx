@@ -40,7 +40,7 @@ function FecharDiaDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="bg-[#01696F] hover:bg-[#0C4E54] text-white" data-testid="fechar-dia-lancamentos">
+        <Button className="bg-primary hover:bg-primary/80 text-white" data-testid="fechar-dia-lancamentos">
           <CalendarCheck className="w-4 h-4 mr-2" />
           Fechar o Dia
         </Button>
@@ -78,7 +78,7 @@ function FecharDiaDialog() {
             <Label className="text-xs">Observações</Label>
             <Textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} rows={2} />
           </div>
-          <Button type="submit" className="w-full bg-[#01696F] hover:bg-[#0C4E54] text-white">Salvar</Button>
+          <Button type="submit" className="w-full bg-primary hover:bg-primary/80 text-white">Salvar</Button>
         </form>
       </DialogContent>
     </Dialog>
@@ -141,7 +141,7 @@ function AddExpenseDialog() {
             <Label className="text-xs">Valor (R$)</Label>
             <Input type="number" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} />
           </div>
-          <Button type="submit" className="w-full bg-[#01696F] hover:bg-[#0C4E54] text-white">Salvar</Button>
+          <Button type="submit" className="w-full bg-primary hover:bg-primary/80 text-white">Salvar</Button>
         </form>
       </DialogContent>
     </Dialog>
@@ -216,7 +216,7 @@ export default function Lancamentos() {
           <h2 className="text-lg font-semibold">Lançamentos</h2>
           <p className="text-sm text-muted-foreground">
             Receitas e despesas de {monthLabelCapital}
-            {hasTrinksData && <span className="text-[#01696F] ml-1">• Dados Trinks</span>}
+            {hasTrinksData && <span className="text-primary ml-1">• Dados Trinks</span>}
           </p>
         </div>
         <div className="flex gap-2">
@@ -266,7 +266,7 @@ export default function Lancamentos() {
             variant={filter === f ? 'default' : 'outline'}
             size="sm"
             onClick={() => setFilter(f)}
-            className={filter === f ? 'bg-[#01696F] hover:bg-[#0C4E54] text-white' : ''}
+            className={filter === f ? 'bg-primary hover:bg-primary/80 text-white' : ''}
             data-testid={`filter-${f}`}
           >
             {f === 'todos' ? 'Todos' : f === 'receita' ? 'Receitas' : 'Despesas'}

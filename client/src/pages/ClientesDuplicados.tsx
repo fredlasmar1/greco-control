@@ -135,8 +135,8 @@ export default function ClientesDuplicados() {
         <Card className="bg-card border-card-border">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-md bg-[#01696F]/15 flex items-center justify-center">
-                <Users className="w-3.5 h-3.5 text-[#01696F]" />
+              <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center">
+                <Users className="w-3.5 h-3.5 text-primary" />
               </div>
               <p className="text-xs text-muted-foreground">Total de Clientes</p>
             </div>
@@ -375,9 +375,9 @@ export default function ClientesDuplicados() {
       )}
 
       {/* Summary info */}
-      <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-[#01696F]/10 border border-[#01696F]/20">
-        <Info className="w-4 h-4 text-[#01696F] flex-shrink-0 mt-0.5" />
-        <div className="text-xs text-[#01696F]">
+      <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-primary/10 border border-primary/20">
+        <Info className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+        <div className="text-xs text-primary">
           <p className="font-medium mb-1">Como organizar:</p>
           <p>1. Expanda cada grupo para ver os cadastros duplicados</p>
           <p>2. O cadastro <strong>mais antigo</strong> (verde) geralmente é o principal — mantenha esse</p>

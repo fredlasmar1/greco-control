@@ -7,6 +7,7 @@ import {
   getTrinksBarberRanking,
   getTrinksPaymentMethodData,
   getTrinksRevenueSummary,
+  getTrinksRevenueByRange,
   formatLastSync,
 } from "@/lib/trinksStore";
 import {
@@ -18,6 +19,7 @@ import {
   getBarberRankingData,
   getPaymentMethodData,
   getRevenueSummary,
+  getRevenueByRange,
 } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,6 +50,7 @@ import {
   Calendar,
   CalendarDays,
   CalendarRange,
+  Filter,
 } from "lucide-react";
 import {
   LineChart,
@@ -331,6 +335,66 @@ export default function Dashboard() {
     useTrinksStore();
   const hasTrinksData = isConnected && trinks !== null;
 
+  // Period filter state
+  const [periodFilter, setPeriodFilter] = useState("");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+
+  // Calculate period date range
+  const { periodStart, periodEnd, periodLabel } = useMemo(() => {
+    const today = new Date();
+    const toStr = (d: Date) => d.toISOString().split("T")[0];
+    const todayStr = toStr(today);
+
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+
+    const dow = today.getDay();
+    const mondayOff = dow === 0 ? 6 : dow - 1;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - mondayOff);
+
+    const lastSunday = new Date(monday);
+    lastSunday.setDate(monday.getDate() - 1);
+    const lastMonday = new Date(lastSunday);
+    lastMonday.setDate(lastSunday.getDate() - 6);
+
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+    const lastMonthStart = new Date(lastMonthEnd.getFullYear(), lastMonthEnd.getMonth(), 1);
+
+    const formatBR = (d: Date) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+
+    switch (periodFilter) {
+      case "hoje":
+        return { periodStart: todayStr, periodEnd: todayStr, periodLabel: `Hoje — ${formatBR(today)}` };
+      case "ontem":
+        return { periodStart: toStr(yesterday), periodEnd: toStr(yesterday), periodLabel: `Ontem — ${formatBR(yesterday)}` };
+      case "semana":
+        return { periodStart: toStr(monday), periodEnd: todayStr, periodLabel: `Esta Semana — ${formatBR(monday)} a ${formatBR(today)}` };
+      case "sem-passada":
+        return { periodStart: toStr(lastMonday), periodEnd: toStr(lastSunday), periodLabel: `Semana Passada — ${formatBR(lastMonday)} a ${formatBR(lastSunday)}` };
+      case "mes":
+        return { periodStart: toStr(monthStart), periodEnd: todayStr, periodLabel: `Este Mês — ${formatBR(monthStart)} a ${formatBR(today)}` };
+      case "mes-passado":
+        return { periodStart: toStr(lastMonthStart), periodEnd: toStr(lastMonthEnd), periodLabel: `Mês Passado — ${formatBR(lastMonthStart)} a ${formatBR(lastMonthEnd)}` };
+      case "custom":
+        if (customStart && customEnd) {
+          return { periodStart: customStart, periodEnd: customEnd, periodLabel: `${formatBR(new Date(customStart + "T12:00:00"))} a ${formatBR(new Date(customEnd + "T12:00:00"))}` };
+        }
+        return { periodStart: "", periodEnd: "", periodLabel: "" };
+      default:
+        return { periodStart: "", periodEnd: "", periodLabel: "" };
+    }
+  }, [periodFilter, customStart, customEnd]);
+
+  const periodRevenue = useMemo(() => {
+    if (!periodStart || !periodEnd) return 0;
+    return hasTrinksData
+      ? getTrinksRevenueByRange(trinks!, periodStart, periodEnd)
+      : getRevenueByRange(periodStart, periodEnd);
+  }, [hasTrinksData, trinks, periodStart, periodEnd]);
+
   // Calculate data from either Trinks or demo
   const totals = useMemo(
     () => (hasTrinksData ? getTrinksMonthTotals(trinks!) : getMonthTotals()),
@@ -449,6 +513,114 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Period Filter */}
+      <Card className="bg-card border-card-border">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Faturamento por Período</span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {[
+                { label: "Hoje", key: "hoje" },
+                { label: "Ontem", key: "ontem" },
+                { label: "Esta Semana", key: "semana" },
+                { label: "Sem. Passada", key: "sem-passada" },
+                { label: "Este Mês", key: "mes" },
+                { label: "Mês Passado", key: "mes-passado" },
+              ].map((p) => (
+                <Button
+                  key={p.key}
+                  variant={periodFilter === p.key ? "default" : "outline"}
+                  size="sm"
+                  className={
+                    periodFilter === p.key
+                      ? "bg-[#01696F] hover:bg-[#0C4E54] text-white h-7 text-xs"
+                      : "h-7 text-xs"
+                  }
+                  onClick={() => {
+                    setPeriodFilter(p.key);
+                    setCustomStart("");
+                    setCustomEnd("");
+                  }}
+                >
+                  {p.label}
+                </Button>
+              ))}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant={periodFilter === "custom" ? "default" : "outline"}
+                    size="sm"
+                    className={
+                      periodFilter === "custom"
+                        ? "bg-[#01696F] hover:bg-[#0C4E54] text-white h-7 text-xs"
+                        : "h-7 text-xs"
+                    }
+                  >
+                    <CalendarRange className="w-3 h-3 mr-1" />
+                    Personalizado
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-3 bg-card border-card-border" align="end">
+                  <div className="flex items-center gap-2">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">De</Label>
+                      <Input
+                        type="date"
+                        value={customStart}
+                        onChange={(e) => setCustomStart(e.target.value)}
+                        className="h-8 text-xs w-36"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Até</Label>
+                      <Input
+                        type="date"
+                        value={customEnd}
+                        onChange={(e) => setCustomEnd(e.target.value)}
+                        className="h-8 text-xs w-36"
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      className="bg-[#01696F] hover:bg-[#0C4E54] text-white h-8 mt-4"
+                      disabled={!customStart || !customEnd}
+                      onClick={() => setPeriodFilter("custom")}
+                    >
+                      Filtrar
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
+          {periodFilter && (
+            <div className="mt-3 pt-3 border-t border-card-border flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">{periodLabel}</p>
+                <p className="text-2xl font-bold text-[#01696F]" data-testid="revenue-period">
+                  {formatCurrency(periodRevenue)}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground"
+                onClick={() => {
+                  setPeriodFilter("");
+                  setCustomStart("");
+                  setCustomEnd("");
+                }}
+              >
+                Limpar filtro
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

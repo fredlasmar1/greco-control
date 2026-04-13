@@ -413,6 +413,20 @@ export function getTrinksRevenueSummary(trinks: TrinksData) {
   return { dayRevenue, weekRevenue, monthRevenue };
 }
 
+/** Revenue for a custom date range */
+export function getTrinksRevenueByRange(trinks: TrinksData, startDate: string, endDate: string) {
+  const transacoes = trinks.transacoes || [];
+  let total = 0;
+  transacoes.forEach((t: any) => {
+    const date = getItemDate(t);
+    if (!date) return;
+    if (date >= startDate && date <= endDate) {
+      total += getTransactionValue(t);
+    }
+  });
+  return total;
+}
+
 // ─── Map Trinks profissionais to Barber format ────────────
 export function mapTrinksProfissionais(trinks: TrinksData) {
   const profissionais = trinks.profissionais || [];

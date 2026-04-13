@@ -256,6 +256,13 @@ export function getRevenueSummary() {
   return { dayRevenue, weekRevenue, monthRevenue };
 }
 
+/** Revenue for a custom date range */
+export function getRevenueByRange(startDate: string, endDate: string) {
+  return dailyEntries
+    .filter(e => e.type === 'receita' && e.date >= startDate && e.date <= endDate)
+    .reduce((sum, e) => sum + e.amount, 0);
+}
+
 // Revenue by payment method for charts
 export function getPaymentMethodData() {
   const totals = getMonthTotals();

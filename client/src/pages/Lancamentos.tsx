@@ -60,7 +60,7 @@ function FecharDiaDialog() {
               <Input type="number" value={form.revenue} onChange={e => setForm(p => ({ ...p, revenue: e.target.value }))} placeholder="0" />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <Label className="text-xs">Pix</Label>
               <Input type="number" value={form.pix} onChange={e => setForm(p => ({ ...p, pix: e.target.value }))} />

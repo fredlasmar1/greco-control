@@ -21,7 +21,9 @@ interface FinanceEntry {
 }
 
 const FINANCEIRO_FILE = path.join(process.cwd(), ".financeiro-data.json");
+const DUPLICADOS_RESOLVIDOS_FILE = path.join(process.cwd(), ".duplicados-resolvidos.json");
 let financeEntries: FinanceEntry[] = [];
+let resolvedDuplicateIds: number[] = [];
 
 // Load on startup
 try {
@@ -32,6 +34,25 @@ try {
   }
 } catch (err) {
   log("Financeiro: could not load data from disk, starting fresh", "financeiro");
+}
+
+// Load resolved duplicates on startup
+try {
+  if (fs.existsSync(DUPLICADOS_RESOLVIDOS_FILE)) {
+    const raw = fs.readFileSync(DUPLICADOS_RESOLVIDOS_FILE, "utf-8");
+    resolvedDuplicateIds = JSON.parse(raw) || [];
+    log(`Duplicados: loaded ${resolvedDuplicateIds.length} resolved IDs from disk`, "duplicados");
+  }
+} catch (err) {
+  log("Duplicados: could not load resolved IDs from disk, starting fresh", "duplicados");
+}
+
+function saveResolvedDuplicates() {
+  try {
+    fs.writeFileSync(DUPLICADOS_RESOLVIDOS_FILE, JSON.stringify(resolvedDuplicateIds, null, 2), "utf-8");
+  } catch (err) {
+    log("Duplicados: could not save resolved IDs to disk", "duplicados");
+  }
 }
 
 function saveFinanceEntries() {
@@ -783,6 +804,13 @@ export async function registerRoutes(
         });
       });
 
+      // Filter out resolved duplicate IDs from each phone group
+      const resolvedSet = new Set(resolvedDuplicateIds);
+      for (const phone of Object.keys(phoneMap)) {
+        phoneMap[phone] = phoneMap[phone].filter((c: any) => !resolvedSet.has(c.id));
+        if (phoneMap[phone].length === 0) delete phoneMap[phone];
+      }
+
       // Find groups with more than one client (duplicates)
       const duplicateGroups = Object.entries(phoneMap)
         .filter(([_, clients]) => clients.length > 1)
@@ -813,47 +841,41 @@ export async function registerRoutes(
     }
   });
 
-  // ─── DELETE /api/clientes/:id — Delete a client from Trinks ───
-  app.delete("/api/clientes/:id", async (req: Request, res: Response) => {
+  // ─── POST /api/clientes/duplicados/resolver — Mark a client as resolved (hide from duplicates) ───
+  app.post("/api/clientes/duplicados/resolver", (req: Request, res: Response) => {
     try {
-      const clientId = req.params.id;
-      if (!clientId) {
-        return res.status(400).json({ error: "ID do cliente é obrigatório" });
+      const { clientId } = req.body;
+      if (!clientId || typeof clientId !== "number") {
+        return res.status(400).json({ error: "clientId (number) é obrigatório" });
       }
 
-      if (!trinksConfig) {
-        return res.status(400).json({ error: "Chave API da Trinks não configurada." });
+      if (!resolvedDuplicateIds.includes(clientId)) {
+        resolvedDuplicateIds.push(clientId);
+        saveResolvedDuplicates();
+        log(`Marked client #${clientId} as resolved duplicate`, "duplicados");
       }
 
-      await waitForRateLimit();
-
-      const url = new URL(`/v1/clientes/${clientId}`, TRINKS_BASE);
-      const headers: Record<string, string> = {
-        "X-Api-Key": trinksConfig.apiKey,
-        "Accept": "application/json",
-      };
-      if (trinksConfig.establishmentId) {
-        headers["estabelecimentoId"] = trinksConfig.establishmentId;
-      }
-
-      log(`DELETE client #${clientId}`, "trinks");
-      const response = await fetch(url.toString(), { method: "DELETE", headers });
-      recordRequest();
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        log(`Delete client error ${response.status}: ${body}`, "trinks");
-        return res.status(response.status).json({
-          error: body || `Erro ${response.status} ao excluir cliente na Trinks.`,
-        });
-      }
-
-      // Clear sync cache so next load reflects the deletion
-      invalidateCache();
-
-      return res.json({ ok: true, deletedId: clientId });
+      return res.json({ ok: true, resolvedId: clientId });
     } catch (err: any) {
-      return handleTrinksError(err, res);
+      return res.status(500).json({ error: "Erro ao marcar duplicado como resolvido." });
+    }
+  });
+
+  // ─── DELETE /api/clientes/duplicados/resolver/:id — Undo resolved (show again in duplicates) ───
+  app.delete("/api/clientes/duplicados/resolver/:id", (req: Request, res: Response) => {
+    try {
+      const clientId = parseInt(req.params.id as string, 10);
+      if (isNaN(clientId)) {
+        return res.status(400).json({ error: "ID inválido" });
+      }
+
+      resolvedDuplicateIds = resolvedDuplicateIds.filter((id) => id !== clientId);
+      saveResolvedDuplicates();
+      log(`Unresolved client #${clientId} from duplicates`, "duplicados");
+
+      return res.json({ ok: true, unresolvedId: clientId });
+    } catch (err: any) {
+      return res.status(500).json({ error: "Erro ao desfazer resolução de duplicado." });
     }
   });
 

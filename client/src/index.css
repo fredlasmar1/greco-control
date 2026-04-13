@@ -249,4 +249,11 @@
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
   }
+
+  /* Mobile touch targets */
+  @media (max-width: 640px) {
+    button, a, select, input {
+      min-height: 44px;
+    }
+  }
 }

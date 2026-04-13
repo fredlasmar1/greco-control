@@ -194,7 +194,7 @@ function FecharDiaDialog() {
               />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <Label className="text-xs">Pix (R$)</Label>
               <Input
@@ -777,7 +777,7 @@ export default function Dashboard() {
                     type="category"
                     stroke="#666"
                     fontSize={11}
-                    width={70}
+                    width={55}
                   />
                   <Tooltip
                     formatter={(value: number) => formatCurrency(value)}

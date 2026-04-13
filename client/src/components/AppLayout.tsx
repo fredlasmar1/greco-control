@@ -125,13 +125,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-background flex-shrink-0">
           <div className="flex items-center gap-3">
             <button
-              className="lg:hidden p-1.5 rounded-md hover:bg-muted"
+              className="lg:hidden p-2.5 rounded-md hover:bg-muted"
               onClick={() => setSidebarOpen(true)}
               data-testid="open-sidebar"
             >
               <Menu className="w-5 h-5" />
             </button>
-            <h1 className="text-base font-semibold" data-testid="page-title">
+            <h1 className="text-base font-semibold truncate" data-testid="page-title">
               {getPageTitle(location)}
             </h1>
           </div>

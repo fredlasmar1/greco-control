@@ -383,6 +383,36 @@ export function getTrinksPaymentMethodData(trinks: TrinksData) {
   return data;
 }
 
+// ─── Revenue Summary (Day / Week / Month) ───────────────
+
+export function getTrinksRevenueSummary(trinks: TrinksData) {
+  const transacoes = trinks.transacoes || [];
+  const today = new Date();
+  const todayStr = today.toISOString().split("T")[0];
+
+  // Start of current week (Monday)
+  const dayOfWeek = today.getDay();
+  const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - mondayOffset);
+  const weekStartStr = monday.toISOString().split("T")[0];
+
+  let dayRevenue = 0;
+  let weekRevenue = 0;
+  let monthRevenue = 0;
+
+  transacoes.forEach((t: any) => {
+    const date = getItemDate(t);
+    if (!date) return;
+    const val = getTransactionValue(t);
+    monthRevenue += val;
+    if (date >= weekStartStr) weekRevenue += val;
+    if (date === todayStr) dayRevenue += val;
+  });
+
+  return { dayRevenue, weekRevenue, monthRevenue };
+}
+
 // ─── Map Trinks profissionais to Barber format ────────────
 export function mapTrinksProfissionais(trinks: TrinksData) {
   const profissionais = trinks.profissionais || [];

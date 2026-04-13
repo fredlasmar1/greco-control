@@ -6,6 +6,7 @@ import {
   getTrindsDailyRevenueChart,
   getTrinksBarberRanking,
   getTrinksPaymentMethodData,
+  getTrinksRevenueSummary,
   formatLastSync,
 } from "@/lib/trinksStore";
 import {
@@ -16,6 +17,7 @@ import {
   formatPercent,
   getBarberRankingData,
   getPaymentMethodData,
+  getRevenueSummary,
 } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -42,6 +44,9 @@ import {
   Info,
   RefreshCw,
   Clock,
+  Calendar,
+  CalendarDays,
+  CalendarRange,
 } from "lucide-react";
 import {
   LineChart,
@@ -332,6 +337,14 @@ export default function Dashboard() {
     [hasTrinksData, trinks]
   );
 
+  const revenueSummary = useMemo(
+    () =>
+      hasTrinksData
+        ? getTrinksRevenueSummary(trinks!)
+        : getRevenueSummary(),
+    [hasTrinksData, trinks]
+  );
+
   const chartData = useMemo(
     () =>
       hasTrinksData
@@ -391,14 +404,54 @@ export default function Dashboard() {
         <FecharDiaDialog />
       </div>
 
+      {/* Revenue Highlight */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="bg-card border-card-border relative overflow-hidden">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-8 h-8 rounded-lg bg-[#01696F]/10 flex items-center justify-center">
+                <Calendar className="w-4 h-4 text-[#01696F]" />
+              </div>
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Hoje</span>
+            </div>
+            <p className="text-2xl sm:text-3xl font-bold text-foreground" data-testid="revenue-today">
+              {formatCurrency(revenueSummary.dayRevenue)}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card border-card-border relative overflow-hidden">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-8 h-8 rounded-lg bg-[#01696F]/15 flex items-center justify-center">
+                <CalendarDays className="w-4 h-4 text-[#01696F]" />
+              </div>
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Esta Semana</span>
+            </div>
+            <p className="text-2xl sm:text-3xl font-bold text-foreground" data-testid="revenue-week">
+              {formatCurrency(revenueSummary.weekRevenue)}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card border-card-border relative overflow-hidden border-[#01696F]/30">
+          <div className="absolute inset-0 bg-gradient-to-br from-[#01696F]/5 to-transparent pointer-events-none" />
+          <CardContent className="p-5 relative">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-8 h-8 rounded-lg bg-[#01696F]/20 flex items-center justify-center">
+                <CalendarRange className="w-4 h-4 text-[#01696F]" />
+              </div>
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Este Mês</span>
+            </div>
+            <p className="text-2xl sm:text-3xl font-bold text-[#01696F]" data-testid="revenue-month">
+              {formatCurrency(revenueSummary.monthRevenue)}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard
-          title="Faturamento do Mês"
-          value={formatCurrency(totals.totalRevenue)}
-          trend={8.5}
-          icon={<DollarSign className="w-4 h-4 text-[#01696F]" />}
-        />
         <KPICard
           title="Ticket Médio"
           value={formatCurrency(totals.avgTicket)}

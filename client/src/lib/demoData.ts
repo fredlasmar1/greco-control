@@ -231,6 +231,31 @@ export function getDREData() {
   ];
 }
 
+// ─── Revenue Summary (Day / Week / Month) ───────────────
+export function getRevenueSummary() {
+  const revenueEntries = dailyEntries.filter(e => e.type === 'receita');
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+
+  const dayOfWeek = today.getDay();
+  const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - mondayOffset);
+  const weekStartStr = monday.toISOString().split('T')[0];
+
+  let dayRevenue = 0;
+  let weekRevenue = 0;
+  let monthRevenue = 0;
+
+  revenueEntries.forEach(e => {
+    monthRevenue += e.amount;
+    if (e.date >= weekStartStr) weekRevenue += e.amount;
+    if (e.date === todayStr) dayRevenue += e.amount;
+  });
+
+  return { dayRevenue, weekRevenue, monthRevenue };
+}
+
 // Revenue by payment method for charts
 export function getPaymentMethodData() {
   const totals = getMonthTotals();

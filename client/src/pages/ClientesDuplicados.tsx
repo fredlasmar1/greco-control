@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { formatNumber } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,15 @@ import {
   Info,
   ExternalLink,
   Loader2,
+  Trash2,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 interface DuplicateClient {
   id: number;
@@ -52,6 +61,35 @@ export default function ClientesDuplicados() {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<DuplicateClient | null>(null);
+  const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
+  const qClient = useQueryClient();
+
+  const deleteMutation = useMutation({
+    mutationFn: async (clientId: number) => {
+      const res = await apiRequest("DELETE", `/api/clientes/${clientId}`);
+      return res.json();
+    },
+    onMutate: (clientId) => {
+      setDeletingIds(prev => new Set(prev).add(clientId));
+    },
+    onSuccess: (_data, clientId) => {
+      setDeletingIds(prev => {
+        const next = new Set(prev);
+        next.delete(clientId);
+        return next;
+      });
+      setDeleteConfirm(null);
+      qClient.invalidateQueries({ queryKey: ["/api/clientes/duplicados"] });
+    },
+    onError: (_err, clientId) => {
+      setDeletingIds(prev => {
+        const next = new Set(prev);
+        next.delete(clientId);
+        return next;
+      });
+    },
+  });
 
   const { data, isLoading, error } = useQuery<DuplicateData>({
     queryKey: ["/api/clientes/duplicados"],
@@ -354,6 +392,27 @@ export default function ClientesDuplicados() {
                               <ExternalLink className="w-3 h-3 mr-1" />
                               Trinks
                             </Button>
+                            {idx > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                                disabled={deletingIds.has(client.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteConfirm(client);
+                                }}
+                              >
+                                {deletingIds.has(client.id) ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <>
+                                    <Trash2 className="w-3 h-3 mr-1" />
+                                    Excluir
+                                  </>
+                                )}
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -381,11 +440,65 @@ export default function ClientesDuplicados() {
           <p className="font-medium mb-1">Como organizar:</p>
           <p>1. Expanda cada grupo para ver os cadastros duplicados</p>
           <p>2. O cadastro <strong>mais antigo</strong> (verde) geralmente é o principal — mantenha esse</p>
-          <p>3. Clique em "Trinks" para abrir o cadastro do cliente diretamente na Trinks</p>
-          <p>4. Na Trinks, transfira os agendamentos do duplicado para o principal e exclua o duplicado</p>
+          <p>3. Use o botão <strong>"Excluir"</strong> para apagar os duplicados direto da Trinks</p>
+          <p>4. Ou clique em "Trinks" para abrir o cadastro e resolver manualmente</p>
           <p className="mt-1">A análise é feita pelos últimos 8-9 dígitos do telefone, ignorando formatação.</p>
         </div>
       </div>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
+        <DialogContent className="bg-card border-card-border max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">Excluir cliente duplicado?</DialogTitle>
+          </DialogHeader>
+          {deleteConfirm && (
+            <div className="space-y-3">
+              <div className="p-3 rounded-md bg-red-500/10 border border-red-500/20">
+                <p className="text-sm font-semibold">{deleteConfirm.nome}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Tel: {deleteConfirm.telefoneOriginal} · ID: {deleteConfirm.id}
+                </p>
+                {deleteConfirm.email && (
+                  <p className="text-xs text-muted-foreground">{deleteConfirm.email}</p>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Esta ação vai <strong>excluir permanentemente</strong> este cliente da Trinks.
+                Certifique-se de que já transferiu os agendamentos para o cadastro principal.
+              </p>
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setDeleteConfirm(null)}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-red-600 hover:bg-red-700 text-white text-xs"
+                  disabled={deletingIds.has(deleteConfirm.id)}
+                  onClick={() => deleteMutation.mutate(deleteConfirm.id)}
+                >
+                  {deletingIds.has(deleteConfirm.id) ? (
+                    <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                  ) : (
+                    <Trash2 className="w-3 h-3 mr-1" />
+                  )}
+                  Excluir da Trinks
+                </Button>
+              </div>
+              {deleteMutation.isError && (
+                <p className="text-xs text-red-400">
+                  Erro ao excluir. Verifique se o cliente não tem agendamentos pendentes.
+                </p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

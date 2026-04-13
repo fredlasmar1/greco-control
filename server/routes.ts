@@ -813,6 +813,50 @@ export async function registerRoutes(
     }
   });
 
+  // ─── DELETE /api/clientes/:id — Delete a client from Trinks ───
+  app.delete("/api/clientes/:id", async (req: Request, res: Response) => {
+    try {
+      const clientId = req.params.id;
+      if (!clientId) {
+        return res.status(400).json({ error: "ID do cliente é obrigatório" });
+      }
+
+      if (!trinksConfig) {
+        return res.status(400).json({ error: "Chave API da Trinks não configurada." });
+      }
+
+      await waitForRateLimit();
+
+      const url = new URL(`/v1/clientes/${clientId}`, TRINKS_BASE);
+      const headers: Record<string, string> = {
+        "X-Api-Key": trinksConfig.apiKey,
+        "Accept": "application/json",
+      };
+      if (trinksConfig.establishmentId) {
+        headers["estabelecimentoId"] = trinksConfig.establishmentId;
+      }
+
+      log(`DELETE client #${clientId}`, "trinks");
+      const response = await fetch(url.toString(), { method: "DELETE", headers });
+      recordRequest();
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        log(`Delete client error ${response.status}: ${body}`, "trinks");
+        return res.status(response.status).json({
+          error: body || `Erro ${response.status} ao excluir cliente na Trinks.`,
+        });
+      }
+
+      // Clear sync cache so next load reflects the deletion
+      invalidateCache();
+
+      return res.json({ ok: true, deletedId: clientId });
+    } catch (err: any) {
+      return handleTrinksError(err, res);
+    }
+  });
+
   // ──────────────────────────────────────────────────────────────────
   // SERVICE COSTS ROUTES
   // ──────────────────────────────────────────────────────────────────

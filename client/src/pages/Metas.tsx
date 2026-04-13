@@ -4,7 +4,9 @@ import { useTrinksStore, getTrinksMonthTotals, mapTrinksProfissionais } from "@/
 import { formatCurrency, formatPercent, getMonthTotals, barbers as demoBarbers } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle, Users } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle, Users, Pencil, X, RotateCcw } from "lucide-react";
 
 interface MetaHistorico {
   month: string;
@@ -82,6 +84,65 @@ export default function Metas() {
     return all.sort((a, b) => a.month.localeCompare(b.month));
   }, [historico, currentMonth, target, achieved]);
 
+  // ─── Custom barber metas from server ────────────────────
+  const [customMetas, setCustomMetas] = useState<Record<string, number>>({});
+  const [editingBarber, setEditingBarber] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/metas/barbeiros/${currentMonth}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data && typeof data === "object") setCustomMetas(data);
+      })
+      .catch(() => {});
+  }, [currentMonth]);
+
+  function startEdit(barberId: string, currentMeta: number) {
+    setEditingBarber(barberId);
+    setEditValue(Math.round(currentMeta).toString());
+  }
+
+  function cancelEdit() {
+    setEditingBarber(null);
+    setEditValue("");
+  }
+
+  function saveBarberMeta(barberId: string) {
+    const val = Number(editValue);
+    if (!val || val <= 0) return;
+    fetch(`${API_BASE}/api/metas/barbeiros`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ month: currentMonth, barberId, meta: val }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.metas) setCustomMetas(data.metas);
+      })
+      .catch(() => {});
+    setEditingBarber(null);
+    setEditValue("");
+  }
+
+  function resetBarberMeta(barberId: string) {
+    fetch(`${API_BASE}/api/metas/barbeiros`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ month: currentMonth, barberId }),
+    }).catch(() => {});
+    setCustomMetas(prev => {
+      const next = { ...prev };
+      delete next[barberId];
+      return next;
+    });
+  }
+
+  function handleEditKeyDown(e: React.KeyboardEvent, barberId: string) {
+    if (e.key === "Enter") saveBarberMeta(barberId);
+    if (e.key === "Escape") cancelEdit();
+  }
+
   // ─── Barbers with proportional goals ───────────────────
   const barbersData = useMemo(() => {
     let list: { id: string; name: string; initials: string; revenue: number; commission: number }[];
@@ -104,9 +165,10 @@ export default function Metas() {
     const totalComm = list.reduce((s, b) => s + b.commission, 0) || 1;
     return list.map(b => ({
       ...b,
-      meta: (b.commission / totalComm) * target,
+      meta: customMetas[b.id] != null ? customMetas[b.id] : (b.commission / totalComm) * target,
+      isCustom: customMetas[b.id] != null,
     }));
-  }, [hasTrinksData, trinks, target]);
+  }, [hasTrinksData, trinks, target, customMetas]);
 
   return (
     <div className="space-y-6 max-w-[1400px]">
@@ -235,6 +297,7 @@ export default function Metas() {
                   <th className="text-right p-3 text-xs text-muted-foreground font-medium">Realizado</th>
                   <th className="text-right p-3 text-xs text-muted-foreground font-medium">%</th>
                   <th className="text-center p-3 text-xs text-muted-foreground font-medium">Status</th>
+                  <th className="text-center p-3 text-xs text-muted-foreground font-medium">Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -242,11 +305,37 @@ export default function Metas() {
                   const bPct = b.meta > 0 ? (b.revenue / b.meta) * 100 : 0;
                   const expectedPct = (dayOfMonth / daysInMonth) * 100;
                   const bOnTrack = bPct >= expectedPct * 0.9;
+                  const isEditing = editingBarber === b.id;
                   return (
                     <tr key={b.id} className="border-b border-border/50 hover:bg-muted/30">
-                      <td className="p-3 font-medium">{b.name.split(" ").slice(0, 2).join(" ")}</td>
+                      <td className="p-3 font-medium">
+                        {b.name.split(" ").slice(0, 2).join(" ")}
+                        {b.isCustom && <span className="text-[10px] text-primary ml-1">custom</span>}
+                      </td>
                       <td className="p-3 text-right text-muted-foreground">{b.commission}%</td>
-                      <td className="p-3 text-right">{formatCurrency(b.meta)}</td>
+                      <td className="p-3 text-right">
+                        {isEditing ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <span className="text-xs text-muted-foreground">R$</span>
+                            <Input
+                              type="number"
+                              value={editValue}
+                              onChange={e => setEditValue(e.target.value)}
+                              onKeyDown={e => handleEditKeyDown(e, b.id)}
+                              className="h-7 w-24 text-xs text-right"
+                              autoFocus
+                            />
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-green-500" onClick={() => saveBarberMeta(b.id)}>
+                              <CheckCircle className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground" onClick={cancelEdit}>
+                              <X className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        ) : (
+                          formatCurrency(b.meta)
+                        )}
+                      </td>
                       <td className="p-3 text-right font-medium">{formatCurrency(b.revenue)}</td>
                       <td className="p-3 text-right">
                         <span className={bOnTrack ? 'text-green-500' : 'text-orange-400'}>{formatPercent(bPct)}</span>
@@ -257,6 +346,32 @@ export default function Metas() {
                         ) : (
                           <AlertTriangle className="w-4 h-4 text-orange-400 inline" />
                         )}
+                      </td>
+                      <td className="p-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          {!isEditing && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                              onClick={() => startEdit(b.id, b.meta)}
+                              title="Editar meta"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                          {b.isCustom && !isEditing && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-orange-400"
+                              onClick={() => resetBarberMeta(b.id)}
+                              title="Voltar para proporcional"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

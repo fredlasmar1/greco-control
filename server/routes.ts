@@ -23,6 +23,7 @@ interface FinanceEntry {
 const FINANCEIRO_FILE = path.join(process.cwd(), ".financeiro-data.json");
 const DUPLICADOS_RESOLVIDOS_FILE = path.join(process.cwd(), ".duplicados-resolvidos.json");
 const METAS_FILE = path.join(process.cwd(), ".metas-data.json");
+const METAS_BARBEIROS_FILE = path.join(process.cwd(), ".metas-barbeiros.json");
 const CHECKLIST_FILE = path.join(process.cwd(), ".checklist-data.json");
 let financeEntries: FinanceEntry[] = [];
 let resolvedDuplicateIds: number[] = [];
@@ -34,6 +35,10 @@ interface MetaHistorico {
   achieved: number;
 }
 let metasHistorico: MetaHistorico[] = [];
+
+// ─── Metas por Barbeiro ──────────────────────────────────
+// { "YYYY-MM": { "barberId": metaValue } }
+let metasBarbeiros: Record<string, Record<string, number>> = {};
 
 // ─── Checklist Data ──────────────────────────────────────
 interface ChecklistDay {
@@ -101,6 +106,20 @@ try {
 function saveMetas() {
   try { fs.writeFileSync(METAS_FILE, JSON.stringify(metasHistorico, null, 2), "utf-8"); }
   catch { log("Metas: could not save to disk", "metas"); }
+}
+
+// Load metas barbeiros on startup
+try {
+  if (fs.existsSync(METAS_BARBEIROS_FILE)) {
+    const raw = fs.readFileSync(METAS_BARBEIROS_FILE, "utf-8");
+    metasBarbeiros = JSON.parse(raw) || {};
+    log(`Metas barbeiros: loaded from disk`, "metas");
+  }
+} catch { log("Metas barbeiros: starting fresh", "metas"); }
+
+function saveMetasBarbeiros() {
+  try { fs.writeFileSync(METAS_BARBEIROS_FILE, JSON.stringify(metasBarbeiros, null, 2), "utf-8"); }
+  catch { log("Metas barbeiros: could not save to disk", "metas"); }
 }
 
 function saveChecklist() {
@@ -960,6 +979,37 @@ export async function registerRoutes(
       existing.achieved = Number(achieved || 0);
     }
     saveMetas();
+    return res.json({ ok: true });
+  });
+
+  // GET /api/metas/barbeiros/:month — get individual barber metas for a month
+  app.get("/api/metas/barbeiros/:month", (req: Request, res: Response) => {
+    const { month } = req.params;
+    return res.json(metasBarbeiros[month] || {});
+  });
+
+  // POST /api/metas/barbeiros — save individual barber meta
+  app.post("/api/metas/barbeiros", (req: Request, res: Response) => {
+    const { month, barberId, meta } = req.body;
+    if (!month || !barberId || meta == null) {
+      return res.status(400).json({ error: "month, barberId and meta are required" });
+    }
+    if (!metasBarbeiros[month]) metasBarbeiros[month] = {};
+    metasBarbeiros[month][barberId] = Number(meta);
+    saveMetasBarbeiros();
+    return res.json({ ok: true, metas: metasBarbeiros[month] });
+  });
+
+  // DELETE /api/metas/barbeiros — remove custom meta (revert to proportional)
+  app.delete("/api/metas/barbeiros", (req: Request, res: Response) => {
+    const { month, barberId } = req.body;
+    if (!month || !barberId) {
+      return res.status(400).json({ error: "month and barberId are required" });
+    }
+    if (metasBarbeiros[month]) {
+      delete metasBarbeiros[month][barberId];
+      saveMetasBarbeiros();
+    }
     return res.json({ ok: true });
   });
 

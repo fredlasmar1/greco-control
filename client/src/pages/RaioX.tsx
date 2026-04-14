@@ -649,45 +649,42 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
     { field: "fecharCaixa", label: "Fechar caixa ao final do dia" },
   ];
 
+  const adminDone = Object.values(adminTasks).filter(Boolean).length;
+  const adminProgress = (adminDone / adminTaskDefs.length) * 100;
+  const avgDaily = totalRevenue > 0 ? totalRevenue / dayOfMonth : 0;
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6" data-testid="raio-x-page">
-      {/* ── Header with date navigation ── */}
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <ClipboardCheck className="w-5 h-5 text-primary" />
+    <div className="max-w-6xl mx-auto space-y-5 pb-8" data-testid="raio-x-page">
+      {/* ── Header ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border pb-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <ClipboardCheck className="w-5 h-5 text-primary flex-shrink-0" />
             <h1 className="text-xl font-bold text-foreground">Raio-X Diário</h1>
             {usingDemoData && (
-              <Badge variant="outline" className="text-xs text-amber-400 border-amber-500/40 bg-amber-500/10">
-                Demo
-              </Badge>
+              <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/40 bg-amber-500/10">Demo</Badge>
             )}
             {!isToday && (
-              <Badge variant="outline" className="text-xs text-blue-400 border-blue-500/40 bg-blue-500/10">
-                Dia anterior
-              </Badge>
+              <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-500/40 bg-blue-500/10">Dia anterior</Badge>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={goToPreviousDay}>
+          <div className="flex items-center gap-1 flex-wrap">
+            <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={goToPreviousDay}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
             <p className="text-sm text-muted-foreground">{formatDatePT(today)}</p>
-            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={goToNextDay} disabled={isToday}>
+            <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={goToNextDay} disabled={isToday}>
               <ChevronRight className="w-4 h-4" />
             </Button>
             {!isToday && (
-              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={goToToday}>
-                Hoje
-              </Button>
+              <Button size="sm" variant="outline" className="h-7 px-2 text-xs ml-1" onClick={goToToday}>Hoje</Button>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5">Briefing matinal da equipe</p>
         </div>
         <Button
           variant="outline"
           size="sm"
-          className="border-primary/40 text-[#5B8AC4] hover:bg-primary/10 hover:border-primary shrink-0"
+          className="border-primary/40 text-primary hover:bg-primary/10 hover:border-primary shrink-0 self-start sm:self-auto"
           onClick={copyBriefing}
           data-testid="btn-gerar-relatorio"
         >
@@ -696,240 +693,205 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
         </Button>
       </div>
 
-      {/* ── Section 1: Barbeiros & Assistentes ── */}
-      <Collapsible open={barbersOpen}>
-        <Card className="bg-card border-border overflow-hidden">
-          <SectionHeader
-            icon="👊"
-            title="Barbeiros & Assistentes"
-            badge={barbers.length}
-            isOpen={barbersOpen}
-            onToggle={() => setBarbersOpen((v) => !v)}
-          />
-          <CollapsibleContent>
-            <div className="px-4 pb-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 mt-1">
-                {barbersWithOverrides.map((barber) => (
-                  <BarberCard
-                    key={barber.id}
-                    barber={barber}
-                    meta={getMetaForBarber(barber.id)}
-                    dayOfMonth={dayOfMonth}
-                    daysInMonth={daysInMonth}
-                    tasks={getBarberTask(barber.id)}
-                    onTaskChange={(field, val) => setBarberTask(barber.id, field, val)}
-                    isEditingRevenue={editingRevenue === barber.id}
-                    editRevenueValue={editRevenueValue}
-                    onStartEditRevenue={() => startRevenueEdit(barber.id, barber.revenue)}
-                    onSaveEditRevenue={() => saveRevenueEdit(barber.id)}
-                    onCancelEditRevenue={cancelRevenueEdit}
-                    onEditRevenueChange={setEditRevenueValue}
-                    hasOverride={revenueOverrides[barber.id] != null}
+      {/* ── KPI strip: 4 cards compactos ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1.5">
+              <Target className="w-3.5 h-3.5 text-primary" />
+              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Meta do mês</span>
+            </div>
+            <p className="text-lg font-bold truncate">{formatCurrency(totalRevenue)}</p>
+            <div className="flex items-center justify-between mt-1.5 text-[10px] text-muted-foreground">
+              <span>{totalGoalPct.toFixed(1)}% de {formatCurrency(MONTHLY_GOAL)}</span>
+            </div>
+            <Progress value={Math.min(100, totalGoalPct)} className="h-1 mt-1.5 bg-white/10 [&>div]:bg-primary" />
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1.5">
+              <TrendingUp className="w-3.5 h-3.5 text-primary" />
+              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Projeção</span>
+            </div>
+            <p className={`text-lg font-bold truncate ${projectedRevenue >= MONTHLY_GOAL ? "text-emerald-400" : "text-amber-400"}`}>
+              {formatCurrency(projectedRevenue)}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1.5">Média {formatCurrency(avgDaily)}/dia</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1.5">
+              <CalendarDays className="w-3.5 h-3.5 text-primary" />
+              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Agendados hoje</span>
+            </div>
+            <p className="text-lg font-bold">{todayAppointments}</p>
+            <p className="text-[10px] text-muted-foreground mt-1.5">atendimentos previstos</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1.5">
+              <Users className="w-3.5 h-3.5 text-primary" />
+              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Equipe</span>
+            </div>
+            <p className="text-lg font-bold">{barbers.length} <span className="text-sm font-normal text-muted-foreground">ativos</span></p>
+            <p className={`text-[10px] mt-1.5 ${barbersBehind.length === 0 ? "text-emerald-400" : "text-red-400"}`}>
+              {barbersBehind.length === 0 ? "Todos no ritmo" : `${barbersBehind.length} em atenção`}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Alerta de barbeiros atrasados (só se houver) ── */}
+      {barbersBehind.length > 0 && (
+        <Card className="bg-red-500/5 border-red-500/30">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full bg-red-500/15 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-red-300">
+                  {barbersBehind.length} barbeiro{barbersBehind.length > 1 ? "s" : ""} precisa{barbersBehind.length > 1 ? "m" : ""} de atenção
+                </p>
+                <p className="text-xs text-red-300/80 mt-0.5 mb-2">Abaixo de 60% da meta esperada para hoje</p>
+                <div className="flex flex-wrap gap-2">
+                  {barbersBehind.map((b) => {
+                    const bMeta = getMetaForBarber(b.id);
+                    const pct = bMeta > 0 ? (b.revenue / bMeta) * 100 : 0;
+                    return (
+                      <div key={b.id} className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-red-500/10 border border-red-500/20 text-xs">
+                        <span className="font-medium text-foreground">{b.name.split(" ")[0]}</span>
+                        <span className="text-red-400 font-semibold">{pct.toFixed(0)}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Seção: Barbeiros ── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-1 h-5 bg-primary rounded-full" />
+            <h2 className="text-base font-semibold">Barbeiros & Assistentes</h2>
+            <Badge variant="secondary" className="bg-primary/15 text-primary border-primary/30 text-[10px]">{barbers.length}</Badge>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {barbersWithOverrides.map((barber) => (
+            <BarberCard
+              key={barber.id}
+              barber={barber}
+              meta={getMetaForBarber(barber.id)}
+              dayOfMonth={dayOfMonth}
+              daysInMonth={daysInMonth}
+              tasks={getBarberTask(barber.id)}
+              onTaskChange={(field, val) => setBarberTask(barber.id, field, val)}
+              isEditingRevenue={editingRevenue === barber.id}
+              editRevenueValue={editRevenueValue}
+              onStartEditRevenue={() => startRevenueEdit(barber.id, barber.revenue)}
+              onSaveEditRevenue={() => saveRevenueEdit(barber.id)}
+              onCancelEditRevenue={cancelRevenueEdit}
+              onEditRevenueChange={setEditRevenueValue}
+              hasOverride={revenueOverrides[barber.id] != null}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* ── Grid: Admin + Observações lado a lado no desktop ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Admin checklist */}
+        <div className="flex flex-col">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-1 h-5 bg-primary rounded-full" />
+              <h2 className="text-base font-semibold">Administrativo</h2>
+            </div>
+            <span className="text-xs font-medium text-primary">
+              {adminDone}/{adminTaskDefs.length}
+            </span>
+          </div>
+          <Card className="bg-card border-card-border flex-1">
+            <CardContent className="p-4">
+              <Progress value={adminProgress} className="h-1.5 mb-3 bg-white/10 [&>div]:bg-primary" />
+              <div className="space-y-0.5">
+                {adminTaskDefs.map((t) => (
+                  <ChecklistItem
+                    key={`admin-${t.field}`}
+                    id={`admin-${t.field}`}
+                    label={t.label}
+                    checked={adminTasks[t.field]}
+                    onChange={() => toggleAdmin(t.field)}
                   />
                 ))}
               </div>
-            </div>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
+            </CardContent>
+          </Card>
+        </div>
 
-      {/* ── Section 2: Administrativo ── */}
-      <Collapsible open={adminOpen}>
-        <Card className="bg-card border-border overflow-hidden">
-          <SectionHeader
-            icon="📋"
-            title="Administrativo"
-            isOpen={adminOpen}
-            onToggle={() => setAdminOpen((v) => !v)}
-          />
-          <CollapsibleContent>
-            <div className="px-4 pb-4">
-              <Card className="bg-background/50 border-border mt-1">
-                <CardContent className="p-4">
-                  <p className="text-xs text-muted-foreground mb-3 font-medium">Checklist diário</p>
-                  <div className="space-y-1">
-                    {adminTaskDefs.map((t) => (
-                      <ChecklistItem
-                        key={t.field}
-                        id={`admin-${t.field}`}
-                        label={t.label}
-                        checked={adminTasks[t.field]}
-                        onChange={() => toggleAdmin(t.field)}
-                      />
-                    ))}
-                  </div>
-                  <div className="mt-3 pt-3 border-t border-border">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">Progresso</span>
-                      <span className="font-medium text-[#5B8AC4]">
-                        {Object.values(adminTasks).filter(Boolean).length} / {adminTaskDefs.length} concluídas
-                      </span>
-                    </div>
-                    <Progress
-                      value={(Object.values(adminTasks).filter(Boolean).length / adminTaskDefs.length) * 100}
-                      className="h-1.5 mt-1.5 bg-white/10 [&>div]:bg-primary"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
+        {/* Observações */}
+        <div className="flex flex-col">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-1 h-5 bg-primary rounded-full" />
+            <h2 className="text-base font-semibold">Observações do Dia</h2>
+          </div>
+          <Card className="bg-card border-card-border flex-1">
+            <CardContent className="p-4 h-full">
+              <Textarea
+                placeholder="Anote decisões, observações ou lembretes para o dia..."
+                value={socioNotes}
+                onChange={(e) => setSocioNotes(e.target.value)}
+                className="bg-background border-border text-foreground placeholder:text-muted-foreground resize-none text-sm min-h-[200px] h-full"
+                data-testid="socio-notes"
+              />
+            </CardContent>
+          </Card>
+        </div>
+      </div>
 
-      {/* ── Section 3: Sócio ── */}
-      <Collapsible open={socioOpen}>
-        <Card className="bg-card border-border overflow-hidden">
-          <SectionHeader
-            icon="👔"
-            title="Sócio (Fred)"
-            isOpen={socioOpen}
-            onToggle={() => setSocioOpen((v) => !v)}
-          />
-          <CollapsibleContent>
-            <div className="px-4 pb-4 space-y-3 mt-1">
-              {/* Meta mensal */}
-              <Card className="bg-background/50 border-border">
-                <CardHeader className="pb-2 pt-3 px-4">
-                  <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-                    <Target className="w-3.5 h-3.5" /> Meta Mensal
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 pb-4">
-                  <div className="flex items-baseline gap-2 mb-2">
-                    <span className="text-2xl font-bold text-foreground">{formatCurrency(totalRevenue)}</span>
-                    <span className="text-sm text-muted-foreground">/ {formatCurrency(MONTHLY_GOAL)}</span>
-                  </div>
-                  <Progress
-                    value={Math.min(100, totalGoalPct)}
-                    className="h-2 mb-2 bg-white/10 [&>div]:bg-primary"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>{totalGoalPct.toFixed(1)}% atingido</span>
-                    <span>Projeção: {formatCurrency(projectedRevenue)}</span>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Indicadores do dia */}
-              <div className="grid grid-cols-2 gap-3">
-                <Card className="bg-background/50 border-border">
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <CalendarDays className="w-4 h-4 text-primary" />
-                      <span className="text-xs text-muted-foreground font-medium">Agendados hoje</span>
-                    </div>
-                    <p className="text-2xl font-bold text-foreground" data-testid="today-appointments">
-                      {todayAppointments}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">atendimentos</p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-background/50 border-border">
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <DollarSign className="w-4 h-4 text-primary" />
-                      <span className="text-xs text-muted-foreground font-medium">Estimativa hoje</span>
-                    </div>
-                    <p className="text-lg font-bold text-foreground" data-testid="today-revenue-estimate">
-                      {formatCurrency(totalRevenue > 0 ? totalRevenue / dayOfMonth : 0)}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">média diária</p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Alertas */}
-              <Card className="bg-background/50 border-border">
-                <CardHeader className="pb-2 pt-3 px-4">
-                  <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-                    <AlertTriangle className="w-3.5 h-3.5" /> Alertas
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 pb-4">
-                  {barbersBehind.length === 0 ? (
-                    <div className="flex items-center gap-2 p-2 rounded-md bg-emerald-500/10 border border-emerald-500/20">
-                      <TrendingUp className="w-4 h-4 text-emerald-400" />
-                      <p className="text-sm text-emerald-300">Todos os barbeiros no ritmo esperado 👏</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 p-2 rounded-md bg-red-500/10 border border-red-500/20 mb-2">
-                        <TrendingDown className="w-4 h-4 text-red-400" />
-                        <p className="text-sm text-red-300 font-medium">
-                          {barbersBehind.length} barbeiro{barbersBehind.length > 1 ? "s" : ""} abaixo de 60% da meta esperada
-                        </p>
-                      </div>
-                      {barbersBehind.map((b) => {
-                        const pct = metaPerBarber > 0 ? (b.revenue / metaPerBarber) * 100 : 0;
-                        return (
-                          <div
-                            key={b.id}
-                            className="flex items-center justify-between text-sm px-2 py-1.5 rounded bg-white/5"
-                            data-testid={`alert-barber-${b.id}`}
-                          >
-                            <span className="text-foreground font-medium">{b.name.split(" ")[0]}</span>
-                            <span className="text-red-400 font-semibold">{pct.toFixed(0)}% da meta</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Decisões pendentes */}
-              <Card className="bg-background/50 border-border">
-                <CardHeader className="pb-2 pt-3 px-4">
-                  <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-                    <Users className="w-3.5 h-3.5" /> Decisões Pendentes / Observações
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 pb-4">
-                  <Textarea
-                    placeholder="Anote decisões, observações ou lembretes para o dia..."
-                    value={socioNotes}
-                    onChange={(e) => setSocioNotes(e.target.value)}
-                    className="bg-background border-border text-foreground placeholder:text-muted-foreground resize-none text-sm min-h-[80px]"
-                    data-testid="socio-notes"
-                  />
-                </CardContent>
-              </Card>
-            </div>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
-
-      {/* ── Briefing Text ── */}
-      <Collapsible open={briefingOpen}>
-        <Card className="bg-card border-border overflow-hidden">
-          <SectionHeader
-            icon="📤"
-            title="Texto do Briefing"
-            isOpen={briefingOpen}
-            onToggle={() => setBriefingOpen((v) => !v)}
-          />
-          <CollapsibleContent>
-            <div className="px-4 pb-4 mt-1">
-              <div className="relative">
-                <pre className="bg-background/60 border border-border rounded-lg p-4 text-xs text-foreground font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto">
-                  {briefingText}
-                </pre>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="absolute top-2 right-2 border-primary/40 text-[#5B8AC4] hover:bg-primary/10 hover:border-primary text-xs"
-                  onClick={copyBriefing}
-                  data-testid="btn-copiar-briefing"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 mr-1.5" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
-                  {copied ? "Copiado!" : "Copiar"}
-                </Button>
-              </div>
-            </div>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
+      {/* ── Briefing ── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <button
+            className="flex items-center gap-2 hover:text-primary transition-colors"
+            onClick={() => setBriefingOpen(v => !v)}
+          >
+            <div className="w-1 h-5 bg-primary rounded-full" />
+            <h2 className="text-base font-semibold">Texto do Briefing</h2>
+            {briefingOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+          </button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-primary/40 text-primary hover:bg-primary/10 text-xs h-8"
+            onClick={copyBriefing}
+            data-testid="btn-copiar-briefing"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 mr-1.5" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
+            {copied ? "Copiado!" : "Copiar"}
+          </Button>
+        </div>
+        {briefingOpen && (
+          <Card className="bg-card border-card-border">
+            <CardContent className="p-4">
+              <pre className="bg-background/60 border border-border rounded-lg p-4 text-xs text-foreground font-mono whitespace-pre-wrap leading-relaxed overflow-x-auto">
+                {briefingText}
+              </pre>
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

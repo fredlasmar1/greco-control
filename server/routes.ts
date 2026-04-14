@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { log } from "./index";
 import * as fs from "fs";
 import * as path from "path";
+import * as crypto from "crypto";
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -27,6 +28,7 @@ const METAS_BARBEIROS_FILE = path.join(process.cwd(), ".metas-barbeiros.json");
 const CHECKLIST_FILE = path.join(process.cwd(), ".checklist-data.json");
 const CONSOLIDACAO_CONTAS_FILE = path.join(process.cwd(), ".consolidacao-contas.json");
 const CONSOLIDACAO_TRANSACOES_FILE = path.join(process.cwd(), ".consolidacao-transacoes.json");
+const USUARIOS_FILE = path.join(process.cwd(), ".usuarios.json");
 let financeEntries: FinanceEntry[] = [];
 let resolvedDuplicateIds: number[] = [];
 
@@ -65,6 +67,59 @@ interface TransacaoBanco {
 }
 let contasConsolidacao: ContaConsolidacao[] = [];
 let transacoesBanco: TransacaoBanco[] = [];
+
+// ─── Usuários / Autenticação ─────────────────────────────
+interface Usuario {
+  id: string;
+  username: string;
+  passwordHash: string; // formato: salt:hash
+  role: 'admin' | 'barbeiro';
+  nome: string;
+  barberId?: string; // ID do profissional no Trinks (apenas para barbeiros)
+  ativo: boolean;
+  createdAt: string;
+}
+let usuarios: Usuario[] = [];
+
+// Tokens de sessão em memória: token → { userId, expiresAt }
+const sessoesAtivas = new Map<string, { userId: string; expiresAt: number }>();
+const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  try {
+    const [salt, hash] = stored.split(":");
+    if (!salt || !hash) return false;
+    const testHash = crypto.scryptSync(password, salt, 64).toString("hex");
+    return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(testHash, "hex"));
+  } catch { return false; }
+}
+
+function generateToken(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function getUserFromToken(token: string | undefined): Usuario | null {
+  if (!token) return null;
+  const session = sessoesAtivas.get(token);
+  if (!session) return null;
+  if (session.expiresAt < Date.now()) {
+    sessoesAtivas.delete(token);
+    return null;
+  }
+  return usuarios.find(u => u.id === session.userId && u.ativo) || null;
+}
+
+function extractToken(req: Request): string | undefined {
+  const auth = req.headers.authorization || "";
+  if (auth.startsWith("Bearer ")) return auth.slice(7);
+  return undefined;
+}
 
 // ─── Checklist Data ──────────────────────────────────────
 interface ChecklistDay {
@@ -169,6 +224,35 @@ function saveContasConsolidacao() {
 function saveTransacoesBanco() {
   try { fs.writeFileSync(CONSOLIDACAO_TRANSACOES_FILE, JSON.stringify(transacoesBanco, null, 2), "utf-8"); }
   catch { log("Consolidação transações: could not save", "consolidacao"); }
+}
+
+// Usuários: load on startup
+try {
+  if (fs.existsSync(USUARIOS_FILE)) {
+    usuarios = JSON.parse(fs.readFileSync(USUARIOS_FILE, "utf-8")) || [];
+    log(`Usuários: ${usuarios.length} carregados`, "auth");
+  }
+} catch { log("Usuários: starting fresh", "auth"); }
+
+function saveUsuarios() {
+  try { fs.writeFileSync(USUARIOS_FILE, JSON.stringify(usuarios, null, 2), "utf-8"); }
+  catch { log("Usuários: could not save", "auth"); }
+}
+
+// Cria admin padrão se não existir nenhum usuário
+if (usuarios.length === 0) {
+  const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || "admin123";
+  usuarios.push({
+    id: `user-${Date.now()}-admin`,
+    username: "admin",
+    passwordHash: hashPassword(defaultAdminPassword),
+    role: "admin",
+    nome: "Administrador",
+    ativo: true,
+    createdAt: new Date().toISOString(),
+  });
+  saveUsuarios();
+  log(`Usuário admin padrão criado (user=admin, pass=${defaultAdminPassword})`, "auth");
 }
 
 function saveChecklist() {
@@ -590,7 +674,260 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
-  // ─── GET /api/trinks/config — Load saved credentials ────
+  // ──────────────────────────────────────────────────────────────────
+  // AUTH ROUTES
+  // ──────────────────────────────────────────────────────────────────
+
+  // POST /api/auth/login — autentica e retorna token
+  app.post("/api/auth/login", (req: Request, res: Response) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: "Usuário e senha são obrigatórios." });
+    }
+    const user = usuarios.find(u => u.username.toLowerCase() === String(username).toLowerCase() && u.ativo);
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+      return res.status(401).json({ error: "Usuário ou senha incorretos." });
+    }
+    const token = generateToken();
+    sessoesAtivas.set(token, { userId: user.id, expiresAt: Date.now() + SESSION_DURATION_MS });
+    const { passwordHash, ...userSafe } = user;
+    return res.json({ token, user: userSafe });
+  });
+
+  // POST /api/auth/logout
+  app.post("/api/auth/logout", (req: Request, res: Response) => {
+    const token = extractToken(req);
+    if (token) sessoesAtivas.delete(token);
+    return res.json({ ok: true });
+  });
+
+  // GET /api/auth/me — retorna usuário atual
+  app.get("/api/auth/me", (req: Request, res: Response) => {
+    const user = getUserFromToken(extractToken(req));
+    if (!user) return res.status(401).json({ error: "Não autenticado." });
+    const { passwordHash, ...userSafe } = user;
+    return res.json(userSafe);
+  });
+
+  // GET /api/auth/usuarios — admin lista todos os usuários
+  app.get("/api/auth/usuarios", (req: Request, res: Response) => {
+    const user = getUserFromToken(extractToken(req));
+    if (!user || user.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+    return res.json(usuarios.map(u => {
+      const { passwordHash, ...rest } = u;
+      return rest;
+    }));
+  });
+
+  // POST /api/auth/usuarios — admin cria novo usuário
+  app.post("/api/auth/usuarios", (req: Request, res: Response) => {
+    const admin = getUserFromToken(extractToken(req));
+    if (!admin || admin.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+    const { username, password, nome, role, barberId } = req.body;
+    if (!username || !password || !nome || !role) {
+      return res.status(400).json({ error: "username, password, nome e role são obrigatórios." });
+    }
+    if (role !== "admin" && role !== "barbeiro") {
+      return res.status(400).json({ error: "role deve ser 'admin' ou 'barbeiro'." });
+    }
+    if (usuarios.some(u => u.username.toLowerCase() === String(username).toLowerCase())) {
+      return res.status(409).json({ error: "Usuário já existe." });
+    }
+    const newUser: Usuario = {
+      id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      username: String(username),
+      passwordHash: hashPassword(String(password)),
+      role,
+      nome: String(nome),
+      barberId: barberId ? String(barberId) : undefined,
+      ativo: true,
+      createdAt: new Date().toISOString(),
+    };
+    usuarios.push(newUser);
+    saveUsuarios();
+    const { passwordHash, ...userSafe } = newUser;
+    return res.json(userSafe);
+  });
+
+  // PUT /api/auth/usuarios/:id — admin atualiza usuário (nome, role, barberId, ativo)
+  app.put("/api/auth/usuarios/:id", (req: Request, res: Response) => {
+    const admin = getUserFromToken(extractToken(req));
+    if (!admin || admin.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+    const user = usuarios.find(u => u.id === req.params.id);
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+    const { nome, role, barberId, ativo } = req.body;
+    if (nome != null) user.nome = String(nome);
+    if (role != null && (role === "admin" || role === "barbeiro")) user.role = role;
+    if (barberId !== undefined) user.barberId = barberId ? String(barberId) : undefined;
+    if (ativo != null) user.ativo = !!ativo;
+    saveUsuarios();
+    const { passwordHash, ...userSafe } = user;
+    return res.json(userSafe);
+  });
+
+  // POST /api/auth/usuarios/:id/reset-password — admin reseta senha
+  app.post("/api/auth/usuarios/:id/reset-password", (req: Request, res: Response) => {
+    const admin = getUserFromToken(extractToken(req));
+    if (!admin || admin.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+    const user = usuarios.find(u => u.id === req.params.id);
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+    const { password } = req.body;
+    if (!password || String(password).length < 4) {
+      return res.status(400).json({ error: "Senha deve ter ao menos 4 caracteres." });
+    }
+    user.passwordHash = hashPassword(String(password));
+    saveUsuarios();
+    return res.json({ ok: true });
+  });
+
+  // DELETE /api/auth/usuarios/:id
+  app.delete("/api/auth/usuarios/:id", (req: Request, res: Response) => {
+    const admin = getUserFromToken(extractToken(req));
+    if (!admin || admin.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+    if (req.params.id === admin.id) {
+      return res.status(400).json({ error: "Você não pode excluir a si mesmo." });
+    }
+    const before = usuarios.length;
+    usuarios = usuarios.filter(u => u.id !== req.params.id);
+    saveUsuarios();
+    return res.json({ ok: true, removed: before - usuarios.length });
+  });
+
+  // POST /api/auth/change-password — usuário muda a própria senha
+  app.post("/api/auth/change-password", (req: Request, res: Response) => {
+    const user = getUserFromToken(extractToken(req));
+    if (!user) return res.status(401).json({ error: "Não autenticado." });
+    const { currentPassword, newPassword } = req.body;
+    if (!verifyPassword(String(currentPassword || ""), user.passwordHash)) {
+      return res.status(401).json({ error: "Senha atual incorreta." });
+    }
+    if (!newPassword || String(newPassword).length < 4) {
+      return res.status(400).json({ error: "Nova senha deve ter ao menos 4 caracteres." });
+    }
+    user.passwordHash = hashPassword(String(newPassword));
+    saveUsuarios();
+    return res.json({ ok: true });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // PAINEL DO BARBEIRO
+  // ──────────────────────────────────────────────────────────────────
+
+  // GET /api/meu-painel — dados do barbeiro logado
+  app.get("/api/meu-painel", (req: Request, res: Response) => {
+    const user = getUserFromToken(extractToken(req));
+    if (!user) return res.status(401).json({ error: "Não autenticado." });
+    if (user.role !== "barbeiro") return res.status(403).json({ error: "Apenas barbeiros têm painel." });
+    if (!user.barberId) return res.status(400).json({ error: "Seu usuário não está vinculado a um profissional." });
+
+    const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
+    const profissionais = syncCache?.profissionais || [];
+    const agendamentos = syncCache?.agendamentos || [];
+    const transacoes = syncCache?.transacoes || [];
+
+    const prof = profissionais.find((p: any) => String(p.id) === user.barberId);
+
+    // Helpers
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const dow = today.getDay();
+    const mondayOffset = dow === 0 ? 6 : dow - 1;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - mondayOffset);
+    const weekStart = monday.toISOString().slice(0, 10);
+    const monthStart = todayStr.slice(0, 7) + "-01";
+
+    function isMine(item: any): boolean {
+      const pid = item.profissionalId || item.profissional?.id;
+      return String(pid || "") === user.barberId;
+    }
+    function getDate(item: any): string {
+      const raw = item.dataHoraInicio || item.dataHora || item.data || "";
+      return typeof raw === "string" ? raw.slice(0, 10) : "";
+    }
+    function getValue(item: any): number {
+      return Number(item.totalPagar || item.valor || 0);
+    }
+    function isCompleted(a: any): boolean {
+      const st = a.status;
+      const name = typeof st === "string" ? st : st?.descricao || st?.nome || "";
+      return /finalizado|realizado|concluido|concluído/i.test(name);
+    }
+
+    // Meu faturamento por período
+    let diaFat = 0, semanaFat = 0, mesFat = 0;
+    transacoes.filter(isMine).forEach((t: any) => {
+      const d = getDate(t);
+      if (!d) return;
+      const v = getValue(t);
+      if (d >= monthStart) mesFat += v;
+      if (d >= weekStart) semanaFat += v;
+      if (d === todayStr) diaFat += v;
+    });
+
+    // Clientes por período (agendamentos finalizados)
+    let diaCli = 0, semanaCli = 0, mesCli = 0;
+    agendamentos.filter(isMine).forEach((a: any) => {
+      const d = getDate(a);
+      if (!d) return;
+      if (!isCompleted(a)) return;
+      if (d >= monthStart) mesCli += 1;
+      if (d >= weekStart) semanaCli += 1;
+      if (d === todayStr) diaCli += 1;
+    });
+
+    // Próximos agendamentos de hoje (não finalizados)
+    const proximosHoje = agendamentos
+      .filter(isMine)
+      .filter((a: any) => getDate(a) === todayStr && !isCompleted(a))
+      .sort((a: any, b: any) => (a.dataHoraInicio || "").localeCompare(b.dataHoraInicio || ""))
+      .slice(0, 10)
+      .map((a: any) => ({
+        hora: (a.dataHoraInicio || "").slice(11, 16),
+        cliente: a.cliente?.nome || a.clienteNome || "Cliente",
+        servico: a.servico?.nome || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).join(", ") : "Serviço"),
+        valor: getValue(a),
+      }));
+
+    // Meta: usa meta customizada do mês se houver, senão proporcional
+    const currentMonth = todayStr.slice(0, 7);
+    const metasDoMes = metasBarbeiros[currentMonth] || {};
+    const metaGlobal = metasHistorico.find(m => m.month === currentMonth)?.target || 150000;
+
+    let minhaMeta = metasDoMes[user.barberId!];
+    if (minhaMeta == null) {
+      // Fallback: proporcional à comissão
+      const ativos = (profissionais || []).filter((p: any) => p.ativo !== false);
+      const totalComm = ativos.reduce((s: number, p: any) => s + (Number(p.comissao || p.percentualComissao || 40)), 0) || 1;
+      const minhaComm = Number(prof?.comissao || prof?.percentualComissao || 40);
+      minhaMeta = (minhaComm / totalComm) * metaGlobal;
+    }
+
+    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+    const dayOfMonth = today.getDate();
+    const remainingDays = Math.max(1, daysInMonth - dayOfMonth + 1);
+    const restaFaturar = Math.max(0, minhaMeta - mesFat);
+    const dailyNeeded = restaFaturar / remainingDays;
+
+    return res.json({
+      barberId: user.barberId,
+      nome: user.nome,
+      profissional: prof ? { nome: prof.nome, comissao: prof.comissao || prof.percentualComissao } : null,
+      meta: minhaMeta,
+      faturamento: { dia: diaFat, semana: semanaFat, mes: mesFat },
+      clientes: { dia: diaCli, semana: semanaCli, mes: mesCli },
+      restaFaturar,
+      dailyNeeded,
+      remainingDays,
+      daysInMonth,
+      dayOfMonth,
+      proximosHoje,
+      mes: currentMonth,
+      dataSync: syncCache?.syncedAt || null,
+    });
+  });
+
+  // GET /api/trinks/config — Load saved credentials ────
   app.get("/api/trinks/config", (_req: Request, res: Response) => {
     if (trinksConfig) {
       const masked = trinksConfig.apiKey.length > 8

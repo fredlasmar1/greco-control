@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Switch, Route, Router } from "wouter";
+import { Switch, Route, Router, useLocation } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -7,6 +7,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import { useTrinksStore } from "@/lib/trinksStore";
+import { useAuth } from "@/lib/authStore";
+import { Loader2 } from "lucide-react";
 import Dashboard from "@/pages/Dashboard";
 import Lancamentos from "@/pages/Lancamentos";
 import Equipe from "@/pages/Equipe";
@@ -19,9 +21,11 @@ import Configuracoes from "@/pages/Configuracoes";
 import ClientesDuplicados from "@/pages/ClientesDuplicados";
 import RaioX from "@/pages/RaioX";
 import Consolidacao from "@/pages/Consolidacao";
+import Login from "@/pages/Login";
+import MeuPainel from "@/pages/MeuPainel";
 import NotFound from "@/pages/not-found";
 
-function AppRouter() {
+function AdminRoutes() {
   const loadSavedConfig = useTrinksStore((s) => s.loadSavedConfig);
   const hasLoaded = useRef(false);
 
@@ -41,16 +45,72 @@ function AppRouter() {
         <Route path="/servicos" component={Servicos} />
         <Route path="/precificacao" component={Precificacao} />
         <Route path="/financeiro" component={Financeiro} />
+        <Route path="/consolidacao" component={Consolidacao} />
         <Route path="/fechamento" component={Fechamento} />
         <Route path="/metas" component={Metas} />
         <Route path="/duplicados" component={ClientesDuplicados} />
         <Route path="/configuracoes" component={Configuracoes} />
         <Route path="/raio-x" component={RaioX} />
-        <Route path="/consolidacao" component={Consolidacao} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
   );
+}
+
+function AppRouter() {
+  const { user, loading, restoreSession } = useAuth();
+  const [location, setLocation] = useLocation();
+  const restored = useRef(false);
+
+  useEffect(() => {
+    if (!restored.current) {
+      restored.current = true;
+      restoreSession();
+    }
+  }, [restoreSession]);
+
+  // Redireciona quando o estado de auth muda
+  useEffect(() => {
+    if (loading) return;
+    if (!user && location !== "/login") {
+      setLocation("/login");
+    } else if (user?.role === "barbeiro" && location !== "/meu-painel" && location !== "/login") {
+      setLocation("/meu-painel");
+    } else if (user?.role === "admin" && location === "/login") {
+      setLocation("/");
+    }
+  }, [user, loading, location, setLocation]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Sem login: só mostra a tela de login
+  if (!user) {
+    return (
+      <Switch>
+        <Route path="/login" component={Login} />
+        <Route component={Login} />
+      </Switch>
+    );
+  }
+
+  // Barbeiro: vê só o próprio painel
+  if (user.role === "barbeiro") {
+    return (
+      <Switch>
+        <Route path="/meu-painel" component={MeuPainel} />
+        <Route component={MeuPainel} />
+      </Switch>
+    );
+  }
+
+  // Admin: acesso completo
+  return <AdminRoutes />;
 }
 
 function App() {

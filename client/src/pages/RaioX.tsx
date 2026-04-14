@@ -10,6 +10,8 @@ import {
   ClipboardCheck,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Check,
   TrendingUp,
@@ -19,7 +21,10 @@ import {
   CalendarDays,
   DollarSign,
   Users,
+  Pencil,
+  X,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { useTrinksStore, mapTrinksProfissionais, getTrinksMonthTotals } from "@/lib/trinksStore";
 import { formatCurrency, barbers as demoBarbers } from "@/lib/demoData";
 import { useStore } from "@/lib/store";
@@ -162,6 +167,13 @@ function BarberCard({
   daysInMonth,
   tasks,
   onTaskChange,
+  isEditingRevenue,
+  editRevenueValue,
+  onStartEditRevenue,
+  onSaveEditRevenue,
+  onCancelEditRevenue,
+  onEditRevenueChange,
+  hasOverride,
 }: {
   barber: BarberData;
   meta: number;
@@ -169,6 +181,13 @@ function BarberCard({
   daysInMonth: number;
   tasks: BarberTask;
   onTaskChange: (field: keyof BarberTask, val: boolean) => void;
+  isEditingRevenue: boolean;
+  editRevenueValue: string;
+  onStartEditRevenue: () => void;
+  onSaveEditRevenue: () => void;
+  onCancelEditRevenue: () => void;
+  onEditRevenueChange: (val: string) => void;
+  hasOverride: boolean;
 }) {
   const pct = meta > 0 ? Math.min(100, (barber.revenue / meta) * 100) : 0;
 
@@ -215,15 +234,53 @@ function BarberCard({
         {/* Revenue progress */}
         <div className="mb-3">
           <div className="flex justify-between items-baseline mb-1.5">
-            <span className="text-xs text-muted-foreground">Faturamento do mês</span>
+            <span className="text-xs text-muted-foreground">
+              Faturamento do mês
+              {hasOverride && <span className="text-amber-400 ml-1">(editado)</span>}
+            </span>
             <span className="text-xs font-semibold text-[#5B8AC4]">{pct.toFixed(0)}%</span>
           </div>
           <Progress
             value={pct}
             className="h-1.5 bg-white/10 [&>div]:bg-primary"
           />
-          <div className="flex justify-between mt-1">
-            <span className="text-xs text-foreground font-medium">{formatCurrency(barber.revenue)}</span>
+          <div className="flex justify-between items-center mt-1">
+            {isEditingRevenue ? (
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-muted-foreground">R$</span>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  value={editRevenueValue}
+                  onChange={e => onEditRevenueChange(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") onSaveEditRevenue();
+                    if (e.key === "Escape") onCancelEditRevenue();
+                  }}
+                  className="h-7 w-24 text-xs text-right"
+                  autoFocus
+                />
+                <Button size="sm" className="h-7 px-2 bg-green-600 hover:bg-green-700 text-white text-[10px]" onClick={onSaveEditRevenue}>
+                  OK
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={onCancelEditRevenue}>
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-foreground font-medium">{formatCurrency(barber.revenue)}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-5 w-5 p-0 text-muted-foreground hover:text-primary"
+                  onClick={onStartEditRevenue}
+                  title="Editar faturamento"
+                >
+                  <Pencil className="w-2.5 h-2.5" />
+                </Button>
+              </div>
+            )}
             <span className="text-xs text-muted-foreground">meta {formatCurrency(meta)}</span>
           </div>
         </div>
@@ -266,10 +323,29 @@ function BarberCard({
 
 // ─── Main Page ────────────────────────────────────────────
 export default function RaioX() {
-  const today = useMemo(() => new Date(), []);
+  const realToday = useMemo(() => new Date(), []);
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const today = selectedDate;
   const todayStr = today.toISOString().split("T")[0];
+  const isToday = todayStr === realToday.toISOString().split("T")[0];
   const dayOfMonth = getDayOfMonth(today);
   const daysInMonth = getDaysInMonth(today);
+
+  function goToPreviousDay() {
+    setSelectedDate(prev => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() - 1);
+      return d;
+    });
+  }
+  function goToNextDay() {
+    const next = new Date(selectedDate);
+    next.setDate(next.getDate() + 1);
+    if (next <= realToday) setSelectedDate(next);
+  }
+  function goToToday() {
+    setSelectedDate(new Date());
+  }
 
   const { toast } = useToast();
   const { settings } = useStore();
@@ -305,6 +381,17 @@ export default function RaioX() {
 
   const barbers: BarberData[] = barbersWithCommission;
 
+  // Revenue override states (must be before barbersWithOverrides)
+  const [revenueOverrides, setRevenueOverrides] = useState<Record<string, number>>({});
+
+  // Apply manual revenue overrides
+  const barbersWithOverrides: BarberData[] = useMemo(() => {
+    return barbers.map(b => ({
+      ...b,
+      revenue: revenueOverrides[b.id] != null ? revenueOverrides[b.id] : b.revenue,
+    }));
+  }, [barbers, revenueOverrides]);
+
   const usingDemoData = !trinks || rateLimited || barbers.every((b) => b.revenue === 0 && trinks === null);
 
   // Meta proporcional por comissão
@@ -319,14 +406,10 @@ export default function RaioX() {
     ? MONTHLY_GOAL / barbersWithCommission.length
     : MONTHLY_GOAL / 8;
 
-  // Total revenue
+  // Total revenue (with manual overrides applied)
   const totalRevenue = useMemo(() => {
-    if (trinks && !rateLimited) {
-      const totals = getTrinksMonthTotals(trinks);
-      if (totals.totalRevenue > 0) return totals.totalRevenue;
-    }
-    return demoBarbers.reduce((sum, b) => sum + b.revenue, 0);
-  }, [trinks, rateLimited]);
+    return barbersWithOverrides.reduce((sum, b) => sum + b.revenue, 0);
+  }, [barbersWithOverrides]);
 
   // Today's appointments (from Trinks or demo estimate)
   const todayAppointments = useMemo(() => {
@@ -345,11 +428,33 @@ export default function RaioX() {
 
   // Barbers behind (< 60% of expected progress)
   const expectedPct = (dayOfMonth / daysInMonth) * 100;
-  const barbersBehind = barbers.filter((b) => {
+  const barbersBehind = barbersWithOverrides.filter((b) => {
     const bMeta = getMetaForBarber(b.id);
     const pct = bMeta > 0 ? (b.revenue / bMeta) * 100 : 0;
     return pct < expectedPct * 0.6;
   });
+
+  // ─── Manual revenue overrides (per barber) ─────────────────
+  const [editingRevenue, setEditingRevenue] = useState<string | null>(null);
+  const [editRevenueValue, setEditRevenueValue] = useState("");
+
+  function startRevenueEdit(barberId: string, currentRevenue: number) {
+    setEditingRevenue(barberId);
+    setEditRevenueValue(Math.round(currentRevenue).toString());
+  }
+
+  function saveRevenueEdit(barberId: string) {
+    const val = Number(editRevenueValue);
+    if (isNaN(val) || val < 0) return;
+    setRevenueOverrides(prev => ({ ...prev, [barberId]: val }));
+    setEditingRevenue(null);
+    setEditRevenueValue("");
+  }
+
+  function cancelRevenueEdit() {
+    setEditingRevenue(null);
+    setEditRevenueValue("");
+  }
 
   // Section open states
   const [barbersOpen, setBarbersOpen] = useState(true);
@@ -372,8 +477,13 @@ export default function RaioX() {
 
   const API_BASE = (globalThis as any).__API_BASE__ || "";
 
-  // Load checklist from server on mount
+  // Load checklist from server on mount and when date changes
   useEffect(() => {
+    setChecklistLoaded(false);
+    setBarberTasks({});
+    setAdminTasks({ aberturaCaixa: false, verificarAgendamentos: false, conferirEstoque: false, pagamentosPendentes: false, redesSociais: false, fecharCaixa: false });
+    setSocioNotes("");
+    setRevenueOverrides({});
     fetch(`${API_BASE}/api/checklist/${todayStr}`)
       .then(r => r.json())
       .then(data => {
@@ -404,6 +514,16 @@ export default function RaioX() {
 
           // Restore notes
           if (tasks["socio-notes"]) setSocioNotes(tasks["socio-notes"]);
+
+          // Restore revenue overrides
+          const overrides: Record<string, number> = {};
+          Object.keys(tasks).forEach(key => {
+            const match = key.match(/^barber-(.+)-revenue$/);
+            if (match && typeof tasks[key] === 'number') {
+              overrides[match[1]] = tasks[key];
+            }
+          });
+          setRevenueOverrides(overrides);
         }
         setChecklistLoaded(true);
       })
@@ -422,13 +542,17 @@ export default function RaioX() {
     });
     // Notes
     if (socioNotes) tasks["socio-notes"] = socioNotes;
+    // Revenue overrides
+    Object.entries(revenueOverrides).forEach(([barberId, val]) => {
+      tasks[`barber-${barberId}-revenue`] = val;
+    });
 
     fetch(`${API_BASE}/api/checklist`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ date: todayStr, tasks }),
     }).catch(() => {});
-  }, [adminTasks, barberTasks, socioNotes, todayStr, checklistLoaded, API_BASE]);
+  }, [adminTasks, barberTasks, socioNotes, revenueOverrides, todayStr, checklistLoaded, API_BASE]);
 
   useEffect(() => { saveChecklist(); }, [saveChecklist]);
 
@@ -456,7 +580,7 @@ export default function RaioX() {
     const dayNames = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
     const dayName = dayNames[today.getDay()];
 
-    const barberLines = barbers
+    const barberLines = barbersWithOverrides
       .map((b) => {
         const bMeta = getMetaForBarber(b.id);
         const pct = bMeta > 0 ? (b.revenue / bMeta) * 100 : 0;
@@ -527,7 +651,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6" data-testid="raio-x-page">
-      {/* ── Header ── */}
+      {/* ── Header with date navigation ── */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -538,8 +662,26 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                 Demo
               </Badge>
             )}
+            {!isToday && (
+              <Badge variant="outline" className="text-xs text-blue-400 border-blue-500/40 bg-blue-500/10">
+                Dia anterior
+              </Badge>
+            )}
           </div>
-          <p className="text-sm text-muted-foreground">{formatDatePT(today)}</p>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={goToPreviousDay}>
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <p className="text-sm text-muted-foreground">{formatDatePT(today)}</p>
+            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={goToNextDay} disabled={isToday}>
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+            {!isToday && (
+              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={goToToday}>
+                Hoje
+              </Button>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground mt-0.5">Briefing matinal da equipe</p>
         </div>
         <Button
@@ -567,7 +709,7 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
           <CollapsibleContent>
             <div className="px-4 pb-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 mt-1">
-                {barbers.map((barber) => (
+                {barbersWithOverrides.map((barber) => (
                   <BarberCard
                     key={barber.id}
                     barber={barber}
@@ -576,6 +718,13 @@ ${alertLine}${socioNotes ? `\n\n📝 Observações:\n${socioNotes}` : ""}`;
                     daysInMonth={daysInMonth}
                     tasks={getBarberTask(barber.id)}
                     onTaskChange={(field, val) => setBarberTask(barber.id, field, val)}
+                    isEditingRevenue={editingRevenue === barber.id}
+                    editRevenueValue={editRevenueValue}
+                    onStartEditRevenue={() => startRevenueEdit(barber.id, barber.revenue)}
+                    onSaveEditRevenue={() => saveRevenueEdit(barber.id)}
+                    onCancelEditRevenue={cancelRevenueEdit}
+                    onEditRevenueChange={setEditRevenueValue}
+                    hasOverride={revenueOverrides[barber.id] != null}
                   />
                 ))}
               </div>

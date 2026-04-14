@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle, Users, Pencil, X, RotateCcw } from "lucide-react";
+import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle, Users, Pencil, X, RotateCcw, Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface MetaHistorico {
   month: string;
@@ -85,9 +86,11 @@ export default function Metas() {
   }, [historico, currentMonth, target, achieved]);
 
   // ─── Custom barber metas from server ────────────────────
+  const { toast } = useToast();
   const [customMetas, setCustomMetas] = useState<Record<string, number>>({});
   const [editingBarber, setEditingBarber] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/metas/barbeiros/${currentMonth}`)
@@ -108,34 +111,50 @@ export default function Metas() {
     setEditValue("");
   }
 
-  function saveBarberMeta(barberId: string) {
+  async function saveBarberMeta(barberId: string) {
     const val = Number(editValue);
-    if (!val || val <= 0) return;
-    fetch(`${API_BASE}/api/metas/barbeiros`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ month: currentMonth, barberId, meta: val }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.metas) setCustomMetas(data.metas);
-      })
-      .catch(() => {});
-    setEditingBarber(null);
-    setEditValue("");
+    if (!val || val <= 0) {
+      toast({ title: "Valor inválido", description: "Digite um valor maior que zero.", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/metas/barbeiros`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: currentMonth, barberId, meta: val }),
+      });
+      if (!res.ok) throw new Error(`Erro ${res.status}`);
+      const data = await res.json();
+      if (data.metas) setCustomMetas(data.metas);
+      toast({ title: "Meta salva!", description: `Meta atualizada para ${formatCurrency(val)}` });
+      setEditingBarber(null);
+      setEditValue("");
+    } catch (err: any) {
+      console.error("[Metas] Erro ao salvar:", err);
+      toast({ title: "Erro ao salvar", description: "Não foi possível salvar a meta. Tente novamente.", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function resetBarberMeta(barberId: string) {
-    fetch(`${API_BASE}/api/metas/barbeiros`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ month: currentMonth, barberId }),
-    }).catch(() => {});
-    setCustomMetas(prev => {
-      const next = { ...prev };
-      delete next[barberId];
-      return next;
-    });
+  async function resetBarberMeta(barberId: string) {
+    try {
+      const res = await fetch(`${API_BASE}/api/metas/barbeiros`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: currentMonth, barberId }),
+      });
+      if (!res.ok) throw new Error(`Erro ${res.status}`);
+      setCustomMetas(prev => {
+        const next = { ...prev };
+        delete next[barberId];
+        return next;
+      });
+      toast({ title: "Meta resetada", description: "Voltou para proporcional à comissão." });
+    } catch {
+      toast({ title: "Erro", description: "Não foi possível resetar a meta.", variant: "destructive" });
+    }
   }
 
   function handleEditKeyDown(e: React.KeyboardEvent, barberId: string) {
@@ -329,8 +348,8 @@ export default function Metas() {
                               />
                             </div>
                             <div className="flex gap-1">
-                              <Button size="sm" className="h-9 px-3 bg-green-600 hover:bg-green-700 text-white text-xs" onClick={() => saveBarberMeta(b.id)}>
-                                Salvar
+                              <Button size="sm" className="h-9 px-3 bg-green-600 hover:bg-green-700 text-white text-xs" onClick={() => saveBarberMeta(b.id)} disabled={saving}>
+                                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Salvar"}
                               </Button>
                               <Button size="sm" variant="outline" className="h-9 px-2 text-xs" onClick={cancelEdit}>
                                 <X className="w-3.5 h-3.5" />

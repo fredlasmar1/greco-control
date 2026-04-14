@@ -18,6 +18,7 @@ import Metas from "@/pages/Metas";
 import Configuracoes from "@/pages/Configuracoes";
 import ClientesDuplicados from "@/pages/ClientesDuplicados";
 import RaioX from "@/pages/RaioX";
+import Consolidacao from "@/pages/Consolidacao";
 import NotFound from "@/pages/not-found";
 
 function AppRouter() {
@@ -45,6 +46,7 @@ function AppRouter() {
         <Route path="/duplicados" component={ClientesDuplicados} />
         <Route path="/configuracoes" component={Configuracoes} />
         <Route path="/raio-x" component={RaioX} />
+        <Route path="/consolidacao" component={Consolidacao} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

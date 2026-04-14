@@ -25,6 +25,8 @@ const DUPLICADOS_RESOLVIDOS_FILE = path.join(process.cwd(), ".duplicados-resolvi
 const METAS_FILE = path.join(process.cwd(), ".metas-data.json");
 const METAS_BARBEIROS_FILE = path.join(process.cwd(), ".metas-barbeiros.json");
 const CHECKLIST_FILE = path.join(process.cwd(), ".checklist-data.json");
+const CONSOLIDACAO_CONTAS_FILE = path.join(process.cwd(), ".consolidacao-contas.json");
+const CONSOLIDACAO_TRANSACOES_FILE = path.join(process.cwd(), ".consolidacao-transacoes.json");
 let financeEntries: FinanceEntry[] = [];
 let resolvedDuplicateIds: number[] = [];
 
@@ -39,6 +41,30 @@ let metasHistorico: MetaHistorico[] = [];
 // ─── Metas por Barbeiro ──────────────────────────────────
 // { "YYYY-MM": { "barberId": metaValue } }
 let metasBarbeiros: Record<string, Record<string, number>> = {};
+
+// ─── Consolidação: Contas e Transações ───────────────────
+interface ContaConsolidacao {
+  id: string;
+  nome: string;
+  tipo: 'banco' | 'maquininha' | 'caixa';
+  taxaDebito?: number; // %
+  taxaCredito?: number; // %
+  diasLiquidacaoDebito?: number; // padrão 1
+  diasLiquidacaoCredito?: number; // padrão 30
+  ativa: boolean;
+  createdAt: string;
+}
+interface TransacaoBanco {
+  id: string;
+  contaId: string;
+  date: string; // YYYY-MM-DD
+  description: string;
+  amount: number; // positivo = entrada
+  tipo?: 'pix' | 'debito' | 'credito' | 'outro';
+  importedAt: string;
+}
+let contasConsolidacao: ContaConsolidacao[] = [];
+let transacoesBanco: TransacaoBanco[] = [];
 
 // ─── Checklist Data ──────────────────────────────────────
 interface ChecklistDay {
@@ -120,6 +146,29 @@ try {
 function saveMetasBarbeiros() {
   try { fs.writeFileSync(METAS_BARBEIROS_FILE, JSON.stringify(metasBarbeiros, null, 2), "utf-8"); }
   catch { log("Metas barbeiros: could not save to disk", "metas"); }
+}
+
+// Consolidação: load on startup
+try {
+  if (fs.existsSync(CONSOLIDACAO_CONTAS_FILE)) {
+    contasConsolidacao = JSON.parse(fs.readFileSync(CONSOLIDACAO_CONTAS_FILE, "utf-8")) || [];
+    log(`Consolidação: ${contasConsolidacao.length} contas carregadas`, "consolidacao");
+  }
+} catch { log("Consolidação contas: starting fresh", "consolidacao"); }
+try {
+  if (fs.existsSync(CONSOLIDACAO_TRANSACOES_FILE)) {
+    transacoesBanco = JSON.parse(fs.readFileSync(CONSOLIDACAO_TRANSACOES_FILE, "utf-8")) || [];
+    log(`Consolidação: ${transacoesBanco.length} transações carregadas`, "consolidacao");
+  }
+} catch { log("Consolidação transações: starting fresh", "consolidacao"); }
+
+function saveContasConsolidacao() {
+  try { fs.writeFileSync(CONSOLIDACAO_CONTAS_FILE, JSON.stringify(contasConsolidacao, null, 2), "utf-8"); }
+  catch { log("Consolidação contas: could not save", "consolidacao"); }
+}
+function saveTransacoesBanco() {
+  try { fs.writeFileSync(CONSOLIDACAO_TRANSACOES_FILE, JSON.stringify(transacoesBanco, null, 2), "utf-8"); }
+  catch { log("Consolidação transações: could not save", "consolidacao"); }
 }
 
 function saveChecklist() {
@@ -1032,6 +1081,117 @@ export async function registerRoutes(
     checklistData[date] = { date, tasks };
     saveChecklist();
     return res.json({ ok: true });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // CONSOLIDAÇÃO ROUTES
+  // ──────────────────────────────────────────────────────────────────
+
+  // GET /api/consolidacao/contas — lista todas as contas
+  app.get("/api/consolidacao/contas", (_req: Request, res: Response) => {
+    return res.json(contasConsolidacao);
+  });
+
+  // POST /api/consolidacao/contas — cria ou atualiza conta
+  app.post("/api/consolidacao/contas", (req: Request, res: Response) => {
+    const { id, nome, tipo, taxaDebito, taxaCredito, diasLiquidacaoDebito, diasLiquidacaoCredito, ativa } = req.body;
+    if (!nome || !tipo) {
+      return res.status(400).json({ error: "nome e tipo são obrigatórios" });
+    }
+    if (id) {
+      const idx = contasConsolidacao.findIndex(c => c.id === id);
+      if (idx >= 0) {
+        contasConsolidacao[idx] = {
+          ...contasConsolidacao[idx],
+          nome, tipo,
+          taxaDebito: taxaDebito != null ? Number(taxaDebito) : undefined,
+          taxaCredito: taxaCredito != null ? Number(taxaCredito) : undefined,
+          diasLiquidacaoDebito: diasLiquidacaoDebito != null ? Number(diasLiquidacaoDebito) : 1,
+          diasLiquidacaoCredito: diasLiquidacaoCredito != null ? Number(diasLiquidacaoCredito) : 30,
+          ativa: ativa !== false,
+        };
+        saveContasConsolidacao();
+        return res.json(contasConsolidacao[idx]);
+      }
+    }
+    const newConta: ContaConsolidacao = {
+      id: `conta-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      nome, tipo,
+      taxaDebito: taxaDebito != null ? Number(taxaDebito) : undefined,
+      taxaCredito: taxaCredito != null ? Number(taxaCredito) : undefined,
+      diasLiquidacaoDebito: diasLiquidacaoDebito != null ? Number(diasLiquidacaoDebito) : 1,
+      diasLiquidacaoCredito: diasLiquidacaoCredito != null ? Number(diasLiquidacaoCredito) : 30,
+      ativa: ativa !== false,
+      createdAt: new Date().toISOString(),
+    };
+    contasConsolidacao.push(newConta);
+    saveContasConsolidacao();
+    return res.json(newConta);
+  });
+
+  // DELETE /api/consolidacao/contas/:id
+  app.delete("/api/consolidacao/contas/:id", (req: Request, res: Response) => {
+    const { id } = req.params;
+    const before = contasConsolidacao.length;
+    contasConsolidacao = contasConsolidacao.filter(c => c.id !== id);
+    transacoesBanco = transacoesBanco.filter(t => t.contaId !== id);
+    saveContasConsolidacao();
+    saveTransacoesBanco();
+    return res.json({ ok: true, removed: before - contasConsolidacao.length });
+  });
+
+  // GET /api/consolidacao/transacoes — query params: contaId?, mes? (YYYY-MM)
+  app.get("/api/consolidacao/transacoes", (req: Request, res: Response) => {
+    const { contaId, mes } = req.query;
+    let result = transacoesBanco;
+    if (contaId) result = result.filter(t => t.contaId === contaId);
+    if (mes) result = result.filter(t => t.date.startsWith(String(mes)));
+    return res.json(result);
+  });
+
+  // POST /api/consolidacao/transacoes — bulk insert (do upload CSV)
+  app.post("/api/consolidacao/transacoes", (req: Request, res: Response) => {
+    const { contaId, transacoes, replaceMonth } = req.body;
+    if (!contaId || !Array.isArray(transacoes)) {
+      return res.status(400).json({ error: "contaId e transacoes[] são obrigatórios" });
+    }
+    const conta = contasConsolidacao.find(c => c.id === contaId);
+    if (!conta) return res.status(404).json({ error: "Conta não encontrada" });
+
+    // Opcional: remover transações do mês antes de inserir (evita duplicar)
+    if (replaceMonth) {
+      transacoesBanco = transacoesBanco.filter(t =>
+        t.contaId !== contaId || !t.date.startsWith(String(replaceMonth))
+      );
+    }
+
+    const now = new Date().toISOString();
+    const novas: TransacaoBanco[] = transacoes.map((t: any, i: number) => ({
+      id: `tx-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
+      contaId,
+      date: String(t.date || "").slice(0, 10),
+      description: String(t.description || ""),
+      amount: Number(t.amount || 0),
+      tipo: t.tipo || undefined,
+      importedAt: now,
+    })).filter((t: TransacaoBanco) => t.date && !isNaN(t.amount));
+
+    transacoesBanco.push(...novas);
+    saveTransacoesBanco();
+    return res.json({ ok: true, inserted: novas.length });
+  });
+
+  // DELETE /api/consolidacao/transacoes — body: { contaId, mes }
+  app.delete("/api/consolidacao/transacoes", (req: Request, res: Response) => {
+    const { contaId, mes } = req.body;
+    const before = transacoesBanco.length;
+    transacoesBanco = transacoesBanco.filter(t => {
+      if (contaId && t.contaId !== contaId) return true;
+      if (mes && !t.date.startsWith(mes)) return true;
+      return false;
+    });
+    saveTransacoesBanco();
+    return res.json({ ok: true, removed: before - transacoesBanco.length });
   });
 
   // ──────────────────────────────────────────────────────────────────

@@ -1814,6 +1814,126 @@ export async function registerRoutes(
     return res.json(result);
   });
 
+  // POST /api/consolidacao/upload-ia — extrai transações de QUALQUER arquivo via Claude
+  app.post("/api/consolidacao/upload-ia", upload.single("file"), async (req: Request, res: Response) => {
+    try {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY não configurada no servidor." });
+      if (!req.file) return res.status(400).json({ error: "Arquivo não enviado." });
+
+      const contaId = (req.body.contaId || "").toString();
+      const mes = (req.body.mes || "").toString();
+      const conta = contasConsolidacao.find(c => c.id === contaId);
+      if (!conta) return res.status(404).json({ error: "Conta não encontrada." });
+
+      const name = (req.file.originalname || "").toLowerCase();
+      const isPdf = name.endsWith(".pdf");
+      const isExcel = name.endsWith(".xlsx") || name.endsWith(".xls");
+      const isCsv = name.endsWith(".csv") || name.endsWith(".txt");
+
+      log(`IA upload: ${req.file.originalname} (${(req.file.size / 1024).toFixed(0)}kb) → ${conta.nome}`, "consolidacao");
+
+      const anthropic = new Anthropic({ apiKey });
+      const prompt = `Este é um extrato bancário. Extraia TODAS as transações e retorne APENAS JSON (sem markdown).
+
+Formato:
+{
+  "transacoes": [
+    { "date": "YYYY-MM-DD", "description": "descrição completa", "amount": -100.50, "tipo": "pix|debito|credito|antecipacao|tarifa|transferencia|outro" }
+  ]
+}
+
+Regras CRÍTICAS:
+- amount: número puro em reais. Use ponto como separador decimal
+- NEGATIVO para saídas (débito/pagamento/saída/transferência enviada)
+- POSITIVO para entradas (crédito/recebimento/transferência recebida)
+- Valores brasileiros: "1.234,56" significa 1234.56 (mil duzentos e trinta e quatro reais)
+- IGNORE a coluna "Documento" (número da transação, geralmente grande)
+- IGNORE a coluna "Saldo" (cumulativo)
+- Use APENAS a coluna de "Valor" para o amount
+- Ignore linhas de saldo anterior, saldo atual, subtotais, cabeçalhos
+- tipo: analise a descrição. "Antecipacao" → antecipacao, "Pix" → pix, "Cartao Debito/Credito" → debito/credito, "Tarifa/Anuidade" → tarifa`;
+
+      let content: any[];
+      if (isPdf) {
+        const pdfBase64 = req.file.buffer.toString("base64");
+        content = [
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } },
+          { type: "text", text: prompt },
+        ];
+      } else if (isExcel || isCsv) {
+        // Lê como texto
+        let textContent = "";
+        if (isExcel) {
+          // Precisa de lib pra ler xlsx no backend. Workaround: enviar base64 pro Claude
+          // Mas Claude não aceita xlsx nativamente. Vamos avisar.
+          return res.status(400).json({
+            error: "Para Excel, use o upload normal. Se quiser IA, converta pra PDF ou CSV primeiro."
+          });
+        } else {
+          textContent = req.file.buffer.toString("utf-8");
+        }
+        content = [
+          {
+            type: "text",
+            text: `${prompt}\n\n--- CONTEÚDO DO CSV ---\n${textContent.slice(0, 100000)}`,
+          },
+        ];
+      } else {
+        return res.status(400).json({ error: "Formato não suportado. Use CSV, Excel ou PDF." });
+      }
+
+      const response = await anthropic.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 8000,
+        messages: [{ role: "user", content }],
+      });
+
+      const text = response.content.find(b => b.type === "text")?.text || "";
+      const cleaned = text.replace(/```json|```/g, "").trim();
+      let parsed: { transacoes: any[] };
+      try { parsed = JSON.parse(cleaned); }
+      catch {
+        log(`IA parse error. Claude retornou: ${text.slice(0, 500)}`, "consolidacao");
+        return res.status(500).json({ error: "IA não conseguiu extrair as transações." });
+      }
+
+      if (!Array.isArray(parsed?.transacoes) || parsed.transacoes.length === 0) {
+        return res.status(400).json({ error: "Nenhuma transação encontrada." });
+      }
+
+      if (mes) {
+        transacoesBanco = transacoesBanco.filter(t =>
+          t.contaId !== contaId || !t.date.startsWith(mes)
+        );
+      }
+
+      const now = new Date().toISOString();
+      const novas: TransacaoBanco[] = parsed.transacoes.map((t: any, i: number) => {
+        const amount = Number(t.amount || 0);
+        let categoria: CategoriaGasto | undefined;
+        if (amount < 0) categoria = autoCategorizarGasto(String(t.description || ""));
+        return {
+          id: `tx-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
+          contaId,
+          date: String(t.date || "").slice(0, 10),
+          description: String(t.description || ""),
+          amount,
+          tipo: t.tipo || undefined,
+          categoria,
+          importedAt: now,
+        };
+      }).filter(t => t.date && !isNaN(t.amount) && t.amount !== 0);
+
+      transacoesBanco.push(...novas);
+      saveTransacoesBanco();
+      return res.json({ ok: true, inserted: novas.length });
+    } catch (err: any) {
+      log(`IA upload error: ${err.message}`, "consolidacao");
+      return res.status(500).json({ error: err.message || "Erro processando arquivo com IA" });
+    }
+  });
+
   // POST /api/consolidacao/upload-pdf — extrai transações de PDF via Claude
   app.post("/api/consolidacao/upload-pdf", upload.single("file"), async (req: Request, res: Response) => {
     try {

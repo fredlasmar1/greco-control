@@ -15,7 +15,7 @@ import {
   Building2, CreditCard, Coins, Upload, AlertTriangle, CheckCircle2,
   TrendingDown, Plus, Trash2, ArrowRight, Pencil, Zap, Tag,
   Server, UserCog, Home, Droplets, ShoppingBag, Receipt as ReceiptIcon,
-  ArrowLeftRight, HelpCircle, Sparkles,
+  ArrowLeftRight, HelpCircle, Sparkles, Wand2,
 } from "lucide-react";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
@@ -941,7 +941,37 @@ function ContaDialog({ onSaved, conta, trigger, todasContas = [] }: { onSaved: (
 function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta: Conta; totalTx: number; onReload: () => void; mes: string; todasContas?: Conta[] }) {
   const { toast } = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
+  const aiFileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadingAI, setUploadingAI] = useState(false);
+
+  const handleFileAI = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingAI(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("contaId", conta.id);
+      form.append("mes", mes);
+      const res = await fetch(`${API_BASE}/api/consolidacao/upload-ia`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Falha no processamento com IA");
+      }
+      const data = await res.json();
+      toast({ title: "IA processou!", description: `${data.inserted} transações extraídas.` });
+      onReload();
+    } catch (err: any) {
+      toast({ title: "Erro no processamento IA", description: err.message, variant: "destructive" });
+    } finally {
+      setUploadingAI(false);
+      if (aiFileInput.current) aiFileInput.current.value = "";
+    }
+  };
 
   const Icon = conta.tipo === "banco" ? Building2 : conta.tipo === "maquininha" ? CreditCard : Coins;
 
@@ -1013,11 +1043,24 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
         }
 
         if (amount === 0) continue;
-        // Sanidade: rejeita valores absurdos (> 10 milhões) que indicam parse errado
+        // Sanidade por linha: rejeita valores absurdos (> 10 milhões) que indicam parse errado
         if (Math.abs(amount) > 10_000_000) continue;
 
         const tipo = detectTipo(description);
         transacoes.push({ date, description, amount, tipo });
+      }
+
+      // Sanidade agregada: se o total é absurdo (>R$ 10M) ou valor médio > R$ 500k,
+      // provavelmente pegamos a coluna errada. Aborta e sugere IA.
+      const totalAbs = transacoes.reduce((s, t) => s + Math.abs(t.amount), 0);
+      const avg = transacoes.length > 0 ? totalAbs / transacoes.length : 0;
+      if (totalAbs > 10_000_000 || avg > 500_000) {
+        toast({
+          title: "Parsing com valores suspeitos",
+          description: `Total parece errado (${formatCurrency(totalAbs)}). Tente 'Importar com IA' — Claude vai analisar o arquivo corretamente.`,
+          variant: "destructive",
+        });
+        return;
       }
 
       if (transacoes.length === 0) {
@@ -1115,29 +1158,43 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
 
         <p className="text-xs text-muted-foreground mb-3">{totalTx} transações em {formatMonth(mes)}</p>
         <input ref={fileInput} type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" onChange={handleFile} className="hidden" />
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="flex-1 text-xs h-8"
-            onClick={() => fileInput.current?.click()}
-            disabled={uploading}
-            title="Aceita CSV, Excel (.xlsx) ou PDF"
-          >
-            <Upload className="w-3.5 h-3.5 mr-1.5" />
-            {uploading ? "Importando..." : "Importar extrato"}
-          </Button>
-          {totalTx > 0 && (
+        <input ref={aiFileInput} type="file" accept=".csv,.txt,.pdf" onChange={handleFileAI} className="hidden" />
+        <div className="space-y-1.5">
+          <div className="flex gap-2">
             <Button
               size="sm"
               variant="outline"
-              className="text-xs h-8 text-red-400 hover:text-red-300 hover:border-red-500/50"
-              onClick={limparMes}
-              title="Limpar transações deste mês"
+              className="flex-1 text-xs h-8"
+              onClick={() => fileInput.current?.click()}
+              disabled={uploading || uploadingAI}
+              title="Aceita CSV, Excel (.xlsx) ou PDF"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Upload className="w-3.5 h-3.5 mr-1.5" />
+              {uploading ? "Importando..." : "Importar extrato"}
             </Button>
-          )}
+            {totalTx > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs h-8 text-red-400 hover:text-red-300 hover:border-red-500/50"
+                onClick={limparMes}
+                title="Limpar transações deste mês"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full text-xs h-8 border-primary/40 text-primary hover:bg-primary/10 hover:border-primary"
+            onClick={() => aiFileInput.current?.click()}
+            disabled={uploading || uploadingAI}
+            title="Usa IA (Claude) para extrair transações quando o parser normal falha"
+          >
+            <Wand2 className="w-3.5 h-3.5 mr-1.5" />
+            {uploadingAI ? "IA processando..." : "Importar com IA"}
+          </Button>
         </div>
       </CardContent>
     </Card>

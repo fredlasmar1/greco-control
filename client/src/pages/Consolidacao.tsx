@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +48,8 @@ interface Conta {
   taxaAntecipacao?: number;
   diasLiquidacaoDebito?: number;
   diasLiquidacaoCredito?: number;
+  transito?: boolean;
+  contaDestinoId?: string;
   ativa: boolean;
   createdAt: string;
 }
@@ -59,6 +62,22 @@ interface TransacaoBanco {
   tipo?: TipoTransacao;
   categoria?: CategoriaGasto;
   importedAt: string;
+}
+
+// ─── Parser universal: CSV, XLSX ────────────────────────────
+async function parseFileToRows(file: File): Promise<string[][]> {
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array", cellDates: false });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) return [];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: "" }) as any[][];
+    return rows.map(r => r.map(c => (c == null ? "" : String(c))));
+  }
+  // CSV / TXT
+  const text = await file.text();
+  return parseCSV(text);
 }
 
 // ─── CSV parser ────────────────────────────────────────────
@@ -196,6 +215,17 @@ export default function Consolidacao() {
     return getMonthTotals();
   }, [hasTrinksData, trinks]);
 
+  // IDs de contas de trânsito (ex: InfinityPay) e nomes pra detectar por descrição
+  const idsTransito = useMemo(() => new Set(contas.filter(c => c.transito).map(c => c.id)), [contas]);
+  const nomesTransito = useMemo(
+    () => contas.filter(c => c.transito).map(c => c.nome.toLowerCase().replace(/\s+/g, "")),
+    [contas]
+  );
+  const isTransferenciaDeTransito = (desc: string) => {
+    const d = (desc || "").toLowerCase().replace(/\s+/g, "");
+    return nomesTransito.some(n => n && d.includes(n));
+  };
+
   // ─── Totais por meio (somando antecipações como crédito) ──
   const totaisPorMeio = useMemo(() => {
     let pix = 0, debito = 0, credito = 0, dinheiro = 0, tarifas = 0;
@@ -203,9 +233,27 @@ export default function Consolidacao() {
       const conta = contas.find(c => c.id === t.contaId);
       if (!conta) return;
 
+      // Entradas em contas de trânsito contam (é o dinheiro real chegando).
+      // Entradas na conta destino que venham da conta de trânsito NÃO contam
+      // (para evitar duplicação). Como não temos matching exato de transações,
+      // usamos heurística: se existem contas de trânsito, as transferências
+      // recebidas na conta destino são marcadas como tipo "transferencia"
+      // e já são excluídas no bloco abaixo.
+
+      // Para contas de trânsito: considerar só as entradas (não contar a transferência saída)
+      if (conta.transito && t.amount < 0) {
+        // Saída de conta de trânsito é transferência interna, ignora
+        return;
+      }
+
       // Tarifas/taxas (negativos) — agrupam separado
       if (t.tipo === "tarifa" || t.tipo === "transferencia") {
         if (t.amount < 0) tarifas += Math.abs(t.amount);
+        return;
+      }
+
+      // Entrada que veio de uma conta de trânsito: ignora (já foi contada na origem)
+      if (!conta.transito && t.amount > 0 && isTransferenciaDeTransito(t.description)) {
         return;
       }
 
@@ -403,7 +451,7 @@ export default function Consolidacao() {
             <div className="w-1 h-5 bg-primary rounded-full" />
             <h2 className="text-base font-semibold">Contas Cadastradas</h2>
           </div>
-          <ContaDialog onSaved={loadData} />
+          <ContaDialog onSaved={loadData} todasContas={contas} />
         </div>
         {contas.length === 0 ? (
           <Card className="bg-card border-card-border">
@@ -414,7 +462,14 @@ export default function Consolidacao() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {contas.map(c => (
-              <ContaCard key={c.id} conta={c} totalTx={transacoes.filter(t => t.contaId === c.id).length} onReload={loadData} mes={selectedMes} />
+              <ContaCard
+                key={c.id}
+                conta={c}
+                totalTx={transacoes.filter(t => t.contaId === c.id).length}
+                onReload={loadData}
+                mes={selectedMes}
+                todasContas={contas}
+              />
             ))}
           </div>
         )}
@@ -574,7 +629,7 @@ export default function Consolidacao() {
 }
 
 // ─── Dialog de criar/editar conta ─────────────────────────
-function ContaDialog({ onSaved, conta, trigger }: { onSaved: () => void; conta?: Conta; trigger?: React.ReactNode }) {
+function ContaDialog({ onSaved, conta, trigger, todasContas = [] }: { onSaved: () => void; conta?: Conta; trigger?: React.ReactNode; todasContas?: Conta[] }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [nome, setNome] = useState("");
@@ -584,6 +639,8 @@ function ContaDialog({ onSaved, conta, trigger }: { onSaved: () => void; conta?:
   const [taxaDebito, setTaxaDebito] = useState("");
   const [taxaCredito, setTaxaCredito] = useState("");
   const [taxaAntecipacao, setTaxaAntecipacao] = useState("");
+  const [transito, setTransito] = useState(false);
+  const [contaDestinoId, setContaDestinoId] = useState("");
   const [saving, setSaving] = useState(false);
 
   // Reset form quando abrir
@@ -597,9 +654,12 @@ function ContaDialog({ onSaved, conta, trigger }: { onSaved: () => void; conta?:
         setTaxaDebito(conta.taxaDebito?.toString() || "");
         setTaxaCredito(conta.taxaCredito?.toString() || "");
         setTaxaAntecipacao(conta.taxaAntecipacao?.toString() || "");
+        setTransito(!!conta.transito);
+        setContaDestinoId(conta.contaDestinoId || "");
       } else {
         setNome(""); setTipo("banco"); setMeios(["pix"]);
         setTaxaPix(""); setTaxaDebito(""); setTaxaCredito(""); setTaxaAntecipacao("");
+        setTransito(false); setContaDestinoId("");
       }
     }
   }, [open, conta]);
@@ -632,6 +692,8 @@ function ContaDialog({ onSaved, conta, trigger }: { onSaved: () => void; conta?:
           taxaDebito: meios.includes("debito") && taxaDebito ? Number(taxaDebito) : undefined,
           taxaCredito: meios.includes("credito") && taxaCredito ? Number(taxaCredito) : undefined,
           taxaAntecipacao: meios.includes("credito") && taxaAntecipacao ? Number(taxaAntecipacao) : undefined,
+          transito,
+          contaDestinoId: transito && contaDestinoId ? contaDestinoId : undefined,
           ativa: true,
         }),
       });
@@ -717,6 +779,32 @@ function ContaDialog({ onSaved, conta, trigger }: { onSaved: () => void; conta?:
             </div>
           )}
 
+          {/* Conta de trânsito */}
+          <div className="border-t border-border pt-3 space-y-2">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <Checkbox checked={transito} onCheckedChange={v => setTransito(!!v)} />
+              <div className="flex-1">
+                <span className="text-sm font-medium">Conta de trânsito</span>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Marque se esta conta só recebe e transfere pra outra (ex: InfinityPay → Itaú). Evita contar o valor 2 vezes.
+                </p>
+              </div>
+            </label>
+            {transito && (
+              <div>
+                <Label className="text-xs">Transfere para qual conta?</Label>
+                <Select value={contaDestinoId} onValueChange={setContaDestinoId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione a conta destino" /></SelectTrigger>
+                  <SelectContent>
+                    {todasContas
+                      .filter(c => c.id !== conta?.id && !c.transito)
+                      .map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
           <Button onClick={save} disabled={saving} className="w-full bg-primary hover:bg-primary/80 text-white">
             {saving ? "Salvando..." : (conta ? "Atualizar" : "Criar conta")}
           </Button>
@@ -727,7 +815,7 @@ function ContaDialog({ onSaved, conta, trigger }: { onSaved: () => void; conta?:
 }
 
 // ─── Card de conta ──────────────────────────────────────────
-function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: number; onReload: () => void; mes: string }) {
+function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta: Conta; totalTx: number; onReload: () => void; mes: string; todasContas?: Conta[] }) {
   const { toast } = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -739,9 +827,33 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
     if (!file) return;
     setUploading(true);
     try {
-      const text = await file.text();
-      const rows = parseCSV(text);
-      if (rows.length < 2) throw new Error("CSV vazio");
+      const name = file.name.toLowerCase();
+
+      // PDF: envia pro backend extrair via IA
+      if (name.endsWith(".pdf")) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("contaId", conta.id);
+        form.append("mes", mes);
+        const res = await fetch(`${API_BASE}/api/consolidacao/upload-pdf`, {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "Falha ao processar PDF");
+        }
+        const data = await res.json();
+        toast({
+          title: "PDF processado!",
+          description: `${data.inserted} transações extraídas via IA.`,
+        });
+        onReload();
+        return;
+      }
+
+      const rows = await parseFileToRows(file);
+      if (rows.length < 2) throw new Error("Arquivo vazio");
 
       const headers = rows[0];
       const cols = detectColumns(headers);
@@ -845,6 +957,7 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
             <ContaDialog
               conta={conta}
               onSaved={onReload}
+              todasContas={todasContas}
               trigger={
                 <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary" title="Editar">
                   <Pencil className="w-3.5 h-3.5" />
@@ -877,7 +990,7 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
         )}
 
         <p className="text-xs text-muted-foreground mb-3">{totalTx} transações em {formatMonth(mes)}</p>
-        <input ref={fileInput} type="file" accept=".csv,.txt" onChange={handleFile} className="hidden" />
+        <input ref={fileInput} type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" onChange={handleFile} className="hidden" />
         <div className="flex gap-2">
           <Button
             size="sm"
@@ -885,9 +998,10 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
             className="flex-1 text-xs h-8"
             onClick={() => fileInput.current?.click()}
             disabled={uploading}
+            title="Aceita CSV, Excel (.xlsx) ou PDF"
           >
             <Upload className="w-3.5 h-3.5 mr-1.5" />
-            {uploading ? "Importando..." : "Importar CSV"}
+            {uploading ? "Importando..." : "Importar extrato"}
           </Button>
           {totalTx > 0 && (
             <Button

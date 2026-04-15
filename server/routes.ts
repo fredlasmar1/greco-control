@@ -7,7 +7,10 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
+import multer from "multer";
 import { kvGet, kvSet, waitForDb, isDbReady } from "./db";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // ─── Financeiro Data ──────────────────────────────────────
 interface FinanceEntry {
@@ -104,6 +107,10 @@ interface ContaConsolidacao {
   taxaAntecipacao?: number; // % por antecipação
   diasLiquidacaoDebito?: number; // padrão 1
   diasLiquidacaoCredito?: number; // padrão 30
+  // Conta de trânsito: recebe e transfere pra outra conta (ex: InfinityPay → Itaú)
+  // O valor conta como recebido mas as entradas da conta destino (que vieram daqui) são excluídas
+  transito?: boolean;
+  contaDestinoId?: string; // ID da conta pra onde transfere (se transito=true)
   ativa: boolean;
   createdAt: string;
 }
@@ -1731,6 +1738,7 @@ export async function registerRoutes(
       id, nome, tipo, meios,
       taxaDebito, taxaCredito, taxaPix, taxaAntecipacao,
       diasLiquidacaoDebito, diasLiquidacaoCredito, ativa,
+      transito, contaDestinoId,
     } = req.body;
     if (!nome || !tipo) {
       return res.status(400).json({ error: "nome e tipo são obrigatórios" });
@@ -1758,6 +1766,8 @@ export async function registerRoutes(
           taxaAntecipacao: num(taxaAntecipacao),
           diasLiquidacaoDebito: num(diasLiquidacaoDebito) ?? 1,
           diasLiquidacaoCredito: num(diasLiquidacaoCredito) ?? 30,
+          transito: !!transito,
+          contaDestinoId: transito && contaDestinoId ? String(contaDestinoId) : undefined,
           ativa: ativa !== false,
         };
         saveContasConsolidacao();
@@ -1774,6 +1784,8 @@ export async function registerRoutes(
       taxaAntecipacao: num(taxaAntecipacao),
       diasLiquidacaoDebito: num(diasLiquidacaoDebito) ?? 1,
       diasLiquidacaoCredito: num(diasLiquidacaoCredito) ?? 30,
+      transito: !!transito,
+      contaDestinoId: transito && contaDestinoId ? String(contaDestinoId) : undefined,
       ativa: ativa !== false,
       createdAt: new Date().toISOString(),
     };
@@ -1800,6 +1812,102 @@ export async function registerRoutes(
     if (contaId) result = result.filter(t => t.contaId === contaId);
     if (mes) result = result.filter(t => t.date.startsWith(String(mes)));
     return res.json(result);
+  });
+
+  // POST /api/consolidacao/upload-pdf — extrai transações de PDF via Claude
+  app.post("/api/consolidacao/upload-pdf", upload.single("file"), async (req: Request, res: Response) => {
+    try {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY não configurada no servidor." });
+      if (!req.file) return res.status(400).json({ error: "Arquivo não enviado." });
+
+      const contaId = (req.body.contaId || "").toString();
+      const mes = (req.body.mes || "").toString();
+      const conta = contasConsolidacao.find(c => c.id === contaId);
+      if (!conta) return res.status(404).json({ error: "Conta não encontrada." });
+
+      log(`PDF upload: ${req.file.originalname} (${(req.file.size / 1024).toFixed(0)}kb) → ${conta.nome}`, "consolidacao");
+
+      const anthropic = new Anthropic({ apiKey });
+      const pdfBase64 = req.file.buffer.toString("base64");
+
+      const prompt = `Este é um extrato bancário em PDF. Extraia TODAS as transações e retorne em JSON puro (sem markdown, sem backticks, sem texto extra).
+
+Formato:
+{
+  "transacoes": [
+    { "date": "YYYY-MM-DD", "description": "descrição completa", "amount": -100.50, "tipo": "pix|debito|credito|antecipacao|tarifa|transferencia|outro" }
+  ]
+}
+
+Regras:
+- amount: negativo para saídas (débito/pagamento), positivo para entradas (crédito/recebimento)
+- Use o valor numérico puro (não use R$, nem separadores brasileiros)
+- Ignore linhas de saldo, subtotais, cabeçalhos
+- tipo: escolha o mais apropriado. Use "antecipacao" se for antecipação de cartão
+- Se não conseguir detectar o tipo, use "outro"`;
+
+      const response = await anthropic.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 8000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "document",
+                source: { type: "base64", media_type: "application/pdf", data: pdfBase64 },
+              },
+              { type: "text", text: prompt },
+            ],
+          },
+        ],
+      });
+
+      const text = response.content.find(b => b.type === "text")?.text || "";
+      const cleaned = text.replace(/```json|```/g, "").trim();
+      let parsed: { transacoes: any[] };
+      try { parsed = JSON.parse(cleaned); }
+      catch {
+        log(`PDF parse error. Claude retornou: ${text.slice(0, 500)}`, "consolidacao");
+        return res.status(500).json({ error: "IA não conseguiu extrair as transações. Tente CSV ou Excel." });
+      }
+
+      if (!Array.isArray(parsed?.transacoes) || parsed.transacoes.length === 0) {
+        return res.status(400).json({ error: "Nenhuma transação encontrada no PDF." });
+      }
+
+      // Remove do mês se replaceMonth
+      if (mes) {
+        transacoesBanco = transacoesBanco.filter(t =>
+          t.contaId !== contaId || !t.date.startsWith(mes)
+        );
+      }
+
+      const now = new Date().toISOString();
+      const novas: TransacaoBanco[] = parsed.transacoes.map((t: any, i: number) => {
+        const amount = Number(t.amount || 0);
+        let categoria: CategoriaGasto | undefined;
+        if (amount < 0) categoria = autoCategorizarGasto(String(t.description || ""));
+        return {
+          id: `tx-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
+          contaId,
+          date: String(t.date || "").slice(0, 10),
+          description: String(t.description || ""),
+          amount,
+          tipo: t.tipo || undefined,
+          categoria,
+          importedAt: now,
+        };
+      }).filter(t => t.date && !isNaN(t.amount) && t.amount !== 0);
+
+      transacoesBanco.push(...novas);
+      saveTransacoesBanco();
+      return res.json({ ok: true, inserted: novas.length });
+    } catch (err: any) {
+      log(`PDF upload error: ${err.message}`, "consolidacao");
+      return res.status(500).json({ error: err.message || "Erro processando PDF" });
+    }
   });
 
   // POST /api/consolidacao/transacoes — bulk insert (do upload CSV)

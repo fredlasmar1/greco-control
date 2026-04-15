@@ -1119,6 +1119,82 @@ export async function registerRoutes(
   });
 
   // ─── GET /api/trinks/transacoes ─────────────────────────
+  // GET /api/trinks/hoje — apenas comandas fechadas de hoje (economiza chamadas)
+  app.get("/api/trinks/hoje", async (_req: Request, res: Response) => {
+    try {
+      const now = new Date();
+      const hoje = now.toISOString().slice(0, 10);
+      const cacheKey = `hoje_${hoje}`;
+      // Cache curto de 3 minutos para não esbaforir a API
+      const cached = getCached(cacheKey);
+      if (cached) return res.json({ ...cached, fromCache: true });
+
+      const data = await trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: hoje });
+      const lista = Array.isArray(data) ? data : (data?.data || []);
+
+      // Calcula resumo
+      let total = 0;
+      let pix = 0, cartao = 0, dinheiro = 0, outros = 0;
+      const comandas: any[] = [];
+
+      lista.forEach((t: any) => {
+        const val = Number(t.totalPagar || t.valor || 0);
+        total += val;
+
+        // Extrai informações da comanda
+        const cliente = t.cliente?.nome || t.clienteNome || "Cliente";
+        const profissional = t.profissional?.nome || t.profissionalNome || "—";
+        const hora = (t.dataHoraInicio || t.dataHora || "").slice(11, 16);
+
+        // Detecta meios de pagamento
+        const formas = t.formasPagamentos || t.formasPagamento || [];
+        const meiosDaComanda: string[] = [];
+        if (Array.isArray(formas) && formas.length > 0) {
+          formas.forEach((fp: any) => {
+            const nome = (fp.nome || fp.descricao || "").toLowerCase();
+            const v = Number(fp.valor || 0);
+            if (nome.includes("pix")) { pix += v; meiosDaComanda.push("pix"); }
+            else if (/créd|cred|déb|deb|cart/.test(nome)) { cartao += v; meiosDaComanda.push("cartao"); }
+            else if (/dinhe|espécie|cash/.test(nome)) { dinheiro += v; meiosDaComanda.push("dinheiro"); }
+            else { outros += v; meiosDaComanda.push("outros"); }
+          });
+        } else {
+          const method = (t.formaPagamento || t.metodoPagamento || "").toLowerCase();
+          if (method.includes("pix")) { pix += val; meiosDaComanda.push("pix"); }
+          else if (/cart/.test(method)) { cartao += val; meiosDaComanda.push("cartao"); }
+          else if (/dinhe/.test(method)) { dinheiro += val; meiosDaComanda.push("dinheiro"); }
+          else { outros += val; meiosDaComanda.push("outros"); }
+        }
+
+        comandas.push({
+          id: t.id,
+          hora,
+          cliente,
+          profissional,
+          total: val,
+          meios: Array.from(new Set(meiosDaComanda)),
+        });
+      });
+
+      // Ordena por hora (mais recente primeiro)
+      comandas.sort((a, b) => (b.hora || "").localeCompare(a.hora || ""));
+
+      const result = {
+        data: hoje,
+        total,
+        count: comandas.length,
+        breakdown: { pix, cartao, dinheiro, outros },
+        comandas,
+        fetchedAt: new Date().toISOString(),
+      };
+
+      setCache(cacheKey, result, 3 * 60 * 1000); // 3 min
+      return res.json(result);
+    } catch (err: any) {
+      return handleTrinksError(err, res);
+    }
+  });
+
   app.get("/api/trinks/transacoes", async (req: Request, res: Response) => {
     try {
       const params: Record<string, string> = {};

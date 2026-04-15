@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { useStore } from "@/lib/store";
 import {
   useTrinksStore,
@@ -325,10 +325,37 @@ function SyncBanner({
   );
 }
 
+interface HojeData {
+  data: string;
+  total: number;
+  count: number;
+  breakdown: { pix: number; cartao: number; dinheiro: number; outros: number };
+  comandas: { id: string; hora: string; cliente: string; profissional: string; total: number; meios: string[] }[];
+  fetchedAt: string;
+  fromCache?: boolean;
+}
+
 export default function Dashboard() {
   const { isConnected, trinks, lastSync, isSyncing, syncData } =
     useTrinksStore();
   const hasTrinksData = isConnected && trinks !== null;
+
+  // "Hoje" em tempo-quase-real (1 chamada leve à API, cacheada 3 min)
+  const [hoje, setHoje] = useState<HojeData | null>(null);
+  const [hojeLoading, setHojeLoading] = useState(false);
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+
+  const loadHoje = useCallback(async () => {
+    if (!isConnected) return;
+    setHojeLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/trinks/hoje`);
+      if (res.ok) setHoje(await res.json());
+    } catch {}
+    setHojeLoading(false);
+  }, [isConnected, API_BASE]);
+
+  useEffect(() => { loadHoje(); }, [loadHoje]);
 
   // Period filter state
   const [periodFilter, setPeriodFilter] = useState("");
@@ -472,10 +499,21 @@ export default function Dashboard() {
                 <Calendar className="w-4 h-4 text-primary" />
               </div>
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Hoje</span>
+              {hoje && hoje.count > 0 && (
+                <span className="text-[10px] text-muted-foreground ml-auto">{hoje.count} comanda{hoje.count !== 1 ? "s" : ""}</span>
+              )}
             </div>
             <p className="text-2xl sm:text-3xl font-bold text-foreground" data-testid="revenue-today">
-              {formatCurrency(revenueSummary.dayRevenue)}
+              {formatCurrency(hoje?.total ?? revenueSummary.dayRevenue)}
             </p>
+            {hoje && hoje.total > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {hoje.breakdown.pix > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary">Pix {formatCurrency(hoje.breakdown.pix)}</span>}
+                {hoje.breakdown.cartao > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">Cartão {formatCurrency(hoje.breakdown.cartao)}</span>}
+                {hoje.breakdown.dinheiro > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">Dinheiro {formatCurrency(hoje.breakdown.dinheiro)}</span>}
+                {hoje.breakdown.outros > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Outros {formatCurrency(hoje.breakdown.outros)}</span>}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -508,6 +546,88 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Comandas Fechadas Hoje */}
+      {isConnected && (
+        <Card className="bg-card border-card-border">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-sm font-medium">Comandas Fechadas Hoje</CardTitle>
+                {hoje && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {hoje.count} · {formatCurrency(hoje.total)}
+                  </span>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-primary hover:bg-primary/10"
+                onClick={loadHoje}
+                disabled={hojeLoading}
+              >
+                <RefreshCw className={`w-3 h-3 mr-1 ${hojeLoading ? "animate-spin" : ""}`} />
+                Atualizar
+              </Button>
+            </div>
+            {hoje?.fromCache && (
+              <p className="text-[10px] text-muted-foreground">
+                Em cache · atualiza a cada 3 minutos para economizar chamadas
+              </p>
+            )}
+          </CardHeader>
+          <CardContent className="p-0">
+            {!hoje ? (
+              <div className="p-6 text-center text-xs text-muted-foreground">
+                {hojeLoading ? "Carregando..." : "Clique em atualizar"}
+              </div>
+            ) : hoje.count === 0 ? (
+              <div className="p-6 text-center text-xs text-muted-foreground">
+                Nenhuma comanda fechada ainda hoje
+              </div>
+            ) : (
+              <div className="max-h-80 overflow-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-card border-b border-border">
+                    <tr>
+                      <th className="text-left p-2.5 text-muted-foreground font-medium">Hora</th>
+                      <th className="text-left p-2.5 text-muted-foreground font-medium">Cliente</th>
+                      <th className="text-left p-2.5 text-muted-foreground font-medium">Profissional</th>
+                      <th className="text-left p-2.5 text-muted-foreground font-medium">Pagamento</th>
+                      <th className="text-right p-2.5 text-muted-foreground font-medium">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {hoje.comandas.map(c => (
+                      <tr key={c.id} className="border-b border-border/50 hover:bg-muted/20">
+                        <td className="p-2.5 font-mono whitespace-nowrap">{c.hora || "—"}</td>
+                        <td className="p-2.5 truncate max-w-[180px]">{c.cliente}</td>
+                        <td className="p-2.5 truncate max-w-[140px] text-muted-foreground">{c.profissional}</td>
+                        <td className="p-2.5">
+                          <div className="flex flex-wrap gap-1">
+                            {c.meios.map(m => {
+                              const map: Record<string, { label: string; cls: string }> = {
+                                pix: { label: "Pix", cls: "bg-primary/15 text-primary" },
+                                cartao: { label: "Cartão", cls: "bg-emerald-500/15 text-emerald-400" },
+                                dinheiro: { label: "Dinheiro", cls: "bg-amber-500/15 text-amber-400" },
+                                outros: { label: "Outros", cls: "bg-muted text-muted-foreground" },
+                              };
+                              const info = map[m] || map.outros;
+                              return <span key={m} className={`text-[10px] px-1.5 py-0.5 rounded ${info.cls}`}>{info.label}</span>;
+                            })}
+                          </div>
+                        </td>
+                        <td className="p-2.5 text-right font-semibold whitespace-nowrap">{formatCurrency(c.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Period Filter */}
       <Card className="bg-card border-card-border">

@@ -62,6 +62,7 @@ interface ContaConsolidacao {
   createdAt: string;
 }
 type TipoTransacao = 'pix' | 'debito' | 'credito' | 'antecipacao' | 'tarifa' | 'transferencia' | 'outro';
+type CategoriaGasto = 'sistema' | 'funcionario' | 'aluguel' | 'agua_luz' | 'produtos' | 'imposto' | 'transferencia_interna' | 'esporadica' | 'outros';
 interface TransacaoBanco {
   id: string;
   contaId: string;
@@ -69,8 +70,13 @@ interface TransacaoBanco {
   description: string;
   amount: number; // positivo = entrada
   tipo?: TipoTransacao;
+  categoria?: CategoriaGasto; // só faz sentido pra valores negativos (gastos)
   importedAt: string;
 }
+
+// Regras de auto-categorização: { palavra-chave (lower) → categoria }
+let regrasGastos: Record<string, CategoriaGasto> = {};
+const REGRAS_GASTOS_FILE = path.join(process.cwd(), ".regras-gastos.json");
 let contasConsolidacao: ContaConsolidacao[] = [];
 let transacoesBanco: TransacaoBanco[] = [];
 
@@ -246,6 +252,44 @@ function saveTransacoesBanco() {
   try { fs.writeFileSync(CONSOLIDACAO_TRANSACOES_FILE, JSON.stringify(transacoesBanco, null, 2), "utf-8"); }
   catch { log("Consolidação transações: could not save", "consolidacao"); }
 }
+
+// Carrega regras de gastos
+try {
+  if (fs.existsSync(REGRAS_GASTOS_FILE)) {
+    regrasGastos = JSON.parse(fs.readFileSync(REGRAS_GASTOS_FILE, "utf-8")) || {};
+    log(`Regras gastos: ${Object.keys(regrasGastos).length} regras carregadas`, "consolidacao");
+  }
+} catch { log("Regras gastos: starting fresh", "consolidacao"); }
+
+function saveRegrasGastos() {
+  try { fs.writeFileSync(REGRAS_GASTOS_FILE, JSON.stringify(regrasGastos, null, 2), "utf-8"); }
+  catch { log("Regras gastos: could not save", "consolidacao"); }
+}
+
+// Auto-categoriza pela descrição
+function autoCategorizarGasto(description: string): CategoriaGasto | undefined {
+  const d = (description || "").toLowerCase();
+
+  // Primeiro: regras aprendidas pelo usuário (match parcial)
+  for (const [palavra, categoria] of Object.entries(regrasGastos)) {
+    if (d.includes(palavra.toLowerCase())) return categoria;
+  }
+
+  // Depois: padrões nativos básicos
+  if (/aluguel|imobili|imovel/.test(d)) return "aluguel";
+  if (/energia|enel|equatorial|cemig|copel|celpe|coelba|luz/.test(d)) return "agua_luz";
+  if (/saneago|sabesp|cedae|sanepar|caesb|agua/.test(d)) return "agua_luz";
+  if (/iss\b|darf|gps |inss|simples\s*nacional|imposto|tribut/.test(d)) return "imposto";
+  if (/trinks|infinitypay\s*plano|vivo|claro|tim|oi |internet|netflix|sistema/.test(d)) return "sistema";
+  if (/transf.*entre.*contas|transf\s*propria|para\s*minha\s*conta/.test(d)) return "transferencia_interna";
+
+  return undefined;
+}
+
+const CATEGORIAS_VALIDAS: CategoriaGasto[] = [
+  'sistema', 'funcionario', 'aluguel', 'agua_luz', 'produtos', 'imposto',
+  'transferencia_interna', 'esporadica', 'outros',
+];
 
 // Usuários: load on startup
 try {
@@ -1589,19 +1633,91 @@ export async function registerRoutes(
     }
 
     const now = new Date().toISOString();
-    const novas: TransacaoBanco[] = transacoes.map((t: any, i: number) => ({
-      id: `tx-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
-      contaId,
-      date: String(t.date || "").slice(0, 10),
-      description: String(t.description || ""),
-      amount: Number(t.amount || 0),
-      tipo: t.tipo || undefined,
-      importedAt: now,
-    })).filter((t: TransacaoBanco) => t.date && !isNaN(t.amount));
+    const novas: TransacaoBanco[] = transacoes.map((t: any, i: number) => {
+      const description = String(t.description || "");
+      const amount = Number(t.amount || 0);
+      // Auto-categoriza só se for gasto (negativo) e ainda não veio com categoria
+      let categoria: CategoriaGasto | undefined = t.categoria;
+      if (!categoria && amount < 0) {
+        categoria = autoCategorizarGasto(description);
+      }
+      return {
+        id: `tx-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
+        contaId,
+        date: String(t.date || "").slice(0, 10),
+        description,
+        amount,
+        tipo: t.tipo || undefined,
+        categoria,
+        importedAt: now,
+      };
+    }).filter((t: TransacaoBanco) => t.date && !isNaN(t.amount));
 
     transacoesBanco.push(...novas);
     saveTransacoesBanco();
     return res.json({ ok: true, inserted: novas.length });
+  });
+
+  // PUT /api/consolidacao/transacoes/:id/categoria — atualiza categoria de uma tx
+  app.put("/api/consolidacao/transacoes/:id/categoria", (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { categoria, aprenderRegra } = req.body;
+    const tx = transacoesBanco.find(t => t.id === id);
+    if (!tx) return res.status(404).json({ error: "Transação não encontrada" });
+
+    if (categoria === null || categoria === "") {
+      tx.categoria = undefined;
+    } else if (CATEGORIAS_VALIDAS.includes(categoria)) {
+      tx.categoria = categoria;
+    } else {
+      return res.status(400).json({ error: "Categoria inválida" });
+    }
+    saveTransacoesBanco();
+
+    // Aprender regra: extrai o "núcleo" da descrição e salva
+    if (aprenderRegra && tx.categoria) {
+      // Remove números, datas e caracteres especiais — pega palavras significativas
+      const palavras = tx.description
+        .toLowerCase()
+        .replace(/[\d/.,\-]+/g, " ")
+        .split(/\s+/)
+        .filter(p => p.length >= 4)
+        .slice(0, 3); // pega até 3 palavras significativas
+      const chave = palavras.join(" ").trim();
+      if (chave.length >= 4) {
+        regrasGastos[chave] = tx.categoria;
+        saveRegrasGastos();
+
+        // Aplica retroativamente em transações similares sem categoria
+        let count = 0;
+        transacoesBanco.forEach(other => {
+          if (other.id !== tx.id && !other.categoria && other.amount < 0) {
+            const desc = other.description.toLowerCase();
+            if (desc.includes(chave)) {
+              other.categoria = tx.categoria;
+              count++;
+            }
+          }
+        });
+        if (count > 0) saveTransacoesBanco();
+        return res.json({ ok: true, categoria: tx.categoria, regraAprendida: chave, aplicadaEm: count });
+      }
+    }
+
+    return res.json({ ok: true, categoria: tx.categoria });
+  });
+
+  // GET /api/consolidacao/regras-gastos — lista regras aprendidas
+  app.get("/api/consolidacao/regras-gastos", (_req: Request, res: Response) => {
+    return res.json(regrasGastos);
+  });
+
+  // DELETE /api/consolidacao/regras-gastos/:chave — remove regra
+  app.delete("/api/consolidacao/regras-gastos/:chave", (req: Request, res: Response) => {
+    const chave = decodeURIComponent(req.params.chave);
+    delete regrasGastos[chave];
+    saveRegrasGastos();
+    return res.json({ ok: true });
   });
 
   // DELETE /api/consolidacao/transacoes — body: { contaId, mes }

@@ -12,7 +12,9 @@ import { useTrinksStore, getTrinksMonthTotals } from "@/lib/trinksStore";
 import { formatCurrency, getMonthTotals } from "@/lib/demoData";
 import {
   Building2, CreditCard, Coins, Upload, AlertTriangle, CheckCircle2,
-  TrendingDown, Plus, Trash2, ArrowRight, Pencil, Zap,
+  TrendingDown, Plus, Trash2, ArrowRight, Pencil, Zap, Tag,
+  Server, UserCog, Home, Droplets, ShoppingBag, Receipt as ReceiptIcon,
+  ArrowLeftRight, HelpCircle, Sparkles,
 } from "lucide-react";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
@@ -20,6 +22,19 @@ const API_BASE = (globalThis as any).__API_BASE__ || "";
 type TipoConta = "banco" | "maquininha" | "caixa";
 type Meio = "pix" | "debito" | "credito" | "dinheiro";
 type TipoTransacao = "pix" | "debito" | "credito" | "antecipacao" | "tarifa" | "transferencia" | "outro";
+type CategoriaGasto = "sistema" | "funcionario" | "aluguel" | "agua_luz" | "produtos" | "imposto" | "transferencia_interna" | "esporadica" | "outros";
+
+const CATEGORIAS_INFO: Record<CategoriaGasto, { label: string; icon: any; color: string }> = {
+  sistema: { label: "Sistema", icon: Server, color: "text-blue-400 border-blue-500/40 bg-blue-500/10" },
+  funcionario: { label: "Funcionário", icon: UserCog, color: "text-violet-400 border-violet-500/40 bg-violet-500/10" },
+  aluguel: { label: "Aluguel", icon: Home, color: "text-amber-400 border-amber-500/40 bg-amber-500/10" },
+  agua_luz: { label: "Água/Luz", icon: Droplets, color: "text-cyan-400 border-cyan-500/40 bg-cyan-500/10" },
+  produtos: { label: "Produtos", icon: ShoppingBag, color: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10" },
+  imposto: { label: "Imposto", icon: ReceiptIcon, color: "text-red-400 border-red-500/40 bg-red-500/10" },
+  transferencia_interna: { label: "Transf. Interna", icon: ArrowLeftRight, color: "text-muted-foreground border-border bg-muted/30" },
+  esporadica: { label: "Esporádica", icon: Sparkles, color: "text-pink-400 border-pink-500/40 bg-pink-500/10" },
+  outros: { label: "Outros", icon: HelpCircle, color: "text-muted-foreground border-border bg-muted/30" },
+};
 
 interface Conta {
   id: string;
@@ -42,6 +57,7 @@ interface TransacaoBanco {
   description: string;
   amount: number;
   tipo?: TipoTransacao;
+  categoria?: CategoriaGasto;
   importedAt: string;
 }
 
@@ -143,6 +159,24 @@ export default function Consolidacao() {
 
   useEffect(() => { loadData(); }, [selectedMes]);
 
+  // Atualiza categoria de uma transação (e opcionalmente aprende o padrão)
+  const atualizarCategoria = async (txId: string, categoria: CategoriaGasto | null, aprenderRegra = false) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/consolidacao/transacoes/${txId}/categoria`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoria, aprenderRegra }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.aplicadaEm > 0) {
+          toast({ title: "Padrão aprendido!", description: `Aplicado em outras ${data.aplicadaEm} transação${data.aplicadaEm > 1 ? "ões" : ""}.` });
+        }
+        loadData();
+      }
+    } catch {}
+  };
+
   const trinksTotals = useMemo(() => {
     if (hasTrinksData) return getTrinksMonthTotals(trinks!);
     return getMonthTotals();
@@ -190,6 +224,32 @@ export default function Consolidacao() {
     });
     return { pix, debito, credito, cartao: debito + credito, dinheiro, tarifas, total: pix + debito + credito + dinheiro };
   }, [transacoes, contas]);
+
+  // ─── Gastos por categoria ─────────────────────────────
+  const gastos = useMemo(() => {
+    return transacoes
+      .filter(t => t.amount < 0 && t.tipo !== "tarifa" && t.tipo !== "transferencia")
+      .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  }, [transacoes]);
+
+  const gastosPorCategoria = useMemo(() => {
+    const m: Record<string, { total: number; count: number }> = {};
+    let semCategoria = 0;
+    let semCategoriaCount = 0;
+    gastos.forEach(g => {
+      const cat = g.categoria || "_sem_";
+      if (cat === "_sem_") {
+        semCategoria += Math.abs(g.amount);
+        semCategoriaCount++;
+      } else {
+        if (!m[cat]) m[cat] = { total: 0, count: 0 };
+        m[cat].total += Math.abs(g.amount);
+        m[cat].count++;
+      }
+    });
+    const totalGastos = Object.values(m).reduce((s, v) => s + v.total, 0) + semCategoria;
+    return { porCategoria: m, semCategoria, semCategoriaCount, total: totalGastos };
+  }, [gastos]);
 
   // ─── Discrepâncias Trinks vs Banco ───────────────────
   const discrepancias = useMemo(() => {
@@ -345,6 +405,100 @@ export default function Consolidacao() {
           </div>
         )}
       </div>
+
+      {/* Gastos do mês */}
+      {gastos.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-1 h-5 bg-primary rounded-full" />
+            <h2 className="text-base font-semibold">Gastos do Mês</h2>
+            <Badge variant="secondary" className="text-[10px]">
+              {formatCurrency(gastosPorCategoria.total)}
+            </Badge>
+            {gastosPorCategoria.semCategoriaCount > 0 && (
+              <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/40 bg-amber-500/10">
+                {gastosPorCategoria.semCategoriaCount} sem categoria
+              </Badge>
+            )}
+          </div>
+
+          {/* Resumo por categoria */}
+          {Object.keys(gastosPorCategoria.porCategoria).length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mb-4">
+              {Object.entries(gastosPorCategoria.porCategoria)
+                .sort((a, b) => b[1].total - a[1].total)
+                .map(([cat, v]) => {
+                  const info = CATEGORIAS_INFO[cat as CategoriaGasto];
+                  if (!info) return null;
+                  const Icon = info.icon;
+                  return (
+                    <Card key={cat} className="bg-card border-card-border">
+                      <CardContent className="p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide truncate">{info.label}</span>
+                        </div>
+                        <p className="text-sm font-bold truncate">{formatCurrency(v.total)}</p>
+                        <p className="text-[10px] text-muted-foreground">{v.count} transação{v.count > 1 ? "ões" : ""}</p>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              {gastosPorCategoria.semCategoria > 0 && (
+                <Card className="bg-amber-500/5 border-amber-500/20">
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="text-[10px] font-medium text-amber-400 uppercase tracking-wide">Sem categoria</span>
+                    </div>
+                    <p className="text-sm font-bold text-amber-300 truncate">{formatCurrency(gastosPorCategoria.semCategoria)}</p>
+                    <p className="text-[10px] text-muted-foreground">{gastosPorCategoria.semCategoriaCount} pendente{gastosPorCategoria.semCategoriaCount > 1 ? "s" : ""}</p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+
+          {/* Lista de gastos categorizáveis */}
+          <Card className="bg-card border-card-border">
+            <CardContent className="p-0 max-h-96 overflow-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-card border-b border-border">
+                  <tr>
+                    <th className="text-left p-2.5 text-muted-foreground font-medium">Data</th>
+                    <th className="text-left p-2.5 text-muted-foreground font-medium">Descrição</th>
+                    <th className="text-right p-2.5 text-muted-foreground font-medium">Valor</th>
+                    <th className="text-left p-2.5 text-muted-foreground font-medium">Categoria</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gastos.map(g => {
+                    const conta = contas.find(c => c.id === g.contaId);
+                    return (
+                      <tr key={g.id} className={`border-b border-border/50 hover:bg-muted/20 ${!g.categoria ? "bg-amber-500/5" : ""}`}>
+                        <td className="p-2.5 font-mono whitespace-nowrap">{g.date.slice(8)}/{g.date.slice(5,7)}</td>
+                        <td className="p-2.5">
+                          <div className="truncate max-w-[260px]" title={g.description}>{g.description}</div>
+                          <div className="text-[10px] text-muted-foreground mt-0.5">{conta?.nome}</div>
+                        </td>
+                        <td className="p-2.5 text-right font-semibold whitespace-nowrap text-red-400">
+                          {formatCurrency(g.amount)}
+                        </td>
+                        <td className="p-2.5">
+                          <CategoriaSelector
+                            value={g.categoria}
+                            onChange={(cat, aprender) => atualizarCategoria(g.id, cat, aprender)}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Lista de transações */}
       {transacoes.length > 0 && (
@@ -685,5 +839,70 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+
+// ─── Seletor de categoria com aprendizado ─────────────────
+function CategoriaSelector({ value, onChange }: {
+  value?: CategoriaGasto;
+  onChange: (cat: CategoriaGasto | null, aprenderRegra: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const info = value ? CATEGORIAS_INFO[value] : null;
+  const Icon = info?.icon;
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        {value && info && Icon ? (
+          <button className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-[10px] border ${info.color} hover:opacity-80 transition`}>
+            <Icon className="w-3 h-3" />
+            <span>{info.label}</span>
+          </button>
+        ) : (
+          <button className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[10px] border border-dashed border-amber-500/40 text-amber-400 bg-amber-500/5 hover:bg-amber-500/10 transition">
+            <Tag className="w-3 h-3" />
+            <span>Categorizar</span>
+          </button>
+        )}
+      </DialogTrigger>
+      <DialogContent className="bg-card border-card-border max-w-md">
+        <DialogHeader><DialogTitle className="text-base">Categorizar gasto</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">Escolha a categoria que melhor representa este gasto.</p>
+          <div className="grid grid-cols-2 gap-2">
+            {(Object.keys(CATEGORIAS_INFO) as CategoriaGasto[]).map(cat => {
+              const i = CATEGORIAS_INFO[cat];
+              const I = i.icon;
+              const selected = value === cat;
+              return (
+                <button
+                  key={cat}
+                  onClick={() => { onChange(cat, true); setOpen(false); }}
+                  className={`flex items-center gap-2 p-2.5 rounded-md border text-left transition ${selected ? i.color : "border-border hover:bg-muted/30"}`}
+                >
+                  <I className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-xs font-medium">{i.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          {value && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-xs"
+              onClick={() => { onChange(null, false); setOpen(false); }}
+            >
+              Remover categoria
+            </Button>
+          )}
+          <p className="text-[10px] text-muted-foreground text-center pt-2 border-t border-border">
+            ✨ O sistema aprende com sua escolha e categoriza transações similares automaticamente
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

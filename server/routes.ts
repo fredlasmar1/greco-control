@@ -29,6 +29,7 @@ const CHECKLIST_FILE = path.join(process.cwd(), ".checklist-data.json");
 const CONSOLIDACAO_CONTAS_FILE = path.join(process.cwd(), ".consolidacao-contas.json");
 const CONSOLIDACAO_TRANSACOES_FILE = path.join(process.cwd(), ".consolidacao-transacoes.json");
 const USUARIOS_FILE = path.join(process.cwd(), ".usuarios.json");
+const STORE_FILE = path.join(process.cwd(), ".store-data.json");
 let financeEntries: FinanceEntry[] = [];
 let resolvedDuplicateIds: number[] = [];
 
@@ -257,6 +258,30 @@ try {
 function saveUsuarios() {
   try { fs.writeFileSync(USUARIOS_FILE, JSON.stringify(usuarios, null, 2), "utf-8"); }
   catch { log("Usuários: could not save", "auth"); }
+}
+
+// ─── Store unificado (settings, barbers, services, entries, weeklySummaries) ─
+interface StoreData {
+  settings?: any;
+  barbers?: any[];
+  services?: any[];
+  entries?: any[];
+  weeklySummaries?: any[];
+  updatedAt?: string;
+}
+let storeData: StoreData = {};
+try {
+  if (fs.existsSync(STORE_FILE)) {
+    storeData = JSON.parse(fs.readFileSync(STORE_FILE, "utf-8")) || {};
+    log(`Store: dados carregados do disco`, "store");
+  }
+} catch { log("Store: starting fresh", "store"); }
+
+function saveStore() {
+  try {
+    storeData.updatedAt = new Date().toISOString();
+    fs.writeFileSync(STORE_FILE, JSON.stringify(storeData, null, 2), "utf-8");
+  } catch { log("Store: could not save", "store"); }
 }
 
 // Cria admin padrão se não existir nenhum usuário
@@ -811,6 +836,27 @@ export async function registerRoutes(
     usuarios = usuarios.filter(u => u.id !== req.params.id);
     saveUsuarios();
     return res.json({ ok: true, removed: before - usuarios.length });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // STORE — persistência de settings, barbers, services, entries
+  // ──────────────────────────────────────────────────────────────────
+
+  // GET /api/store — retorna todo o store persistido
+  app.get("/api/store", (_req: Request, res: Response) => {
+    return res.json(storeData);
+  });
+
+  // PUT /api/store — atualiza um ou mais slices do store
+  app.put("/api/store", (req: Request, res: Response) => {
+    const { settings, barbers, services, entries, weeklySummaries } = req.body || {};
+    if (settings !== undefined) storeData.settings = settings;
+    if (barbers !== undefined) storeData.barbers = Array.isArray(barbers) ? barbers : [];
+    if (services !== undefined) storeData.services = Array.isArray(services) ? services : [];
+    if (entries !== undefined) storeData.entries = Array.isArray(entries) ? entries : [];
+    if (weeklySummaries !== undefined) storeData.weeklySummaries = Array.isArray(weeklySummaries) ? weeklySummaries : [];
+    saveStore();
+    return res.json({ ok: true, updatedAt: storeData.updatedAt });
   });
 
   // POST /api/auth/change-password — usuário muda a própria senha

@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import { useTrinksStore } from "@/lib/trinksStore";
 import { useAuth } from "@/lib/authStore";
+import { useStore } from "@/lib/store";
 import { Loader2 } from "lucide-react";
 import Dashboard from "@/pages/Dashboard";
 import Lancamentos from "@/pages/Lancamentos";
@@ -27,14 +28,16 @@ import NotFound from "@/pages/not-found";
 
 function AdminRoutes() {
   const loadSavedConfig = useTrinksStore((s) => s.loadSavedConfig);
+  const loadStoreFromServer = useStore((s) => s.loadFromServer);
   const hasLoaded = useRef(false);
 
   useEffect(() => {
     if (!hasLoaded.current) {
       hasLoaded.current = true;
       loadSavedConfig();
+      loadStoreFromServer();
     }
-  }, [loadSavedConfig]);
+  }, [loadSavedConfig, loadStoreFromServer]);
 
   return (
     <AppLayout>

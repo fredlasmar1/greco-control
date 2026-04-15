@@ -101,14 +101,28 @@ function parseDate(s: string): string {
 }
 
 function detectColumns(headers: string[]) {
-  const dateIdx = headers.findIndex(h => /data|date|dt/i.test(h));
-  const descIdx = headers.findIndex(h => /descri|histor|memo|observa|lan[çc]amento/i.test(h));
-  const amtIdx = headers.findIndex(h => /valor|amount|montante|cr[eé]dito/i.test(h));
+  const h = headers.map(x => (x || "").toLowerCase().trim());
+  const dateIdx = h.findIndex(x => /^data$|^date$|dt.lanc|dt.mov|^data mov/i.test(x));
+  const descIdx = h.findIndex(x => /descri|histor|memo|observa|lan[çc]amento/i.test(x));
+  // Colunas separadas de débito e crédito
+  const debIdx = h.findIndex(x => /^d[ée]bito$|saida|^pago|valor.*saida/i.test(x));
+  const credIdx = h.findIndex(x => /^cr[eé]dito$|entrada|recebido|valor.*entrada/i.test(x));
+  // Coluna única de valor (exclui saldo)
+  const amtIdx = h.findIndex(x => /^valor$|^amount$|^montante$|valor.*lan/i.test(x));
   return {
     date: dateIdx >= 0 ? dateIdx : 0,
     description: descIdx >= 0 ? descIdx : 1,
-    amount: amtIdx >= 0 ? amtIdx : 2,
+    amount: amtIdx,
+    debito: debIdx,
+    credito: credIdx,
+    hasDebitoCredito: debIdx >= 0 && credIdx >= 0,
   };
+}
+
+// Linha parece um saldo / subtotal / cabeçalho? (ignora)
+function isSaldoLine(description: string): boolean {
+  const d = (description || "").toLowerCase();
+  return /^saldo|^total|^subtotal|^s\s*a\s*l\s*d\s*o/.test(d.trim());
 }
 
 // Detecta tipo de transação pela descrição
@@ -737,9 +751,35 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
         const row = rows[i];
         if (row.length < 2) continue;
         const date = parseDate(row[cols.date] || "");
-        const description = row[cols.description] || "";
-        const amount = parseBR(row[cols.amount] || "0");
-        if (!date || amount === 0) continue;
+        const description = (row[cols.description] || "").trim();
+
+        // Ignora linhas de saldo / subtotal / cabeçalho repetido
+        if (!date || isSaldoLine(description)) continue;
+
+        // Calcula valor: se tiver colunas separadas de débito/crédito, usa ambas
+        let amount = 0;
+        if (cols.hasDebitoCredito) {
+          const deb = parseBR(row[cols.debito] || "0");
+          const cred = parseBR(row[cols.credito] || "0");
+          // Débito = saída (negativo), Crédito = entrada (positivo)
+          amount = cred - deb;
+        } else if (cols.amount >= 0) {
+          amount = parseBR(row[cols.amount] || "0");
+        } else {
+          // Fallback: procura qualquer coluna numérica razoável (não a última se for saldo)
+          for (let j = 2; j < row.length; j++) {
+            const v = parseBR(row[j] || "0");
+            if (v !== 0 && Math.abs(v) < 10_000_000) {
+              amount = v;
+              break;
+            }
+          }
+        }
+
+        if (amount === 0) continue;
+        // Sanidade: rejeita valores absurdos (> 10 milhões) que indicam parse errado
+        if (Math.abs(amount) > 10_000_000) continue;
+
         const tipo = detectTipo(description);
         transacoes.push({ date, description, amount, tipo });
       }
@@ -768,6 +808,17 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
     }
+  };
+
+  const limparMes = async () => {
+    if (!confirm(`Limpar todas as transações de ${conta.nome} no mês ${mes}?\n(as transações importadas serão removidas — a conta continua salva)`)) return;
+    await fetch(`${API_BASE}/api/consolidacao/transacoes`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contaId: conta.id, mes }),
+    });
+    toast({ title: "Transações removidas" });
+    onReload();
   };
 
   const deleteConta = async () => {
@@ -827,16 +878,29 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
 
         <p className="text-xs text-muted-foreground mb-3">{totalTx} transações em {formatMonth(mes)}</p>
         <input ref={fileInput} type="file" accept=".csv,.txt" onChange={handleFile} className="hidden" />
-        <Button
-          size="sm"
-          variant="outline"
-          className="w-full text-xs h-8"
-          onClick={() => fileInput.current?.click()}
-          disabled={uploading}
-        >
-          <Upload className="w-3.5 h-3.5 mr-1.5" />
-          {uploading ? "Importando..." : "Importar CSV"}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="flex-1 text-xs h-8"
+            onClick={() => fileInput.current?.click()}
+            disabled={uploading}
+          >
+            <Upload className="w-3.5 h-3.5 mr-1.5" />
+            {uploading ? "Importando..." : "Importar CSV"}
+          </Button>
+          {totalTx > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs h-8 text-red-400 hover:text-red-300 hover:border-red-500/50"
+              onClick={limparMes}
+              title="Limpar transações deste mês"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

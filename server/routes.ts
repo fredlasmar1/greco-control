@@ -21,15 +21,33 @@ interface FinanceEntry {
   createdAt: string;
 }
 
-const FINANCEIRO_FILE = path.join(process.cwd(), ".financeiro-data.json");
-const DUPLICADOS_RESOLVIDOS_FILE = path.join(process.cwd(), ".duplicados-resolvidos.json");
-const METAS_FILE = path.join(process.cwd(), ".metas-data.json");
-const METAS_BARBEIROS_FILE = path.join(process.cwd(), ".metas-barbeiros.json");
-const CHECKLIST_FILE = path.join(process.cwd(), ".checklist-data.json");
-const CONSOLIDACAO_CONTAS_FILE = path.join(process.cwd(), ".consolidacao-contas.json");
-const CONSOLIDACAO_TRANSACOES_FILE = path.join(process.cwd(), ".consolidacao-transacoes.json");
-const USUARIOS_FILE = path.join(process.cwd(), ".usuarios.json");
-const STORE_FILE = path.join(process.cwd(), ".store-data.json");
+// Diretório de dados persistente. No Railway, configurar um Volume montado em /data.
+// Se DATA_DIR não existir, usa o cwd (ephemeral — dados se perdem em cada deploy).
+const DATA_DIR = (() => {
+  const candidate = process.env.DATA_DIR || "/data";
+  try {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      // Testa se é gravável
+      const testFile = path.join(candidate, ".write-test");
+      fs.writeFileSync(testFile, "ok");
+      fs.unlinkSync(testFile);
+      log(`Persistência: usando ${candidate}`, "data");
+      return candidate;
+    }
+  } catch { /* não gravável, usa cwd */ }
+  log(`⚠️ Persistência: usando cwd (dados se perdem em cada deploy). Configure Volume no Railway em /data`, "data");
+  return process.cwd();
+})();
+
+const FINANCEIRO_FILE = path.join(DATA_DIR, ".financeiro-data.json");
+const DUPLICADOS_RESOLVIDOS_FILE = path.join(DATA_DIR, ".duplicados-resolvidos.json");
+const METAS_FILE = path.join(DATA_DIR, ".metas-data.json");
+const METAS_BARBEIROS_FILE = path.join(DATA_DIR, ".metas-barbeiros.json");
+const CHECKLIST_FILE = path.join(DATA_DIR, ".checklist-data.json");
+const CONSOLIDACAO_CONTAS_FILE = path.join(DATA_DIR, ".consolidacao-contas.json");
+const CONSOLIDACAO_TRANSACOES_FILE = path.join(DATA_DIR, ".consolidacao-transacoes.json");
+const USUARIOS_FILE = path.join(DATA_DIR, ".usuarios.json");
+const STORE_FILE = path.join(DATA_DIR, ".store-data.json");
 let financeEntries: FinanceEntry[] = [];
 let resolvedDuplicateIds: number[] = [];
 

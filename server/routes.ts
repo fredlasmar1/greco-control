@@ -7,6 +7,7 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
+import { kvGet, kvSet, waitForDb, isDbReady } from "./db";
 
 // ─── Financeiro Data ──────────────────────────────────────
 interface FinanceEntry {
@@ -48,6 +49,33 @@ const CONSOLIDACAO_CONTAS_FILE = path.join(DATA_DIR, ".consolidacao-contas.json"
 const CONSOLIDACAO_TRANSACOES_FILE = path.join(DATA_DIR, ".consolidacao-transacoes.json");
 const USUARIOS_FILE = path.join(DATA_DIR, ".usuarios.json");
 const STORE_FILE = path.join(DATA_DIR, ".store-data.json");
+
+// ─── Persistência híbrida: DB (Postgres) + arquivo JSON (fallback) ───
+// Todos os loads tentam DB primeiro; se falhar, lê do arquivo.
+// Todos os saves gravam no DB E no arquivo (redundância).
+async function loadData<T>(dbKey: string, file: string, defaultValue: T): Promise<T> {
+  try {
+    if (isDbReady()) {
+      const fromDb = await kvGet<T>(dbKey);
+      if (fromDb !== null) return fromDb;
+    }
+  } catch {}
+  try {
+    if (fs.existsSync(file)) {
+      return JSON.parse(fs.readFileSync(file, "utf-8")) as T;
+    }
+  } catch {}
+  return defaultValue;
+}
+
+function persistData(dbKey: string, file: string, data: any) {
+  // Grava no DB (async, fire-and-forget)
+  kvSet(dbKey, data).catch(() => {});
+  // Grava no arquivo (sync, backup local)
+  try {
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+  } catch {}
+}
 let financeEntries: FinanceEntry[] = [];
 let resolvedDuplicateIds: number[] = [];
 
@@ -181,6 +209,7 @@ try {
 }
 
 function saveResolvedDuplicates() {
+  kvSet("duplicados_resolvidos", resolvedDuplicateIds).catch(() => {});
   try {
     fs.writeFileSync(DUPLICADOS_RESOLVIDOS_FILE, JSON.stringify(resolvedDuplicateIds, null, 2), "utf-8");
   } catch (err) {
@@ -189,6 +218,7 @@ function saveResolvedDuplicates() {
 }
 
 function saveFinanceEntries() {
+  kvSet("financeiro", financeEntries).catch(() => {});
   try {
     fs.writeFileSync(FINANCEIRO_FILE, JSON.stringify(financeEntries, null, 2), "utf-8");
   } catch (err) {
@@ -215,6 +245,7 @@ try {
 } catch { log("Checklist: starting fresh", "checklist"); }
 
 function saveMetas() {
+  kvSet("metas", metasHistorico).catch(() => {});
   try { fs.writeFileSync(METAS_FILE, JSON.stringify(metasHistorico, null, 2), "utf-8"); }
   catch { log("Metas: could not save to disk", "metas"); }
 }
@@ -229,6 +260,7 @@ try {
 } catch { log("Metas barbeiros: starting fresh", "metas"); }
 
 function saveMetasBarbeiros() {
+  kvSet("metas_barbeiros", metasBarbeiros).catch(() => {});
   try { fs.writeFileSync(METAS_BARBEIROS_FILE, JSON.stringify(metasBarbeiros, null, 2), "utf-8"); }
   catch { log("Metas barbeiros: could not save to disk", "metas"); }
 }
@@ -263,10 +295,12 @@ try {
 } catch { log("Consolidação transações: starting fresh", "consolidacao"); }
 
 function saveContasConsolidacao() {
+  kvSet("consolidacao_contas", contasConsolidacao).catch(() => {});
   try { fs.writeFileSync(CONSOLIDACAO_CONTAS_FILE, JSON.stringify(contasConsolidacao, null, 2), "utf-8"); }
   catch { log("Consolidação contas: could not save", "consolidacao"); }
 }
 function saveTransacoesBanco() {
+  kvSet("consolidacao_transacoes", transacoesBanco).catch(() => {});
   try { fs.writeFileSync(CONSOLIDACAO_TRANSACOES_FILE, JSON.stringify(transacoesBanco, null, 2), "utf-8"); }
   catch { log("Consolidação transações: could not save", "consolidacao"); }
 }
@@ -280,6 +314,7 @@ try {
 } catch { log("Regras gastos: starting fresh", "consolidacao"); }
 
 function saveRegrasGastos() {
+  kvSet("regras_gastos", regrasGastos).catch(() => {});
   try { fs.writeFileSync(REGRAS_GASTOS_FILE, JSON.stringify(regrasGastos, null, 2), "utf-8"); }
   catch { log("Regras gastos: could not save", "consolidacao"); }
 }
@@ -318,6 +353,7 @@ try {
 } catch { log("Usuários: starting fresh", "auth"); }
 
 function saveUsuarios() {
+  kvSet("usuarios", usuarios).catch(() => {});
   try { fs.writeFileSync(USUARIOS_FILE, JSON.stringify(usuarios, null, 2), "utf-8"); }
   catch { log("Usuários: could not save", "auth"); }
 }
@@ -340,8 +376,9 @@ try {
 } catch { log("Store: starting fresh", "store"); }
 
 function saveStore() {
+  storeData.updatedAt = new Date().toISOString();
+  kvSet("store", storeData).catch(() => {});
   try {
-    storeData.updatedAt = new Date().toISOString();
     fs.writeFileSync(STORE_FILE, JSON.stringify(storeData, null, 2), "utf-8");
   } catch { log("Store: could not save", "store"); }
 }
@@ -363,6 +400,7 @@ if (usuarios.length === 0) {
 }
 
 function saveChecklist() {
+  kvSet("checklist", checklistData).catch(() => {});
   try { fs.writeFileSync(CHECKLIST_FILE, JSON.stringify(checklistData, null, 2), "utf-8"); }
   catch { log("Checklist: could not save to disk", "checklist"); }
 }
@@ -780,6 +818,60 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // ─── Aguarda DB conectar e puxa dados do DB (sobrescreve dos arquivos) ──
+  try {
+    await waitForDb(8000);
+    if (isDbReady()) {
+      log("Carregando dados do PostgreSQL...", "db");
+      const [
+        dbUsuarios, dbFinanceiro, dbMetas, dbMetasBarb, dbChecklist,
+        dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore,
+      ] = await Promise.all([
+        kvGet<typeof usuarios>("usuarios"),
+        kvGet<typeof financeEntries>("financeiro"),
+        kvGet<typeof metasHistorico>("metas"),
+        kvGet<typeof metasBarbeiros>("metas_barbeiros"),
+        kvGet<typeof checklistData>("checklist"),
+        kvGet<typeof contasConsolidacao>("consolidacao_contas"),
+        kvGet<typeof transacoesBanco>("consolidacao_transacoes"),
+        kvGet<typeof regrasGastos>("regras_gastos"),
+        kvGet<typeof resolvedDuplicateIds>("duplicados_resolvidos"),
+        kvGet<typeof storeData>("store"),
+      ]);
+      if (Array.isArray(dbUsuarios) && dbUsuarios.length > 0) usuarios = dbUsuarios;
+      if (Array.isArray(dbFinanceiro)) financeEntries = dbFinanceiro;
+      if (Array.isArray(dbMetas)) metasHistorico = dbMetas;
+      if (dbMetasBarb && typeof dbMetasBarb === "object") metasBarbeiros = dbMetasBarb;
+      if (dbChecklist && typeof dbChecklist === "object") checklistData = dbChecklist;
+      if (Array.isArray(dbContas)) contasConsolidacao = dbContas;
+      if (Array.isArray(dbTransacoes)) transacoesBanco = dbTransacoes;
+      if (dbRegras && typeof dbRegras === "object") regrasGastos = dbRegras;
+      if (Array.isArray(dbDuplicados)) resolvedDuplicateIds = dbDuplicados;
+      if (dbStore && typeof dbStore === "object") storeData = dbStore;
+
+      // Se este é o primeiro boot com DB, migra os dados que estão em memória para ele
+      const anyData = [dbUsuarios, dbFinanceiro, dbMetas, dbMetasBarb, dbChecklist, dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore].some(v => v !== null);
+      if (!anyData) {
+        log("Primeira inicialização com DB — migrando dados em memória para Postgres", "db");
+        await Promise.all([
+          kvSet("usuarios", usuarios),
+          kvSet("financeiro", financeEntries),
+          kvSet("metas", metasHistorico),
+          kvSet("metas_barbeiros", metasBarbeiros),
+          kvSet("checklist", checklistData),
+          kvSet("consolidacao_contas", contasConsolidacao),
+          kvSet("consolidacao_transacoes", transacoesBanco),
+          kvSet("regras_gastos", regrasGastos),
+          kvSet("duplicados_resolvidos", resolvedDuplicateIds),
+          kvSet("store", storeData),
+        ]);
+      }
+      log("Dados carregados do Postgres", "db");
+    }
+  } catch (err: any) {
+    log(`Erro ao carregar do DB (usando dados dos arquivos): ${err.message}`, "db");
+  }
 
   // ──────────────────────────────────────────────────────────────────
   // AUTH ROUTES

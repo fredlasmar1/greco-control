@@ -82,19 +82,33 @@ async function parseFileToRows(file: File): Promise<string[][]> {
 
 // ─── CSV parser ────────────────────────────────────────────
 function parseCSV(text: string): string[][] {
-  const rows: string[][] = [];
   const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length === 0) return [];
+
+  // Detecta separador analisando a primeira linha.
+  // Prioridade: tab → ponto-e-vírgula → vírgula → 2+ espaços consecutivos
+  const firstLine = lines[0];
+  let sep = "";
+  if (firstLine.includes("\t")) sep = "\t";
+  else if (firstLine.includes(";")) sep = ";";
+  else if ((firstLine.match(/,/g) || []).length >= 2) sep = ",";
+
+  const rows: string[][] = [];
   for (const line of lines) {
-    const sep = line.includes(";") ? ";" : ",";
     const cells: string[] = [];
-    let cur = "";
-    let inQuote = false;
-    for (const ch of line) {
-      if (ch === '"') { inQuote = !inQuote; continue; }
-      if (ch === sep && !inQuote) { cells.push(cur.trim()); cur = ""; continue; }
-      cur += ch;
+    if (sep) {
+      let cur = "";
+      let inQuote = false;
+      for (const ch of line) {
+        if (ch === '"') { inQuote = !inQuote; continue; }
+        if (ch === sep && !inQuote) { cells.push(cur.trim()); cur = ""; continue; }
+        cur += ch;
+      }
+      cells.push(cur.trim());
+    } else {
+      // Fallback: split por 2+ espaços consecutivos
+      line.split(/\s{2,}/).forEach(c => cells.push(c.trim()));
     }
-    cells.push(cur.trim());
     rows.push(cells);
   }
   return rows;
@@ -121,19 +135,26 @@ function parseDate(s: string): string {
 
 function detectColumns(headers: string[]) {
   const h = headers.map(x => (x || "").toLowerCase().trim());
-  const dateIdx = h.findIndex(x => /^data$|^date$|dt.lanc|dt.mov|^data mov/i.test(x));
+  const dateIdx = h.findIndex(x => /^data\b|^date\b|dt.lanc|dt.mov|data.mov/i.test(x));
   const descIdx = h.findIndex(x => /descri|histor|memo|observa|lan[çc]amento/i.test(x));
   // Colunas separadas de débito e crédito
-  const debIdx = h.findIndex(x => /^d[ée]bito$|saida|^pago|valor.*saida/i.test(x));
-  const credIdx = h.findIndex(x => /^cr[eé]dito$|entrada|recebido|valor.*entrada/i.test(x));
-  // Coluna única de valor (exclui saldo)
-  const amtIdx = h.findIndex(x => /^valor$|^amount$|^montante$|valor.*lan/i.test(x));
+  const debIdx = h.findIndex(x => /^d[ée]bito\b|saida|^pago\b|valor.*saida/i.test(x));
+  const credIdx = h.findIndex(x => /^cr[eé]dito\b|entrada|recebido|valor.*entrada/i.test(x));
+  // Coluna única de valor — aceita "valor", "valor (r$)", "valor (brl)", "valor lançamento" etc.
+  // IMPORTANTE: NÃO casa com "saldo" que muitas vezes vem depois de "valor"
+  const amtIdx = h.findIndex(x => {
+    if (/saldo/.test(x)) return false;
+    return /^valor\b|^amount\b|^montante\b/.test(x);
+  });
+  // ID da coluna de saldo — usado pra exclusão no fallback
+  const saldoIdx = h.findIndex(x => /saldo/.test(x));
   return {
     date: dateIdx >= 0 ? dateIdx : 0,
     description: descIdx >= 0 ? descIdx : 1,
     amount: amtIdx,
     debito: debIdx,
     credito: credIdx,
+    saldo: saldoIdx,
     hasDebitoCredito: debIdx >= 0 && credIdx >= 0,
   };
 }
@@ -878,8 +899,9 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
         } else if (cols.amount >= 0) {
           amount = parseBR(row[cols.amount] || "0");
         } else {
-          // Fallback: procura qualquer coluna numérica razoável (não a última se for saldo)
+          // Fallback: procura coluna numérica razoável, pulando a de saldo explicitamente
           for (let j = 2; j < row.length; j++) {
+            if (j === cols.saldo) continue; // NÃO usar saldo como valor
             const v = parseBR(row[j] || "0");
             if (v !== 0 && Math.abs(v) < 10_000_000) {
               amount = v;

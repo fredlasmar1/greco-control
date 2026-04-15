@@ -1952,6 +1952,20 @@ Regras:
     return res.json({ ok: true, inserted: novas.length });
   });
 
+  // PUT /api/consolidacao/transacoes/:id — atualiza valor/tipo/descrição de uma transação
+  app.put("/api/consolidacao/transacoes/:id", (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { amount, tipo, description, flipSign } = req.body;
+    const tx = transacoesBanco.find(t => t.id === id);
+    if (!tx) return res.status(404).json({ error: "Transação não encontrada" });
+    if (flipSign) tx.amount = -tx.amount;
+    else if (amount != null) tx.amount = Number(amount);
+    if (tipo) tx.tipo = tipo;
+    if (description != null) tx.description = String(description);
+    saveTransacoesBanco();
+    return res.json({ ok: true, transacao: tx });
+  });
+
   // PUT /api/consolidacao/transacoes/:id/categoria — atualiza categoria de uma tx
   app.put("/api/consolidacao/transacoes/:id/categoria", (req: Request, res: Response) => {
     const { id } = req.params;

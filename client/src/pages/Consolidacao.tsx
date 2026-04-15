@@ -133,7 +133,7 @@ function parseDate(s: string): string {
   return "";
 }
 
-function detectColumns(headers: string[]) {
+function detectColumns(headers: string[], sampleRows: string[][] = []) {
   const h = headers.map(x => (x || "").toLowerCase().trim());
   const dateIdx = h.findIndex(x => /^data\b|^date\b|dt.lanc|dt.mov|data.mov/i.test(x));
   const descIdx = h.findIndex(x => /descri|histor|memo|observa|lan[çc]amento/i.test(x));
@@ -142,12 +142,45 @@ function detectColumns(headers: string[]) {
   const credIdx = h.findIndex(x => /^cr[eé]dito\b|entrada|recebido|valor.*entrada/i.test(x));
   // Coluna única de valor — aceita "valor", "valor (r$)", "valor (brl)", "valor lançamento" etc.
   // IMPORTANTE: NÃO casa com "saldo" que muitas vezes vem depois de "valor"
-  const amtIdx = h.findIndex(x => {
+  let amtIdx = h.findIndex(x => {
     if (/saldo/.test(x)) return false;
     return /^valor\b|^amount\b|^montante\b/.test(x);
   });
-  // ID da coluna de saldo — usado pra exclusão no fallback
+  // ID da coluna de saldo
   const saldoIdx = h.findIndex(x => /saldo/.test(x));
+
+  // ─── Validação: se a coluna detectada tem valores "Documento-like", busca a correta ──
+  // Score: quantos valores parecem monetários (com vírgula/ponto decimal)
+  const scoreColumn = (idx: number): number => {
+    if (idx < 0 || sampleRows.length === 0) return 0;
+    let monetarios = 0;
+    let total = 0;
+    for (const row of sampleRows) {
+      const cell = row[idx] || "";
+      if (!cell.trim()) continue;
+      total++;
+      // Valores monetários brasileiros: contém vírgula decimal
+      if (/\d+,\d{1,2}/.test(cell)) monetarios++;
+    }
+    return total > 0 ? monetarios / total : 0;
+  };
+
+  // Se a detectada não parece monetária (< 50% com decimal) E há uma melhor, troca
+  if (amtIdx >= 0 && sampleRows.length > 0) {
+    const currentScore = scoreColumn(amtIdx);
+    if (currentScore < 0.5) {
+      // Procura a melhor candidata (excluindo data, descrição e saldo)
+      let bestIdx = amtIdx;
+      let bestScore = currentScore;
+      for (let i = 0; i < headers.length; i++) {
+        if (i === dateIdx || i === descIdx || i === saldoIdx) continue;
+        const s = scoreColumn(i);
+        if (s > bestScore) { bestScore = s; bestIdx = i; }
+      }
+      amtIdx = bestIdx;
+    }
+  }
+
   return {
     date: dateIdx >= 0 ? dateIdx : 0,
     description: descIdx >= 0 ? descIdx : 1,
@@ -592,59 +625,128 @@ export default function Consolidacao() {
 
       {/* Lista de transações */}
       {transacoes.length > 0 && (
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-1 h-5 bg-primary rounded-full" />
-            <h2 className="text-base font-semibold">Transações Importadas</h2>
-            <Badge variant="secondary" className="text-[10px]">{transacoes.length}</Badge>
-          </div>
-          <Card className="bg-card border-card-border">
-            <CardContent className="p-0 max-h-96 overflow-auto">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-card border-b border-border">
-                  <tr>
-                    <th className="text-left p-2.5 text-muted-foreground font-medium">Data</th>
-                    <th className="text-left p-2.5 text-muted-foreground font-medium">Conta</th>
-                    <th className="text-left p-2.5 text-muted-foreground font-medium">Tipo</th>
-                    <th className="text-left p-2.5 text-muted-foreground font-medium">Descrição</th>
-                    <th className="text-right p-2.5 text-muted-foreground font-medium">Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {transacoes.slice().sort((a, b) => b.date.localeCompare(a.date)).map(t => {
-                    const conta = contas.find(c => c.id === t.contaId);
-                    return (
-                      <tr key={t.id} className="border-b border-border/50 hover:bg-muted/20">
-                        <td className="p-2.5 font-mono whitespace-nowrap">{t.date.slice(8)}/{t.date.slice(5,7)}</td>
-                        <td className="p-2.5 truncate max-w-[120px]">{conta?.nome || "?"}</td>
-                        <td className="p-2.5">
-                          {t.tipo === "antecipacao" ? (
-                            <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/40 bg-amber-500/10">
-                              <Zap className="w-2.5 h-2.5 mr-0.5" />Antec
-                            </Badge>
-                          ) : t.tipo === "pix" ? (
-                            <Badge variant="outline" className="text-[10px]">Pix</Badge>
-                          ) : t.tipo === "debito" ? (
-                            <Badge variant="outline" className="text-[10px]">Débito</Badge>
-                          ) : t.tipo === "credito" ? (
-                            <Badge variant="outline" className="text-[10px]">Crédito</Badge>
-                          ) : t.tipo === "tarifa" ? (
-                            <Badge variant="outline" className="text-[10px] text-red-400 border-red-500/30">Tarifa</Badge>
-                          ) : null}
-                        </td>
-                        <td className="p-2.5 truncate max-w-[280px]">{t.description}</td>
-                        <td className={`p-2.5 text-right font-semibold whitespace-nowrap ${t.amount >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                          {t.amount >= 0 ? "+" : ""}{formatCurrency(t.amount)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </CardContent>
-          </Card>
-        </div>
+        <TransacoesList
+          transacoes={transacoes}
+          contas={contas}
+          onChanged={loadData}
+        />
       )}
+    </div>
+  );
+}
+
+// ─── Lista de Transações com filtro Entrada/Saída e inverter sinal ───
+function TransacoesList({ transacoes, contas, onChanged }: {
+  transacoes: TransacaoBanco[];
+  contas: Conta[];
+  onChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const [filtro, setFiltro] = useState<"todas" | "entradas" | "saidas">("todas");
+
+  const flipSinal = async (id: string) => {
+    await fetch(`${API_BASE}/api/consolidacao/transacoes/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ flipSign: true }),
+    });
+    toast({ title: "Sinal invertido", description: "Entrada ↔ Saída" });
+    onChanged();
+  };
+
+  const filtradas = transacoes.filter(t => {
+    if (filtro === "entradas") return t.amount > 0;
+    if (filtro === "saidas") return t.amount < 0;
+    return true;
+  });
+  const totalEntradas = transacoes.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
+  const totalSaidas = Math.abs(transacoes.filter(t => t.amount < 0).reduce((s, t) => s + t.amount, 0));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <div className="w-1 h-5 bg-primary rounded-full" />
+          <h2 className="text-base font-semibold">Transações Importadas</h2>
+          <Badge variant="secondary" className="text-[10px]">{filtradas.length}/{transacoes.length}</Badge>
+        </div>
+        <div className="flex items-center gap-1 bg-muted/30 rounded-md p-1">
+          <button
+            onClick={() => setFiltro("todas")}
+            className={`text-xs px-3 py-1 rounded ${filtro === "todas" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            Todas
+          </button>
+          <button
+            onClick={() => setFiltro("entradas")}
+            className={`text-xs px-3 py-1 rounded ${filtro === "entradas" ? "bg-emerald-600 text-white" : "text-muted-foreground hover:text-emerald-400"}`}
+          >
+            Entradas · {formatCurrency(totalEntradas)}
+          </button>
+          <button
+            onClick={() => setFiltro("saidas")}
+            className={`text-xs px-3 py-1 rounded ${filtro === "saidas" ? "bg-red-600 text-white" : "text-muted-foreground hover:text-red-400"}`}
+          >
+            Saídas · {formatCurrency(totalSaidas)}
+          </button>
+        </div>
+      </div>
+
+      <Card className="bg-card border-card-border">
+        <CardContent className="p-0 max-h-96 overflow-auto">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-card border-b border-border">
+              <tr>
+                <th className="text-left p-2.5 text-muted-foreground font-medium">Data</th>
+                <th className="text-left p-2.5 text-muted-foreground font-medium">Conta</th>
+                <th className="text-left p-2.5 text-muted-foreground font-medium">Tipo</th>
+                <th className="text-left p-2.5 text-muted-foreground font-medium">Descrição</th>
+                <th className="text-right p-2.5 text-muted-foreground font-medium">Valor</th>
+                <th className="text-center p-2.5 text-muted-foreground font-medium w-12">↕</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtradas.slice().sort((a, b) => b.date.localeCompare(a.date)).map(t => {
+                const conta = contas.find(c => c.id === t.contaId);
+                return (
+                  <tr key={t.id} className="border-b border-border/50 hover:bg-muted/20">
+                    <td className="p-2.5 font-mono whitespace-nowrap">{t.date.slice(8)}/{t.date.slice(5,7)}</td>
+                    <td className="p-2.5 truncate max-w-[120px]">{conta?.nome || "?"}</td>
+                    <td className="p-2.5">
+                      {t.tipo === "antecipacao" ? (
+                        <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/40 bg-amber-500/10">
+                          <Zap className="w-2.5 h-2.5 mr-0.5" />Antec
+                        </Badge>
+                      ) : t.tipo === "pix" ? (
+                        <Badge variant="outline" className="text-[10px]">Pix</Badge>
+                      ) : t.tipo === "debito" ? (
+                        <Badge variant="outline" className="text-[10px]">Débito</Badge>
+                      ) : t.tipo === "credito" ? (
+                        <Badge variant="outline" className="text-[10px]">Crédito</Badge>
+                      ) : t.tipo === "tarifa" ? (
+                        <Badge variant="outline" className="text-[10px] text-red-400 border-red-500/30">Tarifa</Badge>
+                      ) : null}
+                    </td>
+                    <td className="p-2.5 truncate max-w-[260px]">{t.description}</td>
+                    <td className={`p-2.5 text-right font-semibold whitespace-nowrap ${t.amount >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {t.amount >= 0 ? "+" : ""}{formatCurrency(t.amount)}
+                    </td>
+                    <td className="p-2.5 text-center">
+                      <button
+                        onClick={() => flipSinal(t.id)}
+                        className="text-[10px] text-muted-foreground hover:text-primary px-1.5 py-0.5 rounded hover:bg-muted/30"
+                        title="Inverter sinal (entrada ↔ saída)"
+                      >
+                        ↕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -877,7 +979,7 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
       if (rows.length < 2) throw new Error("Arquivo vazio");
 
       const headers = rows[0];
-      const cols = detectColumns(headers);
+      const cols = detectColumns(headers, rows.slice(1, 20));
       const transacoes: any[] = [];
 
       for (let i = 1; i < rows.length; i++) {

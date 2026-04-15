@@ -45,24 +45,29 @@ let metasHistorico: MetaHistorico[] = [];
 let metasBarbeiros: Record<string, Record<string, number>> = {};
 
 // ─── Consolidação: Contas e Transações ───────────────────
+type MeioRecebimento = 'pix' | 'debito' | 'credito' | 'dinheiro';
 interface ContaConsolidacao {
   id: string;
   nome: string;
   tipo: 'banco' | 'maquininha' | 'caixa';
+  meios: MeioRecebimento[]; // que tipos de pagamento essa conta recebe
   taxaDebito?: number; // %
   taxaCredito?: number; // %
+  taxaPix?: number; // % (alguns provedores cobram)
+  taxaAntecipacao?: number; // % por antecipação
   diasLiquidacaoDebito?: number; // padrão 1
   diasLiquidacaoCredito?: number; // padrão 30
   ativa: boolean;
   createdAt: string;
 }
+type TipoTransacao = 'pix' | 'debito' | 'credito' | 'antecipacao' | 'tarifa' | 'transferencia' | 'outro';
 interface TransacaoBanco {
   id: string;
   contaId: string;
   date: string; // YYYY-MM-DD
   description: string;
   amount: number; // positivo = entrada
-  tipo?: 'pix' | 'debito' | 'credito' | 'outro';
+  tipo?: TipoTransacao;
   importedAt: string;
 }
 let contasConsolidacao: ContaConsolidacao[] = [];
@@ -207,6 +212,21 @@ function saveMetasBarbeiros() {
 try {
   if (fs.existsSync(CONSOLIDACAO_CONTAS_FILE)) {
     contasConsolidacao = JSON.parse(fs.readFileSync(CONSOLIDACAO_CONTAS_FILE, "utf-8")) || [];
+    // Migração: contas antigas sem campo "meios"
+    let migrated = false;
+    contasConsolidacao = contasConsolidacao.map((c: any) => {
+      if (!Array.isArray(c.meios) || c.meios.length === 0) {
+        migrated = true;
+        const meios: MeioRecebimento[] =
+          c.tipo === 'banco' ? ['pix']
+          : c.tipo === 'maquininha' ? ['debito', 'credito']
+          : c.tipo === 'caixa' ? ['dinheiro']
+          : [];
+        return { ...c, meios };
+      }
+      return c;
+    });
+    if (migrated) saveContasConsolidacao();
     log(`Consolidação: ${contasConsolidacao.length} contas carregadas`, "consolidacao");
   }
 } catch { log("Consolidação contas: starting fresh", "consolidacao"); }
@@ -1431,20 +1451,37 @@ export async function registerRoutes(
 
   // POST /api/consolidacao/contas — cria ou atualiza conta
   app.post("/api/consolidacao/contas", (req: Request, res: Response) => {
-    const { id, nome, tipo, taxaDebito, taxaCredito, diasLiquidacaoDebito, diasLiquidacaoCredito, ativa } = req.body;
+    const {
+      id, nome, tipo, meios,
+      taxaDebito, taxaCredito, taxaPix, taxaAntecipacao,
+      diasLiquidacaoDebito, diasLiquidacaoCredito, ativa,
+    } = req.body;
     if (!nome || !tipo) {
       return res.status(400).json({ error: "nome e tipo são obrigatórios" });
     }
+    const meiosValidos: MeioRecebimento[] = ['pix', 'debito', 'credito', 'dinheiro'];
+    const meiosFiltrados: MeioRecebimento[] = Array.isArray(meios)
+      ? meios.filter((m: any) => meiosValidos.includes(m))
+      : (tipo === 'banco' ? ['pix']
+         : tipo === 'maquininha' ? ['debito', 'credito']
+         : tipo === 'caixa' ? ['dinheiro']
+         : []);
+
+    const num = (v: any) => v != null && v !== "" ? Number(v) : undefined;
+
     if (id) {
       const idx = contasConsolidacao.findIndex(c => c.id === id);
       if (idx >= 0) {
         contasConsolidacao[idx] = {
           ...contasConsolidacao[idx],
           nome, tipo,
-          taxaDebito: taxaDebito != null ? Number(taxaDebito) : undefined,
-          taxaCredito: taxaCredito != null ? Number(taxaCredito) : undefined,
-          diasLiquidacaoDebito: diasLiquidacaoDebito != null ? Number(diasLiquidacaoDebito) : 1,
-          diasLiquidacaoCredito: diasLiquidacaoCredito != null ? Number(diasLiquidacaoCredito) : 30,
+          meios: meiosFiltrados,
+          taxaDebito: num(taxaDebito),
+          taxaCredito: num(taxaCredito),
+          taxaPix: num(taxaPix),
+          taxaAntecipacao: num(taxaAntecipacao),
+          diasLiquidacaoDebito: num(diasLiquidacaoDebito) ?? 1,
+          diasLiquidacaoCredito: num(diasLiquidacaoCredito) ?? 30,
           ativa: ativa !== false,
         };
         saveContasConsolidacao();
@@ -1454,10 +1491,13 @@ export async function registerRoutes(
     const newConta: ContaConsolidacao = {
       id: `conta-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       nome, tipo,
-      taxaDebito: taxaDebito != null ? Number(taxaDebito) : undefined,
-      taxaCredito: taxaCredito != null ? Number(taxaCredito) : undefined,
-      diasLiquidacaoDebito: diasLiquidacaoDebito != null ? Number(diasLiquidacaoDebito) : 1,
-      diasLiquidacaoCredito: diasLiquidacaoCredito != null ? Number(diasLiquidacaoCredito) : 30,
+      meios: meiosFiltrados,
+      taxaDebito: num(taxaDebito),
+      taxaCredito: num(taxaCredito),
+      taxaPix: num(taxaPix),
+      taxaAntecipacao: num(taxaAntecipacao),
+      diasLiquidacaoDebito: num(diasLiquidacaoDebito) ?? 1,
+      diasLiquidacaoCredito: num(diasLiquidacaoCredito) ?? 30,
       ativa: ativa !== false,
       createdAt: new Date().toISOString(),
     };

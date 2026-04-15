@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
@@ -12,18 +12,24 @@ import { useTrinksStore, getTrinksMonthTotals } from "@/lib/trinksStore";
 import { formatCurrency, getMonthTotals } from "@/lib/demoData";
 import {
   Building2, CreditCard, Coins, Upload, AlertTriangle, CheckCircle2,
-  TrendingDown, Plus, Trash2, FileDown, Percent, ArrowRight,
+  TrendingDown, Plus, Trash2, ArrowRight, Pencil, Zap,
 } from "lucide-react";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
 type TipoConta = "banco" | "maquininha" | "caixa";
+type Meio = "pix" | "debito" | "credito" | "dinheiro";
+type TipoTransacao = "pix" | "debito" | "credito" | "antecipacao" | "tarifa" | "transferencia" | "outro";
+
 interface Conta {
   id: string;
   nome: string;
   tipo: TipoConta;
+  meios: Meio[];
   taxaDebito?: number;
   taxaCredito?: number;
+  taxaPix?: number;
+  taxaAntecipacao?: number;
   diasLiquidacaoDebito?: number;
   diasLiquidacaoCredito?: number;
   ativa: boolean;
@@ -35,16 +41,15 @@ interface TransacaoBanco {
   date: string;
   description: string;
   amount: number;
-  tipo?: "pix" | "debito" | "credito" | "outro";
+  tipo?: TipoTransacao;
   importedAt: string;
 }
 
-// ─── CSV parser simples ────────────────────────────────────
+// ─── CSV parser ────────────────────────────────────────────
 function parseCSV(text: string): string[][] {
   const rows: string[][] = [];
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   for (const line of lines) {
-    // Detecta separador: vírgula ou ponto-e-vírgula
     const sep = line.includes(";") ? ";" : ",";
     const cells: string[] = [];
     let cur = "";
@@ -60,7 +65,7 @@ function parseCSV(text: string): string[][] {
   return rows;
 }
 
-function parseBrazilianNumber(s: string): number {
+function parseBR(s: string): number {
   if (!s) return 0;
   const cleaned = s.replace(/[^\d,.\-+]/g, "").replace(/\./g, "").replace(",", ".");
   const n = parseFloat(cleaned);
@@ -70,22 +75,19 @@ function parseBrazilianNumber(s: string): number {
 function parseDate(s: string): string {
   if (!s) return "";
   s = s.trim();
-  // DD/MM/YYYY
   const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
   if (br) return `${br[3]}-${br[2]}-${br[1]}`;
-  // YYYY-MM-DD
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return iso[0];
-  // DD-MM-YYYY
   const dash = s.match(/^(\d{2})-(\d{2})-(\d{4})/);
   if (dash) return `${dash[3]}-${dash[2]}-${dash[1]}`;
   return "";
 }
 
-function detectColumns(headers: string[]): { date: number; description: number; amount: number } {
+function detectColumns(headers: string[]) {
   const dateIdx = headers.findIndex(h => /data|date|dt/i.test(h));
-  const descIdx = headers.findIndex(h => /descri|histor|memo|observa/i.test(h));
-  const amtIdx = headers.findIndex(h => /valor|amount|credito|debito|montante/i.test(h));
+  const descIdx = headers.findIndex(h => /descri|histor|memo|observa|lan[çc]amento/i.test(h));
+  const amtIdx = headers.findIndex(h => /valor|amount|montante|cr[eé]dito/i.test(h));
   return {
     date: dateIdx >= 0 ? dateIdx : 0,
     description: descIdx >= 0 ? descIdx : 1,
@@ -93,11 +95,30 @@ function detectColumns(headers: string[]): { date: number; description: number; 
   };
 }
 
+// Detecta tipo de transação pela descrição
+function detectTipo(description: string): TipoTransacao | undefined {
+  const d = description.toLowerCase();
+  if (/antecip/.test(d)) return "antecipacao";
+  if (/pix/.test(d)) return "pix";
+  if (/d[ée]bito|deb\.|cart.*deb/.test(d)) return "debito";
+  if (/cr[ée]dito|cred\.|cart.*cred|parcelad/.test(d)) return "credito";
+  if (/tarifa|tar\.|iof|taxa|anuidade/.test(d)) return "tarifa";
+  if (/ted|doc|transfer/.test(d)) return "transferencia";
+  return undefined;
+}
+
 function formatMonth(s: string): string {
   const [y, m] = s.split("-");
   const months = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
   return `${months[parseInt(m)-1]}/${y}`;
 }
+
+const MEIO_LABELS: Record<Meio, string> = {
+  pix: "Pix",
+  debito: "Débito",
+  credito: "Crédito",
+  dinheiro: "Dinheiro",
+};
 
 // ─── Page ───────────────────────────────────────────────────
 export default function Consolidacao() {
@@ -117,51 +138,57 @@ export default function Consolidacao() {
       ]);
       setContas(Array.isArray(rContas) ? rContas : []);
       setTransacoes(Array.isArray(rTx) ? rTx : []);
-    } catch { /* ignore */ }
+    } catch {}
   };
 
   useEffect(() => { loadData(); }, [selectedMes]);
 
-  // ─── Totais do Trinks para o mês selecionado ──────────
   const trinksTotals = useMemo(() => {
     if (hasTrinksData) return getTrinksMonthTotals(trinks!);
     return getMonthTotals();
   }, [hasTrinksData, trinks]);
 
-  // ─── Análise de taxas por maquininha ──────────────────
-  const analiseTaxas = useMemo(() => {
-    const maquininhas = contas.filter(c => c.tipo === "maquininha" && c.ativa);
-    return maquininhas.map(m => {
-      const txMes = transacoes.filter(t => t.contaId === m.id && t.amount > 0);
-      const totalRecebido = txMes.reduce((s, t) => s + t.amount, 0);
-      // Taxa esperada = media entre debito e credito (aproximacao)
-      const taxaContratadaMedia = ((m.taxaDebito || 0) + (m.taxaCredito || 0)) / 2;
-      // Taxa real = precisamos comparar gross vs net. Por enquanto, usamos taxaContratada
-      return {
-        conta: m,
-        totalRecebido,
-        taxaContratadaMedia,
-        taxaEstimadaPaga: totalRecebido * (taxaContratadaMedia / 100),
-        nTransacoes: txMes.length,
-      };
-    });
-  }, [contas, transacoes]);
-
-  const totalTaxasPagas = analiseTaxas.reduce((s, a) => s + a.taxaEstimadaPaga, 0);
-
-  // ─── Total entradas por tipo ─────────────────────────
-  const totaisPorTipo = useMemo(() => {
-    let pix = 0, cartao = 0, outros = 0, caixa = 0;
+  // ─── Totais por meio (somando antecipações como crédito) ──
+  const totaisPorMeio = useMemo(() => {
+    let pix = 0, debito = 0, credito = 0, dinheiro = 0, tarifas = 0;
     transacoes.forEach(t => {
-      if (t.amount <= 0) return;
       const conta = contas.find(c => c.id === t.contaId);
       if (!conta) return;
-      if (conta.tipo === "caixa") caixa += t.amount;
-      else if (conta.tipo === "maquininha") cartao += t.amount;
-      else if (t.tipo === "pix" || /pix/i.test(t.description)) pix += t.amount;
-      else outros += t.amount;
+
+      // Tarifas/taxas (negativos) — agrupam separado
+      if (t.tipo === "tarifa" || t.tipo === "transferencia") {
+        if (t.amount < 0) tarifas += Math.abs(t.amount);
+        return;
+      }
+
+      if (t.amount <= 0) return;
+
+      // Antecipações = crédito recebido antecipado
+      if (t.tipo === "antecipacao") {
+        credito += t.amount;
+        return;
+      }
+
+      if (t.tipo === "pix") { pix += t.amount; return; }
+      if (t.tipo === "debito") { debito += t.amount; return; }
+      if (t.tipo === "credito") { credito += t.amount; return; }
+
+      // Sem tipo — usa os meios da conta
+      if (conta.meios?.includes("dinheiro")) dinheiro += t.amount;
+      else if (conta.meios?.length === 1) {
+        const m = conta.meios[0];
+        if (m === "pix") pix += t.amount;
+        else if (m === "debito") debito += t.amount;
+        else if (m === "credito") credito += t.amount;
+      } else {
+        // Conta multi-meios sem tipo claro: tenta detectar pela descrição
+        const det = detectTipo(t.description);
+        if (det === "pix") pix += t.amount;
+        else if (det === "debito") debito += t.amount;
+        else if (det === "credito" || det === "antecipacao") credito += t.amount;
+      }
     });
-    return { pix, cartao, outros, caixa, total: pix + cartao + outros + caixa };
+    return { pix, debito, credito, cartao: debito + credito, dinheiro, tarifas, total: pix + debito + credito + dinheiro };
   }, [transacoes, contas]);
 
   // ─── Discrepâncias Trinks vs Banco ───────────────────
@@ -171,48 +198,27 @@ export default function Consolidacao() {
     const trinksDinheiro = trinksTotals.totalDinheiro || 0;
 
     return [
-      {
-        meio: "Pix",
-        trinks: trinksPix,
-        banco: totaisPorTipo.pix,
-        diff: totaisPorTipo.pix - trinksPix,
-      },
-      {
-        meio: "Cartão",
-        trinks: trinksCartao,
-        banco: totaisPorTipo.cartao,
-        diff: totaisPorTipo.cartao - trinksCartao,
-      },
-      {
-        meio: "Dinheiro",
-        trinks: trinksDinheiro,
-        banco: totaisPorTipo.caixa,
-        diff: totaisPorTipo.caixa - trinksDinheiro,
-      },
+      { meio: "Pix", trinks: trinksPix, banco: totaisPorMeio.pix, diff: totaisPorMeio.pix - trinksPix },
+      { meio: "Cartão", trinks: trinksCartao, banco: totaisPorMeio.cartao, diff: totaisPorMeio.cartao - trinksCartao,
+        detalhe: `Débito ${formatCurrency(totaisPorMeio.debito)} + Crédito ${formatCurrency(totaisPorMeio.credito)}` },
+      { meio: "Dinheiro", trinks: trinksDinheiro, banco: totaisPorMeio.dinheiro, diff: totaisPorMeio.dinheiro - trinksDinheiro },
     ];
-  }, [trinksTotals, totaisPorTipo]);
+  }, [trinksTotals, totaisPorMeio]);
 
   return (
-    <div className="space-y-6 max-w-[1400px] pb-8">
+    <div className="space-y-5 max-w-[1400px] pb-8">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3 border-b border-border pb-4">
         <div>
           <h1 className="text-xl font-bold">Consolidação Bancária</h1>
           <p className="text-sm text-muted-foreground">
-            Compare o fechamento do Trinks com o extrato dos seus bancos e maquininhas
+            Compare o fechamento do Trinks com seus extratos bancários
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Input
-            type="month"
-            value={selectedMes}
-            onChange={e => setSelectedMes(e.target.value)}
-            className="h-9 w-40"
-          />
-        </div>
+        <Input type="month" value={selectedMes} onChange={e => setSelectedMes(e.target.value)} className="h-9 w-40" />
       </div>
 
-      {/* KPIs de resumo */}
+      {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card className="bg-card border-card-border">
           <CardContent className="p-4">
@@ -220,19 +226,8 @@ export default function Consolidacao() {
               <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
               <span className="text-[10px] text-muted-foreground font-medium uppercase">Entrou no banco</span>
             </div>
-            <p className="text-lg font-bold">{formatCurrency(totaisPorTipo.total)}</p>
+            <p className="text-lg font-bold">{formatCurrency(totaisPorMeio.total)}</p>
             <p className="text-[10px] text-muted-foreground mt-1.5">{formatMonth(selectedMes)}</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-card-border">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-1.5">
-              <TrendingDown className="w-3.5 h-3.5 text-red-400" />
-              <span className="text-[10px] text-muted-foreground font-medium uppercase">Taxas estimadas</span>
-            </div>
-            <p className="text-lg font-bold text-red-400">{formatCurrency(totalTaxasPagas)}</p>
-            <p className="text-[10px] text-muted-foreground mt-1.5">{analiseTaxas.length} maquininha{analiseTaxas.length !== 1 ? "s" : ""}</p>
           </CardContent>
         </Card>
 
@@ -250,6 +245,17 @@ export default function Consolidacao() {
         <Card className="bg-card border-card-border">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-1.5">
+              <TrendingDown className="w-3.5 h-3.5 text-red-400" />
+              <span className="text-[10px] text-muted-foreground font-medium uppercase">Tarifas pagas</span>
+            </div>
+            <p className="text-lg font-bold text-red-400">{formatCurrency(totaisPorMeio.tarifas)}</p>
+            <p className="text-[10px] text-muted-foreground mt-1.5">tarifas + transferências</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1.5">
               <Building2 className="w-3.5 h-3.5 text-primary" />
               <span className="text-[10px] text-muted-foreground font-medium uppercase">Contas ativas</span>
             </div>
@@ -259,11 +265,12 @@ export default function Consolidacao() {
         </Card>
       </div>
 
-      {/* Discrepâncias */}
+      {/* Conciliação */}
       <div>
         <div className="flex items-center gap-2 mb-3">
           <div className="w-1 h-5 bg-primary rounded-full" />
           <h2 className="text-base font-semibold">Conciliação Trinks × Banco</h2>
+          <span className="text-xs text-muted-foreground">(antecipações somadas como crédito)</span>
         </div>
         <Card className="bg-card border-card-border">
           <CardContent className="p-0">
@@ -280,14 +287,17 @@ export default function Consolidacao() {
               <tbody>
                 {discrepancias.map(d => {
                   const pct = d.trinks > 0 ? (d.diff / d.trinks) * 100 : 0;
-                  const ok = Math.abs(d.diff) < d.trinks * 0.05; // menos de 5%
-                  const negativo = d.diff < 0 && Math.abs(d.diff) > 10;
+                  const ok = Math.abs(d.diff) < Math.max(d.trinks * 0.05, 50);
+                  const negativo = d.diff < -10;
                   return (
                     <tr key={d.meio} className="border-b border-border/50">
-                      <td className="p-3 font-medium">{d.meio}</td>
+                      <td className="p-3">
+                        <div className="font-medium">{d.meio}</div>
+                        {d.detalhe && <div className="text-[10px] text-muted-foreground mt-0.5">{d.detalhe}</div>}
+                      </td>
                       <td className="p-3 text-right">{formatCurrency(d.trinks)}</td>
                       <td className="p-3 text-right">{formatCurrency(d.banco)}</td>
-                      <td className={`p-3 text-right font-semibold ${negativo ? "text-red-400" : d.diff > 0 ? "text-amber-400" : "text-muted-foreground"}`}>
+                      <td className={`p-3 text-right font-semibold ${negativo ? "text-red-400" : d.diff > 50 ? "text-amber-400" : "text-muted-foreground"}`}>
                         {d.diff >= 0 ? "+" : ""}{formatCurrency(d.diff)}
                         {d.trinks > 0 && <span className="text-[10px] ml-1">({pct >= 0 ? "+" : ""}{pct.toFixed(1)}%)</span>}
                       </td>
@@ -303,84 +313,34 @@ export default function Consolidacao() {
                 })}
               </tbody>
             </table>
-            {(trinksTotals.totalRevenue === 0 || totaisPorTipo.total === 0) && (
+            {(trinksTotals.totalRevenue === 0 || totaisPorMeio.total === 0) && (
               <div className="p-4 text-xs text-muted-foreground text-center border-t border-border">
-                {trinksTotals.totalRevenue === 0
-                  ? "Sincronize a Trinks para ver as vendas do mês"
-                  : "Faça upload do extrato do banco para comparar"}
+                {trinksTotals.totalRevenue === 0 ? "Sincronize a Trinks para ver as vendas" : "Faça upload do extrato para comparar"}
               </div>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Análise de Taxas */}
-      {analiseTaxas.length > 0 && (
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-1 h-5 bg-primary rounded-full" />
-            <h2 className="text-base font-semibold">Análise de Taxas</h2>
-            <span className="text-xs text-muted-foreground">por maquininha</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {analiseTaxas.map(a => (
-              <Card key={a.conta.id} className="bg-card border-card-border">
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-primary" />
-                      <span className="font-semibold text-sm">{a.conta.nome}</span>
-                    </div>
-                    <Badge variant="outline" className="text-[10px]">{a.nTransacoes} tx</Badge>
-                  </div>
-                  <div className="space-y-1.5 mt-3">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">Total recebido</span>
-                      <span className="font-medium">{formatCurrency(a.totalRecebido)}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">Taxa contratada</span>
-                      <span className="font-medium text-primary">
-                        D {a.conta.taxaDebito || 0}% / C {a.conta.taxaCredito || 0}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-xs pt-1.5 border-t border-border">
-                      <span className="text-muted-foreground">Taxa estimada no mês</span>
-                      <span className="font-semibold text-red-400">-{formatCurrency(a.taxaEstimadaPaga)}</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Gestão de Contas */}
+      {/* Contas */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="w-1 h-5 bg-primary rounded-full" />
             <h2 className="text-base font-semibold">Contas Cadastradas</h2>
           </div>
-          <ContaForm onSaved={loadData} />
+          <ContaDialog onSaved={loadData} />
         </div>
         {contas.length === 0 ? (
           <Card className="bg-card border-card-border">
             <CardContent className="p-6 text-center text-muted-foreground text-sm">
-              Nenhuma conta cadastrada. Adicione seus bancos, maquininhas e caixa para começar.
+              Nenhuma conta cadastrada. Adicione seus bancos, contas de plano (InfinityPay) e maquininhas.
             </CardContent>
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {contas.map(c => (
-              <ContaCard
-                key={c.id}
-                conta={c}
-                totalTx={transacoes.filter(t => t.contaId === c.id).length}
-                onReload={loadData}
-                mes={selectedMes}
-              />
+              <ContaCard key={c.id} conta={c} totalTx={transacoes.filter(t => t.contaId === c.id).length} onReload={loadData} mes={selectedMes} />
             ))}
           </div>
         )}
@@ -401,6 +361,7 @@ export default function Consolidacao() {
                   <tr>
                     <th className="text-left p-2.5 text-muted-foreground font-medium">Data</th>
                     <th className="text-left p-2.5 text-muted-foreground font-medium">Conta</th>
+                    <th className="text-left p-2.5 text-muted-foreground font-medium">Tipo</th>
                     <th className="text-left p-2.5 text-muted-foreground font-medium">Descrição</th>
                     <th className="text-right p-2.5 text-muted-foreground font-medium">Valor</th>
                   </tr>
@@ -410,10 +371,25 @@ export default function Consolidacao() {
                     const conta = contas.find(c => c.id === t.contaId);
                     return (
                       <tr key={t.id} className="border-b border-border/50 hover:bg-muted/20">
-                        <td className="p-2.5 font-mono">{t.date.slice(8)}/{t.date.slice(5,7)}</td>
+                        <td className="p-2.5 font-mono whitespace-nowrap">{t.date.slice(8)}/{t.date.slice(5,7)}</td>
                         <td className="p-2.5 truncate max-w-[120px]">{conta?.nome || "?"}</td>
+                        <td className="p-2.5">
+                          {t.tipo === "antecipacao" ? (
+                            <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/40 bg-amber-500/10">
+                              <Zap className="w-2.5 h-2.5 mr-0.5" />Antec
+                            </Badge>
+                          ) : t.tipo === "pix" ? (
+                            <Badge variant="outline" className="text-[10px]">Pix</Badge>
+                          ) : t.tipo === "debito" ? (
+                            <Badge variant="outline" className="text-[10px]">Débito</Badge>
+                          ) : t.tipo === "credito" ? (
+                            <Badge variant="outline" className="text-[10px]">Crédito</Badge>
+                          ) : t.tipo === "tarifa" ? (
+                            <Badge variant="outline" className="text-[10px] text-red-400 border-red-500/30">Tarifa</Badge>
+                          ) : null}
+                        </td>
                         <td className="p-2.5 truncate max-w-[280px]">{t.description}</td>
-                        <td className={`p-2.5 text-right font-semibold ${t.amount >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        <td className={`p-2.5 text-right font-semibold whitespace-nowrap ${t.amount >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                           {t.amount >= 0 ? "+" : ""}{formatCurrency(t.amount)}
                         </td>
                       </tr>
@@ -429,35 +405,71 @@ export default function Consolidacao() {
   );
 }
 
-// ─── Formulário de conta ──────────────────────────────────
-function ContaForm({ onSaved, conta }: { onSaved: () => void; conta?: Conta }) {
+// ─── Dialog de criar/editar conta ─────────────────────────
+function ContaDialog({ onSaved, conta, trigger }: { onSaved: () => void; conta?: Conta; trigger?: React.ReactNode }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
-  const [nome, setNome] = useState(conta?.nome || "");
-  const [tipo, setTipo] = useState<TipoConta>(conta?.tipo || "banco");
-  const [taxaDebito, setTaxaDebito] = useState(conta?.taxaDebito?.toString() || "");
-  const [taxaCredito, setTaxaCredito] = useState(conta?.taxaCredito?.toString() || "");
+  const [nome, setNome] = useState("");
+  const [tipo, setTipo] = useState<TipoConta>("banco");
+  const [meios, setMeios] = useState<Meio[]>(["pix"]);
+  const [taxaPix, setTaxaPix] = useState("");
+  const [taxaDebito, setTaxaDebito] = useState("");
+  const [taxaCredito, setTaxaCredito] = useState("");
+  const [taxaAntecipacao, setTaxaAntecipacao] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Reset form quando abrir
+  useEffect(() => {
+    if (open) {
+      if (conta) {
+        setNome(conta.nome);
+        setTipo(conta.tipo);
+        setMeios(conta.meios || []);
+        setTaxaPix(conta.taxaPix?.toString() || "");
+        setTaxaDebito(conta.taxaDebito?.toString() || "");
+        setTaxaCredito(conta.taxaCredito?.toString() || "");
+        setTaxaAntecipacao(conta.taxaAntecipacao?.toString() || "");
+      } else {
+        setNome(""); setTipo("banco"); setMeios(["pix"]);
+        setTaxaPix(""); setTaxaDebito(""); setTaxaCredito(""); setTaxaAntecipacao("");
+      }
+    }
+  }, [open, conta]);
+
+  const toggleMeio = (m: Meio) => {
+    setMeios(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m]);
+  };
+
+  // Sugestões padrão por tipo
+  const onChangeTipo = (t: TipoConta) => {
+    setTipo(t);
+    if (!conta) {
+      if (t === "banco") setMeios(["pix"]);
+      else if (t === "maquininha") setMeios(["debito", "credito"]);
+      else if (t === "caixa") setMeios(["dinheiro"]);
+    }
+  };
 
   const save = async () => {
     if (!nome.trim()) { toast({ title: "Nome obrigatório", variant: "destructive" }); return; }
+    if (meios.length === 0) { toast({ title: "Selecione ao menos um meio de recebimento", variant: "destructive" }); return; }
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE}/api/consolidacao/contas`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: conta?.id,
-          nome, tipo,
-          taxaDebito: tipo === "maquininha" && taxaDebito ? Number(taxaDebito) : undefined,
-          taxaCredito: tipo === "maquininha" && taxaCredito ? Number(taxaCredito) : undefined,
+          id: conta?.id, nome, tipo, meios,
+          taxaPix: meios.includes("pix") && taxaPix ? Number(taxaPix) : undefined,
+          taxaDebito: meios.includes("debito") && taxaDebito ? Number(taxaDebito) : undefined,
+          taxaCredito: meios.includes("credito") && taxaCredito ? Number(taxaCredito) : undefined,
+          taxaAntecipacao: meios.includes("credito") && taxaAntecipacao ? Number(taxaAntecipacao) : undefined,
           ativa: true,
         }),
       });
-      if (!res.ok) throw new Error("erro");
+      if (!res.ok) throw new Error();
       toast({ title: conta ? "Conta atualizada" : "Conta criada" });
       setOpen(false);
-      if (!conta) { setNome(""); setTaxaDebito(""); setTaxaCredito(""); }
       onSaved();
     } catch {
       toast({ title: "Erro ao salvar", variant: "destructive" });
@@ -467,42 +479,78 @@ function ContaForm({ onSaved, conta }: { onSaved: () => void; conta?: Conta }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" className="bg-primary hover:bg-primary/80 text-white">
-          <Plus className="w-4 h-4 mr-1" /> Nova conta
-        </Button>
+        {trigger || (
+          <Button size="sm" className="bg-primary hover:bg-primary/80 text-white">
+            <Plus className="w-4 h-4 mr-1" /> Nova conta
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="bg-card border-card-border max-w-md">
         <DialogHeader><DialogTitle>{conta ? "Editar conta" : "Nova conta"}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div>
-            <Label className="text-xs">Nome</Label>
-            <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: NuBank PJ, Cielo Loja..." />
+            <Label className="text-xs">Nome da conta</Label>
+            <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Itaú PJ, InfinityPay, Cielo..." />
           </div>
           <div>
             <Label className="text-xs">Tipo</Label>
-            <Select value={tipo} onValueChange={v => setTipo(v as TipoConta)}>
+            <Select value={tipo} onValueChange={v => onChangeTipo(v as TipoConta)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="banco">Banco (Pix / depósito)</SelectItem>
-                <SelectItem value="maquininha">Maquininha (cartão)</SelectItem>
+                <SelectItem value="banco">Banco / Conta de plano</SelectItem>
+                <SelectItem value="maquininha">Maquininha / Adquirente</SelectItem>
                 <SelectItem value="caixa">Caixa (dinheiro)</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          {tipo === "maquininha" && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Taxa Débito (%)</Label>
-                <Input type="number" step="0.01" value={taxaDebito} onChange={e => setTaxaDebito(e.target.value)} placeholder="1.99" />
-              </div>
-              <div>
-                <Label className="text-xs">Taxa Crédito (%)</Label>
-                <Input type="number" step="0.01" value={taxaCredito} onChange={e => setTaxaCredito(e.target.value)} placeholder="3.29" />
+
+          <div>
+            <Label className="text-xs">Meios de recebimento</Label>
+            <p className="text-[10px] text-muted-foreground mb-2">Marque tudo que essa conta recebe (ex: InfinityPay = Pix + Crédito)</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(["pix", "debito", "credito", "dinheiro"] as Meio[]).map(m => (
+                <label key={m} className="flex items-center gap-2 p-2 rounded-md border border-border cursor-pointer hover:bg-muted/30">
+                  <Checkbox checked={meios.includes(m)} onCheckedChange={() => toggleMeio(m)} />
+                  <span className="text-sm">{MEIO_LABELS[m]}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {(meios.includes("pix") || meios.includes("debito") || meios.includes("credito")) && (
+            <div className="border-t border-border pt-3 space-y-2">
+              <Label className="text-xs">Taxas (%)</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {meios.includes("pix") && (
+                  <div>
+                    <Label className="text-[10px] text-muted-foreground">Pix</Label>
+                    <Input type="number" step="0.01" value={taxaPix} onChange={e => setTaxaPix(e.target.value)} placeholder="0" />
+                  </div>
+                )}
+                {meios.includes("debito") && (
+                  <div>
+                    <Label className="text-[10px] text-muted-foreground">Débito</Label>
+                    <Input type="number" step="0.01" value={taxaDebito} onChange={e => setTaxaDebito(e.target.value)} placeholder="1.99" />
+                  </div>
+                )}
+                {meios.includes("credito") && (
+                  <>
+                    <div>
+                      <Label className="text-[10px] text-muted-foreground">Crédito</Label>
+                      <Input type="number" step="0.01" value={taxaCredito} onChange={e => setTaxaCredito(e.target.value)} placeholder="3.29" />
+                    </div>
+                    <div>
+                      <Label className="text-[10px] text-muted-foreground">Antecipação</Label>
+                      <Input type="number" step="0.01" value={taxaAntecipacao} onChange={e => setTaxaAntecipacao(e.target.value)} placeholder="2.99" />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
+
           <Button onClick={save} disabled={saving} className="w-full bg-primary hover:bg-primary/80 text-white">
-            {saving ? "Salvando..." : "Salvar"}
+            {saving ? "Salvando..." : (conta ? "Atualizar" : "Criar conta")}
           </Button>
         </div>
       </DialogContent>
@@ -510,14 +558,13 @@ function ContaForm({ onSaved, conta }: { onSaved: () => void; conta?: Conta }) {
   );
 }
 
-// ─── Card de conta com upload e delete ────────────────────
+// ─── Card de conta ──────────────────────────────────────────
 function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: number; onReload: () => void; mes: string }) {
   const { toast } = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
-  const icon = conta.tipo === "banco" ? Building2 : conta.tipo === "maquininha" ? CreditCard : Coins;
-  const Icon = icon;
+  const Icon = conta.tipo === "banco" ? Building2 : conta.tipo === "maquininha" ? CreditCard : Coins;
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -537,14 +584,9 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
         if (row.length < 2) continue;
         const date = parseDate(row[cols.date] || "");
         const description = row[cols.description] || "";
-        const amount = parseBrazilianNumber(row[cols.amount] || "0");
+        const amount = parseBR(row[cols.amount] || "0");
         if (!date || amount === 0) continue;
-        // Detecta tipo pela descrição
-        let tipo: any;
-        const d = description.toLowerCase();
-        if (/pix/.test(d)) tipo = "pix";
-        else if (/deb|débito/.test(d)) tipo = "debito";
-        else if (/cred|crédito/.test(d)) tipo = "credito";
+        const tipo = detectTipo(description);
         transacoes.push({ date, description, amount, tipo });
       }
 
@@ -560,7 +602,11 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
       });
       if (!res.ok) throw new Error("upload falhou");
       const data = await res.json();
-      toast({ title: "Importado!", description: `${data.inserted} transações adicionadas para ${conta.nome}.` });
+      const antecipacoes = transacoes.filter(t => t.tipo === "antecipacao").length;
+      toast({
+        title: "Importado!",
+        description: `${data.inserted} transações${antecipacoes > 0 ? ` (${antecipacoes} antecipações detectadas)` : ""}.`,
+      });
       onReload();
     } catch (err: any) {
       toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
@@ -590,16 +636,41 @@ function ContaCard({ conta, totalTx, onReload, mes }: { conta: Conta; totalTx: n
               <p className="text-[10px] text-muted-foreground capitalize">{conta.tipo}</p>
             </div>
           </div>
-          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400 hover:text-red-300" onClick={deleteConta}>
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <ContaDialog
+              conta={conta}
+              onSaved={onReload}
+              trigger={
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-primary" title="Editar">
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+              }
+            />
+            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400 hover:text-red-300" onClick={deleteConta} title="Excluir">
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          </div>
         </div>
-        {conta.tipo === "maquininha" && (
-          <div className="flex gap-2 mb-3 text-[10px]">
-            <Badge variant="outline" className="text-[10px]">D {conta.taxaDebito || 0}%</Badge>
-            <Badge variant="outline" className="text-[10px]">C {conta.taxaCredito || 0}%</Badge>
+
+        {/* Meios */}
+        {conta.meios && conta.meios.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-2">
+            {conta.meios.map(m => (
+              <Badge key={m} variant="outline" className="text-[10px]">{MEIO_LABELS[m]}</Badge>
+            ))}
           </div>
         )}
+
+        {/* Taxas */}
+        {(conta.taxaPix || conta.taxaDebito || conta.taxaCredito || conta.taxaAntecipacao) && (
+          <div className="flex flex-wrap gap-1 mb-3 text-[10px]">
+            {conta.taxaPix != null && <Badge variant="outline" className="text-[10px]">Pix {conta.taxaPix}%</Badge>}
+            {conta.taxaDebito != null && <Badge variant="outline" className="text-[10px]">D {conta.taxaDebito}%</Badge>}
+            {conta.taxaCredito != null && <Badge variant="outline" className="text-[10px]">C {conta.taxaCredito}%</Badge>}
+            {conta.taxaAntecipacao != null && <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/40">Antec {conta.taxaAntecipacao}%</Badge>}
+          </div>
+        )}
+
         <p className="text-xs text-muted-foreground mb-3">{totalTx} transações em {formatMonth(mes)}</p>
         <input ref={fileInput} type="file" accept=".csv,.txt" onChange={handleFile} className="hidden" />
         <Button

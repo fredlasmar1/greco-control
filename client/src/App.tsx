@@ -22,6 +22,7 @@ import Configuracoes from "@/pages/Configuracoes";
 import ClientesDuplicados from "@/pages/ClientesDuplicados";
 import RaioX from "@/pages/RaioX";
 import Consolidacao from "@/pages/Consolidacao";
+import Assinaturas from "@/pages/Assinaturas";
 import Login from "@/pages/Login";
 import MeuPainel from "@/pages/MeuPainel";
 import NotFound from "@/pages/not-found";
@@ -49,6 +50,7 @@ function AdminRoutes() {
         <Route path="/precificacao" component={Precificacao} />
         <Route path="/financeiro" component={Financeiro} />
         <Route path="/consolidacao" component={Consolidacao} />
+        <Route path="/assinaturas" component={Assinaturas} />
         <Route path="/fechamento" component={Fechamento} />
         <Route path="/metas" component={Metas} />
         <Route path="/duplicados" component={ClientesDuplicados} />

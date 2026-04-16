@@ -18,6 +18,7 @@ import {
   Calculator,
   UserX,
   Banknote,
+  Crown,
 } from "lucide-react";
 
 const navItems = [
@@ -29,6 +30,7 @@ const navItems = [
   { path: "/precificacao", label: "Precificação", icon: Calculator },
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
   { path: "/consolidacao", label: "Consolidação", icon: Banknote },
+  { path: "/assinaturas", label: "Assinaturas", icon: Crown },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
   { path: "/metas", label: "Metas", icon: Target },
   { path: "/duplicados", label: "Duplicados", icon: UserX },

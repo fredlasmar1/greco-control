@@ -75,8 +75,12 @@ async function parseFileToRows(file: File): Promise<string[][]> {
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: "" }) as any[][];
     return rows.map(r => r.map(c => (c == null ? "" : String(c))));
   }
-  // CSV / TXT
-  const text = await file.text();
+  // CSV / TXT — tenta UTF-8, se tiver caracteres corrompidos usa Windows-1252
+  let text = await file.text();
+  if (text.includes('\uFFFD')) {
+    const buf = await file.arrayBuffer();
+    text = new TextDecoder('windows-1252').decode(buf);
+  }
   return parseCSV(text);
 }
 
@@ -133,10 +137,26 @@ function parseDate(s: string): string {
   return "";
 }
 
+// Encontra a linha de cabeçalho real (pula metadados como AGENCIA, nome do banco, etc.)
+function findHeaderRow(rows: string[][]): number {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const cells = rows[i].map(c => (c || "").toLowerCase().trim());
+    if (cells.some(c => /^data\b|^date\b|dt\.?lanc|dt\.?mov|data\.?mov/.test(c))) {
+      return i;
+    }
+  }
+  return 0;
+}
+
 function detectColumns(headers: string[], sampleRows: string[][] = []) {
   const h = headers.map(x => (x || "").toLowerCase().trim());
   const dateIdx = h.findIndex(x => /^data\b|^date\b|dt.lanc|dt.mov|data.mov/i.test(x));
-  const descIdx = h.findIndex(x => /descri|histor|memo|observa|lan[çc]amento/i.test(x));
+  // Primeiro tenta padrões tradicionais de descrição (hist.?ri pega "Histórico" mesmo com encoding quebrado)
+  let descIdx = h.findIndex(x => /descri|hist.?ri|memo|observa|lan[çc]amento/i.test(x));
+  // Fallback: colunas alternativas como "Nome", "Razão Social", "Detalhe"
+  if (descIdx < 0) {
+    descIdx = h.findIndex(x => /^nome\b|raz[aã]o|detalhe/i.test(x));
+  }
   // Colunas separadas de débito e crédito
   const debIdx = h.findIndex(x => /^d[ée]bito\b|saida|^pago\b|valor.*saida/i.test(x));
   const credIdx = h.findIndex(x => /^cr[eé]dito\b|entrada|recebido|valor.*entrada/i.test(x));
@@ -194,8 +214,8 @@ function detectColumns(headers: string[], sampleRows: string[][] = []) {
 
 // Linha parece um saldo / subtotal / cabeçalho? (ignora)
 function isSaldoLine(description: string): boolean {
-  const d = (description || "").toLowerCase();
-  return /^saldo|^total|^subtotal|^s\s*a\s*l\s*d\s*o/.test(d.trim());
+  const d = (description || "").toLowerCase().trim();
+  return /^saldo|^total|^subtotal|^s\s*a\s*l\s*d\s*o|saldo\s*(total|disponivel|anterior|em\s*conta)/i.test(d);
 }
 
 // Detecta tipo de transação pela descrição
@@ -205,7 +225,7 @@ function detectTipo(description: string): TipoTransacao | undefined {
   if (/pix/.test(d)) return "pix";
   if (/d[ée]bito|deb\.|cart.*deb/.test(d)) return "debito";
   if (/cr[ée]dito|cred\.|cart.*cred|parcelad/.test(d)) return "credito";
-  if (/tarifa|tar\.|iof|taxa|anuidade/.test(d)) return "tarifa";
+  if (/tarifa|tar\b|tar\.|iof\b|taxa|anuidade|juros\b|manuten[çc][aã]o/.test(d)) return "tarifa";
   if (/ted|doc|transfer/.test(d)) return "transferencia";
   return undefined;
 }
@@ -1008,12 +1028,13 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
       const rows = await parseFileToRows(file);
       if (rows.length < 2) throw new Error("Arquivo vazio");
 
-      const headers = rows[0];
-      const cols = detectColumns(headers, rows.slice(1, 20));
+      const headerIdx = findHeaderRow(rows);
+      const headers = rows[headerIdx];
+      const dataRows = rows.slice(headerIdx + 1);
+      const cols = detectColumns(headers, dataRows.slice(0, 20));
       const transacoes: any[] = [];
 
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
+      for (const row of dataRows) {
         if (row.length < 2) continue;
         const date = parseDate(row[cols.date] || "");
         const description = (row[cols.description] || "").trim();

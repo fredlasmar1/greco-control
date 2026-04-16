@@ -53,7 +53,6 @@ const CONSOLIDACAO_TRANSACOES_FILE = path.join(DATA_DIR, ".consolidacao-transaco
 const USUARIOS_FILE = path.join(DATA_DIR, ".usuarios.json");
 const STORE_FILE = path.join(DATA_DIR, ".store-data.json");
 const ASSINATURAS_FILE = path.join(DATA_DIR, ".assinaturas-clientes.json");
-const ASSINATURAS_ALERTAS_FILE = path.join(DATA_DIR, ".assinaturas-alertas.json");
 
 // ─── Persistência híbrida: DB (Postgres) + arquivo JSON (fallback) ───
 // Todos os loads tentam DB primeiro; se falhar, lê do arquivo.
@@ -136,44 +135,60 @@ let contasConsolidacao: ContaConsolidacao[] = [];
 let transacoesBanco: TransacaoBanco[] = [];
 
 // ─── Assinaturas (Greco Assinaturas) ────────────────────
+interface PagamentoMensal {
+  mes: string; // YYYY-MM
+  pago: boolean;
+  pagoEm?: string; // ISO date
+  valor: number;
+}
 interface AssinaturaCliente {
   id: string;
   name: string;
   phone?: string;
   email?: string;
-  trinksId?: string;
-  plan?: string; // express_corte | express_cabelo_barba | personalizada
-  planValue?: number;
-  barberId?: string;
-  barberName?: string;
-  status: 'active' | 'inactive' | 'cancelled' | 'pending';
-  paymentDay?: number;
-  paymentAccount?: string; // itau | infinitepay
-  paymentMethod?: string; // pix | cartao
-  selectedServices?: Record<string, number>;
-  startDate?: string;
+  plan: string; // express_corte | express_cabelo_barba | personalizada
+  planValue: number;
+  // Contrato
+  contractDate: string; // data da assinatura do contrato (YYYY-MM-DD)
+  contractDurationMonths: number; // duração em meses (ex: 3, 6, 12)
+  contractEndDate: string; // data de fim do contrato (YYYY-MM-DD)
+  contractUrl?: string; // link do ZapSign ou URL do arquivo
+  contractFileName?: string; // nome do PDF salvo
+  // Pagamento
+  paymentDay: number; // dia do mês
+  payments: PagamentoMensal[]; // histórico mensal
+  // Status
+  status: 'active' | 'cancelled' | 'expired';
   notes?: string;
   createdAt: string;
   updatedAt: string;
 }
-interface AssinaturaAlerta {
-  id: string;
-  type: 'payment_overdue' | 'client_inactive' | 'renewal_soon';
-  message: string;
-  clientId?: string;
-  clientName?: string;
-  isResolved: boolean;
-  resolvedAt?: string;
-  createdAt: string;
-}
 let assinaturaClientes: AssinaturaCliente[] = [];
-let assinaturaAlertas: AssinaturaAlerta[] = [];
 
 function saveAssinaturaClientes() {
   persistData("assinaturas_clientes", ASSINATURAS_FILE, assinaturaClientes);
 }
-function saveAssinaturaAlertas() {
-  persistData("assinaturas_alertas", ASSINATURAS_ALERTAS_FILE, assinaturaAlertas);
+
+// Calcula status de pagamento do cliente
+function getPaymentStatus(c: AssinaturaCliente): 'em_dia' | 'inadimplente' | 'cancelado' | 'expirado' {
+  if (c.status === 'cancelled') return 'cancelado';
+  if (c.status === 'expired') return 'expirado';
+  const now = new Date();
+  const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  // Verifica meses não pagos até o mês atual
+  const start = new Date(c.contractDate);
+  const end = new Date(c.contractEndDate);
+  const current = now < end ? now : end;
+  const mesStart = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
+  const pagoSet = new Set(c.payments.filter(p => p.pago).map(p => p.mes));
+  // Gera lista de meses do contrato até o mês atual
+  const d = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (d <= current) {
+    const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (!pagoSet.has(m)) return 'inadimplente';
+    d.setMonth(d.getMonth() + 1);
+  }
+  return 'em_dia';
 }
 
 // ─── Usuários / Autenticação ─────────────────────────────
@@ -877,7 +892,7 @@ export async function registerRoutes(
       const [
         dbUsuarios, dbFinanceiro, dbMetas, dbMetasBarb, dbChecklist,
         dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore,
-        dbAssinaturaClientes, dbAssinaturaAlertas,
+        dbAssinaturaClientes,
       ] = await Promise.all([
         kvGet<typeof usuarios>("usuarios"),
         kvGet<typeof financeEntries>("financeiro"),
@@ -890,7 +905,6 @@ export async function registerRoutes(
         kvGet<typeof resolvedDuplicateIds>("duplicados_resolvidos"),
         kvGet<typeof storeData>("store"),
         kvGet<typeof assinaturaClientes>("assinaturas_clientes"),
-        kvGet<typeof assinaturaAlertas>("assinaturas_alertas"),
       ]);
       if (Array.isArray(dbUsuarios) && dbUsuarios.length > 0) usuarios = dbUsuarios;
       if (Array.isArray(dbFinanceiro)) financeEntries = dbFinanceiro;
@@ -903,7 +917,6 @@ export async function registerRoutes(
       if (Array.isArray(dbDuplicados)) resolvedDuplicateIds = dbDuplicados;
       if (dbStore && typeof dbStore === "object") storeData = dbStore;
       if (Array.isArray(dbAssinaturaClientes)) assinaturaClientes = dbAssinaturaClientes;
-      if (Array.isArray(dbAssinaturaAlertas)) assinaturaAlertas = dbAssinaturaAlertas;
 
       // Se este é o primeiro boot com DB, migra os dados que estão em memória para ele
       const anyData = [dbUsuarios, dbFinanceiro, dbMetas, dbMetasBarb, dbChecklist, dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore].some(v => v !== null);
@@ -921,7 +934,6 @@ export async function registerRoutes(
           kvSet("duplicados_resolvidos", resolvedDuplicateIds),
           kvSet("store", storeData),
           kvSet("assinaturas_clientes", assinaturaClientes),
-          kvSet("assinaturas_alertas", assinaturaAlertas),
         ]);
       }
       log("Dados carregados do Postgres", "db");
@@ -2539,75 +2551,87 @@ Qualquer sinal de atenção que deva ser monitorado nos próximos meses.`;
   // ASSINATURAS ROUTES
   // ──────────────────────────────────────────────────────────────────
 
-  // GET /api/assinaturas/clientes — lista todos os clientes
+  // GET /api/assinaturas/clientes — lista com status de pagamento calculado
   app.get("/api/assinaturas/clientes", (_req: Request, res: Response) => {
-    return res.json(assinaturaClientes.sort((a, b) => a.name.localeCompare(b.name)));
+    const enriched = assinaturaClientes.map(c => ({
+      ...c,
+      paymentStatus: getPaymentStatus(c),
+    }));
+    return res.json(enriched.sort((a, b) => a.name.localeCompare(b.name)));
   });
 
   // GET /api/assinaturas/clientes/:id
   app.get("/api/assinaturas/clientes/:id", (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const cliente = assinaturaClientes.find(c => c.id === id);
-    if (!cliente) return res.status(404).json({ error: "Cliente não encontrado" });
-    return res.json(cliente);
+    const c = assinaturaClientes.find(c => c.id === id);
+    if (!c) return res.status(404).json({ error: "Cliente não encontrado" });
+    return res.json({ ...c, paymentStatus: getPaymentStatus(c) });
   });
 
-  // POST /api/assinaturas/clientes — criar cliente
+  // POST /api/assinaturas/clientes — cadastrar novo assinante
   app.post("/api/assinaturas/clientes", (req: Request, res: Response) => {
-    const { name, phone, email, trinksId } = req.body;
-    if (!name || !String(name).trim()) return res.status(400).json({ error: "Nome é obrigatório" });
+    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: "Nome é obrigatório" });
+    if (!plan) return res.status(400).json({ error: "Plano é obrigatório" });
+    if (!planValue) return res.status(400).json({ error: "Valor é obrigatório" });
+    if (!contractDate) return res.status(400).json({ error: "Data do contrato é obrigatória" });
+    if (!contractDurationMonths) return res.status(400).json({ error: "Duração é obrigatória" });
+    if (!paymentDay) return res.status(400).json({ error: "Dia de pagamento é obrigatório" });
+
+    const duration = Number(contractDurationMonths);
+    const endDate = new Date(contractDate);
+    endDate.setMonth(endDate.getMonth() + duration);
     const now = new Date().toISOString();
+
     const cliente: AssinaturaCliente = {
       id: `asc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: String(name).trim(),
       phone: phone || undefined,
       email: email || undefined,
-      trinksId: trinksId || undefined,
-      status: "pending",
+      plan,
+      planValue: Number(planValue),
+      contractDate,
+      contractDurationMonths: duration,
+      contractEndDate: endDate.toISOString().slice(0, 10),
+      contractUrl: contractUrl || undefined,
+      paymentDay: Number(paymentDay),
+      payments: [],
+      status: "active",
+      notes: notes || undefined,
       createdAt: now,
       updatedAt: now,
     };
     assinaturaClientes.push(cliente);
     saveAssinaturaClientes();
-    return res.json({ id: cliente.id, message: "Cliente adicionado" });
+    return res.json({ id: cliente.id, message: "Assinante cadastrado" });
   });
 
-  // POST /api/assinaturas/clientes/import — importar lote
-  app.post("/api/assinaturas/clientes/import", (req: Request, res: Response) => {
-    const { clients } = req.body;
-    if (!Array.isArray(clients)) return res.status(400).json({ error: "Envie um array de clientes" });
-    const now = new Date().toISOString();
-    let imported = 0;
-    for (const c of clients) {
-      if (!c.name || !String(c.name).trim()) continue;
-      assinaturaClientes.push({
-        id: `asc-${Date.now()}-${imported}-${Math.random().toString(36).slice(2, 6)}`,
-        name: String(c.name).trim(),
-        phone: c.phone || undefined,
-        email: c.email || undefined,
-        status: "pending",
-        createdAt: now,
-        updatedAt: now,
-      });
-      imported++;
-    }
-    saveAssinaturaClientes();
-    return res.json({ imported });
-  });
-
-  // PUT /api/assinaturas/clientes/:id — atualizar dados do cliente
+  // PUT /api/assinaturas/clientes/:id — editar assinante
   app.put("/api/assinaturas/clientes/:id", (req: Request, res: Response) => {
     const id = req.params.id as string;
     const idx = assinaturaClientes.findIndex(c => c.id === id);
     if (idx < 0) return res.status(404).json({ error: "Cliente não encontrado" });
-    const { name, phone, email, notes } = req.body;
-    if (name !== undefined) assinaturaClientes[idx].name = String(name).trim();
-    if (phone !== undefined) assinaturaClientes[idx].phone = phone || undefined;
-    if (email !== undefined) assinaturaClientes[idx].email = email || undefined;
-    if (notes !== undefined) assinaturaClientes[idx].notes = notes || undefined;
-    assinaturaClientes[idx].updatedAt = new Date().toISOString();
+    const c = assinaturaClientes[idx];
+    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes, status } = req.body;
+    if (name !== undefined) c.name = String(name).trim();
+    if (phone !== undefined) c.phone = phone || undefined;
+    if (email !== undefined) c.email = email || undefined;
+    if (plan !== undefined) c.plan = plan;
+    if (planValue !== undefined) c.planValue = Number(planValue);
+    if (contractDate !== undefined) c.contractDate = contractDate;
+    if (contractDurationMonths !== undefined) {
+      c.contractDurationMonths = Number(contractDurationMonths);
+      const end = new Date(c.contractDate);
+      end.setMonth(end.getMonth() + c.contractDurationMonths);
+      c.contractEndDate = end.toISOString().slice(0, 10);
+    }
+    if (paymentDay !== undefined) c.paymentDay = Number(paymentDay);
+    if (contractUrl !== undefined) c.contractUrl = contractUrl || undefined;
+    if (notes !== undefined) c.notes = notes || undefined;
+    if (status !== undefined) c.status = status as any;
+    c.updatedAt = new Date().toISOString();
     saveAssinaturaClientes();
-    return res.json({ message: "Cliente atualizado" });
+    return res.json({ message: "Assinante atualizado" });
   });
 
   // DELETE /api/assinaturas/clientes/:id
@@ -2617,33 +2641,10 @@ Qualquer sinal de atenção que deva ser monitorado nos próximos meses.`;
     assinaturaClientes = assinaturaClientes.filter(c => c.id !== id);
     if (assinaturaClientes.length === before) return res.status(404).json({ error: "Cliente não encontrado" });
     saveAssinaturaClientes();
-    return res.json({ message: "Cliente excluído" });
+    return res.json({ message: "Assinante excluído" });
   });
 
-  // PUT /api/assinaturas/clientes/:id/assinatura — configurar/editar assinatura
-  app.put("/api/assinaturas/clientes/:id/assinatura", (req: Request, res: Response) => {
-    const id = req.params.id as string;
-    const idx = assinaturaClientes.findIndex(c => c.id === id);
-    if (idx < 0) return res.status(404).json({ error: "Cliente não encontrado" });
-    const { plan, barberId, barberName, planValue, paymentDay, paymentAccount, paymentMethod, selectedServices, startDate, notes, status } = req.body;
-    const c = assinaturaClientes[idx];
-    if (plan !== undefined) c.plan = plan;
-    if (barberId !== undefined) c.barberId = barberId;
-    if (barberName !== undefined) c.barberName = barberName;
-    if (planValue !== undefined) c.planValue = Number(planValue) || undefined;
-    if (paymentDay !== undefined) c.paymentDay = Number(paymentDay) || undefined;
-    if (paymentAccount !== undefined) c.paymentAccount = paymentAccount;
-    if (paymentMethod !== undefined) c.paymentMethod = paymentMethod;
-    if (selectedServices !== undefined) c.selectedServices = selectedServices;
-    if (startDate !== undefined) c.startDate = startDate;
-    if (notes !== undefined) c.notes = notes || undefined;
-    c.status = (status as any) || "active";
-    c.updatedAt = new Date().toISOString();
-    saveAssinaturaClientes();
-    return res.json({ message: "Assinatura configurada" });
-  });
-
-  // PUT /api/assinaturas/clientes/:id/cancelar — cancelar assinatura
+  // PUT /api/assinaturas/clientes/:id/cancelar
   app.put("/api/assinaturas/clientes/:id/cancelar", (req: Request, res: Response) => {
     const id = req.params.id as string;
     const idx = assinaturaClientes.findIndex(c => c.id === id);
@@ -2654,94 +2655,84 @@ Qualquer sinal de atenção que deva ser monitorado nos próximos meses.`;
     return res.json({ message: "Assinatura cancelada" });
   });
 
-  // GET /api/assinaturas/dashboard — stats
-  app.get("/api/assinaturas/dashboard", (_req: Request, res: Response) => {
-    const active = assinaturaClientes.filter(c => c.status === "active");
-    const monthlyRevenue = active.reduce((s, c) => s + (c.planValue || 0), 0);
-    const activeAlerts = assinaturaAlertas.filter(a => !a.isResolved).length;
-    // Distribuição de planos
-    const planMap: Record<string, number> = {};
-    active.forEach(c => {
-      const p = c.plan || "Sem plano";
-      planMap[p] = (planMap[p] || 0) + 1;
-    });
-    const planDistribution = Object.entries(planMap).map(([name, count]) => ({ name, count }));
-    // Receita por barbeiro
-    const barberMap: Record<string, number> = {};
-    active.forEach(c => {
-      const b = c.barberName || "Sem barbeiro";
-      barberMap[b] = (barberMap[b] || 0) + (c.planValue || 0);
-    });
-    const revenueByBarber = Object.entries(barberMap).map(([name, revenue]) => ({ name, revenue }));
-    return res.json({
-      activeSubscribers: active.length,
-      totalSubscribers: assinaturaClientes.length,
-      monthlyRevenue,
-      activeAlerts,
-      planDistribution,
-      revenueByBarber,
-    });
-  });
-
-  // GET /api/assinaturas/alertas
-  app.get("/api/assinaturas/alertas", (_req: Request, res: Response) => {
-    return res.json(assinaturaAlertas.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
-  });
-
-  // POST /api/assinaturas/alertas/gerar — gera alertas automaticamente
-  app.post("/api/assinaturas/alertas/gerar", (_req: Request, res: Response) => {
-    let generated = 0;
-    const now = new Date();
-    const today = now.getDate();
-    for (const c of assinaturaClientes) {
-      if (c.status !== "active") continue;
-      // Pagamento atrasado
-      if (c.paymentDay && today > c.paymentDay + 5) {
-        assinaturaAlertas.push({
-          id: `ala-${Date.now()}-${generated}-${Math.random().toString(36).slice(2, 5)}`,
-          type: "payment_overdue",
-          message: `Pagamento de ${c.name} está atrasado (dia ${c.paymentDay})`,
-          clientId: c.id,
-          clientName: c.name,
-          isResolved: false,
-          createdAt: now.toISOString(),
-        });
-        generated++;
+  // PUT /api/assinaturas/clientes/:id/pagamento — registrar pagamento de um mês
+  app.put("/api/assinaturas/clientes/:id/pagamento", (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const { mes, pago } = req.body; // mes: "YYYY-MM", pago: boolean
+    if (!mes) return res.status(400).json({ error: "Mês é obrigatório (YYYY-MM)" });
+    const idx = assinaturaClientes.findIndex(c => c.id === id);
+    if (idx < 0) return res.status(404).json({ error: "Cliente não encontrado" });
+    const c = assinaturaClientes[idx];
+    const pIdx = c.payments.findIndex(p => p.mes === mes);
+    if (pago) {
+      if (pIdx >= 0) {
+        c.payments[pIdx].pago = true;
+        c.payments[pIdx].pagoEm = new Date().toISOString();
+      } else {
+        c.payments.push({ mes, pago: true, pagoEm: new Date().toISOString(), valor: c.planValue });
       }
-      // Renovação próxima
-      if (c.startDate) {
-        const start = new Date(c.startDate);
-        const monthsSince = Math.floor((now.getTime() - start.getTime()) / (30 * 24 * 60 * 60 * 1000));
-        const nextRenewal = new Date(start);
-        nextRenewal.setMonth(nextRenewal.getMonth() + monthsSince + 1);
-        const daysUntil = Math.floor((nextRenewal.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
-        if (daysUntil <= 7 && daysUntil > 0) {
-          assinaturaAlertas.push({
-            id: `ala-${Date.now()}-${generated}-${Math.random().toString(36).slice(2, 5)}`,
-            type: "renewal_soon",
-            message: `Renovação de ${c.name} em ${daysUntil} dias`,
-            clientId: c.id,
-            clientName: c.name,
-            isResolved: false,
-            createdAt: now.toISOString(),
-          });
-          generated++;
-        }
+    } else {
+      if (pIdx >= 0) {
+        c.payments[pIdx].pago = false;
+        c.payments[pIdx].pagoEm = undefined;
       }
     }
-    saveAssinaturaAlertas();
-    return res.json({ generated });
+    c.updatedAt = new Date().toISOString();
+    saveAssinaturaClientes();
+    return res.json({ message: pago ? "Pagamento registrado" : "Pagamento desmarcado" });
   });
 
-  // PUT /api/assinaturas/alertas/:id/resolver
-  app.put("/api/assinaturas/alertas/:id/resolver", (req: Request, res: Response) => {
+  // POST /api/assinaturas/clientes/:id/contrato — upload do contrato (PDF)
+  app.post("/api/assinaturas/clientes/:id/contrato", upload.single("file"), (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const idx = assinaturaAlertas.findIndex(a => a.id === id);
-    if (idx < 0) return res.status(404).json({ error: "Alerta não encontrado" });
-    assinaturaAlertas[idx].isResolved = true;
-    assinaturaAlertas[idx].resolvedAt = new Date().toISOString();
-    saveAssinaturaAlertas();
-    return res.json({ message: "Alerta resolvido" });
+    const idx = assinaturaClientes.findIndex(c => c.id === id);
+    if (idx < 0) return res.status(404).json({ error: "Cliente não encontrado" });
+    if (!req.file) return res.status(400).json({ error: "Arquivo não enviado" });
+
+    const fileName = `contrato-${id}-${Date.now()}.pdf`;
+    const filePath = path.join(DATA_DIR, fileName);
+    try { fs.writeFileSync(filePath, req.file.buffer); } catch {}
+    assinaturaClientes[idx].contractFileName = fileName;
+    assinaturaClientes[idx].updatedAt = new Date().toISOString();
+    saveAssinaturaClientes();
+    return res.json({ message: "Contrato salvo", fileName });
+  });
+
+  // GET /api/assinaturas/contratos/:fileName — baixar contrato
+  app.get("/api/assinaturas/contratos/:fileName", (req: Request, res: Response) => {
+    const fileName = req.params.fileName as string;
+    const filePath = path.join(DATA_DIR, fileName);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Contrato não encontrado" });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    return res.send(fs.readFileSync(filePath));
+  });
+
+  // GET /api/assinaturas/dashboard — resumo geral
+  app.get("/api/assinaturas/dashboard", (_req: Request, res: Response) => {
+    const active = assinaturaClientes.filter(c => c.status === "active");
+    const inadimplentes = active.filter(c => getPaymentStatus(c) === "inadimplente");
+    const monthlyRevenue = active.reduce((s, c) => s + (c.planValue || 0), 0);
+    // Distribuição por plano
+    const planMap: Record<string, number> = {};
+    active.forEach(c => { planMap[c.plan] = (planMap[c.plan] || 0) + 1; });
+    const planDistribution = Object.entries(planMap).map(([name, count]) => ({ name, count }));
+    // Contratos vencendo nos próximos 30 dias
+    const now = new Date();
+    const in30 = new Date(now); in30.setDate(in30.getDate() + 30);
+    const vencendoEmBreve = active.filter(c => {
+      const end = new Date(c.contractEndDate);
+      return end >= now && end <= in30;
+    });
+    return res.json({
+      totalAssinantes: assinaturaClientes.length,
+      ativos: active.length,
+      inadimplentes: inadimplentes.length,
+      cancelados: assinaturaClientes.filter(c => c.status === "cancelled").length,
+      monthlyRevenue,
+      planDistribution,
+      vencendoEmBreve: vencendoEmBreve.length,
+    });
   });
 
   return httpServer;

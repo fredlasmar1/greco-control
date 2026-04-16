@@ -164,17 +164,21 @@ interface AssinaturaCliente {
   createdAt: string;
   updatedAt: string;
 }
+interface PlanoServico {
+  servicoId: string;
+  servicoNome: string;
+  quantidade: number;
+  precoUnitario: number;
+}
 interface PlanoAssinatura {
   id: string;
   nome: string;
-  valor: number; // preço padrão
+  servicos: PlanoServico[]; // composição do plano
+  valor: number; // preço final (pode ter desconto sobre a soma)
   ativo: boolean;
 }
 let assinaturaClientes: AssinaturaCliente[] = [];
-let assinaturaPlanos: PlanoAssinatura[] = [
-  { id: "express_corte", nome: "Express Corte", valor: 80, ativo: true },
-  { id: "express_cabelo_barba", nome: "Express Cabelo e Barba", valor: 160, ativo: true },
-];
+let assinaturaPlanos: PlanoAssinatura[] = [];
 
 function saveAssinaturaClientes() {
   persistData("assinaturas_clientes", ASSINATURAS_FILE, assinaturaClientes);
@@ -2734,10 +2738,14 @@ Qualquer sinal de atenção que deva ser monitorado nos próximos meses.`;
 
   // POST /api/assinaturas/planos — criar plano
   app.post("/api/assinaturas/planos", (req: Request, res: Response) => {
-    const { nome, valor } = req.body;
+    const { nome, valor, servicos } = req.body;
     if (!nome?.trim()) return res.status(400).json({ error: "Nome é obrigatório" });
-    const id = nome.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "") + "_" + Date.now().toString(36);
-    assinaturaPlanos.push({ id, nome: nome.trim(), valor: Number(valor) || 0, ativo: true });
+    const id = `plano_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`;
+    assinaturaPlanos.push({
+      id, nome: nome.trim(), valor: Number(valor) || 0,
+      servicos: Array.isArray(servicos) ? servicos : [],
+      ativo: true,
+    });
     saveAssinaturaPlanos();
     return res.json({ id, message: "Plano criado" });
   });
@@ -2747,9 +2755,10 @@ Qualquer sinal de atenção que deva ser monitorado nos próximos meses.`;
     const id = req.params.id as string;
     const idx = assinaturaPlanos.findIndex(p => p.id === id);
     if (idx < 0) return res.status(404).json({ error: "Plano não encontrado" });
-    const { nome, valor, ativo } = req.body;
+    const { nome, valor, servicos, ativo } = req.body;
     if (nome !== undefined) assinaturaPlanos[idx].nome = String(nome).trim();
     if (valor !== undefined) assinaturaPlanos[idx].valor = Number(valor);
+    if (servicos !== undefined) assinaturaPlanos[idx].servicos = Array.isArray(servicos) ? servicos : [];
     if (ativo !== undefined) assinaturaPlanos[idx].ativo = !!ativo;
     saveAssinaturaPlanos();
     return res.json({ message: "Plano atualizado" });

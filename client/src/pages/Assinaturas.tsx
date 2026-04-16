@@ -18,11 +18,23 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
+interface PlanoServico {
+  servicoId: string;
+  servicoNome: string;
+  quantidade: number;
+  precoUnitario: number;
+}
 interface Plano {
   id: string;
   nome: string;
+  servicos: PlanoServico[];
   valor: number;
   ativo: boolean;
+}
+interface ServicoDisponivel {
+  id: string;
+  name: string;
+  price: number;
 }
 
 const DURATION_OPTIONS = [
@@ -269,7 +281,20 @@ export default function Assinaturas() {
                           <p className="font-medium">{c.name}</p>
                           <p className="text-[10px] text-muted-foreground">{c.phone || c.email || ""}</p>
                         </td>
-                        <td className="p-3">{planLabels[c.plan] || c.plan}</td>
+                        <td className="p-3">
+                          <p>{planLabels[c.plan] || c.plan}</p>
+                          {(() => {
+                            const plano = planos.find(p => p.id === c.plan);
+                            if (plano?.servicos?.length) return (
+                              <div className="flex flex-wrap gap-1 mt-0.5">
+                                {plano.servicos.map((s, i) => (
+                                  <span key={i} className="text-[9px] text-muted-foreground">{s.quantidade}x {s.servicoNome}{i < plano.servicos.length - 1 ? " +" : ""}</span>
+                                ))}
+                              </div>
+                            );
+                            return null;
+                          })()}
+                        </td>
                         <td className="p-3 text-right font-semibold">{formatCurrency(c.planValue)}</td>
                         <td className="p-3 text-center">
                           <div className="text-[10px] text-muted-foreground">
@@ -686,40 +711,28 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
   );
 }
 
-// ─── Gerenciar Planos ──────────────────────────────────────
+// ─── Gerenciar Planos (composição de serviços) ─────────────
 function PlanosDialog({ open, onClose, planos, onChanged }: {
   open: boolean; onClose: () => void; planos: Plano[]; onChanged: () => void;
 }) {
   const { toast } = useToast();
-  const [novoNome, setNovoNome] = useState("");
-  const [novoValor, setNovoValor] = useState("");
-  const [editId, setEditId] = useState<string | null>(null);
-  const [editNome, setEditNome] = useState("");
-  const [editValor, setEditValor] = useState("");
+  const [servicos, setServicos] = useState<ServicoDisponivel[]>([]);
+  const [editingPlano, setEditingPlano] = useState<Plano | null>(null);
+  const [showEditor, setShowEditor] = useState(false);
 
-  const criarPlano = async () => {
-    if (!novoNome.trim()) return;
-    await fetch(`${API_BASE}/api/assinaturas/planos`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nome: novoNome, valor: Number(novoValor) || 0 }),
-    });
-    toast({ title: "Plano criado!" });
-    setNovoNome(""); setNovoValor("");
-    onChanged();
-  };
-
-  const salvarEdicao = async () => {
-    if (!editId) return;
-    await fetch(`${API_BASE}/api/assinaturas/planos/${editId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nome: editNome, valor: Number(editValor) }),
-    });
-    toast({ title: "Plano atualizado!" });
-    setEditId(null);
-    onChanged();
-  };
+  // Carrega serviços do Trinks
+  useEffect(() => {
+    if (!open) return;
+    fetch(`${API_BASE}/api/store`).then(r => r.json()).then((data: any) => {
+      if (data?.trinksData?.servicos) {
+        setServicos(data.trinksData.servicos.map((s: any) => ({
+          id: String(s.id || ""),
+          name: s.nome || s.name || "",
+          price: Number(s.preco || s.valor || s.price || 0),
+        })).filter((s: any) => s.name));
+      }
+    }).catch(() => {});
+  }, [open]);
 
   const excluirPlano = async (id: string) => {
     if (!confirm("Excluir este plano?")) return;
@@ -729,54 +742,213 @@ function PlanosDialog({ open, onClose, planos, onChanged }: {
   };
 
   return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="bg-card border-card-border max-w-md">
-        <DialogHeader><DialogTitle>Gerenciar Planos</DialogTitle></DialogHeader>
-        <div className="space-y-4">
-          <p className="text-xs text-muted-foreground">Configure os planos disponíveis e seus valores padrão. O valor pode ser ajustado por cliente na hora do cadastro (desconto).</p>
+    <Dialog open={open} onOpenChange={v => { if (!v) { onClose(); setShowEditor(false); setEditingPlano(null); } }}>
+      <DialogContent className="bg-card border-card-border max-w-xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{showEditor ? (editingPlano ? "Editar Plano" : "Novo Plano") : "Gerenciar Planos"}</DialogTitle>
+        </DialogHeader>
 
-          {/* Lista de planos */}
-          <div className="space-y-2">
-            {planos.map(p => (
-              <div key={p.id} className="flex items-center gap-2 p-3 rounded-lg border border-border bg-muted/10">
-                {editId === p.id ? (
-                  <>
-                    <Input value={editNome} onChange={e => setEditNome(e.target.value)} className="h-8 text-xs flex-1" />
-                    <Input type="number" value={editValor} onChange={e => setEditValor(e.target.value)} className="h-8 text-xs w-24" placeholder="R$" />
-                    <Button size="sm" className="h-8 w-8 p-0 bg-emerald-600" onClick={salvarEdicao}><Check className="w-3.5 h-3.5" /></Button>
-                    <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => setEditId(null)}><X className="w-3.5 h-3.5" /></Button>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">{p.nome}</p>
-                      <p className="text-xs text-muted-foreground">{p.valor > 0 ? formatCurrency(p.valor) + "/mês" : "Valor personalizado"}</p>
-                    </div>
-                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setEditId(p.id); setEditNome(p.nome); setEditValor(p.valor.toString()); }}>
-                      <Pencil className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400" onClick={() => excluirPlano(p.id)}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </>
-                )}
+        {!showEditor ? (
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">Monte seus planos combinando serviços e quantidades. Ex: 2 cortes + 4 barbas = R$ X,XX</p>
+
+            {planos.length === 0 ? (
+              <div className="py-8 text-center text-muted-foreground text-sm">
+                Nenhum plano cadastrado. Crie seu primeiro plano.
               </div>
-            ))}
-          </div>
+            ) : (
+              <div className="space-y-3">
+                {planos.map(p => (
+                  <Card key={p.id} className="bg-muted/10 border-border">
+                    <CardContent className="p-3">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <p className="text-sm font-semibold">{p.nome}</p>
+                          <p className="text-lg font-bold text-emerald-400">{formatCurrency(p.valor)}<span className="text-xs text-muted-foreground font-normal">/mês</span></p>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setEditingPlano(p); setShowEditor(true); }}>
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400" onClick={() => excluirPlano(p.id)}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                      {p.servicos && p.servicos.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {p.servicos.map((s, i) => (
+                            <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                              {s.quantidade}x {s.servicoNome}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-muted-foreground">Sem serviços definidos</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
 
-          {/* Novo plano */}
-          <div className="border-t border-border pt-3">
-            <Label className="text-xs font-medium mb-2 block">Adicionar novo plano</Label>
-            <div className="flex items-center gap-2">
-              <Input value={novoNome} onChange={e => setNovoNome(e.target.value)} placeholder="Nome do plano" className="h-8 text-xs flex-1" />
-              <Input type="number" value={novoValor} onChange={e => setNovoValor(e.target.value)} placeholder="R$" className="h-8 text-xs w-24" />
-              <Button size="sm" className="h-8 bg-primary hover:bg-primary/80 text-white" onClick={criarPlano} disabled={!novoNome.trim()}>
-                <Plus className="w-3.5 h-3.5" />
-              </Button>
-            </div>
+            <Button className="w-full bg-primary hover:bg-primary/80 text-white" onClick={() => { setEditingPlano(null); setShowEditor(true); }}>
+              <Plus className="w-4 h-4 mr-2" /> Criar Novo Plano
+            </Button>
           </div>
-        </div>
+        ) : (
+          <PlanoEditor
+            plano={editingPlano}
+            servicos={servicos}
+            onSaved={() => { setShowEditor(false); setEditingPlano(null); onChanged(); }}
+            onCancel={() => { setShowEditor(false); setEditingPlano(null); }}
+          />
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── Editor de Plano (montar com serviços) ─────────────────
+function PlanoEditor({ plano, servicos, onSaved, onCancel }: {
+  plano: Plano | null; servicos: ServicoDisponivel[]; onSaved: () => void; onCancel: () => void;
+}) {
+  const { toast } = useToast();
+  const [nome, setNome] = useState(plano?.nome || "");
+  const [valor, setValor] = useState(plano?.valor?.toString() || "");
+  const [items, setItems] = useState<PlanoServico[]>(plano?.servicos || []);
+  const [saving, setSaving] = useState(false);
+
+  // Soma dos serviços (preço cheio)
+  const somaServicos = items.reduce((s, i) => s + (i.quantidade * i.precoUnitario), 0);
+
+  const addServico = (svc: ServicoDisponivel) => {
+    const existing = items.find(i => i.servicoId === svc.id);
+    if (existing) {
+      setItems(items.map(i => i.servicoId === svc.id ? { ...i, quantidade: i.quantidade + 1 } : i));
+    } else {
+      setItems([...items, { servicoId: svc.id, servicoNome: svc.name, quantidade: 1, precoUnitario: svc.price }]);
+    }
+  };
+
+  const updateQtd = (servicoId: string, qtd: number) => {
+    if (qtd <= 0) {
+      setItems(items.filter(i => i.servicoId !== servicoId));
+    } else {
+      setItems(items.map(i => i.servicoId === servicoId ? { ...i, quantidade: qtd } : i));
+    }
+  };
+
+  const removeServico = (servicoId: string) => {
+    setItems(items.filter(i => i.servicoId !== servicoId));
+  };
+
+  const save = async () => {
+    if (!nome.trim()) { toast({ title: "Nome é obrigatório", variant: "destructive" }); return; }
+    if (!valor || Number(valor) <= 0) { toast({ title: "Valor é obrigatório", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      const url = plano ? `${API_BASE}/api/assinaturas/planos/${plano.id}` : `${API_BASE}/api/assinaturas/planos`;
+      const res = await fetch(url, {
+        method: plano ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome, valor: Number(valor), servicos: items }),
+      });
+      if (res.ok) {
+        toast({ title: plano ? "Plano atualizado!" : "Plano criado!" });
+        onSaved();
+      }
+    } catch { toast({ title: "Erro", variant: "destructive" }); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Nome e valor */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Nome do plano *</Label>
+          <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Plano Completo" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Valor final (R$) *</Label>
+          <Input type="number" step="0.01" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
+          {somaServicos > 0 && Number(valor) > 0 && Number(valor) < somaServicos && (
+            <p className="text-[10px] text-emerald-400">
+              Desconto de {((1 - Number(valor) / somaServicos) * 100).toFixed(0)}% sobre o preço cheio ({formatCurrency(somaServicos)})
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Serviços no plano */}
+      <div>
+        <Label className="text-xs font-medium mb-2 block">Serviços incluídos</Label>
+        {items.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-3 text-center border border-dashed border-border rounded-lg">
+            Adicione serviços abaixo para montar o plano
+          </p>
+        ) : (
+          <div className="space-y-2 mb-3">
+            {items.map(item => (
+              <div key={item.servicoId} className="flex items-center gap-2 p-2.5 rounded-lg border border-primary/20 bg-primary/5">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate">{item.servicoNome}</p>
+                  <p className="text-[10px] text-muted-foreground">{formatCurrency(item.precoUnitario)} un. = {formatCurrency(item.quantidade * item.precoUnitario)}</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-xs" onClick={() => updateQtd(item.servicoId, item.quantidade - 1)}>-</Button>
+                  <span className="text-sm font-bold w-6 text-center">{item.quantidade}</span>
+                  <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-xs" onClick={() => updateQtd(item.servicoId, item.quantidade + 1)}>+</Button>
+                </div>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400" onClick={() => removeServico(item.servicoId)}>
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            ))}
+            {somaServicos > 0 && (
+              <div className="flex justify-between text-xs px-2 pt-1 border-t border-border">
+                <span className="text-muted-foreground">Preço cheio:</span>
+                <span className="font-medium">{formatCurrency(somaServicos)}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Adicionar serviço */}
+      <div>
+        <Label className="text-xs font-medium mb-2 block">Adicionar serviço</Label>
+        {servicos.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-3 border border-dashed border-border rounded-lg">
+            Sincronize os serviços do Trinks primeiro (aba Configurações)
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto">
+            {servicos.filter(s => !items.find(i => i.servicoId === s.id)).map(svc => (
+              <button
+                key={svc.id}
+                onClick={() => addServico(svc)}
+                className="flex items-center gap-2 p-2 rounded-lg border border-border hover:border-primary/40 hover:bg-primary/5 transition text-left"
+              >
+                <Plus className="w-3 h-3 text-primary flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium truncate">{svc.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{formatCurrency(svc.price)}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Ações */}
+      <div className="flex gap-2 pt-2 border-t border-border">
+        <Button variant="outline" className="flex-1" onClick={onCancel}>Cancelar</Button>
+        <Button className="flex-1 bg-primary hover:bg-primary/80 text-white" onClick={save} disabled={saving}>
+          {saving ? "Salvando..." : (plano ? "Atualizar Plano" : "Criar Plano")}
+        </Button>
+      </div>
+    </div>
   );
 }

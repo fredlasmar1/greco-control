@@ -8,25 +8,23 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/demoData";
+import { useLocation } from "wouter";
 import {
   Users, DollarSign, Search, Plus, Trash2, XCircle, CheckCircle, Check,
   Crown, FileText, ExternalLink, Upload, AlertTriangle, Calendar, Clock,
-  Eye, X,
+  Eye, X, Pencil, Settings, Banknote,
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
-const PLAN_LABELS: Record<string, string> = {
-  personalizada: "Personalizada",
-  express_corte: "Express Corte",
-  express_cabelo_barba: "Express Cabelo e Barba",
-};
-const PLAN_OPTIONS = [
-  { value: "express_corte", label: "Express Corte", price: 80 },
-  { value: "express_cabelo_barba", label: "Express Cabelo e Barba", price: 160 },
-  { value: "personalizada", label: "Personalizada", price: 0 },
-];
+interface Plano {
+  id: string;
+  nome: string;
+  valor: number;
+  ativo: boolean;
+}
+
 const DURATION_OPTIONS = [
   { value: "3", label: "3 meses" },
   { value: "6", label: "6 meses" },
@@ -101,7 +99,9 @@ function formatMonthBR(s: string): string {
 // ─── Main Page ─────────────────────────────────────────────
 export default function Assinaturas() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [planos, setPlanos] = useState<Plano[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -109,15 +109,24 @@ export default function Assinaturas() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [showPlanos, setShowPlanos] = useState(false);
+
+  const planLabels = useMemo(() => {
+    const m: Record<string, string> = {};
+    planos.forEach(p => { m[p.id] = p.nome; });
+    return m;
+  }, [planos]);
 
   const loadData = () => {
     setLoading(true);
     Promise.all([
       fetch(`${API_BASE}/api/assinaturas/clientes`).then(r => r.json()),
       fetch(`${API_BASE}/api/assinaturas/dashboard`).then(r => r.json()),
-    ]).then(([c, s]) => {
+      fetch(`${API_BASE}/api/assinaturas/planos`).then(r => r.json()),
+    ]).then(([c, s, p]) => {
       setClientes(Array.isArray(c) ? c : []);
       setStats(s);
+      setPlanos(Array.isArray(p) ? p : []);
       setLoading(false);
     }).catch(() => setLoading(false));
   };
@@ -158,9 +167,17 @@ export default function Assinaturas() {
           </h1>
           <p className="text-sm text-muted-foreground">Gestão de assinaturas e contratos</p>
         </div>
-        <Button size="sm" className="bg-primary hover:bg-primary/80 text-white" onClick={() => { setEditingId(null); setShowForm(true); }}>
-          <Plus className="w-4 h-4 mr-1.5" /> Novo Assinante
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => setLocation("/consolidacao")} title="Ver extrato InfinitePay">
+            <Banknote className="w-3.5 h-3.5 mr-1.5" /> Extrato InfinitePay
+          </Button>
+          <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => setShowPlanos(true)}>
+            <Settings className="w-3.5 h-3.5 mr-1.5" /> Planos
+          </Button>
+          <Button size="sm" className="bg-primary hover:bg-primary/80 text-white" onClick={() => { setEditingId(null); setShowForm(true); }}>
+            <Plus className="w-4 h-4 mr-1.5" /> Novo Assinante
+          </Button>
+        </div>
       </div>
 
       {/* KPIs */}
@@ -252,7 +269,7 @@ export default function Assinaturas() {
                           <p className="font-medium">{c.name}</p>
                           <p className="text-[10px] text-muted-foreground">{c.phone || c.email || ""}</p>
                         </td>
-                        <td className="p-3">{PLAN_LABELS[c.plan] || c.plan}</td>
+                        <td className="p-3">{planLabels[c.plan] || c.plan}</td>
                         <td className="p-3 text-right font-semibold">{formatCurrency(c.planValue)}</td>
                         <td className="p-3 text-center">
                           <div className="text-[10px] text-muted-foreground">
@@ -277,6 +294,9 @@ export default function Assinaturas() {
                           <div className="flex items-center justify-end gap-1">
                             <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Ver detalhes / pagamentos" onClick={() => setDetailId(c.id)}>
                               <Eye className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Editar" onClick={() => { setEditingId(c.id); setShowForm(true); }}>
+                              <Pencil className="w-3.5 h-3.5" />
                             </Button>
                             {hasContract && (
                               <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Ver contrato" onClick={() => {
@@ -314,7 +334,7 @@ export default function Assinaturas() {
             <div className="flex items-center gap-8">
               <ResponsiveContainer width={180} height={180}>
                 <PieChart>
-                  <Pie data={stats.planDistribution.map(p => ({ ...p, name: PLAN_LABELS[p.name] || p.name }))}
+                  <Pie data={stats.planDistribution.map(p => ({ ...p, name: planLabels[p.name] || p.name }))}
                     dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={70} strokeWidth={0}>
                     {stats.planDistribution.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                   </Pie>
@@ -325,7 +345,7 @@ export default function Assinaturas() {
                 {stats.planDistribution.map((p, i) => (
                   <div key={p.name} className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                    <span className="text-xs">{PLAN_LABELS[p.name] || p.name}</span>
+                    <span className="text-xs">{planLabels[p.name] || p.name}</span>
                     <span className="text-xs text-muted-foreground ml-auto">{p.count} assinante{p.count > 1 ? "s" : ""}</span>
                   </div>
                 ))}
@@ -335,12 +355,16 @@ export default function Assinaturas() {
         </Card>
       )}
 
+      {/* Dialog: Gerenciar Planos */}
+      <PlanosDialog open={showPlanos} onClose={() => setShowPlanos(false)} planos={planos} onChanged={loadData} />
+
       {/* Dialog: Novo/Editar Assinante */}
       <AssinanteFormDialog
         open={showForm}
         onClose={() => { setShowForm(false); setEditingId(null); }}
         onSaved={() => { setShowForm(false); setEditingId(null); loadData(); }}
         editId={editingId}
+        planos={planos.filter(p => p.ativo)}
       />
 
       {/* Dialog: Detalhes + Pagamentos */}
@@ -356,8 +380,8 @@ export default function Assinaturas() {
 }
 
 // ─── Form Dialog ───────────────────────────────────────────
-function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
-  open: boolean; onClose: () => void; onSaved: () => void; editId: string | null;
+function AssinanteFormDialog({ open, onClose, onSaved, editId, planos }: {
+  open: boolean; onClose: () => void; onSaved: () => void; editId: string | null; planos: Plano[];
 }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -389,8 +413,8 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
   }, [open, editId]);
 
   const handlePlanChange = (plan: string) => {
-    const opt = PLAN_OPTIONS.find(p => p.value === plan);
-    setForm(prev => ({ ...prev, plan, planValue: opt && opt.price > 0 ? opt.price.toString() : prev.planValue }));
+    const opt = planos.find(p => p.id === plan);
+    setForm(prev => ({ ...prev, plan, planValue: opt && opt.valor > 0 ? opt.valor.toString() : prev.planValue }));
   };
 
   const save = async () => {
@@ -450,9 +474,9 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
               <Select value={form.plan} onValueChange={handlePlanChange}>
                 <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                 <SelectContent>
-                  {PLAN_OPTIONS.map(p => (
-                    <SelectItem key={p.value} value={p.value}>
-                      {p.label}{p.price > 0 ? ` (R$ ${p.price})` : ""}
+                  {planos.map(p => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.nome}{p.valor > 0 ? ` (R$ ${p.valor})` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -567,7 +591,7 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
         <div className="space-y-4">
           {/* Info */}
           <div className="grid grid-cols-2 gap-2 text-xs">
-            <div><span className="text-muted-foreground">Plano:</span> <span className="font-medium">{PLAN_LABELS[client.plan] || client.plan}</span></div>
+            <div><span className="text-muted-foreground">Plano:</span> <span className="font-medium">{client.plan}</span></div>
             <div><span className="text-muted-foreground">Valor:</span> <span className="font-semibold text-emerald-400">{formatCurrency(client.planValue)}/mês</span></div>
             <div><span className="text-muted-foreground">Contrato:</span> {formatDateBR(client.contractDate)} → {formatDateBR(client.contractEndDate)}</div>
             <div><span className="text-muted-foreground">Duração:</span> {client.contractDurationMonths} meses</div>
@@ -602,30 +626,37 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
           {/* Pagamentos */}
           <div className="border-t border-border pt-3">
             <span className="text-xs font-medium flex items-center gap-1.5 mb-3"><Calendar className="w-3.5 h-3.5" /> Pagamentos mensais</span>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-2">
               {months.map(mes => {
                 const pg = pagoMap.get(mes);
                 const pago = pg?.pago || false;
                 const passado = mes <= mesAtual;
                 const inadimplente = passado && !pago;
                 return (
-                  <button
-                    key={mes}
-                    onClick={() => togglePayment(mes, !pago)}
-                    className={`flex items-center gap-2 p-2.5 rounded-lg border text-left transition text-xs ${
-                      pago
-                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
-                        : inadimplente
-                          ? "border-red-500/40 bg-red-500/10 text-red-400"
-                          : "border-border hover:border-primary/40"
-                    }`}
-                  >
-                    {pago ? <Check className="w-3.5 h-3.5 flex-shrink-0" /> : inadimplente ? <X className="w-3.5 h-3.5 flex-shrink-0" /> : <div className="w-3.5 h-3.5 rounded-full border border-border flex-shrink-0" />}
-                    <div>
-                      <div className="font-medium">{formatMonthBR(mes)}</div>
-                      {pago && pg?.pagoEm && <div className="text-[9px] opacity-70">Pago {formatDateBR(pg.pagoEm.slice(0, 10))}</div>}
+                  <div key={mes} className={`flex items-center justify-between p-2.5 rounded-lg border text-xs ${
+                    pago
+                      ? "border-emerald-500/40 bg-emerald-500/10"
+                      : inadimplente
+                        ? "border-red-500/40 bg-red-500/10"
+                        : "border-border"
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      {pago ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : inadimplente ? <AlertTriangle className="w-4 h-4 text-red-400" /> : <Clock className="w-4 h-4 text-muted-foreground" />}
+                      <div>
+                        <div className="font-medium">{formatMonthBR(mes)}</div>
+                        {pago && pg?.pagoEm && <div className="text-[9px] text-muted-foreground">Pago {formatDateBR(pg.pagoEm.slice(0, 10))}</div>}
+                        {inadimplente && !pago && <div className="text-[9px] text-red-400 font-semibold">Atrasado</div>}
+                      </div>
                     </div>
-                  </button>
+                    <Button
+                      size="sm"
+                      variant={pago ? "outline" : "default"}
+                      className={`h-7 text-[10px] ${pago ? "text-muted-foreground" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+                      onClick={() => togglePayment(mes, !pago)}
+                    >
+                      {pago ? "Desfazer" : "Marcar Pago"}
+                    </Button>
+                  </div>
                 );
               })}
             </div>
@@ -637,6 +668,113 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
               <p className="text-xs mt-1">{client.notes}</p>
             </div>
           )}
+
+          {/* Link para extrato */}
+          <div className="border-t border-border pt-3">
+            <a href="#/consolidacao" className="flex items-center gap-2 p-3 rounded-lg bg-muted/20 border border-border hover:border-primary/40 transition text-xs">
+              <Banknote className="w-4 h-4 text-primary" />
+              <div>
+                <p className="font-medium">Ver extrato InfinitePay</p>
+                <p className="text-[10px] text-muted-foreground">Confira os pagamentos recebidos na aba Consolidação</p>
+              </div>
+              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground ml-auto" />
+            </a>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Gerenciar Planos ──────────────────────────────────────
+function PlanosDialog({ open, onClose, planos, onChanged }: {
+  open: boolean; onClose: () => void; planos: Plano[]; onChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const [novoNome, setNovoNome] = useState("");
+  const [novoValor, setNovoValor] = useState("");
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editNome, setEditNome] = useState("");
+  const [editValor, setEditValor] = useState("");
+
+  const criarPlano = async () => {
+    if (!novoNome.trim()) return;
+    await fetch(`${API_BASE}/api/assinaturas/planos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nome: novoNome, valor: Number(novoValor) || 0 }),
+    });
+    toast({ title: "Plano criado!" });
+    setNovoNome(""); setNovoValor("");
+    onChanged();
+  };
+
+  const salvarEdicao = async () => {
+    if (!editId) return;
+    await fetch(`${API_BASE}/api/assinaturas/planos/${editId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nome: editNome, valor: Number(editValor) }),
+    });
+    toast({ title: "Plano atualizado!" });
+    setEditId(null);
+    onChanged();
+  };
+
+  const excluirPlano = async (id: string) => {
+    if (!confirm("Excluir este plano?")) return;
+    await fetch(`${API_BASE}/api/assinaturas/planos/${id}`, { method: "DELETE" });
+    toast({ title: "Plano excluído" });
+    onChanged();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="bg-card border-card-border max-w-md">
+        <DialogHeader><DialogTitle>Gerenciar Planos</DialogTitle></DialogHeader>
+        <div className="space-y-4">
+          <p className="text-xs text-muted-foreground">Configure os planos disponíveis e seus valores padrão. O valor pode ser ajustado por cliente na hora do cadastro (desconto).</p>
+
+          {/* Lista de planos */}
+          <div className="space-y-2">
+            {planos.map(p => (
+              <div key={p.id} className="flex items-center gap-2 p-3 rounded-lg border border-border bg-muted/10">
+                {editId === p.id ? (
+                  <>
+                    <Input value={editNome} onChange={e => setEditNome(e.target.value)} className="h-8 text-xs flex-1" />
+                    <Input type="number" value={editValor} onChange={e => setEditValor(e.target.value)} className="h-8 text-xs w-24" placeholder="R$" />
+                    <Button size="sm" className="h-8 w-8 p-0 bg-emerald-600" onClick={salvarEdicao}><Check className="w-3.5 h-3.5" /></Button>
+                    <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => setEditId(null)}><X className="w-3.5 h-3.5" /></Button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{p.nome}</p>
+                      <p className="text-xs text-muted-foreground">{p.valor > 0 ? formatCurrency(p.valor) + "/mês" : "Valor personalizado"}</p>
+                    </div>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setEditId(p.id); setEditNome(p.nome); setEditValor(p.valor.toString()); }}>
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400" onClick={() => excluirPlano(p.id)}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Novo plano */}
+          <div className="border-t border-border pt-3">
+            <Label className="text-xs font-medium mb-2 block">Adicionar novo plano</Label>
+            <div className="flex items-center gap-2">
+              <Input value={novoNome} onChange={e => setNovoNome(e.target.value)} placeholder="Nome do plano" className="h-8 text-xs flex-1" />
+              <Input type="number" value={novoValor} onChange={e => setNovoValor(e.target.value)} placeholder="R$" className="h-8 text-xs w-24" />
+              <Button size="sm" className="h-8 bg-primary hover:bg-primary/80 text-white" onClick={criarPlano} disabled={!novoNome.trim()}>
+                <Plus className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

@@ -53,6 +53,7 @@ const CONSOLIDACAO_TRANSACOES_FILE = path.join(DATA_DIR, ".consolidacao-transaco
 const USUARIOS_FILE = path.join(DATA_DIR, ".usuarios.json");
 const STORE_FILE = path.join(DATA_DIR, ".store-data.json");
 const ASSINATURAS_FILE = path.join(DATA_DIR, ".assinaturas-clientes.json");
+const ASSINATURAS_PLANOS_FILE = path.join(DATA_DIR, ".assinaturas-planos.json");
 
 // ─── Persistência híbrida: DB (Postgres) + arquivo JSON (fallback) ───
 // Todos os loads tentam DB primeiro; se falhar, lê do arquivo.
@@ -163,10 +164,23 @@ interface AssinaturaCliente {
   createdAt: string;
   updatedAt: string;
 }
+interface PlanoAssinatura {
+  id: string;
+  nome: string;
+  valor: number; // preço padrão
+  ativo: boolean;
+}
 let assinaturaClientes: AssinaturaCliente[] = [];
+let assinaturaPlanos: PlanoAssinatura[] = [
+  { id: "express_corte", nome: "Express Corte", valor: 80, ativo: true },
+  { id: "express_cabelo_barba", nome: "Express Cabelo e Barba", valor: 160, ativo: true },
+];
 
 function saveAssinaturaClientes() {
   persistData("assinaturas_clientes", ASSINATURAS_FILE, assinaturaClientes);
+}
+function saveAssinaturaPlanos() {
+  persistData("assinaturas_planos", ASSINATURAS_PLANOS_FILE, assinaturaPlanos);
 }
 
 // Calcula status de pagamento do cliente
@@ -892,7 +906,7 @@ export async function registerRoutes(
       const [
         dbUsuarios, dbFinanceiro, dbMetas, dbMetasBarb, dbChecklist,
         dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore,
-        dbAssinaturaClientes,
+        dbAssinaturaClientes, dbAssinaturaPlanos,
       ] = await Promise.all([
         kvGet<typeof usuarios>("usuarios"),
         kvGet<typeof financeEntries>("financeiro"),
@@ -905,6 +919,7 @@ export async function registerRoutes(
         kvGet<typeof resolvedDuplicateIds>("duplicados_resolvidos"),
         kvGet<typeof storeData>("store"),
         kvGet<typeof assinaturaClientes>("assinaturas_clientes"),
+        kvGet<typeof assinaturaPlanos>("assinaturas_planos"),
       ]);
       if (Array.isArray(dbUsuarios) && dbUsuarios.length > 0) usuarios = dbUsuarios;
       if (Array.isArray(dbFinanceiro)) financeEntries = dbFinanceiro;
@@ -917,6 +932,7 @@ export async function registerRoutes(
       if (Array.isArray(dbDuplicados)) resolvedDuplicateIds = dbDuplicados;
       if (dbStore && typeof dbStore === "object") storeData = dbStore;
       if (Array.isArray(dbAssinaturaClientes)) assinaturaClientes = dbAssinaturaClientes;
+      if (Array.isArray(dbAssinaturaPlanos) && dbAssinaturaPlanos.length > 0) assinaturaPlanos = dbAssinaturaPlanos;
 
       // Se este é o primeiro boot com DB, migra os dados que estão em memória para ele
       const anyData = [dbUsuarios, dbFinanceiro, dbMetas, dbMetasBarb, dbChecklist, dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore].some(v => v !== null);
@@ -934,6 +950,7 @@ export async function registerRoutes(
           kvSet("duplicados_resolvidos", resolvedDuplicateIds),
           kvSet("store", storeData),
           kvSet("assinaturas_clientes", assinaturaClientes),
+          kvSet("assinaturas_planos", assinaturaPlanos),
         ]);
       }
       log("Dados carregados do Postgres", "db");
@@ -2706,6 +2723,44 @@ Qualquer sinal de atenção que deva ser monitorado nos próximos meses.`;
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
     return res.send(fs.readFileSync(filePath));
+  });
+
+  // ─── Planos ──────────────────────────────────────────────
+
+  // GET /api/assinaturas/planos
+  app.get("/api/assinaturas/planos", (_req: Request, res: Response) => {
+    return res.json(assinaturaPlanos);
+  });
+
+  // POST /api/assinaturas/planos — criar plano
+  app.post("/api/assinaturas/planos", (req: Request, res: Response) => {
+    const { nome, valor } = req.body;
+    if (!nome?.trim()) return res.status(400).json({ error: "Nome é obrigatório" });
+    const id = nome.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "") + "_" + Date.now().toString(36);
+    assinaturaPlanos.push({ id, nome: nome.trim(), valor: Number(valor) || 0, ativo: true });
+    saveAssinaturaPlanos();
+    return res.json({ id, message: "Plano criado" });
+  });
+
+  // PUT /api/assinaturas/planos/:id — editar plano
+  app.put("/api/assinaturas/planos/:id", (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const idx = assinaturaPlanos.findIndex(p => p.id === id);
+    if (idx < 0) return res.status(404).json({ error: "Plano não encontrado" });
+    const { nome, valor, ativo } = req.body;
+    if (nome !== undefined) assinaturaPlanos[idx].nome = String(nome).trim();
+    if (valor !== undefined) assinaturaPlanos[idx].valor = Number(valor);
+    if (ativo !== undefined) assinaturaPlanos[idx].ativo = !!ativo;
+    saveAssinaturaPlanos();
+    return res.json({ message: "Plano atualizado" });
+  });
+
+  // DELETE /api/assinaturas/planos/:id
+  app.delete("/api/assinaturas/planos/:id", (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    assinaturaPlanos = assinaturaPlanos.filter(p => p.id !== id);
+    saveAssinaturaPlanos();
+    return res.json({ message: "Plano excluído" });
   });
 
   // GET /api/assinaturas/dashboard — resumo geral

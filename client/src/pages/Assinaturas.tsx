@@ -1,41 +1,20 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/demoData";
 import { useLocation } from "wouter";
 import {
-  Users, DollarSign, Search, Plus, Trash2, XCircle, CheckCircle, Check,
+  Users, DollarSign, Search, Plus, Trash2, XCircle, CheckCircle,
   Crown, FileText, ExternalLink, Upload, AlertTriangle, Calendar, Clock,
-  Eye, X, Pencil, Settings, Banknote,
+  Eye, X, Pencil, Banknote,
 } from "lucide-react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
-
-interface PlanoServico {
-  servicoId: string;
-  servicoNome: string;
-  quantidade: number;
-  precoUnitario: number;
-}
-interface Plano {
-  id: string;
-  nome: string;
-  servicos: PlanoServico[];
-  valor: number;
-  ativo: boolean;
-}
-interface ServicoDisponivel {
-  id: string;
-  name: string;
-  price: number;
-}
 
 const DURATION_OPTIONS = [
   { value: "3", label: "3 meses" },
@@ -113,7 +92,6 @@ export default function Assinaturas() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [clientes, setClientes] = useState<Cliente[]>([]);
-  const [planos, setPlanos] = useState<Plano[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -121,24 +99,14 @@ export default function Assinaturas() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [showPlanos, setShowPlanos] = useState(false);
-
-  const planLabels = useMemo(() => {
-    const m: Record<string, string> = {};
-    planos.forEach(p => { m[p.id] = p.nome; });
-    return m;
-  }, [planos]);
-
   const loadData = () => {
     setLoading(true);
     Promise.all([
       fetch(`${API_BASE}/api/assinaturas/clientes`).then(r => r.json()),
       fetch(`${API_BASE}/api/assinaturas/dashboard`).then(r => r.json()),
-      fetch(`${API_BASE}/api/assinaturas/planos`).then(r => r.json()),
-    ]).then(([c, s, p]) => {
+    ]).then(([c, s]) => {
       setClientes(Array.isArray(c) ? c : []);
       setStats(s);
-      setPlanos(Array.isArray(p) ? p : []);
       setLoading(false);
     }).catch(() => setLoading(false));
   };
@@ -182,9 +150,6 @@ export default function Assinaturas() {
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => setLocation("/consolidacao")} title="Ver extrato InfinitePay">
             <Banknote className="w-3.5 h-3.5 mr-1.5" /> Extrato InfinitePay
-          </Button>
-          <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => setShowPlanos(true)}>
-            <Settings className="w-3.5 h-3.5 mr-1.5" /> Planos
           </Button>
           <Button size="sm" className="bg-primary hover:bg-primary/80 text-white" onClick={() => { setEditingId(null); setShowForm(true); }}>
             <Plus className="w-4 h-4 mr-1.5" /> Novo Assinante
@@ -282,18 +247,7 @@ export default function Assinaturas() {
                           <p className="text-[10px] text-muted-foreground">{c.phone || c.email || ""}</p>
                         </td>
                         <td className="p-3">
-                          <p>{planLabels[c.plan] || c.plan}</p>
-                          {(() => {
-                            const plano = planos.find(p => p.id === c.plan);
-                            if (plano?.servicos?.length) return (
-                              <div className="flex flex-wrap gap-1 mt-0.5">
-                                {plano.servicos.map((s, i) => (
-                                  <span key={i} className="text-[9px] text-muted-foreground">{s.quantidade}x {s.servicoNome}{i < plano.servicos.length - 1 ? " +" : ""}</span>
-                                ))}
-                              </div>
-                            );
-                            return null;
-                          })()}
+                          <p className="max-w-[200px] truncate" title={c.plan}>{c.plan || "—"}</p>
                         </td>
                         <td className="p-3 text-right font-semibold">{formatCurrency(c.planValue)}</td>
                         <td className="p-3 text-center">
@@ -351,37 +305,6 @@ export default function Assinaturas() {
         </CardContent>
       </Card>
 
-      {/* Gráfico de planos */}
-      {stats?.planDistribution && stats.planDistribution.length > 0 && (
-        <Card className="bg-card border-card-border">
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Distribuição por Plano</CardTitle></CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-8">
-              <ResponsiveContainer width={180} height={180}>
-                <PieChart>
-                  <Pie data={stats.planDistribution.map(p => ({ ...p, name: planLabels[p.name] || p.name }))}
-                    dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={70} strokeWidth={0}>
-                    {stats.planDistribution.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: "#1a1a1a", border: "1px solid #333", borderRadius: "8px", fontSize: 12 }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-2">
-                {stats.planDistribution.map((p, i) => (
-                  <div key={p.name} className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
-                    <span className="text-xs">{planLabels[p.name] || p.name}</span>
-                    <span className="text-xs text-muted-foreground ml-auto">{p.count} assinante{p.count > 1 ? "s" : ""}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Dialog: Gerenciar Planos */}
-      <PlanosDialog open={showPlanos} onClose={() => setShowPlanos(false)} planos={planos} onChanged={loadData} />
 
       {/* Dialog: Novo/Editar Assinante */}
       <AssinanteFormDialog
@@ -389,7 +312,6 @@ export default function Assinaturas() {
         onClose={() => { setShowForm(false); setEditingId(null); }}
         onSaved={() => { setShowForm(false); setEditingId(null); loadData(); }}
         editId={editingId}
-        planos={planos.filter(p => p.ativo)}
       />
 
       {/* Dialog: Detalhes + Pagamentos */}
@@ -405,8 +327,8 @@ export default function Assinaturas() {
 }
 
 // ─── Form Dialog ───────────────────────────────────────────
-function AssinanteFormDialog({ open, onClose, onSaved, editId, planos }: {
-  open: boolean; onClose: () => void; onSaved: () => void; editId: string | null; planos: Plano[];
+function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
+  open: boolean; onClose: () => void; onSaved: () => void; editId: string | null;
 }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -436,11 +358,6 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId, planos }: {
       });
     }
   }, [open, editId]);
-
-  const handlePlanChange = (plan: string) => {
-    const opt = planos.find(p => p.id === plan);
-    setForm(prev => ({ ...prev, plan, planValue: opt && opt.valor > 0 ? opt.valor.toString() : prev.planValue }));
-  };
 
   const save = async () => {
     if (!form.name.trim()) { toast({ title: "Nome é obrigatório", variant: "destructive" }); return; }
@@ -493,24 +410,13 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId, planos }: {
           <div className="border-t border-border pt-3" />
 
           {/* Plano */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Plano *</Label>
-              <Select value={form.plan} onValueChange={handlePlanChange}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  {planos.map(p => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.nome}{p.valor > 0 ? ` (R$ ${p.valor})` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Valor mensal (R$) *</Label>
-              <Input type="number" step="0.01" value={form.planValue} onChange={e => setForm({ ...form, planValue: e.target.value })} placeholder="80,00" />
-            </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Plano (descreva o que o cliente fechou) *</Label>
+            <Input value={form.plan} onChange={e => setForm({ ...form, plan: e.target.value })} placeholder="Ex: 02 Cortes + 04 Barbas + 02 Sobrancelhas" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Valor mensal (R$) *</Label>
+            <Input type="number" step="0.01" value={form.planValue} onChange={e => setForm({ ...form, planValue: e.target.value })} placeholder="120,00" />
           </div>
 
           <div className="border-t border-border pt-3" />
@@ -711,244 +617,3 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
   );
 }
 
-// ─── Gerenciar Planos (composição de serviços) ─────────────
-function PlanosDialog({ open, onClose, planos, onChanged }: {
-  open: boolean; onClose: () => void; planos: Plano[]; onChanged: () => void;
-}) {
-  const { toast } = useToast();
-  const [servicos, setServicos] = useState<ServicoDisponivel[]>([]);
-  const [editingPlano, setEditingPlano] = useState<Plano | null>(null);
-  const [showEditor, setShowEditor] = useState(false);
-
-  // Carrega serviços do Trinks
-  useEffect(() => {
-    if (!open) return;
-    fetch(`${API_BASE}/api/store`).then(r => r.json()).then((data: any) => {
-      if (data?.trinksData?.servicos) {
-        setServicos(data.trinksData.servicos.map((s: any) => ({
-          id: String(s.id || ""),
-          name: s.nome || s.name || "",
-          price: Number(s.preco || s.valor || s.price || 0),
-        })).filter((s: any) => s.name));
-      }
-    }).catch(() => {});
-  }, [open]);
-
-  const excluirPlano = async (id: string) => {
-    if (!confirm("Excluir este plano?")) return;
-    await fetch(`${API_BASE}/api/assinaturas/planos/${id}`, { method: "DELETE" });
-    toast({ title: "Plano excluído" });
-    onChanged();
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={v => { if (!v) { onClose(); setShowEditor(false); setEditingPlano(null); } }}>
-      <DialogContent className="bg-card border-card-border max-w-xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{showEditor ? (editingPlano ? "Editar Plano" : "Novo Plano") : "Gerenciar Planos"}</DialogTitle>
-        </DialogHeader>
-
-        {!showEditor ? (
-          <div className="space-y-4">
-            <p className="text-xs text-muted-foreground">Monte seus planos combinando serviços e quantidades. Ex: 2 cortes + 4 barbas = R$ X,XX</p>
-
-            {planos.length === 0 ? (
-              <div className="py-8 text-center text-muted-foreground text-sm">
-                Nenhum plano cadastrado. Crie seu primeiro plano.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {planos.map(p => (
-                  <Card key={p.id} className="bg-muted/10 border-border">
-                    <CardContent className="p-3">
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <p className="text-sm font-semibold">{p.nome}</p>
-                          <p className="text-lg font-bold text-emerald-400">{formatCurrency(p.valor)}<span className="text-xs text-muted-foreground font-normal">/mês</span></p>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setEditingPlano(p); setShowEditor(true); }}>
-                            <Pencil className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400" onClick={() => excluirPlano(p.id)}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                      {p.servicos && p.servicos.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
-                          {p.servicos.map((s, i) => (
-                            <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
-                              {s.quantidade}x {s.servicoNome}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-[10px] text-muted-foreground">Sem serviços definidos</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-
-            <Button className="w-full bg-primary hover:bg-primary/80 text-white" onClick={() => { setEditingPlano(null); setShowEditor(true); }}>
-              <Plus className="w-4 h-4 mr-2" /> Criar Novo Plano
-            </Button>
-          </div>
-        ) : (
-          <PlanoEditor
-            plano={editingPlano}
-            servicos={servicos}
-            onSaved={() => { setShowEditor(false); setEditingPlano(null); onChanged(); }}
-            onCancel={() => { setShowEditor(false); setEditingPlano(null); }}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Editor de Plano (montar com serviços) ─────────────────
-function PlanoEditor({ plano, servicos, onSaved, onCancel }: {
-  plano: Plano | null; servicos: ServicoDisponivel[]; onSaved: () => void; onCancel: () => void;
-}) {
-  const { toast } = useToast();
-  const [nome, setNome] = useState(plano?.nome || "");
-  const [valor, setValor] = useState(plano?.valor?.toString() || "");
-  const [items, setItems] = useState<PlanoServico[]>(plano?.servicos || []);
-  const [saving, setSaving] = useState(false);
-
-  // Soma dos serviços (preço cheio)
-  const somaServicos = items.reduce((s, i) => s + (i.quantidade * i.precoUnitario), 0);
-
-  const addServico = (svc: ServicoDisponivel) => {
-    const existing = items.find(i => i.servicoId === svc.id);
-    if (existing) {
-      setItems(items.map(i => i.servicoId === svc.id ? { ...i, quantidade: i.quantidade + 1 } : i));
-    } else {
-      setItems([...items, { servicoId: svc.id, servicoNome: svc.name, quantidade: 1, precoUnitario: svc.price }]);
-    }
-  };
-
-  const updateQtd = (servicoId: string, qtd: number) => {
-    if (qtd <= 0) {
-      setItems(items.filter(i => i.servicoId !== servicoId));
-    } else {
-      setItems(items.map(i => i.servicoId === servicoId ? { ...i, quantidade: qtd } : i));
-    }
-  };
-
-  const removeServico = (servicoId: string) => {
-    setItems(items.filter(i => i.servicoId !== servicoId));
-  };
-
-  const save = async () => {
-    if (!nome.trim()) { toast({ title: "Nome é obrigatório", variant: "destructive" }); return; }
-    if (!valor || Number(valor) <= 0) { toast({ title: "Valor é obrigatório", variant: "destructive" }); return; }
-    setSaving(true);
-    try {
-      const url = plano ? `${API_BASE}/api/assinaturas/planos/${plano.id}` : `${API_BASE}/api/assinaturas/planos`;
-      const res = await fetch(url, {
-        method: plano ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nome, valor: Number(valor), servicos: items }),
-      });
-      if (res.ok) {
-        toast({ title: plano ? "Plano atualizado!" : "Plano criado!" });
-        onSaved();
-      }
-    } catch { toast({ title: "Erro", variant: "destructive" }); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* Nome e valor */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Nome do plano *</Label>
-          <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Plano Completo" />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Valor final (R$) *</Label>
-          <Input type="number" step="0.01" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
-          {somaServicos > 0 && Number(valor) > 0 && Number(valor) < somaServicos && (
-            <p className="text-[10px] text-emerald-400">
-              Desconto de {((1 - Number(valor) / somaServicos) * 100).toFixed(0)}% sobre o preço cheio ({formatCurrency(somaServicos)})
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Serviços no plano */}
-      <div>
-        <Label className="text-xs font-medium mb-2 block">Serviços incluídos</Label>
-        {items.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-3 text-center border border-dashed border-border rounded-lg">
-            Adicione serviços abaixo para montar o plano
-          </p>
-        ) : (
-          <div className="space-y-2 mb-3">
-            {items.map(item => (
-              <div key={item.servicoId} className="flex items-center gap-2 p-2.5 rounded-lg border border-primary/20 bg-primary/5">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium truncate">{item.servicoNome}</p>
-                  <p className="text-[10px] text-muted-foreground">{formatCurrency(item.precoUnitario)} un. = {formatCurrency(item.quantidade * item.precoUnitario)}</p>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-xs" onClick={() => updateQtd(item.servicoId, item.quantidade - 1)}>-</Button>
-                  <span className="text-sm font-bold w-6 text-center">{item.quantidade}</span>
-                  <Button size="sm" variant="outline" className="h-7 w-7 p-0 text-xs" onClick={() => updateQtd(item.servicoId, item.quantidade + 1)}>+</Button>
-                </div>
-                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400" onClick={() => removeServico(item.servicoId)}>
-                  <X className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            ))}
-            {somaServicos > 0 && (
-              <div className="flex justify-between text-xs px-2 pt-1 border-t border-border">
-                <span className="text-muted-foreground">Preço cheio:</span>
-                <span className="font-medium">{formatCurrency(somaServicos)}</span>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Adicionar serviço */}
-      <div>
-        <Label className="text-xs font-medium mb-2 block">Adicionar serviço</Label>
-        {servicos.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-3 border border-dashed border-border rounded-lg">
-            Sincronize os serviços do Trinks primeiro (aba Configurações)
-          </p>
-        ) : (
-          <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto">
-            {servicos.filter(s => !items.find(i => i.servicoId === s.id)).map(svc => (
-              <button
-                key={svc.id}
-                onClick={() => addServico(svc)}
-                className="flex items-center gap-2 p-2 rounded-lg border border-border hover:border-primary/40 hover:bg-primary/5 transition text-left"
-              >
-                <Plus className="w-3 h-3 text-primary flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[11px] font-medium truncate">{svc.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{formatCurrency(svc.price)}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Ações */}
-      <div className="flex gap-2 pt-2 border-t border-border">
-        <Button variant="outline" className="flex-1" onClick={onCancel}>Cancelar</Button>
-        <Button className="flex-1 bg-primary hover:bg-primary/80 text-white" onClick={save} disabled={saving}>
-          {saving ? "Salvando..." : (plano ? "Atualizar Plano" : "Criar Plano")}
-        </Button>
-      </div>
-    </div>
-  );
-}

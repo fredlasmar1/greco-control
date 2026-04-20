@@ -2569,6 +2569,211 @@ Qualquer sinal de atenção que deva ser monitorado nos próximos meses.`;
   });
 
   // ──────────────────────────────────────────────────────────────────
+  // COPILOTO GRECO — Chat IA integrado
+  // ──────────────────────────────────────────────────────────────────
+
+  // Intents com keywords para classificação rápida
+  const COPILOT_INTENTS: Record<string, { name: string; keywords: string[]; gatherData: () => any }> = {
+    resumo_dia: {
+      name: "Resumo do Dia",
+      keywords: ["resumo do dia", "como foi hoje", "resultado de hoje", "faturamento hoje", "receita hoje", "vendas hoje", "movimento hoje"],
+      gatherData: () => {
+        const hoje = new Date().toISOString().slice(0, 10);
+        const trinksCache = loadTrinksCache();
+        const agendamentos = trinksCache?.agendamentos || [];
+        const agendHoje = agendamentos.filter((a: any) => String(a.data || a.dataAgendamento || "").startsWith(hoje));
+        const entradas = financeEntries.filter(e => e.date === hoje);
+        return { data: hoje, agendamentosHoje: agendHoje.length, entradas, trinksAgendamentos: agendHoje.slice(0, 30) };
+      },
+    },
+    resumo_semana: {
+      name: "Resumo da Semana",
+      keywords: ["resumo da semana", "como foi a semana", "resultado semanal", "faturamento semanal"],
+      gatherData: () => {
+        const now = new Date();
+        const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay() + 1);
+        const start = weekStart.toISOString().slice(0, 10);
+        const end = now.toISOString().slice(0, 10);
+        const entradas = financeEntries.filter(e => e.date >= start && e.date <= end);
+        return { periodo: `${start} a ${end}`, entradas };
+      },
+    },
+    equipe: {
+      name: "Diagnóstico de Equipe",
+      keywords: ["quem piorou", "piora na equipe", "desempenho do barbeiro", "performance barbeiro", "equipe", "barbeiro", "diagnostico barbeiro", "rendimento barbeiro"],
+      gatherData: () => {
+        const trinksCache = loadTrinksCache();
+        return { profissionais: trinksCache?.profissionais || [], agendamentos: (trinksCache?.agendamentos || []).slice(0, 100) };
+      },
+    },
+    assinantes: {
+      name: "Análise de Assinaturas",
+      keywords: ["assinantes em risco", "churn", "assinatura", "clube", "inadimplente", "assinantes sumidos", "cancelamento"],
+      gatherData: () => {
+        return { assinantes: assinaturaClientes, totalAtivos: assinaturaClientes.filter(c => c.status === "active").length };
+      },
+    },
+    financeiro: {
+      name: "Análise Financeira",
+      keywords: ["financeiro", "despesa", "gasto", "receita", "lucro", "caixa", "fluxo de caixa", "faturamento do mes"],
+      gatherData: () => {
+        const mes = new Date().toISOString().slice(0, 7);
+        const doMes = financeEntries.filter(e => e.date.startsWith(mes));
+        return { mes, entradas: doMes };
+      },
+    },
+    consolidacao: {
+      name: "Consolidação Bancária",
+      keywords: ["consolidação", "conciliação", "divergencia", "caixa não fecha", "banco", "extrato"],
+      gatherData: () => {
+        const mes = new Date().toISOString().slice(0, 7);
+        const txMes = transacoesBanco.filter(t => t.date.startsWith(mes));
+        return { mes, transacoes: txMes.length, contas: contasConsolidacao.map(c => c.nome) };
+      },
+    },
+    metas: {
+      name: "Progresso de Metas",
+      keywords: ["meta", "progresso", "quanto falta", "vai bater a meta", "projeção"],
+      gatherData: () => {
+        const mes = new Date().toISOString().slice(0, 7);
+        return { metas: metasHistorico.filter(m => m.month === mes), metasBarbeiros: metasBarbeiros[mes] || {} };
+      },
+    },
+    servicos: {
+      name: "Análise de Serviços",
+      keywords: ["serviço mais vendido", "servico", "preço", "precificação", "margem", "ticket medio"],
+      gatherData: () => {
+        const trinksCache = loadTrinksCache();
+        return { servicos: trinksCache?.servicos || [] };
+      },
+    },
+  };
+
+  function loadTrinksCache(): any {
+    try {
+      if (fs.existsSync(CACHE_FILE)) return JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8"));
+    } catch {}
+    return null;
+  }
+
+  function normalizeText(text: string): string {
+    return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\s-]/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  function classifyIntent(pergunta: string): { intentCode: string; name: string } {
+    const normalized = normalizeText(pergunta);
+    for (const [code, intent] of Object.entries(COPILOT_INTENTS)) {
+      for (const kw of intent.keywords) {
+        const nkw = normalizeText(kw);
+        const words = nkw.split(" ");
+        if (words.every(w => normalized.includes(w))) {
+          return { intentCode: code, name: intent.name };
+        }
+      }
+    }
+    return { intentCode: "resumo_dia", name: "Resumo Geral" };
+  }
+
+  const COPILOT_SYSTEM_PROMPT = `Você é o Copiloto Greco, assistente de inteligência de negócios da Greco Barbearia Anápolis.
+
+## Sua Função
+Analisa dados reais do sistema (agendamentos, receitas, despesas, equipe, assinaturas, consolidação bancária) e fornece respostas claras, objetivas e acionáveis para o dono da barbearia (Fred).
+
+## Tom e Estilo
+- Fale como um consultor de confiança direto ao ponto
+- Use números concretos, não generalizações ("faturou R$ 1.847 hoje" > "faturou bem")
+- Quando os dados são ruins, diga claramente
+- Quando são bons, celebre brevemente
+- Responda em português brasileiro, máximo 3-4 parágrafos
+- Termine com 1-2 ações práticas sugeridas
+- Use formatação markdown simples (negrito, listas)
+
+## Contexto do Negócio
+- Barbearia com 16+ profissionais
+- Meta mensal: R$ 150.000
+- Meios de pagamento: Pix, Cartão (Getnet/InfinitePay), Dinheiro
+- Sistema integrado com Trinks (agendamentos/vendas)
+- Data de hoje: ${new Date().toLocaleDateString("pt-BR")}`;
+
+  // POST /api/copilot/ask
+  app.post("/api/copilot/ask", async (req: Request, res: Response) => {
+    const { pergunta } = req.body;
+    if (!pergunta || typeof pergunta !== "string" || pergunta.trim().length < 3) {
+      return res.status(400).json({ error: "Pergunta muito curta" });
+    }
+
+    try {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY não configurada" });
+
+      // 1. Classifica o intent
+      const { intentCode, name: intentName } = classifyIntent(pergunta);
+      const intent = COPILOT_INTENTS[intentCode];
+
+      // 2. Coleta dados relevantes
+      const dados = intent.gatherData();
+
+      // 3. Chama Claude
+      const anthropic = new Anthropic({ apiKey });
+      const userPrompt = `O dono da barbearia perguntou: "${pergunta}"
+
+Dados do sistema (intent: ${intentName}):
+\`\`\`json
+${JSON.stringify(dados, null, 2).slice(0, 8000)}
+\`\`\`
+
+Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que não há dados disponíveis para o período e sugira sincronizar com a Trinks.`;
+
+      const message = await anthropic.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 800,
+        messages: [
+          { role: "user", content: userPrompt },
+        ],
+        system: COPILOT_SYSTEM_PROMPT,
+      });
+
+      const texto = message.content[0]?.type === "text" ? message.content[0].text : "Não consegui gerar uma resposta.";
+
+      // Ações sugeridas por intent
+      const acoesSugeridas: Record<string, string[]> = {
+        resumo_dia: ["Ver lançamentos do dia", "Fechar o dia"],
+        resumo_semana: ["Ver fechamento semanal", "Comparar com semana passada"],
+        equipe: ["Ver aba Equipe", "Abrir Raio-X"],
+        assinantes: ["Ver aba Assinaturas", "Checar inadimplentes"],
+        financeiro: ["Ver aba Financeiro", "Analisar despesas"],
+        consolidacao: ["Ver aba Consolidação", "Importar extrato"],
+        metas: ["Ver aba Metas", "Ajustar meta mensal"],
+        servicos: ["Ver aba Serviços", "Revisar precificação"],
+      };
+
+      return res.json({
+        texto,
+        intentCode,
+        intentName,
+        evidencias: {
+          dados: typeof dados === "object" ? Object.entries(dados).map(([k, v]) => ({
+            label: k,
+            value: Array.isArray(v) ? `${v.length} registros` : String(v),
+          })).slice(0, 10) : [],
+        },
+        acoesSugeridas: acoesSugeridas[intentCode] || ["Ver Dashboard"],
+        tokensUsados: message.usage?.output_tokens || 0,
+      });
+    } catch (err: any) {
+      log(`Copiloto erro: ${err.message}`, "copilot");
+      return res.status(500).json({ error: "Erro ao processar pergunta. Tente novamente." });
+    }
+  });
+
+  // POST /api/copilot/feedback
+  app.post("/api/copilot/feedback", (req: Request, res: Response) => {
+    const { messageId, util } = req.body;
+    log(`Copiloto feedback: msg=${messageId} util=${util}`, "copilot");
+    return res.json({ ok: true });
+  });
+
+  // ──────────────────────────────────────────────────────────────────
   // ASSINATURAS ROUTES
   // ──────────────────────────────────────────────────────────────────
 

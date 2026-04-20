@@ -24,6 +24,7 @@ import RaioX from "@/pages/RaioX";
 import Consolidacao from "@/pages/Consolidacao";
 import Assinaturas from "@/pages/Assinaturas";
 import Login from "@/pages/Login";
+import { CopilotDrawer } from "@/components/CopilotDrawer";
 import MeuPainel from "@/pages/MeuPainel";
 import NotFound from "@/pages/not-found";
 
@@ -126,6 +127,7 @@ function App() {
         <Router hook={useHashLocation}>
           <AppRouter />
         </Router>
+        <CopilotDrawer />
       </TooltipProvider>
     </QueryClientProvider>
   );

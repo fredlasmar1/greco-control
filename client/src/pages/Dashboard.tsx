@@ -339,6 +339,52 @@ interface HojeData {
   fromCache?: boolean;
 }
 
+interface HojeCompletoData {
+  data: string;
+  horaAgora: string;
+  previsto: number;
+  fechado: number;
+  restante: number;
+  totalEsperado: number;
+  breakdown: { pix: number; cartao: number; dinheiro: number; outros: number };
+  agendamentosCount: number;
+  agendamentosRestantesCount: number;
+  agendamentosJaPassaramCount: number;
+  comandasCount: number;
+  metaDiaria: number;
+  atingeMeta: boolean;
+  falta: number;
+  progressoPct: number;
+  progressoFechadoPct: number;
+  porProfissional: {
+    nome: string;
+    previsto: number;
+    fechado: number;
+    countPrevisto: number;
+    countFechado: number;
+    total: number;
+  }[];
+  agendamentos: {
+    id: string | number;
+    hora: string;
+    cliente: string;
+    profissional: string;
+    servico: string;
+    valor: number;
+    status: string;
+  }[];
+  comandas: {
+    id: string | number;
+    hora: string;
+    cliente: string;
+    profissional: string;
+    total: number;
+    meios: string[];
+  }[];
+  fetchedAt: string;
+  fromCache?: boolean;
+}
+
 interface AmanhaData {
   data: string;              // YYYY-MM-DD
   proxDiaUtil: boolean;      // true quando pulou fim de semana/folga
@@ -383,6 +429,23 @@ export default function Dashboard() {
   }, [isConnected, API_BASE]);
 
   useEffect(() => { loadHoje(); }, [loadHoje]);
+
+  // Hoje completo (previsto + fechado + restante)
+  const [hojeCompleto, setHojeCompleto] = useState<HojeCompletoData | null>(null);
+  const [hojeCompletoLoading, setHojeCompletoLoading] = useState(false);
+  const [hojeExpanded, setHojeExpanded] = useState<"none" | "agend" | "fech">("none");
+
+  const loadHojeCompleto = useCallback(async () => {
+    if (!isConnected) return;
+    setHojeCompletoLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/trinks/hoje-completo`);
+      if (res.ok) setHojeCompleto(await res.json());
+    } catch {}
+    setHojeCompletoLoading(false);
+  }, [isConnected, API_BASE]);
+
+  useEffect(() => { loadHojeCompleto(); }, [loadHojeCompleto]);
 
   // Previsão do próximo dia útil
   const [amanha, setAmanha] = useState<AmanhaData | null>(null);
@@ -590,6 +653,318 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Hoje (previsto + fechado em tempo real) */}
+      {isConnected && (
+        <Card
+          className={`bg-card border-card-border relative overflow-hidden ${
+            hojeCompleto?.atingeMeta
+              ? "border-emerald-500/40"
+              : hojeCompleto && hojeCompleto.progressoPct >= 70
+                ? "border-amber-500/40"
+                : hojeCompleto
+                  ? "border-red-500/40"
+                  : ""
+          }`}
+          data-testid="card-hoje-completo"
+        >
+          <div
+            className={`absolute inset-0 pointer-events-none bg-gradient-to-br ${
+              hojeCompleto?.atingeMeta
+                ? "from-emerald-500/10"
+                : hojeCompleto && hojeCompleto.progressoPct >= 70
+                  ? "from-amber-500/10"
+                  : "from-red-500/10"
+            } to-transparent`}
+          />
+          <CardHeader className="pb-3 relative">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                    hojeCompleto?.atingeMeta
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : hojeCompleto && hojeCompleto.progressoPct >= 70
+                        ? "bg-amber-500/15 text-amber-400"
+                        : "bg-red-500/15 text-red-400"
+                  }`}
+                >
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <CardTitle className="text-sm font-medium">
+                    Hoje · tempo real
+                  </CardTitle>
+                  {hojeCompleto && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {new Date(hojeCompleto.data + "T12:00:00").toLocaleDateString("pt-BR", {
+                        weekday: "long", day: "2-digit", month: "2-digit",
+                      })}
+                      {" · agora "}
+                      {hojeCompleto.horaAgora}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-primary hover:bg-primary/10"
+                onClick={loadHojeCompleto}
+                disabled={hojeCompletoLoading}
+                data-testid="btn-refresh-hoje-completo"
+              >
+                <RefreshCw className={`w-3 h-3 mr-1 ${hojeCompletoLoading ? "animate-spin" : ""}`} />
+                Atualizar
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="relative pt-0">
+            {!hojeCompleto ? (
+              <div className="p-4 text-center text-xs text-muted-foreground">
+                {hojeCompletoLoading ? "Carregando dia..." : "Sem dados ainda"}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* 4 métricas principais */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-2 rounded-md bg-emerald-500/5 border border-emerald-500/20">
+                    <p className="text-[10px] uppercase tracking-wide text-emerald-400 font-medium flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Já fechado
+                    </p>
+                    <p className="text-xl sm:text-2xl font-bold text-emerald-400" data-testid="hoje-fechado">
+                      {formatCurrency(hojeCompleto.fechado)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {hojeCompleto.comandasCount} comanda{hojeCompleto.comandasCount !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+
+                  <div className="p-2 rounded-md bg-primary/5 border border-primary/20">
+                    <p className="text-[10px] uppercase tracking-wide text-primary font-medium flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> Restante
+                    </p>
+                    <p className="text-xl sm:text-2xl font-bold text-primary" data-testid="hoje-restante">
+                      {formatCurrency(hojeCompleto.restante)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {hojeCompleto.agendamentosRestantesCount} agend. ainda
+                    </p>
+                  </div>
+
+                  <div className="p-2 rounded-md bg-muted/30 border border-border">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                      Previsto total
+                    </p>
+                    <p className="text-xl sm:text-2xl font-bold" data-testid="hoje-esperado">
+                      {formatCurrency(hojeCompleto.totalEsperado)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {hojeCompleto.agendamentosCount} agend. no dia
+                    </p>
+                  </div>
+
+                  <div className="p-2 rounded-md bg-muted/30 border border-border">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-1">
+                      <Target className="w-3 h-3" /> Meta
+                    </p>
+                    <p className="text-xl sm:text-2xl font-bold text-muted-foreground">
+                      {formatCurrency(hojeCompleto.metaDiaria)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {hojeCompleto.atingeMeta
+                        ? `+${formatCurrency(hojeCompleto.totalEsperado - hojeCompleto.metaDiaria)} sobre meta`
+                        : `faltam ${formatCurrency(hojeCompleto.falta)}`}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Barra de progresso composta */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-1.5">
+                      {hojeCompleto.atingeMeta ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span className="text-xs font-medium text-emerald-400">
+                            Dia vai bater a meta ({formatPercent(hojeCompleto.progressoPct)})
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle
+                            className={`w-3.5 h-3.5 ${
+                              hojeCompleto.progressoPct >= 70 ? "text-amber-400" : "text-red-400"
+                            }`}
+                          />
+                          <span
+                            className={`text-xs font-medium ${
+                              hojeCompleto.progressoPct >= 70 ? "text-amber-400" : "text-red-400"
+                            }`}
+                          >
+                            {formatPercent(hojeCompleto.progressoPct)} previsto — falta{" "}
+                            {formatCurrency(hojeCompleto.falta)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      Fechado: {formatPercent(hojeCompleto.progressoFechadoPct)}
+                    </span>
+                  </div>
+                  {/* Barra composta: fechado (sólido) + restante (translucido) */}
+                  <div className="relative h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={`absolute left-0 top-0 h-full ${
+                        hojeCompleto.atingeMeta
+                          ? "bg-emerald-500"
+                          : hojeCompleto.progressoPct >= 70
+                            ? "bg-amber-500"
+                            : "bg-red-500"
+                      } opacity-40`}
+                      style={{ width: `${Math.min(100, hojeCompleto.progressoPct)}%` }}
+                    />
+                    <div
+                      className="absolute left-0 top-0 h-full bg-emerald-500"
+                      style={{ width: `${Math.min(100, hojeCompleto.progressoFechadoPct)}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    ■ verde sólido = já fechado · ■ translucido = previsto para o restante do dia
+                  </p>
+                </div>
+
+                {/* Ranking por profissional */}
+                {hojeCompleto.porProfissional.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2">
+                      Por profissional
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {hojeCompleto.porProfissional.slice(0, 9).map((p) => {
+                        const metaVisual = Math.max(p.previsto, p.fechado, 1);
+                        const pctFech = (p.fechado / metaVisual) * 100;
+                        return (
+                          <div key={p.nome} className="px-2.5 py-1.5 rounded-md bg-muted/20">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-medium truncate">{p.nome}</p>
+                              <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                                {p.countFechado}/{p.countPrevisto || p.countFechado} agend.
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 mt-0.5">
+                              <span className="text-[11px] text-emerald-400 font-semibold">
+                                {formatCurrency(p.fechado)}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">
+                                de {formatCurrency(Math.max(p.previsto, p.fechado))}
+                              </span>
+                            </div>
+                            <div className="relative h-1 rounded-full bg-muted mt-1 overflow-hidden">
+                              <div
+                                className="absolute left-0 top-0 h-full bg-emerald-500"
+                                style={{ width: `${Math.min(100, pctFech)}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Toggles de listas */}
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-primary hover:bg-primary/10 px-2"
+                    onClick={() => setHojeExpanded((v) => (v === "fech" ? "none" : "fech"))}
+                    data-testid="btn-toggle-hoje-fechadas"
+                  >
+                    {hojeExpanded === "fech" ? "Ocultar" : "Ver"} {hojeCompleto.comandasCount} fechada{hojeCompleto.comandasCount !== 1 ? "s" : ""}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-primary hover:bg-primary/10 px-2"
+                    onClick={() => setHojeExpanded((v) => (v === "agend" ? "none" : "agend"))}
+                    data-testid="btn-toggle-hoje-agendamentos"
+                  >
+                    {hojeExpanded === "agend" ? "Ocultar" : "Ver"} {hojeCompleto.agendamentosRestantesCount} agendamento{hojeCompleto.agendamentosRestantesCount !== 1 ? "s" : ""} restante{hojeCompleto.agendamentosRestantesCount !== 1 ? "s" : ""}
+                  </Button>
+                </div>
+
+                {hojeExpanded === "fech" && hojeCompleto.comandas.length > 0 && (
+                  <div className="max-h-72 overflow-auto border border-card-border rounded-md">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-card border-b border-border">
+                        <tr>
+                          <th className="text-left p-2 text-muted-foreground font-medium">Hora</th>
+                          <th className="text-left p-2 text-muted-foreground font-medium">Cliente</th>
+                          <th className="text-left p-2 text-muted-foreground font-medium">Profissional</th>
+                          <th className="text-left p-2 text-muted-foreground font-medium">Meios</th>
+                          <th className="text-right p-2 text-muted-foreground font-medium">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hojeCompleto.comandas.map((c) => (
+                          <tr key={c.id} className="border-b border-border/50 hover:bg-muted/20">
+                            <td className="p-2 font-mono whitespace-nowrap">{c.hora || "—"}</td>
+                            <td className="p-2 truncate max-w-[160px]">{c.cliente}</td>
+                            <td className="p-2 truncate max-w-[120px] text-muted-foreground">{c.profissional}</td>
+                            <td className="p-2 text-[10px] text-muted-foreground uppercase">{c.meios.join(", ")}</td>
+                            <td className="p-2 text-right font-semibold whitespace-nowrap text-emerald-400">
+                              {formatCurrency(c.total)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {hojeExpanded === "agend" && hojeCompleto.agendamentos.length > 0 && (
+                  <div className="max-h-72 overflow-auto border border-card-border rounded-md">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-card border-b border-border">
+                        <tr>
+                          <th className="text-left p-2 text-muted-foreground font-medium">Hora</th>
+                          <th className="text-left p-2 text-muted-foreground font-medium">Cliente</th>
+                          <th className="text-left p-2 text-muted-foreground font-medium">Profissional</th>
+                          <th className="text-left p-2 text-muted-foreground font-medium">Serviço</th>
+                          <th className="text-right p-2 text-muted-foreground font-medium">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hojeCompleto.agendamentos
+                          .filter(a => (a.hora || "99:99") >= hojeCompleto.horaAgora)
+                          .map((a) => (
+                          <tr key={a.id} className="border-b border-border/50 hover:bg-muted/20">
+                            <td className="p-2 font-mono whitespace-nowrap text-primary">{a.hora || "—"}</td>
+                            <td className="p-2 truncate max-w-[160px]">{a.cliente}</td>
+                            <td className="p-2 truncate max-w-[120px] text-muted-foreground">{a.profissional}</td>
+                            <td className="p-2 truncate max-w-[160px] text-muted-foreground">{a.servico}</td>
+                            <td className="p-2 text-right font-semibold whitespace-nowrap">
+                              {a.valor > 0 ? formatCurrency(a.valor) : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {hojeCompleto.fromCache && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Em cache · atualiza a cada 2 minutos
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Previsão de Amanhã */}
       {isConnected && (
@@ -833,87 +1208,6 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* Comandas Fechadas Hoje */}
-      {isConnected && (
-        <Card className="bg-card border-card-border">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-sm font-medium">Comandas Fechadas Hoje</CardTitle>
-                {hoje && (
-                  <span className="text-[10px] text-muted-foreground">
-                    {hoje.count} · {formatCurrency(hoje.total)}
-                  </span>
-                )}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs text-primary hover:bg-primary/10"
-                onClick={loadHoje}
-                disabled={hojeLoading}
-              >
-                <RefreshCw className={`w-3 h-3 mr-1 ${hojeLoading ? "animate-spin" : ""}`} />
-                Atualizar
-              </Button>
-            </div>
-            {hoje?.fromCache && (
-              <p className="text-[10px] text-muted-foreground">
-                Em cache · atualiza a cada 3 minutos para economizar chamadas
-              </p>
-            )}
-          </CardHeader>
-          <CardContent className="p-0">
-            {!hoje ? (
-              <div className="p-6 text-center text-xs text-muted-foreground">
-                {hojeLoading ? "Carregando..." : "Clique em atualizar"}
-              </div>
-            ) : hoje.count === 0 ? (
-              <div className="p-6 text-center text-xs text-muted-foreground">
-                Nenhuma comanda fechada ainda hoje
-              </div>
-            ) : (
-              <div className="max-h-80 overflow-auto">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card border-b border-border">
-                    <tr>
-                      <th className="text-left p-2.5 text-muted-foreground font-medium">Hora</th>
-                      <th className="text-left p-2.5 text-muted-foreground font-medium">Cliente</th>
-                      <th className="text-left p-2.5 text-muted-foreground font-medium">Profissional</th>
-                      <th className="text-left p-2.5 text-muted-foreground font-medium">Pagamento</th>
-                      <th className="text-right p-2.5 text-muted-foreground font-medium">Valor</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {hoje.comandas.map(c => (
-                      <tr key={c.id} className="border-b border-border/50 hover:bg-muted/20">
-                        <td className="p-2.5 font-mono whitespace-nowrap">{c.hora || "—"}</td>
-                        <td className="p-2.5 truncate max-w-[180px]">{c.cliente}</td>
-                        <td className="p-2.5 truncate max-w-[140px] text-muted-foreground">{c.profissional}</td>
-                        <td className="p-2.5">
-                          <div className="flex flex-wrap gap-1">
-                            {c.meios.map(m => {
-                              const map: Record<string, { label: string; cls: string }> = {
-                                pix: { label: "Pix", cls: "bg-primary/15 text-primary" },
-                                cartao: { label: "Cartão", cls: "bg-emerald-500/15 text-emerald-400" },
-                                dinheiro: { label: "Dinheiro", cls: "bg-amber-500/15 text-amber-400" },
-                                outros: { label: "Outros", cls: "bg-muted text-muted-foreground" },
-                              };
-                              const info = map[m] || map.outros;
-                              return <span key={m} className={`text-[10px] px-1.5 py-0.5 rounded ${info.cls}`}>{info.label}</span>;
-                            })}
-                          </div>
-                        </td>
-                        <td className="p-2.5 text-right font-semibold whitespace-nowrap">{formatCurrency(c.total)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {/* Period Filter */}
       <Card className="bg-card border-card-border">

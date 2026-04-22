@@ -1416,6 +1416,203 @@ export async function registerRoutes(
     }
   });
 
+  // ─── GET /api/trinks/hoje-completo ─────────────────────────
+  // Retorna dados completos do dia: faturamento previsto (agendamentos) +
+  // já fechado (comandas) + restante esperado. Útil para o card 'Hoje'.
+  app.get("/api/trinks/hoje-completo", async (_req: Request, res: Response) => {
+    try {
+      // Data atual em TZ America/Sao_Paulo
+      const tzFmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric", month: "2-digit", day: "2-digit",
+      });
+      const parts = tzFmt.formatToParts(new Date());
+      const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
+      const hoje = `${pick("year")}-${pick("month")}-${pick("day")}`;
+
+      const cacheKey = `hoje_completo_${hoje}`;
+      const cached = getCached(cacheKey);
+      if (cached) return res.json({ ...cached, fromCache: true });
+
+      // Busca agendamentos e transações em paralelo
+      const [agendData, transData] = await Promise.all([
+        trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
+        trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: hoje }),
+      ]);
+
+      const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
+      const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
+
+      // ─── Processa agendamentos (previsão do dia) ───
+      const statusIgnorar = ["cancelado", "cancelada", "no show", "no-show", "faltou"];
+      const getStatusStr = (a: any) =>
+        (typeof a.status === "string" ? a.status : (a.status?.descricao || a.status?.nome || "")).toLowerCase();
+      const isValido = (a: any) => !statusIgnorar.some(s => getStatusStr(a).includes(s));
+
+      const extractValor = (a: any) => {
+        let v = Number(a.valor || a.valorTotal || a.totalPagar || 0);
+        if ((!v || v === 0) && Array.isArray(a.servicos)) {
+          v = a.servicos.reduce((s: number, svc: any) =>
+            s + Number(svc.preco || svc.valor || svc.valorServico || 0), 0);
+        }
+        return v;
+      };
+
+      let totalPrevisto = 0;
+      let agendCount = 0;
+      const agendamentos: any[] = [];
+      const porProfissionalPrev: Record<string, { nome: string; total: number; count: number }> = {};
+
+      agendLista.filter(isValido).forEach((a: any) => {
+        const val = extractValor(a);
+        totalPrevisto += val;
+        agendCount += 1;
+
+        const profId = String(a.profissionalId || a.profissional?.id || "");
+        const profNome = a.profissional?.nome || a.profissionalNome || "—";
+        if (profId) {
+          if (!porProfissionalPrev[profId]) porProfissionalPrev[profId] = { nome: profNome, total: 0, count: 0 };
+          porProfissionalPrev[profId].total += val;
+          porProfissionalPrev[profId].count += 1;
+        }
+
+        const hora = (a.dataHoraInicio || a.dataHora || "").slice(11, 16);
+        const servicoNome = a.servico?.nome
+          || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "")
+          || a.servicoNome || "—";
+        const statusStr = (typeof a.status === "string" ? a.status : (a.status?.descricao || a.status?.nome || "")) || "agendado";
+
+        agendamentos.push({
+          id: a.id,
+          hora,
+          cliente: a.cliente?.nome || a.clienteNome || "Cliente",
+          profissional: profNome,
+          servico: servicoNome,
+          valor: val,
+          status: statusStr,
+        });
+      });
+      agendamentos.sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
+
+      // ─── Processa transações (fechado do dia) ───
+      let totalFechado = 0;
+      let pix = 0, cartao = 0, dinheiro = 0, outros = 0;
+      const comandas: any[] = [];
+      const porProfissionalFech: Record<string, { nome: string; total: number; count: number }> = {};
+
+      transLista.forEach((t: any) => {
+        const val = Number(t.totalPagar || t.valor || 0);
+        totalFechado += val;
+
+        const profId = String(t.profissionalId || t.profissional?.id || "");
+        const profNome = t.profissional?.nome || t.profissionalNome || "—";
+        if (profId) {
+          if (!porProfissionalFech[profId]) porProfissionalFech[profId] = { nome: profNome, total: 0, count: 0 };
+          porProfissionalFech[profId].total += val;
+          porProfissionalFech[profId].count += 1;
+        }
+
+        const formas = t.formasPagamentos || t.formasPagamento || [];
+        const meiosDaComanda: string[] = [];
+        if (Array.isArray(formas) && formas.length > 0) {
+          formas.forEach((fp: any) => {
+            const nome = (fp.nome || fp.descricao || "").toLowerCase();
+            const v = Number(fp.valor || 0);
+            if (nome.includes("pix")) { pix += v; meiosDaComanda.push("pix"); }
+            else if (/créd|cred|déb|deb|cart/.test(nome)) { cartao += v; meiosDaComanda.push("cartao"); }
+            else if (/dinhe|espécie|cash/.test(nome)) { dinheiro += v; meiosDaComanda.push("dinheiro"); }
+            else { outros += v; meiosDaComanda.push("outros"); }
+          });
+        } else {
+          const method = (t.formaPagamento || t.metodoPagamento || "").toLowerCase();
+          if (method.includes("pix")) { pix += val; meiosDaComanda.push("pix"); }
+          else if (/cart/.test(method)) { cartao += val; meiosDaComanda.push("cartao"); }
+          else if (/dinhe/.test(method)) { dinheiro += val; meiosDaComanda.push("dinheiro"); }
+          else { outros += val; meiosDaComanda.push("outros"); }
+        }
+
+        comandas.push({
+          id: t.id,
+          hora: (t.dataHoraInicio || t.dataHora || "").slice(11, 16),
+          cliente: t.cliente?.nome || t.clienteNome || "Cliente",
+          profissional: profNome,
+          total: val,
+          meios: Array.from(new Set(meiosDaComanda)),
+        });
+      });
+      comandas.sort((a, b) => (b.hora || "").localeCompare(a.hora || ""));
+
+      // ─── Cálculos agregados ───
+      const hhmmAgora = new Date().toLocaleTimeString("pt-BR", {
+        timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hour12: false,
+      });
+
+      const agendamentosRestantes = agendamentos.filter(a => (a.hora || "99:99") >= hhmmAgora);
+      const agendamentosJaPassaram = agendamentos.filter(a => (a.hora || "00:00") < hhmmAgora);
+      const valorRestante = agendamentosRestantes.reduce((s, a) => s + a.valor, 0);
+
+      // Total esperado do dia = max(previsto total, fechado + restante)
+      // (usa o maior pra não subestimar quando houve walk-ins sem agendamento)
+      const totalEsperado = Math.max(totalPrevisto, totalFechado + valorRestante);
+
+      const metaDia = metaDiaria;
+      const atingeMeta = totalEsperado >= metaDia;
+      const falta = Math.max(0, metaDia - totalEsperado);
+      const progressoPct = metaDia > 0 ? (totalEsperado / metaDia) * 100 : 0;
+      const progressoFechadoPct = metaDia > 0 ? (totalFechado / metaDia) * 100 : 0;
+
+      // Consolida ranking por profissional (fechado + previsto)
+      const todosProfs = new Set([
+        ...Object.keys(porProfissionalPrev),
+        ...Object.keys(porProfissionalFech),
+      ]);
+      const rankingProfissionais = Array.from(todosProfs).map(id => {
+        const prev = porProfissionalPrev[id] || { nome: "—", total: 0, count: 0 };
+        const fech = porProfissionalFech[id] || { nome: prev.nome, total: 0, count: 0 };
+        return {
+          nome: prev.nome !== "—" ? prev.nome : fech.nome,
+          previsto: prev.total,
+          fechado: fech.total,
+          countPrevisto: prev.count,
+          countFechado: fech.count,
+          total: Math.max(prev.total, fech.total), // não soma pra não dobrar
+        };
+      }).sort((a, b) => b.total - a.total);
+
+      const result = {
+        data: hoje,
+        horaAgora: hhmmAgora,
+        // Faturamento
+        previsto: totalPrevisto,
+        fechado: totalFechado,
+        restante: valorRestante,
+        totalEsperado,
+        breakdown: { pix, cartao, dinheiro, outros },
+        // Contadores
+        agendamentosCount: agendCount,
+        agendamentosRestantesCount: agendamentosRestantes.length,
+        agendamentosJaPassaramCount: agendamentosJaPassaram.length,
+        comandasCount: comandas.length,
+        // Meta
+        metaDiaria: metaDia,
+        atingeMeta,
+        falta,
+        progressoPct,
+        progressoFechadoPct,
+        // Detalhes
+        porProfissional: rankingProfissionais,
+        agendamentos,
+        comandas,
+        fetchedAt: new Date().toISOString(),
+      };
+
+      setCache(cacheKey, result, 2 * 60 * 1000); // 2 min
+      return res.json(result);
+    } catch (err: any) {
+      return handleTrinksError(err, res);
+    }
+  });
+
   app.get("/api/trinks/transacoes", async (req: Request, res: Response) => {
     try {
       const params: Record<string, string> = {};

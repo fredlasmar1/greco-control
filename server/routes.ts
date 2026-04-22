@@ -1308,20 +1308,53 @@ export async function registerRoutes(
 
   // ─── GET /api/trinks/debug — Debug: testa qualquer endpoint arbitrário via query ?path=
   // Exemplo: /api/trinks/debug?path=produtos
+  // Passar &bypass=1 faz a chamada ignorando o rate limiter mensal (uso pontual)
   app.get("/api/trinks/debug", async (req: Request, res: Response) => {
     try {
       const path = String(req.query.path || "").replace(/^\/+/, "");
       if (!path) return res.status(400).json({ ok: false, error: "query param 'path' obrigatório" });
+      const bypass = String(req.query.bypass || "") === "1";
       const queryParams: Record<string, string> = {};
       for (const [k, v] of Object.entries(req.query)) {
-        if (k === "path") continue;
+        if (k === "path" || k === "bypass") continue;
         if (typeof v === "string") queryParams[k] = v;
       }
+
+      if (bypass) {
+        // Chamada direta à Trinks sem passar pelo trinksFetch (sem contar no limite mensal)
+        if (!trinksConfig) return res.status(400).json({ ok: false, error: "TRINKS não configurado" });
+        const url = new URL(`/v1/${path}`, "https://api.trinks.com");
+        for (const [k, v] of Object.entries(queryParams)) url.searchParams.append(k, v);
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "X-Api-Key": trinksConfig.apiKey,
+        };
+        if (trinksConfig.establishmentId) headers["estabelecimentoId"] = trinksConfig.establishmentId;
+        const r = await fetch(url.toString(), { method: "GET", headers });
+        const text = await r.text();
+        let body: any = text;
+        try { body = JSON.parse(text); } catch {}
+        return res.json({ ok: r.ok, path, status: r.status, data: body });
+      }
+
       const data = await trinksFetch(path, queryParams);
       return res.json({ ok: true, path, data });
     } catch (err: any) {
       return res.status(200).json({ ok: false, path: String(req.query.path || ""), error: err?.message || String(err), status: err?.status });
     }
+  });
+
+  // ─── GET /api/trinks/rate-status — consulta contador mensal/minuto
+  app.get("/api/trinks/rate-status", (_req: Request, res: Response) => {
+    return res.json({
+      monthKey: rateLimiter.monthKey,
+      requestsThisMonth: rateLimiter.requestsThisMonth,
+      maxPerMonth: MAX_REQUESTS_PER_MONTH,
+      requestsThisMinute: rateLimiter.requestsThisMinute,
+      maxPerMinute: MAX_REQUESTS_PER_MINUTE,
+      totalRequestsSession: rateLimiter.totalRequestsSession,
+    });
   });
 
   // ─── GET /api/trinks/estabelecimento ────────────────────

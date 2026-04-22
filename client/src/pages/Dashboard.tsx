@@ -48,6 +48,10 @@ import {
   CalendarDays,
   CalendarRange,
   Filter,
+  Target,
+  CheckCircle2,
+  AlertTriangle,
+  CalendarPlus,
 } from "lucide-react";
 import {
   LineChart,
@@ -335,6 +339,29 @@ interface HojeData {
   fromCache?: boolean;
 }
 
+interface AmanhaData {
+  data: string;              // YYYY-MM-DD
+  proxDiaUtil: boolean;      // true quando pulou fim de semana/folga
+  total: number;             // faturamento previsto
+  count: number;             // número de agendamentos válidos
+  metaDiaria: number;
+  atingeMeta: boolean;
+  falta: number;
+  progressoPct: number;
+  porProfissional: { nome: string; total: number; count: number }[];
+  agendamentos: {
+    id: string | number;
+    hora: string;
+    cliente: string;
+    profissional: string;
+    servico: string;
+    valor: number;
+    status: string;
+  }[];
+  fetchedAt: string;
+  fromCache?: boolean;
+}
+
 export default function Dashboard() {
   const { isConnected, trinks, lastSync, isSyncing, syncData } =
     useTrinksStore();
@@ -356,6 +383,23 @@ export default function Dashboard() {
   }, [isConnected, API_BASE]);
 
   useEffect(() => { loadHoje(); }, [loadHoje]);
+
+  // Previsão do próximo dia útil
+  const [amanha, setAmanha] = useState<AmanhaData | null>(null);
+  const [amanhaLoading, setAmanhaLoading] = useState(false);
+  const [amanhaExpanded, setAmanhaExpanded] = useState(false);
+
+  const loadAmanha = useCallback(async () => {
+    if (!isConnected) return;
+    setAmanhaLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/trinks/amanha`);
+      if (res.ok) setAmanha(await res.json());
+    } catch {}
+    setAmanhaLoading(false);
+  }, [isConnected, API_BASE]);
+
+  useEffect(() => { loadAmanha(); }, [loadAmanha]);
 
   // Period filter state
   const [periodFilter, setPeriodFilter] = useState("");
@@ -546,6 +590,248 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Previsão de Amanhã */}
+      {isConnected && (
+        <Card
+          className={`bg-card border-card-border relative overflow-hidden ${
+            amanha?.atingeMeta
+              ? "border-emerald-500/40"
+              : amanha && amanha.progressoPct >= 70
+                ? "border-amber-500/40"
+                : amanha
+                  ? "border-red-500/40"
+                  : ""
+          }`}
+          data-testid="card-amanha"
+        >
+          <div
+            className={`absolute inset-0 pointer-events-none bg-gradient-to-br ${
+              amanha?.atingeMeta
+                ? "from-emerald-500/10"
+                : amanha && amanha.progressoPct >= 70
+                  ? "from-amber-500/10"
+                  : "from-red-500/10"
+            } to-transparent`}
+          />
+          <CardHeader className="pb-3 relative">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                    amanha?.atingeMeta
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : amanha && amanha.progressoPct >= 70
+                        ? "bg-amber-500/15 text-amber-400"
+                        : "bg-red-500/15 text-red-400"
+                  }`}
+                >
+                  <CalendarPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <CardTitle className="text-sm font-medium">
+                    Previsão {amanha?.proxDiaUtil ? "próximo dia útil" : "de Amanhã"}
+                  </CardTitle>
+                  {amanha && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {new Date(amanha.data + "T12:00:00").toLocaleDateString("pt-BR", {
+                        weekday: "long", day: "2-digit", month: "2-digit",
+                      })}
+                      {" · "}
+                      {amanha.count} agendamento{amanha.count !== 1 ? "s" : ""}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-primary hover:bg-primary/10"
+                onClick={loadAmanha}
+                disabled={amanhaLoading}
+                data-testid="btn-refresh-amanha"
+              >
+                <RefreshCw className={`w-3 h-3 mr-1 ${amanhaLoading ? "animate-spin" : ""}`} />
+                Atualizar
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="relative pt-0">
+            {!amanha ? (
+              <div className="p-4 text-center text-xs text-muted-foreground">
+                {amanhaLoading ? "Carregando previsão..." : "Sem dados ainda"}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                      Faturamento previsto
+                    </p>
+                    <p
+                      className="text-2xl sm:text-3xl font-bold"
+                      data-testid="amanha-total"
+                    >
+                      {formatCurrency(amanha.total)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-1">
+                      <Target className="w-3 h-3" /> Meta diária
+                    </p>
+                    <p className="text-2xl sm:text-3xl font-bold text-muted-foreground">
+                      {formatCurrency(amanha.metaDiaria)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                      {amanha.atingeMeta ? "Excedendo meta em" : "Falta para meta"}
+                    </p>
+                    <p
+                      className={`text-2xl sm:text-3xl font-bold ${
+                        amanha.atingeMeta ? "text-emerald-400" : "text-red-400"
+                      }`}
+                      data-testid="amanha-falta"
+                    >
+                      {amanha.atingeMeta
+                        ? `+${formatCurrency(amanha.total - amanha.metaDiaria)}`
+                        : formatCurrency(amanha.falta)}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-1.5">
+                      {amanha.atingeMeta ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span className="text-xs font-medium text-emerald-400">
+                            Meta atingida — {formatPercent(amanha.progressoPct)}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle
+                            className={`w-3.5 h-3.5 ${
+                              amanha.progressoPct >= 70 ? "text-amber-400" : "text-red-400"
+                            }`}
+                          />
+                          <span
+                            className={`text-xs font-medium ${
+                              amanha.progressoPct >= 70 ? "text-amber-400" : "text-red-400"
+                            }`}
+                          >
+                            {formatPercent(amanha.progressoPct)} da meta — falta{" "}
+                            {formatCurrency(amanha.falta)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {amanha.count > 0 && (() => {
+                      const ticketMedioAtual = amanha.total / amanha.count;
+                      const agendFaltando = ticketMedioAtual > 0
+                        ? Math.ceil(amanha.falta / ticketMedioAtual)
+                        : 0;
+                      if (amanha.atingeMeta || agendFaltando <= 0) return null;
+                      return (
+                        <span className="text-[10px] text-muted-foreground">
+                          ~{agendFaltando} agend. a mais (ticket {formatCurrency(ticketMedioAtual)})
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <Progress
+                    value={Math.min(100, amanha.progressoPct)}
+                    className={`h-2 ${
+                      amanha.atingeMeta
+                        ? "[&>div]:bg-emerald-500"
+                        : amanha.progressoPct >= 70
+                          ? "[&>div]:bg-amber-500"
+                          : "[&>div]:bg-red-500"
+                    }`}
+                  />
+                </div>
+
+                {amanha.porProfissional.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2">
+                      Por profissional
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                      {amanha.porProfissional.slice(0, 8).map((p) => (
+                        <div
+                          key={p.nome}
+                          className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-muted/20"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium truncate">{p.nome}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {p.count} agend.
+                            </p>
+                          </div>
+                          <span className="text-xs font-semibold whitespace-nowrap ml-2">
+                            {formatCurrency(p.total)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {amanha.agendamentos.length > 0 && (
+                  <div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs text-primary hover:bg-primary/10 px-2"
+                      onClick={() => setAmanhaExpanded((v) => !v)}
+                      data-testid="btn-toggle-amanha-lista"
+                    >
+                      {amanhaExpanded ? "Ocultar" : "Ver"} lista de agendamentos
+                      ({amanha.agendamentos.length})
+                    </Button>
+                    {amanhaExpanded && (
+                      <div className="mt-2 max-h-72 overflow-auto border border-card-border rounded-md">
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 bg-card border-b border-border">
+                            <tr>
+                              <th className="text-left p-2 text-muted-foreground font-medium">Hora</th>
+                              <th className="text-left p-2 text-muted-foreground font-medium">Cliente</th>
+                              <th className="text-left p-2 text-muted-foreground font-medium">Profissional</th>
+                              <th className="text-left p-2 text-muted-foreground font-medium">Serviço</th>
+                              <th className="text-right p-2 text-muted-foreground font-medium">Valor</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {amanha.agendamentos.map((a) => (
+                              <tr key={a.id} className="border-b border-border/50 hover:bg-muted/20">
+                                <td className="p-2 font-mono whitespace-nowrap">{a.hora || "—"}</td>
+                                <td className="p-2 truncate max-w-[160px]">{a.cliente}</td>
+                                <td className="p-2 truncate max-w-[120px] text-muted-foreground">{a.profissional}</td>
+                                <td className="p-2 truncate max-w-[160px] text-muted-foreground">{a.servico}</td>
+                                <td className="p-2 text-right font-semibold whitespace-nowrap">
+                                  {a.valor > 0 ? formatCurrency(a.valor) : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {amanha.fromCache && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Em cache · atualiza a cada 5 minutos
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Comandas Fechadas Hoje */}
       {isConnected && (

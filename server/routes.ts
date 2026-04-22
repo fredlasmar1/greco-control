@@ -47,6 +47,7 @@ const FINANCEIRO_FILE = path.join(DATA_DIR, ".financeiro-data.json");
 const DUPLICADOS_RESOLVIDOS_FILE = path.join(DATA_DIR, ".duplicados-resolvidos.json");
 const METAS_FILE = path.join(DATA_DIR, ".metas-data.json");
 const METAS_BARBEIROS_FILE = path.join(DATA_DIR, ".metas-barbeiros.json");
+const META_DIARIA_FILE = path.join(DATA_DIR, ".meta-diaria.json");
 const CHECKLIST_FILE = path.join(DATA_DIR, ".checklist-data.json");
 const CONSOLIDACAO_CONTAS_FILE = path.join(DATA_DIR, ".consolidacao-contas.json");
 const CONSOLIDACAO_TRANSACOES_FILE = path.join(DATA_DIR, ".consolidacao-transacoes.json");
@@ -95,6 +96,10 @@ let metasHistorico: MetaHistorico[] = [];
 // ─── Metas por Barbeiro ──────────────────────────────────
 // { "YYYY-MM": { "barberId": metaValue } }
 let metasBarbeiros: Record<string, Record<string, number>> = {};
+
+// ─── Meta Diária (manual) ────────────────────────────────
+// Valor único salvo no disco/DB — default R$ 5.000/dia
+let metaDiaria: number = 5000;
 
 // ─── Consolidação: Contas e Transações ───────────────────
 type MeioRecebimento = 'pix' | 'debito' | 'credito' | 'dinheiro';
@@ -346,6 +351,22 @@ function saveMetasBarbeiros() {
   kvSet("metas_barbeiros", metasBarbeiros).catch(() => {});
   try { fs.writeFileSync(METAS_BARBEIROS_FILE, JSON.stringify(metasBarbeiros, null, 2), "utf-8"); }
   catch { log("Metas barbeiros: could not save to disk", "metas"); }
+}
+
+// Load meta diária on startup
+try {
+  if (fs.existsSync(META_DIARIA_FILE)) {
+    const raw = fs.readFileSync(META_DIARIA_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.valor === "number") metaDiaria = parsed.valor;
+    log(`Meta diária: loaded R$${metaDiaria} from disk`, "metas");
+  }
+} catch { log("Meta diária: starting with default R$5.000", "metas"); }
+
+function saveMetaDiaria() {
+  kvSet("meta_diaria", { valor: metaDiaria }).catch(() => {});
+  try { fs.writeFileSync(META_DIARIA_FILE, JSON.stringify({ valor: metaDiaria }, null, 2), "utf-8"); }
+  catch { log("Meta diária: could not save to disk", "metas"); }
 }
 
 // Consolidação: load on startup
@@ -1407,6 +1428,137 @@ export async function registerRoutes(
     }
   });
 
+  // ─── GET /api/trinks/amanha ─ Previsão de faturamento do próximo dia útil ───
+  // Considera funcionamento terça a sábado (fecha domingo e segunda)
+  app.get("/api/trinks/amanha", async (_req: Request, res: Response) => {
+    try {
+      // Descobre o próximo dia útil (terça a sábado) em TZ America/Sao_Paulo
+      const tzFmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric", month: "2-digit", day: "2-digit",
+        weekday: "short",
+      });
+
+      const addDays = (base: Date, days: number) => new Date(base.getTime() + days * 86400000);
+      const hojeBase = new Date();
+
+      // Encontra próximo dia útil: terça..sábado (dow 2..6)
+      let offset = 1;
+      let alvo = addDays(hojeBase, offset);
+      let info = tzFmt.formatToParts(alvo);
+      const pick = (parts: Intl.DateTimeFormatPart[], type: string) =>
+        parts.find(p => p.type === type)?.value || "";
+      const weekdayToNum: Record<string, number> = {
+        Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+      };
+      let dow = weekdayToNum[pick(info, "weekday")] ?? -1;
+      // Pula domingo (0) e segunda (1)
+      while (dow === 0 || dow === 1) {
+        offset += 1;
+        alvo = addDays(hojeBase, offset);
+        info = tzFmt.formatToParts(alvo);
+        dow = weekdayToNum[pick(info, "weekday")] ?? -1;
+        if (offset > 7) break; // safety
+      }
+
+      const yyyy = pick(info, "year");
+      const mm = pick(info, "month");
+      const dd = pick(info, "day");
+      const amanha = `${yyyy}-${mm}-${dd}`;
+      const proxDiaUtil = offset > 1; // verdadeiro se pulou dias
+
+      const cacheKey = `amanha_${amanha}`;
+      const cached = getCached(cacheKey);
+      if (cached) return res.json({ ...cached, fromCache: true });
+
+      const data = await trinksFetchAll("agendamentos", { dataInicio: amanha, dataFim: amanha });
+      const lista = Array.isArray(data) ? data : (data?.data || []);
+
+      // Status que NÃO contam (cancelados, no-show etc.)
+      const statusIgnorar = ["cancelado", "cancelada", "no show", "no-show", "faltou"];
+      const isAgendamentoValido = (a: any) => {
+        const st = a.status;
+        const nome = (typeof st === "string" ? st : (st?.descricao || st?.nome || "")).toLowerCase();
+        return !statusIgnorar.some(s => nome.includes(s));
+      };
+
+      let totalPrevisto = 0;
+      const porProfissional: Record<string, { nome: string; total: number; count: number }> = {};
+      const agendamentos: any[] = [];
+
+      lista.filter(isAgendamentoValido).forEach((a: any) => {
+        // Tenta vários campos de valor
+        let val = Number(a.valor || a.valorTotal || a.totalPagar || 0);
+
+        // Se houver array de serviços, soma
+        if ((!val || val === 0) && Array.isArray(a.servicos)) {
+          val = a.servicos.reduce((s: number, svc: any) => {
+            return s + Number(svc.preco || svc.valor || svc.valorServico || 0);
+          }, 0);
+        }
+
+        totalPrevisto += val;
+
+        const profId = String(a.profissionalId || a.profissional?.id || "");
+        const profNome = a.profissional?.nome || a.profissionalNome || "—";
+        if (profId) {
+          if (!porProfissional[profId]) {
+            porProfissional[profId] = { nome: profNome, total: 0, count: 0 };
+          }
+          porProfissional[profId].total += val;
+          porProfissional[profId].count += 1;
+        }
+
+        const hora = (a.dataHoraInicio || a.dataHora || "").slice(11, 16);
+        const clienteNome = a.cliente?.nome || a.clienteNome || "Cliente";
+        const servicoNome = a.servico?.nome
+          || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "")
+          || a.servicoNome
+          || "—";
+        const statusStr = (typeof a.status === "string" ? a.status : (a.status?.descricao || a.status?.nome || "")) || "agendado";
+
+        agendamentos.push({
+          id: a.id,
+          hora,
+          cliente: clienteNome,
+          profissional: profNome,
+          servico: servicoNome,
+          valor: val,
+          status: statusStr,
+        });
+      });
+
+      agendamentos.sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
+
+      const ranking = Object.values(porProfissional)
+        .sort((a, b) => b.total - a.total);
+
+      const metaDia = metaDiaria;
+      const atingeMeta = totalPrevisto >= metaDia;
+      const falta = Math.max(0, metaDia - totalPrevisto);
+      const progressoPct = metaDia > 0 ? (totalPrevisto / metaDia) * 100 : 0;
+
+      const result = {
+        data: amanha,
+        proxDiaUtil, // true se não for literalmente "amanhã" (pulou fim de semana / folga)
+        total: totalPrevisto,
+        count: agendamentos.length,
+        metaDiaria: metaDia,
+        atingeMeta,
+        falta,
+        progressoPct,
+        porProfissional: ranking,
+        agendamentos,
+        fetchedAt: new Date().toISOString(),
+      };
+
+      setCache(cacheKey, result, 5 * 60 * 1000); // 5 min
+      return res.json(result);
+    } catch (err: any) {
+      return handleTrinksError(err, res);
+    }
+  });
+
   // ─── GET /api/trinks/clientes ───────────────────────────
   app.get("/api/trinks/clientes", async (_req: Request, res: Response) => {
     try {
@@ -1740,6 +1892,23 @@ export async function registerRoutes(
     metasHistorico.sort((a, b) => a.month.localeCompare(b.month));
     saveMetas();
     return res.json({ ok: true, metas: metasHistorico });
+  });
+
+  // GET /api/metas/diaria — get daily target
+  app.get("/api/metas/diaria", (_req: Request, res: Response) => {
+    return res.json({ valor: metaDiaria });
+  });
+
+  // POST /api/metas/diaria — update daily target
+  app.post("/api/metas/diaria", (req: Request, res: Response) => {
+    const { valor } = req.body;
+    const num = Number(valor);
+    if (!Number.isFinite(num) || num < 0) {
+      return res.status(400).json({ error: "valor inválido" });
+    }
+    metaDiaria = num;
+    saveMetaDiaria();
+    return res.json({ ok: true, valor: metaDiaria });
   });
 
   // POST /api/metas/atualizar-atual — update current month's achieved from Trinks or manual

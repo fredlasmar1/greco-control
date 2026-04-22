@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle, Users, Pencil, X, RotateCcw, Loader2 } from "lucide-react";
+import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle, Users, Pencil, X, RotateCcw, Loader2, CalendarPlus, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface MetaHistorico {
@@ -85,6 +85,23 @@ export default function Metas() {
     return all.sort((a, b) => a.month.localeCompare(b.month));
   }, [historico, currentMonth, target, achieved]);
 
+  // ─── Meta Diária (manual) ───────────────────────────
+  const [metaDiaria, setMetaDiaria] = useState<number>(5000);
+  const [metaDiariaInput, setMetaDiariaInput] = useState<string>("");
+  const [metaDiariaSaving, setMetaDiariaSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/metas/diaria`)
+      .then(r => r.json())
+      .then(data => {
+        if (data && typeof data.valor === "number") {
+          setMetaDiaria(data.valor);
+          setMetaDiariaInput(String(Math.round(data.valor)));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // ─── Custom barber metas from server ────────────────────
   const { toast } = useToast();
   const [customMetas, setCustomMetas] = useState<Record<string, number>>({});
@@ -135,6 +152,30 @@ export default function Metas() {
       toast({ title: "Erro ao salvar", description: "Não foi possível salvar a meta. Tente novamente.", variant: "destructive" });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveMetaDiaria() {
+    const val = Number(metaDiariaInput);
+    if (!Number.isFinite(val) || val < 0) {
+      toast({ title: "Valor inválido", description: "Digite um valor válido.", variant: "destructive" });
+      return;
+    }
+    setMetaDiariaSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/metas/diaria`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ valor: val }),
+      });
+      if (!res.ok) throw new Error(`Erro ${res.status}`);
+      const data = await res.json();
+      setMetaDiaria(data.valor);
+      toast({ title: "Meta diária salva!", description: `Agora: ${formatCurrency(data.valor)}/dia` });
+    } catch {
+      toast({ title: "Erro", description: "Não foi possível salvar.", variant: "destructive" });
+    } finally {
+      setMetaDiariaSaving(false);
     }
   }
 
@@ -295,6 +336,58 @@ export default function Metas() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Meta Diária (manual) */}
+      <Card className="bg-card border-card-border">
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2">
+            <CalendarPlus className="w-4 h-4 text-primary" />
+            <CardTitle className="text-sm font-medium">Meta Diária</CardTitle>
+            <span className="text-xs text-muted-foreground">(usada na previsão do Dashboard)</span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="flex-1 min-w-[220px]">
+              <p className="text-xs text-muted-foreground mb-1">Valor por dia de funcionamento</p>
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1 max-w-[220px]">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="100"
+                    value={metaDiariaInput}
+                    onChange={(e) => setMetaDiariaInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveMetaDiaria(); }}
+                    className="pl-10 h-9"
+                    data-testid="input-meta-diaria"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  className="bg-primary hover:bg-primary/80 text-white h-9"
+                  onClick={saveMetaDiaria}
+                  disabled={metaDiariaSaving}
+                  data-testid="btn-save-meta-diaria"
+                >
+                  {metaDiariaSaving ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5 mr-1" /> Salvar
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              <p>Meta atual: <span className="font-semibold text-foreground">{formatCurrency(metaDiaria)}</span>/dia</p>
+              <p className="mt-0.5">Estimativa mensal (22 dias úteis): <span className="font-medium">{formatCurrency(metaDiaria * 22)}</span></p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Per-barber goals */}
       <Card className="bg-card border-card-border">

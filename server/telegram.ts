@@ -246,3 +246,73 @@ export function montarResumoNoite(hoje: ResumoDiaData): string {
 
   return msg;
 }
+
+// ─── Alertas de Estoque ────────────────────────────────────────────────
+export interface AlertaEstoque {
+  id?: number | string;
+  nome: string;
+  saldo: number;
+  minimo: number;
+  nivel: "critico" | "atencao" | "ok";
+}
+
+/**
+ * Monta bloco de alertas de estoque para anexar aos resumos.
+ * Retorna string vazia se não houver alertas relevantes.
+ */
+export function montarAlertasEstoque(alertas: AlertaEstoque[]): string {
+  if (!Array.isArray(alertas) || alertas.length === 0) return "";
+
+  const criticos = alertas.filter(a => a.nivel === "critico");
+  const atencao = alertas.filter(a => a.nivel === "atencao");
+
+  if (criticos.length === 0 && atencao.length === 0) return "";
+
+  let msg = `📦 <b>Estoque em alerta</b>\n`;
+
+  if (criticos.length > 0) {
+    msg += `🔴 <b>Crítico (${criticos.length})</b>\n`;
+    criticos.slice(0, 8).forEach(a => {
+      const saldoTxt = a.saldo <= 0 ? "zerado" : `${a.saldo} un`;
+      const minTxt = a.minimo > 0 ? ` · mín ${a.minimo}` : "";
+      msg += `├ ${escapeHtml(a.nome)}: ${saldoTxt}${minTxt}\n`;
+    });
+    if (criticos.length > 8) {
+      msg += `└ <i>+${criticos.length - 8} outros críticos</i>\n`;
+    }
+  }
+
+  if (atencao.length > 0) {
+    msg += `🟡 <b>Atenção (${atencao.length})</b>\n`;
+    atencao.slice(0, 5).forEach(a => {
+      msg += `├ ${escapeHtml(a.nome)}: ${a.saldo} un · mín ${a.minimo}\n`;
+    });
+    if (atencao.length > 5) {
+      msg += `└ <i>+${atencao.length - 5} outros em atenção</i>\n`;
+    }
+  }
+
+  msg += `\n`;
+  return msg;
+}
+
+/**
+ * Monta alerta imediato (para notificação pontual quando estoque crítico é detectado).
+ */
+export function montarAlertaImediatoEstoque(alertas: AlertaEstoque[]): string {
+  const criticos = (alertas || []).filter(a => a.nivel === "critico");
+  if (criticos.length === 0) return "";
+
+  let msg = `⚠️ <b>Alerta de estoque</b>\n`;
+  msg += `<i>${criticos.length} produto(s) em nível crítico</i>\n\n`;
+  criticos.slice(0, 10).forEach(a => {
+    const saldoTxt = a.saldo <= 0 ? "zerado" : `${a.saldo} un`;
+    const minTxt = a.minimo > 0 ? ` (mín ${a.minimo})` : "";
+    msg += `🔴 ${escapeHtml(a.nome)}: ${saldoTxt}${minTxt}\n`;
+  });
+  if (criticos.length > 10) {
+    msg += `\n<i>+${criticos.length - 10} outros…</i>\n`;
+  }
+  msg += `\n🔗 <a href="https://greco-control-production.up.railway.app/estoque">Ver detalhes</a>`;
+  return msg;
+}

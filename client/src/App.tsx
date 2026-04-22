@@ -23,6 +23,7 @@ import ClientesDuplicados from "@/pages/ClientesDuplicados";
 import RaioX from "@/pages/RaioX";
 import Consolidacao from "@/pages/Consolidacao";
 import Assinaturas from "@/pages/Assinaturas";
+import Estoque from "@/pages/Estoque";
 import Login from "@/pages/Login";
 import { CopilotDrawer } from "@/components/CopilotDrawer";
 import MeuPainel from "@/pages/MeuPainel";
@@ -50,6 +51,7 @@ function AdminRoutes() {
         <Route path="/servicos" component={Servicos} />
         <Route path="/precificacao" component={Precificacao} />
         <Route path="/financeiro" component={Financeiro} />
+        <Route path="/estoque" component={Estoque} />
         <Route path="/consolidacao" component={Consolidacao} />
         <Route path="/assinaturas" component={Assinaturas} />
         <Route path="/fechamento" component={Fechamento} />

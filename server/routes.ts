@@ -16,6 +16,7 @@ import {
   getChatId,
   montarResumoManha,
   montarResumoNoite,
+  montarAlertasEstoque,
   type ResumoDiaData,
   type ResumoAmanhaData,
 } from "./telegram";
@@ -1382,6 +1383,125 @@ export async function registerRoutes(
     try {
       const data = await trinksFetchAll("servicos");
       return res.json(data);
+    } catch (err: any) {
+      return handleTrinksError(err, res);
+    }
+  });
+
+  // GET /api/trinks/produtos
+  app.get("/api/trinks/produtos", async (_req: Request, res: Response) => {
+    try {
+      const data = await trinksFetchAll("produtos");
+      return res.json(data);
+    } catch (err: any) {
+      return handleTrinksError(err, res);
+    }
+  });
+
+  // GET /api/trinks/produtos-movimentacoes
+  app.get("/api/trinks/produtos-movimentacoes", async (req: Request, res: Response) => {
+    try {
+      const params: Record<string, string> = {};
+      if (req.query.dataInicio) params.dataInicio = String(req.query.dataInicio);
+      if (req.query.dataFim) params.dataFim = String(req.query.dataFim);
+      if (req.query.produtoId) params.produtoId = String(req.query.produtoId);
+      if (req.query.tipo) params.tipo = String(req.query.tipo);
+      const candidates = ["produtos/movimentacoes", "produtos/movimentacao", "movimentacoes-estoque", "estoque/movimentacoes"];
+      let lastErr: any = null;
+      for (const p of candidates) {
+        try {
+          const data = await trinksFetchAll(p, params);
+          return res.json({ path: p, data });
+        } catch (err: any) {
+          lastErr = err;
+          if (err?.status && err.status !== 404) return handleTrinksError(err, res);
+        }
+      }
+      return handleTrinksError(lastErr || { status: 500, message: "Endpoint de movimentacao nao encontrado" }, res);
+    } catch (err: any) {
+      return handleTrinksError(err, res);
+    }
+  });
+
+  // Função interna reutilizável para montar resumo de estoque
+  async function calcularEstoqueResumo(): Promise<any> {
+    const ck = "estoque-resumo";
+    const cached = getCached(ck);
+    if (cached) return cached;
+
+    const produtos: any[] = await trinksFetchAll("produtos").catch(() => [] as any[]);
+    const tzFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
+    const parts = tzFmt.formatToParts(new Date());
+    const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
+    const hoje = `${pick("year")}-${pick("month")}-${pick("day")}`;
+    let movimentacoes: any[] = [];
+    for (const p of ["produtos/movimentacoes", "produtos/movimentacao", "movimentacoes-estoque"]) {
+      try {
+        movimentacoes = await trinksFetchAll(p, { dataInicio: hoje, dataFim: hoje });
+        break;
+      } catch { continue; }
+    }
+
+    const lista = (produtos || []).map((p: any) => {
+      const saldo = Number(p.saldoEstoque ?? p.estoqueAtual ?? p.quantidade ?? p.estoque ?? 0);
+      const minimo = Number(p.estoqueMinimo ?? p.minimo ?? 0);
+      const custo = Number(p.custoMedio ?? p.custo ?? p.precoCusto ?? 0);
+      const preco = Number(p.valorVenda ?? p.preco ?? p.valor ?? 0);
+      let nivel: "ok" | "atencao" | "critico" = "ok";
+      if (saldo <= 0) nivel = "critico";
+      else if (minimo > 0 && saldo < minimo) nivel = "critico";
+      else if (minimo > 0 && saldo < minimo * 1.5) nivel = "atencao";
+      return {
+        id: p.id,
+        nome: p.nome || p.descricao || "",
+        categoria: p.categoria?.nome || p.categoriaNome || "",
+        fabricante: p.fabricante?.nome || p.fabricanteNome || "",
+        saldo,
+        minimo,
+        custoMedio: custo,
+        valorVenda: preco,
+        valorEstoque: saldo * custo,
+        nivel,
+      };
+    });
+
+    const emAlerta = lista.filter(p => p.nivel !== "ok");
+    const criticos = lista.filter(p => p.nivel === "critico");
+    const valorTotalEstoque = lista.reduce((s, p) => s + p.valorEstoque, 0);
+
+    const movHoje = (movimentacoes || []).map((m: any) => ({
+      id: m.id,
+      data: m.data || m.dataHora,
+      produtoId: m.produtoId || m.produto?.id,
+      produtoNome: m.produtoNome || m.produto?.nome || m.nome || "",
+      tipo: (m.tipo || m.operacao || "").toString().toLowerCase(),
+      quantidade: Number(m.quantidade || 0),
+      valor: Number(m.valor || m.valorTotal || 0),
+      observacao: m.observacao || "",
+    }));
+
+    const resumo = {
+      atualizadoEm: new Date().toISOString(),
+      totalProdutos: lista.length,
+      produtosEmAlerta: emAlerta.length,
+      produtosCriticos: criticos.length,
+      valorTotalEstoque,
+      movimentacoesHojeCount: movHoje.length,
+      saidasHoje: movHoje.filter(m => /(saída|saida|venda|uso|consumo)/.test(m.tipo)).length,
+      entradasHoje: movHoje.filter(m => /(entrada|compra|ajuste)/.test(m.tipo)).length,
+      produtos: lista,
+      alertas: emAlerta,
+      movimentacoesHoje: movHoje,
+    };
+    setCache(ck, resumo, 2 * 60 * 1000);
+    return resumo;
+  }
+
+  // GET /api/estoque/resumo - consolidado
+  app.get("/api/estoque/resumo", async (_req: Request, res: Response) => {
+    try {
+      const resumo = await calcularEstoqueResumo();
+      return res.json(resumo);
     } catch (err: any) {
       return handleTrinksError(err, res);
     }
@@ -3500,11 +3620,16 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   // POST /api/telegram/resumo-manha — monta e envia resumo matinal agora
   app.post("/api/telegram/resumo-manha", async (_req: Request, res: Response) => {
     try {
-      const [hoje, amanhaData] = await Promise.all([
+      const [hoje, amanhaData, estoque] = await Promise.all([
         calcularHojeCompleto(),
         calcularAmanha().catch(() => null),
+        calcularEstoqueResumo().catch(() => null),
       ]);
-      const msg = montarResumoManha(hoje, amanhaData);
+      let msg = montarResumoManha(hoje, amanhaData);
+      if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
+        const bloco = montarAlertasEstoque(estoque.alertas);
+        if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);
+      }
       const r = await enviarMensagem(msg);
       return res.json({ ...r, enviado: r.ok });
     } catch (err: any) {
@@ -3515,8 +3640,15 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   // POST /api/telegram/resumo-noite — monta e envia fechamento agora
   app.post("/api/telegram/resumo-noite", async (_req: Request, res: Response) => {
     try {
-      const hoje = await calcularHojeCompleto();
-      const msg = montarResumoNoite(hoje);
+      const [hoje, estoque] = await Promise.all([
+        calcularHojeCompleto(),
+        calcularEstoqueResumo().catch(() => null),
+      ]);
+      let msg = montarResumoNoite(hoje);
+      if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
+        const bloco = montarAlertasEstoque(estoque.alertas);
+        if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);
+      }
       const r = await enviarMensagem(msg);
       return res.json({ ...r, enviado: r.ok });
     } catch (err: any) {
@@ -3533,11 +3665,16 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       cron.schedule("0 8 * * 2-6", async () => {
         log("[cron] disparando resumo da manhã...", "telegram");
         try {
-          const [hoje, amanhaData] = await Promise.all([
+          const [hoje, amanhaData, estoque] = await Promise.all([
             calcularHojeCompleto(),
             calcularAmanha().catch(() => null),
+            calcularEstoqueResumo().catch(() => null),
           ]);
-          const msg = montarResumoManha(hoje, amanhaData);
+          let msg = montarResumoManha(hoje, amanhaData);
+          if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
+            const bloco = montarAlertasEstoque(estoque.alertas);
+            if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);
+          }
           const r = await enviarMensagem(msg);
           log(`[cron] resumo manhã: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
         } catch (err: any) {
@@ -3549,8 +3686,15 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       cron.schedule("0 20 * * 2-6", async () => {
         log("[cron] disparando resumo da noite...", "telegram");
         try {
-          const hoje = await calcularHojeCompleto();
-          const msg = montarResumoNoite(hoje);
+          const [hoje, estoque] = await Promise.all([
+            calcularHojeCompleto(),
+            calcularEstoqueResumo().catch(() => null),
+          ]);
+          let msg = montarResumoNoite(hoje);
+          if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
+            const bloco = montarAlertasEstoque(estoque.alertas);
+            if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);
+          }
           const r = await enviarMensagem(msg);
           log(`[cron] resumo noite: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
         } catch (err: any) {

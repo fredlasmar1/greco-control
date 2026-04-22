@@ -19,6 +19,7 @@ import {
   UserX,
   Banknote,
   Crown,
+  Package,
 } from "lucide-react";
 
 const navItems = [
@@ -29,6 +30,7 @@ const navItems = [
   { path: "/servicos", label: "Serviços", icon: Scissors },
   { path: "/precificacao", label: "Precificação", icon: Calculator },
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
+  { path: "/estoque", label: "Estoque", icon: Package },
   { path: "/consolidacao", label: "Consolidação", icon: Banknote },
   { path: "/assinaturas", label: "Assinaturas", icon: Crown },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },

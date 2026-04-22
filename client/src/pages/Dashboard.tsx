@@ -54,6 +54,7 @@ import {
   CalendarPlus,
   Send,
   Bell,
+  Package,
 } from "lucide-react";
 import {
   LineChart,
@@ -1211,6 +1212,9 @@ export default function Dashboard() {
       )}
 
 
+      {/* Estoque em alerta */}
+      {isConnected && <EstoqueAlertaCard apiBase={API_BASE} />}
+
       {/* Telegram Notifications */}
       {isConnected && <TelegramCard apiBase={API_BASE} />}
 
@@ -1633,6 +1637,87 @@ function TelegramCard({ apiBase }: { apiBase: string }) {
             </p>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── EstoqueAlertaCard ───────────────────────────────────────
+function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function carregar() {
+    setLoading(true);
+    setErro(null);
+    try {
+      const r = await fetch(`${apiBase}/api/estoque/resumo`, { credentials: "include" });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      setData(await r.json());
+    } catch (e: any) {
+      setErro(e?.message || "falhou");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { carregar(); }, []);
+
+  if (!data && !erro) return null;
+  // Se não tem alerta nenhum e carregou, não mostra nada
+  if (data && data.produtosEmAlerta === 0 && !erro) return null;
+
+  return (
+    <Card className="bg-card border-card-border">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <Package className="w-4 h-4 text-amber-400" />
+            <span className="text-sm font-medium">Estoque em alerta</span>
+            {data && (
+              <span className="text-xs text-muted-foreground">
+                {data.produtosEmAlerta} produto{data.produtosEmAlerta !== 1 ? "s" : ""}
+                {data.produtosCriticos > 0 && ` · ${data.produtosCriticos} crítico${data.produtosCriticos > 1 ? "s" : ""}`}
+              </span>
+            )}
+          </div>
+          <a href="#/estoque" className="text-xs text-primary hover:underline">Ver tudo →</a>
+        </div>
+        {erro ? (
+          <div className="text-xs text-muted-foreground">
+            Não foi possível carregar o estoque no momento. {erro}
+          </div>
+        ) : data && data.alertas && data.alertas.length > 0 ? (
+          <div className="space-y-1">
+            {data.alertas.slice(0, 5).map((p: any) => (
+              <div key={p.id} className="flex items-center justify-between text-sm px-2 py-1.5 rounded hover:bg-muted/30">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate">{p.nome}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {p.categoria || "Sem categoria"} · mínimo {p.minimo}
+                  </div>
+                </div>
+                <div className="text-right ml-3">
+                  <div className={`text-sm font-semibold ${p.nivel === "critico" ? "text-red-400" : "text-amber-400"}`}>
+                    {p.saldo} un.
+                  </div>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    {p.nivel === "critico" ? "Crítico" : "Atenção"}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {data.alertas.length > 5 && (
+              <a href="#/estoque" className="block text-xs text-muted-foreground hover:text-primary pt-1 text-center">
+                +{data.alertas.length - 5} outros produtos
+              </a>
+            )}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

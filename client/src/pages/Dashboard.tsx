@@ -52,6 +52,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   CalendarPlus,
+  Send,
+  Bell,
 } from "lucide-react";
 import {
   LineChart,
@@ -1209,6 +1211,9 @@ export default function Dashboard() {
       )}
 
 
+      {/* Telegram Notifications */}
+      {isConnected && <TelegramCard apiBase={API_BASE} />}
+
       {/* Period Filter */}
       <Card className="bg-card border-card-border">
         <CardContent className="p-4">
@@ -1509,5 +1514,126 @@ export default function Dashboard() {
         </Card>
       )}
     </div>
+  );
+}
+
+// ─── TelegramCard ─────────────────────────────────────────────
+interface TelegramStatus {
+  configured: boolean;
+  chatId: string;
+  schedules: { morning: string; evening: string };
+}
+
+function TelegramCard({ apiBase }: { apiBase: string }) {
+  const { toast } = useToast();
+  const [status, setStatus] = useState<TelegramStatus | null>(null);
+  const [sending, setSending] = useState<"test" | "manha" | "noite" | null>(null);
+
+  useEffect(() => {
+    fetch(`${apiBase}/api/telegram/status`)
+      .then(r => r.json())
+      .then(setStatus)
+      .catch(() => setStatus({ configured: false, chatId: "", schedules: { morning: "", evening: "" } }));
+  }, [apiBase]);
+
+  async function enviar(endpoint: string, kind: "test" | "manha" | "noite", label: string) {
+    setSending(kind);
+    try {
+      const res = await fetch(`${apiBase}${endpoint}`, { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        toast({ title: "✅ Enviado!", description: `${label} foi enviado no seu Telegram.` });
+      } else {
+        toast({
+          title: "❌ Falha no envio",
+          description: data.error || "Verifique TELEGRAM_BOT_TOKEN no Railway.",
+          variant: "destructive",
+        });
+      }
+    } catch (err: any) {
+      toast({ title: "Erro", description: err.message, variant: "destructive" });
+    } finally {
+      setSending(null);
+    }
+  }
+
+  return (
+    <Card className="bg-card border-card-border">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-primary/15 text-primary">
+            <Bell className="w-5 h-5" />
+          </div>
+          <div>
+            <CardTitle className="text-sm font-medium">Notificações no Telegram</CardTitle>
+            <p className="text-[11px] text-muted-foreground">
+              @fredgreco_bot · {status?.chatId ? `Chat ${status.chatId}` : "—"}
+            </p>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {status === null ? (
+          <div className="text-xs text-muted-foreground">Carregando...</div>
+        ) : !status.configured ? (
+          <div className="p-3 rounded-md bg-amber-500/10 border border-amber-500/30 text-xs">
+            <p className="font-medium text-amber-400 mb-1">⚠️ Bot não configurado</p>
+            <p className="text-muted-foreground">
+              Configure a variável <code className="bg-muted/40 px-1 rounded">TELEGRAM_BOT_TOKEN</code>{" "}
+              no Railway com o token do @fredgreco_bot (obtido no @BotFather) e redeploy.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <div className="p-2 rounded-md bg-muted/20 border border-border">
+                <p className="text-muted-foreground text-[10px] uppercase">Resumo da manhã</p>
+                <p className="font-medium">{status.schedules.morning}</p>
+              </div>
+              <div className="p-2 rounded-md bg-muted/20 border border-border">
+                <p className="text-muted-foreground text-[10px] uppercase">Fechamento do dia</p>
+                <p className="font-medium">{status.schedules.evening}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+                onClick={() => enviar("/api/telegram/testar", "test", "Teste")}
+                disabled={!!sending}
+                data-testid="btn-telegram-teste"
+              >
+                <Send className="w-3 h-3 mr-1" />
+                {sending === "test" ? "Enviando..." : "Enviar teste"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+                onClick={() => enviar("/api/telegram/resumo-manha", "manha", "Resumo da manhã")}
+                disabled={!!sending}
+                data-testid="btn-telegram-manha"
+              >
+                ☀️ {sending === "manha" ? "Enviando..." : "Enviar resumo da manhã"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs"
+                onClick={() => enviar("/api/telegram/resumo-noite", "noite", "Fechamento do dia")}
+                disabled={!!sending}
+                data-testid="btn-telegram-noite"
+              >
+                🌙 {sending === "noite" ? "Enviando..." : "Enviar fechamento"}
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Envios automáticos: toda terça a sábado às 08:00 e 20:00 (Brasília).
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

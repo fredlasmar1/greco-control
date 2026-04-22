@@ -9,6 +9,16 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
 import { kvGet, kvSet, waitForDb, isDbReady } from "./db";
+import * as cron from "node-cron";
+import {
+  enviarMensagem,
+  isTelegramConfigured,
+  getChatId,
+  montarResumoManha,
+  montarResumoNoite,
+  type ResumoDiaData,
+  type ResumoAmanhaData,
+} from "./telegram";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -1416,197 +1426,242 @@ export async function registerRoutes(
     }
   });
 
+  // Função interna: retorna dados completos do dia (usada por endpoint e cron)
+  async function calcularHojeCompleto(): Promise<ResumoDiaData & {
+    horaAgora: string; breakdown: any; agendamentos: any[]; comandas: any[]; fetchedAt: string;
+  }> {
+    const tzFmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    const parts = tzFmt.formatToParts(new Date());
+    const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
+    const hoje = `${pick("year")}-${pick("month")}-${pick("day")}`;
+
+    const [agendData, transData] = await Promise.all([
+      trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
+      trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: hoje }),
+    ]);
+
+    const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
+    const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
+
+    const statusIgnorar = ["cancelado", "cancelada", "no show", "no-show", "faltou"];
+    const getStatusStr = (a: any) =>
+      (typeof a.status === "string" ? a.status : (a.status?.descricao || a.status?.nome || "")).toLowerCase();
+    const isValido = (a: any) => !statusIgnorar.some(s => getStatusStr(a).includes(s));
+
+    const extractValor = (a: any) => {
+      let v = Number(a.valor || a.valorTotal || a.totalPagar || 0);
+      if ((!v || v === 0) && Array.isArray(a.servicos)) {
+        v = a.servicos.reduce((s: number, svc: any) =>
+          s + Number(svc.preco || svc.valor || svc.valorServico || 0), 0);
+      }
+      return v;
+    };
+
+    let totalPrevisto = 0;
+    let agendCount = 0;
+    const agendamentos: any[] = [];
+    const porProfissionalPrev: Record<string, { nome: string; total: number; count: number }> = {};
+
+    agendLista.filter(isValido).forEach((a: any) => {
+      const val = extractValor(a);
+      totalPrevisto += val;
+      agendCount += 1;
+      const profId = String(a.profissionalId || a.profissional?.id || "");
+      const profNome = a.profissional?.nome || a.profissionalNome || "—";
+      if (profId) {
+        if (!porProfissionalPrev[profId]) porProfissionalPrev[profId] = { nome: profNome, total: 0, count: 0 };
+        porProfissionalPrev[profId].total += val;
+        porProfissionalPrev[profId].count += 1;
+      }
+      const hora = (a.dataHoraInicio || a.dataHora || "").slice(11, 16);
+      const servicoNome = a.servico?.nome
+        || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "")
+        || a.servicoNome || "—";
+      agendamentos.push({
+        id: a.id, hora, cliente: a.cliente?.nome || a.clienteNome || "Cliente",
+        profissional: profNome, servico: servicoNome, valor: val,
+        status: (typeof a.status === "string" ? a.status : (a.status?.descricao || a.status?.nome || "")) || "agendado",
+      });
+    });
+    agendamentos.sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
+
+    let totalFechado = 0;
+    let pix = 0, cartao = 0, dinheiro = 0, outros = 0;
+    const comandas: any[] = [];
+    const porProfissionalFech: Record<string, { nome: string; total: number; count: number }> = {};
+
+    transLista.forEach((t: any) => {
+      const val = Number(t.totalPagar || t.valor || 0);
+      totalFechado += val;
+      const profId = String(t.profissionalId || t.profissional?.id || "");
+      const profNome = t.profissional?.nome || t.profissionalNome || "—";
+      if (profId) {
+        if (!porProfissionalFech[profId]) porProfissionalFech[profId] = { nome: profNome, total: 0, count: 0 };
+        porProfissionalFech[profId].total += val;
+        porProfissionalFech[profId].count += 1;
+      }
+      const formas = t.formasPagamentos || t.formasPagamento || [];
+      const meiosDaComanda: string[] = [];
+      if (Array.isArray(formas) && formas.length > 0) {
+        formas.forEach((fp: any) => {
+          const nome = (fp.nome || fp.descricao || "").toLowerCase();
+          const v = Number(fp.valor || 0);
+          if (nome.includes("pix")) { pix += v; meiosDaComanda.push("pix"); }
+          else if (/créd|cred|déb|deb|cart/.test(nome)) { cartao += v; meiosDaComanda.push("cartao"); }
+          else if (/dinhe|espécie|cash/.test(nome)) { dinheiro += v; meiosDaComanda.push("dinheiro"); }
+          else { outros += v; meiosDaComanda.push("outros"); }
+        });
+      } else {
+        const method = (t.formaPagamento || t.metodoPagamento || "").toLowerCase();
+        if (method.includes("pix")) { pix += val; meiosDaComanda.push("pix"); }
+        else if (/cart/.test(method)) { cartao += val; meiosDaComanda.push("cartao"); }
+        else if (/dinhe/.test(method)) { dinheiro += val; meiosDaComanda.push("dinheiro"); }
+        else { outros += val; meiosDaComanda.push("outros"); }
+      }
+      comandas.push({
+        id: t.id,
+        hora: (t.dataHoraInicio || t.dataHora || "").slice(11, 16),
+        cliente: t.cliente?.nome || t.clienteNome || "Cliente",
+        profissional: profNome, total: val,
+        meios: Array.from(new Set(meiosDaComanda)),
+      });
+    });
+    comandas.sort((a, b) => (b.hora || "").localeCompare(a.hora || ""));
+
+    const hhmmAgora = new Date().toLocaleTimeString("pt-BR", {
+      timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hour12: false,
+    });
+    const agendamentosRestantes = agendamentos.filter(a => (a.hora || "99:99") >= hhmmAgora);
+    const agendamentosJaPassaram = agendamentos.filter(a => (a.hora || "00:00") < hhmmAgora);
+    const valorRestante = agendamentosRestantes.reduce((s, a) => s + a.valor, 0);
+    const totalEsperado = Math.max(totalPrevisto, totalFechado + valorRestante);
+
+    const metaDia = metaDiaria;
+    const atingeMeta = totalEsperado >= metaDia;
+    const falta = Math.max(0, metaDia - totalEsperado);
+    const progressoPct = metaDia > 0 ? (totalEsperado / metaDia) * 100 : 0;
+    const progressoFechadoPct = metaDia > 0 ? (totalFechado / metaDia) * 100 : 0;
+
+    const todosProfs = new Set([
+      ...Object.keys(porProfissionalPrev), ...Object.keys(porProfissionalFech),
+    ]);
+    const rankingProfissionais = Array.from(todosProfs).map(id => {
+      const prev = porProfissionalPrev[id] || { nome: "—", total: 0, count: 0 };
+      const fech = porProfissionalFech[id] || { nome: prev.nome, total: 0, count: 0 };
+      return {
+        nome: prev.nome !== "—" ? prev.nome : fech.nome,
+        previsto: prev.total, fechado: fech.total,
+        countPrevisto: prev.count, countFechado: fech.count,
+        total: Math.max(prev.total, fech.total),
+      };
+    }).sort((a, b) => b.total - a.total);
+
+    return {
+      data: hoje,
+      horaAgora: hhmmAgora,
+      previsto: totalPrevisto,
+      fechado: totalFechado,
+      restante: valorRestante,
+      totalEsperado,
+      breakdown: { pix, cartao, dinheiro, outros },
+      agendamentosCount: agendCount,
+      agendamentosRestantesCount: agendamentosRestantes.length,
+      agendamentosJaPassaramCount: agendamentosJaPassaram.length,
+      comandasCount: comandas.length,
+      metaDiaria: metaDia,
+      atingeMeta, falta, progressoPct, progressoFechadoPct,
+      porProfissional: rankingProfissionais,
+      agendamentos, comandas,
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  // Função interna: retorna previsão do próximo dia útil (terça..sábado)
+  async function calcularAmanha(): Promise<ResumoAmanhaData & { agendamentos: any[] }> {
+    const tzFmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
+    });
+    const addDays = (base: Date, days: number) => new Date(base.getTime() + days * 86400000);
+    const hojeBase = new Date();
+    const pick = (parts: Intl.DateTimeFormatPart[], type: string) =>
+      parts.find(p => p.type === type)?.value || "";
+    const weekdayToNum: Record<string, number> = {
+      Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+    };
+    let offset = 1;
+    let alvo = addDays(hojeBase, offset);
+    let info = tzFmt.formatToParts(alvo);
+    let dow = weekdayToNum[pick(info, "weekday")] ?? -1;
+    while (dow === 0 || dow === 1) {
+      offset += 1;
+      alvo = addDays(hojeBase, offset);
+      info = tzFmt.formatToParts(alvo);
+      dow = weekdayToNum[pick(info, "weekday")] ?? -1;
+      if (offset > 7) break;
+    }
+    const amanha = `${pick(info, "year")}-${pick(info, "month")}-${pick(info, "day")}`;
+    const proxDiaUtil = offset > 1;
+
+    const data = await trinksFetchAll("agendamentos", { dataInicio: amanha, dataFim: amanha });
+    const lista = Array.isArray(data) ? data : (data?.data || []);
+    const statusIgnorar = ["cancelado", "cancelada", "no show", "no-show", "faltou"];
+    const isValido = (a: any) => {
+      const s = (typeof a.status === "string" ? a.status : (a.status?.descricao || a.status?.nome || "")).toLowerCase();
+      return !statusIgnorar.some(ig => s.includes(ig));
+    };
+
+    let total = 0;
+    const porProf: Record<string, { nome: string; total: number; count: number }> = {};
+    const agendamentos: any[] = [];
+    lista.filter(isValido).forEach((a: any) => {
+      let v = Number(a.valor || a.valorTotal || a.totalPagar || 0);
+      if ((!v || v === 0) && Array.isArray(a.servicos)) {
+        v = a.servicos.reduce((s: number, svc: any) =>
+          s + Number(svc.preco || svc.valor || svc.valorServico || 0), 0);
+      }
+      total += v;
+      const profId = String(a.profissionalId || a.profissional?.id || "");
+      const profNome = a.profissional?.nome || a.profissionalNome || "—";
+      if (profId) {
+        if (!porProf[profId]) porProf[profId] = { nome: profNome, total: 0, count: 0 };
+        porProf[profId].total += v;
+        porProf[profId].count += 1;
+      }
+      agendamentos.push({
+        hora: (a.dataHoraInicio || a.dataHora || "").slice(11, 16),
+        valor: v, profissional: profNome,
+      });
+    });
+    const ranking = Object.values(porProf).sort((a, b) => b.total - a.total);
+    const metaDia = metaDiaria;
+    return {
+      data: amanha,
+      proxDiaUtil,
+      total,
+      count: agendamentos.length,
+      metaDiaria: metaDia,
+      atingeMeta: total >= metaDia,
+      falta: Math.max(0, metaDia - total),
+      progressoPct: metaDia > 0 ? (total / metaDia) * 100 : 0,
+      porProfissional: ranking,
+      agendamentos,
+    };
+  }
+
   // ─── GET /api/trinks/hoje-completo ─────────────────────────
   // Retorna dados completos do dia: faturamento previsto (agendamentos) +
   // já fechado (comandas) + restante esperado. Útil para o card 'Hoje'.
   app.get("/api/trinks/hoje-completo", async (_req: Request, res: Response) => {
     try {
-      // Data atual em TZ America/Sao_Paulo
-      const tzFmt = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Sao_Paulo",
-        year: "numeric", month: "2-digit", day: "2-digit",
-      });
-      const parts = tzFmt.formatToParts(new Date());
-      const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
-      const hoje = `${pick("year")}-${pick("month")}-${pick("day")}`;
-
-      const cacheKey = `hoje_completo_${hoje}`;
+      const cacheKey = `hoje_completo_${new Date().toISOString().slice(0, 10)}`;
       const cached = getCached(cacheKey);
       if (cached) return res.json({ ...cached, fromCache: true });
-
-      // Busca agendamentos e transações em paralelo
-      const [agendData, transData] = await Promise.all([
-        trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
-        trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: hoje }),
-      ]);
-
-      const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
-      const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
-
-      // ─── Processa agendamentos (previsão do dia) ───
-      const statusIgnorar = ["cancelado", "cancelada", "no show", "no-show", "faltou"];
-      const getStatusStr = (a: any) =>
-        (typeof a.status === "string" ? a.status : (a.status?.descricao || a.status?.nome || "")).toLowerCase();
-      const isValido = (a: any) => !statusIgnorar.some(s => getStatusStr(a).includes(s));
-
-      const extractValor = (a: any) => {
-        let v = Number(a.valor || a.valorTotal || a.totalPagar || 0);
-        if ((!v || v === 0) && Array.isArray(a.servicos)) {
-          v = a.servicos.reduce((s: number, svc: any) =>
-            s + Number(svc.preco || svc.valor || svc.valorServico || 0), 0);
-        }
-        return v;
-      };
-
-      let totalPrevisto = 0;
-      let agendCount = 0;
-      const agendamentos: any[] = [];
-      const porProfissionalPrev: Record<string, { nome: string; total: number; count: number }> = {};
-
-      agendLista.filter(isValido).forEach((a: any) => {
-        const val = extractValor(a);
-        totalPrevisto += val;
-        agendCount += 1;
-
-        const profId = String(a.profissionalId || a.profissional?.id || "");
-        const profNome = a.profissional?.nome || a.profissionalNome || "—";
-        if (profId) {
-          if (!porProfissionalPrev[profId]) porProfissionalPrev[profId] = { nome: profNome, total: 0, count: 0 };
-          porProfissionalPrev[profId].total += val;
-          porProfissionalPrev[profId].count += 1;
-        }
-
-        const hora = (a.dataHoraInicio || a.dataHora || "").slice(11, 16);
-        const servicoNome = a.servico?.nome
-          || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "")
-          || a.servicoNome || "—";
-        const statusStr = (typeof a.status === "string" ? a.status : (a.status?.descricao || a.status?.nome || "")) || "agendado";
-
-        agendamentos.push({
-          id: a.id,
-          hora,
-          cliente: a.cliente?.nome || a.clienteNome || "Cliente",
-          profissional: profNome,
-          servico: servicoNome,
-          valor: val,
-          status: statusStr,
-        });
-      });
-      agendamentos.sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
-
-      // ─── Processa transações (fechado do dia) ───
-      let totalFechado = 0;
-      let pix = 0, cartao = 0, dinheiro = 0, outros = 0;
-      const comandas: any[] = [];
-      const porProfissionalFech: Record<string, { nome: string; total: number; count: number }> = {};
-
-      transLista.forEach((t: any) => {
-        const val = Number(t.totalPagar || t.valor || 0);
-        totalFechado += val;
-
-        const profId = String(t.profissionalId || t.profissional?.id || "");
-        const profNome = t.profissional?.nome || t.profissionalNome || "—";
-        if (profId) {
-          if (!porProfissionalFech[profId]) porProfissionalFech[profId] = { nome: profNome, total: 0, count: 0 };
-          porProfissionalFech[profId].total += val;
-          porProfissionalFech[profId].count += 1;
-        }
-
-        const formas = t.formasPagamentos || t.formasPagamento || [];
-        const meiosDaComanda: string[] = [];
-        if (Array.isArray(formas) && formas.length > 0) {
-          formas.forEach((fp: any) => {
-            const nome = (fp.nome || fp.descricao || "").toLowerCase();
-            const v = Number(fp.valor || 0);
-            if (nome.includes("pix")) { pix += v; meiosDaComanda.push("pix"); }
-            else if (/créd|cred|déb|deb|cart/.test(nome)) { cartao += v; meiosDaComanda.push("cartao"); }
-            else if (/dinhe|espécie|cash/.test(nome)) { dinheiro += v; meiosDaComanda.push("dinheiro"); }
-            else { outros += v; meiosDaComanda.push("outros"); }
-          });
-        } else {
-          const method = (t.formaPagamento || t.metodoPagamento || "").toLowerCase();
-          if (method.includes("pix")) { pix += val; meiosDaComanda.push("pix"); }
-          else if (/cart/.test(method)) { cartao += val; meiosDaComanda.push("cartao"); }
-          else if (/dinhe/.test(method)) { dinheiro += val; meiosDaComanda.push("dinheiro"); }
-          else { outros += val; meiosDaComanda.push("outros"); }
-        }
-
-        comandas.push({
-          id: t.id,
-          hora: (t.dataHoraInicio || t.dataHora || "").slice(11, 16),
-          cliente: t.cliente?.nome || t.clienteNome || "Cliente",
-          profissional: profNome,
-          total: val,
-          meios: Array.from(new Set(meiosDaComanda)),
-        });
-      });
-      comandas.sort((a, b) => (b.hora || "").localeCompare(a.hora || ""));
-
-      // ─── Cálculos agregados ───
-      const hhmmAgora = new Date().toLocaleTimeString("pt-BR", {
-        timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hour12: false,
-      });
-
-      const agendamentosRestantes = agendamentos.filter(a => (a.hora || "99:99") >= hhmmAgora);
-      const agendamentosJaPassaram = agendamentos.filter(a => (a.hora || "00:00") < hhmmAgora);
-      const valorRestante = agendamentosRestantes.reduce((s, a) => s + a.valor, 0);
-
-      // Total esperado do dia = max(previsto total, fechado + restante)
-      // (usa o maior pra não subestimar quando houve walk-ins sem agendamento)
-      const totalEsperado = Math.max(totalPrevisto, totalFechado + valorRestante);
-
-      const metaDia = metaDiaria;
-      const atingeMeta = totalEsperado >= metaDia;
-      const falta = Math.max(0, metaDia - totalEsperado);
-      const progressoPct = metaDia > 0 ? (totalEsperado / metaDia) * 100 : 0;
-      const progressoFechadoPct = metaDia > 0 ? (totalFechado / metaDia) * 100 : 0;
-
-      // Consolida ranking por profissional (fechado + previsto)
-      const todosProfs = new Set([
-        ...Object.keys(porProfissionalPrev),
-        ...Object.keys(porProfissionalFech),
-      ]);
-      const rankingProfissionais = Array.from(todosProfs).map(id => {
-        const prev = porProfissionalPrev[id] || { nome: "—", total: 0, count: 0 };
-        const fech = porProfissionalFech[id] || { nome: prev.nome, total: 0, count: 0 };
-        return {
-          nome: prev.nome !== "—" ? prev.nome : fech.nome,
-          previsto: prev.total,
-          fechado: fech.total,
-          countPrevisto: prev.count,
-          countFechado: fech.count,
-          total: Math.max(prev.total, fech.total), // não soma pra não dobrar
-        };
-      }).sort((a, b) => b.total - a.total);
-
-      const result = {
-        data: hoje,
-        horaAgora: hhmmAgora,
-        // Faturamento
-        previsto: totalPrevisto,
-        fechado: totalFechado,
-        restante: valorRestante,
-        totalEsperado,
-        breakdown: { pix, cartao, dinheiro, outros },
-        // Contadores
-        agendamentosCount: agendCount,
-        agendamentosRestantesCount: agendamentosRestantes.length,
-        agendamentosJaPassaramCount: agendamentosJaPassaram.length,
-        comandasCount: comandas.length,
-        // Meta
-        metaDiaria: metaDia,
-        atingeMeta,
-        falta,
-        progressoPct,
-        progressoFechadoPct,
-        // Detalhes
-        porProfissional: rankingProfissionais,
-        agendamentos,
-        comandas,
-        fetchedAt: new Date().toISOString(),
-      };
-
-      setCache(cacheKey, result, 2 * 60 * 1000); // 2 min
+      const result = await calcularHojeCompleto();
+      setCache(cacheKey, result, 2 * 60 * 1000);
       return res.json(result);
     } catch (err: any) {
       return handleTrinksError(err, res);
@@ -3369,6 +3424,96 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       vencendoEmBreve: vencendoEmBreve.length,
     });
   });
+
+  // ─── TELEGRAM BOT ────────────────────────────────────────
+  // GET /api/telegram/status — verifica se o bot está configurado
+  app.get("/api/telegram/status", (_req: Request, res: Response) => {
+    res.json({
+      configured: isTelegramConfigured(),
+      chatId: getChatId(),
+      schedules: {
+        morning: "08:00 (terça a sábado)",
+        evening: "20:00 (terça a sábado)",
+      },
+    });
+  });
+
+  // POST /api/telegram/testar — envia mensagem de teste
+  app.post("/api/telegram/testar", async (_req: Request, res: Response) => {
+    const agora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const msg = `✅ <b>Bot @fredgreco_bot conectado!</b>\n\nTeste enviado em ${agora}\nChat ID: <code>${getChatId()}</code>\n\nA partir de agora você vai receber:\n☀️ <b>08:00</b> — Previsão do dia + meta\n🌙 <b>20:00</b> — Fechamento + performance\n\nTudo funcionando 👉`;
+    const r = await enviarMensagem(msg);
+    return res.json(r);
+  });
+
+  // POST /api/telegram/resumo-manha — monta e envia resumo matinal agora
+  app.post("/api/telegram/resumo-manha", async (_req: Request, res: Response) => {
+    try {
+      const [hoje, amanhaData] = await Promise.all([
+        calcularHojeCompleto(),
+        calcularAmanha().catch(() => null),
+      ]);
+      const msg = montarResumoManha(hoje, amanhaData);
+      const r = await enviarMensagem(msg);
+      return res.json({ ...r, enviado: r.ok });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/telegram/resumo-noite — monta e envia fechamento agora
+  app.post("/api/telegram/resumo-noite", async (_req: Request, res: Response) => {
+    try {
+      const hoje = await calcularHojeCompleto();
+      const msg = montarResumoNoite(hoje);
+      const r = await enviarMensagem(msg);
+      return res.json({ ...r, enviado: r.ok });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── Scheduler (cron interno) ───────────────────────────────
+  // Roda de terça a sábado (dia de funcionamento) em TZ America/Sao_Paulo
+  // 8h — resumo da manhã; 20h — fechamento do dia
+  if (isTelegramConfigured()) {
+    try {
+      // Manhã: 08:00 ter-sab (dias 2-6 da semana)
+      cron.schedule("0 8 * * 2-6", async () => {
+        log("[cron] disparando resumo da manhã...", "telegram");
+        try {
+          const [hoje, amanhaData] = await Promise.all([
+            calcularHojeCompleto(),
+            calcularAmanha().catch(() => null),
+          ]);
+          const msg = montarResumoManha(hoje, amanhaData);
+          const r = await enviarMensagem(msg);
+          log(`[cron] resumo manhã: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
+        } catch (err: any) {
+          log(`[cron] erro resumo manhã: ${err.message}`, "telegram");
+        }
+      }, { timezone: "America/Sao_Paulo" });
+
+      // Noite: 20:00 ter-sab
+      cron.schedule("0 20 * * 2-6", async () => {
+        log("[cron] disparando resumo da noite...", "telegram");
+        try {
+          const hoje = await calcularHojeCompleto();
+          const msg = montarResumoNoite(hoje);
+          const r = await enviarMensagem(msg);
+          log(`[cron] resumo noite: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
+        } catch (err: any) {
+          log(`[cron] erro resumo noite: ${err.message}`, "telegram");
+        }
+      }, { timezone: "America/Sao_Paulo" });
+
+      log("[cron] schedulers Telegram ativos: 8h e 20h (terça a sábado)", "telegram");
+    } catch (err: any) {
+      log(`[cron] falha ao registrar schedulers: ${err.message}`, "telegram");
+    }
+  } else {
+    log("[cron] TELEGRAM_BOT_TOKEN não configurado — schedulers desativados", "telegram");
+  }
 
   return httpServer;
 }

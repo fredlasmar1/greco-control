@@ -1306,6 +1306,22 @@ export async function registerRoutes(
     }
   });
 
+  // ─── GET /api/trinks/debug/:path — Debug: testa qualquer endpoint arbitrário
+  // Exemplo: /api/trinks/debug/produtos, /api/trinks/debug/produtos/estoque
+  app.get("/api/trinks/debug/*", async (req: Request, res: Response) => {
+    try {
+      const path = (req.params as any)[0] || "";
+      const queryParams: Record<string, string> = {};
+      for (const [k, v] of Object.entries(req.query)) {
+        if (typeof v === "string") queryParams[k] = v;
+      }
+      const data = await trinksFetch(path, queryParams);
+      return res.json({ ok: true, path, data });
+    } catch (err: any) {
+      return res.status(200).json({ ok: false, path: (req.params as any)[0], error: err?.message || String(err), status: err?.status });
+    }
+  });
+
   // ─── GET /api/trinks/estabelecimento ────────────────────
   app.get("/api/trinks/estabelecimento", async (_req: Request, res: Response) => {
     try {

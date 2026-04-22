@@ -1306,19 +1306,21 @@ export async function registerRoutes(
     }
   });
 
-  // ─── GET /api/trinks/debug/:path — Debug: testa qualquer endpoint arbitrário
-  // Exemplo: /api/trinks/debug/produtos, /api/trinks/debug/produtos/estoque
-  app.get("/api/trinks/debug/*", async (req: Request, res: Response) => {
+  // ─── GET /api/trinks/debug — Debug: testa qualquer endpoint arbitrário via query ?path=
+  // Exemplo: /api/trinks/debug?path=produtos
+  app.get("/api/trinks/debug", async (req: Request, res: Response) => {
     try {
-      const path = (req.params as any)[0] || "";
+      const path = String(req.query.path || "").replace(/^\/+/, "");
+      if (!path) return res.status(400).json({ ok: false, error: "query param 'path' obrigatório" });
       const queryParams: Record<string, string> = {};
       for (const [k, v] of Object.entries(req.query)) {
+        if (k === "path") continue;
         if (typeof v === "string") queryParams[k] = v;
       }
       const data = await trinksFetch(path, queryParams);
       return res.json({ ok: true, path, data });
     } catch (err: any) {
-      return res.status(200).json({ ok: false, path: (req.params as any)[0], error: err?.message || String(err), status: err?.status });
+      return res.status(200).json({ ok: false, path: String(req.query.path || ""), error: err?.message || String(err), status: err?.status });
     }
   });
 

@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-# BUILD_VERSION atualizada em 2026-04-24 11:56 -03 para forçar rebuild após fix useToast
+# BUILD_VERSION atualizada em 2026-04-24 14:55 -03 para forçar rebuild após refactor estoque-vendas-v3
 buildCommand = "npm install --legacy-peer-deps && rm -rf dist && npm run build"
 
 [deploy]

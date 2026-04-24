@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useStore } from "@/lib/store";
+import { useToast } from "@/hooks/use-toast";
 import {
   useTrinksStore,
   getTrinksMonthTotals,
@@ -1213,9 +1214,7 @@ export default function Dashboard() {
 
 
       {/* Estoque em alerta */}
-      {/* TEMPORARIAMENTE DESATIVADO — investigando tela preta
       {isConnected && <EstoqueAlertaCard apiBase={API_BASE} />}
-      */}
 
       {/* Telegram Notifications */}
       {isConnected && <TelegramCard apiBase={API_BASE} />}

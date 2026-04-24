@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-# BUILD_VERSION atualizada em 2026-04-24 14:55 -03 para forçar rebuild após refactor estoque-vendas-v3
+# BUILD_VERSION atualizada em 2026-04-24 15:05 -03 para forçar rebuild após refactor estoque-transacoes-v4
 buildCommand = "npm install --legacy-peer-deps && rm -rf dist && npm run build"
 
 [deploy]

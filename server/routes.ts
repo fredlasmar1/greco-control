@@ -1361,7 +1361,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-24-estoque-vendas-v3",
+      build: "2026-04-24-estoque-transacoes-v4",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1410,29 +1410,44 @@ export async function registerRoutes(
 
   // GET /api/trinks/produtos-movimentacoes
   // NOTA: A API Trinks (v1) NÃO expõe endpoint de movimentação de estoque dedicado.
-  // Usamos /v1/vendas como fonte de movimentação real (saídas por venda de produto).
+  // Usamos /v1/transacoes como fonte — contém produtos vendidos em cada comanda
+  // com IdProfissionalQueRealizouAVenda (quem vendeu).
   app.get("/api/trinks/produtos-movimentacoes", async (req: Request, res: Response) => {
     try {
       const params: Record<string, string> = {};
       if (req.query.dataInicio) params.dataInicio = String(req.query.dataInicio);
       if (req.query.dataFim) params.dataFim = String(req.query.dataFim);
-      const vendas: any[] = await trinksFetchAll("vendas", params).catch(() => [] as any[]);
-      // Expande cada venda em uma linha por produto
-      const movimentacoes = (vendas || []).flatMap((v: any) => {
-        const prods = Array.isArray(v.produtos) ? v.produtos : [];
-        return prods.map((p: any) => ({
-          id: `${v.id}-${p.idProduto}`,
-          data: v.dataVenda,
-          produtoId: p.idProduto,
-          produtoNome: p.nomeProduto || "",
-          tipo: "saida",
-          quantidade: Number(p.quantidade || 0),
-          valorUnitario: Number(p.valorUnitario || 0),
-          valor: Number(p.valorLiquido ?? p.subTotal ?? 0),
-          unidade: p.unidadeDeMedida || "",
-        }));
+      const [transacoes, profissionais] = await Promise.all([
+        trinksFetchAll("transacoes", params).catch(() => [] as any[]),
+        trinksFetchAll("profissionais").catch(() => [] as any[]),
+      ]);
+      const mapaProf = new Map<number, string>();
+      for (const p of (profissionais || [])) {
+        mapaProf.set(Number(p.id), p.nome || p.apelido || "—");
+      }
+      // Expande cada transação em uma linha por produto
+      const movimentacoes = (transacoes || []).flatMap((t: any) => {
+        const prods = Array.isArray(t.produtos) ? t.produtos : [];
+        return prods.map((p: any) => {
+          const idProf = Number(p.IdProfissionalQueRealizouAVenda || 0) || null;
+          return {
+            id: `${t.id}-${p.id}`,
+            data: t.dataHora,
+            produtoId: p.id,
+            produtoNome: p.nome || "",
+            tipo: "saida",
+            quantidade: Number(p.quantidade || 0),
+            valorUnitario: Number(p.valorUnitario || 0),
+            valor: Number(p.valorUnitario || 0) * Number(p.quantidade || 0),
+            unidade: p.unidadeDeMedida || "",
+            vendedorId: idProf,
+            vendedor: idProf ? (mapaProf.get(idProf) || `Profissional ${idProf}`) : "—",
+            clienteNome: t.cliente?.nome || "",
+            comandaId: t.id,
+          };
+        });
       });
-      return res.json({ path: "vendas", data: movimentacoes });
+      return res.json({ path: "transacoes", data: movimentacoes });
     } catch (err: any) {
       return handleTrinksError(err, res);
     }
@@ -1440,14 +1455,16 @@ export async function registerRoutes(
 
   // Função interna reutilizável para montar resumo de estoque
   // IMPORTANTE: A API Trinks (v1) não retorna saldo/custo/valor no endpoint /produtos.
-  // Estratégia: usar /v1/vendas (últimos 30 dias) para detectar produtos com movimento,
-  // produtos parados (sem vendas), e agregar estatísticas de saídas.
+  // Estratégia: usar /v1/transacoes (últimos 30 dias) — que contém produtos vendidos
+  // em cada comanda COM IdProfissionalQueRealizouAVenda (quem vendeu). Permite:
+  //  - detectar produtos com movimento / parados / em ruptura
+  //  - ranking de vendedores de produtos por profissional
+  //  - detalhar quem vendeu cada produto em cada comanda
   async function calcularEstoqueResumo(): Promise<any> {
     const ck = "estoque-resumo";
     const cached = getCached(ck);
     if (cached) return cached;
 
-    const produtos: any[] = await trinksFetchAll("produtos").catch(() => [] as any[]);
     const tzFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
     const parts = tzFmt.formatToParts(new Date());
     const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
@@ -1460,44 +1477,87 @@ export async function registerRoutes(
     const pick30 = (t: string) => parts30.find(p => p.type === t)?.value || "";
     const dataInicio30 = `${pick30("year")}-${pick30("month")}-${pick30("day")}`;
 
-    const vendasMes: any[] = await trinksFetchAll("vendas", {
-      dataInicio: dataInicio30,
-      dataFim: hoje,
-    }).catch(() => [] as any[]);
+    const [produtos, transacoes, profissionais] = await Promise.all([
+      trinksFetchAll("produtos").catch(() => [] as any[]),
+      trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: hoje }).catch(() => [] as any[]),
+      trinksFetchAll("profissionais").catch(() => [] as any[]),
+    ]);
 
-    // Agrega movimentações por produto (últimos 30d) e separa as de hoje
-    const movPorProduto = new Map<number, { qtd30d: number; valor30d: number; ultimaVenda: string | null; qtdHoje: number; valorHoje: number; valorUnitarioMedio: number }>();
+    // Mapa ID → nome do profissional (vendedor)
+    const mapaProf = new Map<number, string>();
+    for (const p of (profissionais || [])) {
+      mapaProf.set(Number(p.id), p.nome || p.apelido || `Profissional ${p.id}`);
+    }
+    const nomeVendedor = (id: number | null | undefined): string => {
+      if (!id) return "—";
+      return mapaProf.get(Number(id)) || `Profissional ${id}`;
+    };
+
+    // Agregações
+    type MovProd = { qtd30d: number; valor30d: number; ultimaVenda: string | null; qtdHoje: number; valorHoje: number; valorUnitarioMedio: number };
+    const movPorProduto = new Map<number, MovProd>();
     const movHoje: any[] = [];
-    for (const v of (vendasMes || [])) {
-      const dataVenda = String(v.dataVenda || "").slice(0, 10);
-      const isHoje = dataVenda === hoje;
-      const prods = Array.isArray(v.produtos) ? v.produtos : [];
+
+    // Ranking de vendedores (por profissional)
+    type VendedorStats = { id: number; nome: string; unidades: number; faturamento: number; produtosDistintos: Set<number>; transacoesDistintas: Set<number> };
+    const rankingMap = new Map<number, VendedorStats>();
+
+    for (const t of (transacoes || [])) {
+      const dataHora = String(t.dataHora || "");
+      const dataTransacao = dataHora.slice(0, 10);
+      const isHoje = dataTransacao === hoje;
+      const prods = Array.isArray(t.produtos) ? t.produtos : [];
       for (const p of prods) {
-        const pid = Number(p.idProduto);
+        const pid = Number(p.id);
         if (!pid) continue;
         const qtd = Number(p.quantidade || 0);
-        const valor = Number(p.valorLiquido ?? p.subTotal ?? 0);
         const vu = Number(p.valorUnitario || 0);
+        const valor = vu * qtd;
+        const idVendedor = Number(p.IdProfissionalQueRealizouAVenda || 0) || null;
+
+        // Agrega por produto
         const cur = movPorProduto.get(pid) || { qtd30d: 0, valor30d: 0, ultimaVenda: null, qtdHoje: 0, valorHoje: 0, valorUnitarioMedio: 0 };
         cur.qtd30d += qtd;
         cur.valor30d += valor;
-        if (vu > 0) cur.valorUnitarioMedio = vu; // valor mais recente observado
-        if (!cur.ultimaVenda || dataVenda > cur.ultimaVenda) cur.ultimaVenda = dataVenda;
+        if (vu > 0) cur.valorUnitarioMedio = vu;
+        if (!cur.ultimaVenda || dataTransacao > cur.ultimaVenda) cur.ultimaVenda = dataTransacao;
         if (isHoje) {
           cur.qtdHoje += qtd;
           cur.valorHoje += valor;
           movHoje.push({
-            id: `${v.id}-${pid}`,
-            data: v.dataVenda,
+            id: `${t.id}-${pid}`,
+            data: dataHora,
             produtoId: pid,
-            produtoNome: p.nomeProduto || "",
+            produtoNome: p.nome || "",
             tipo: "saida",
             quantidade: qtd,
+            valorUnitario: vu,
             valor,
+            vendedorId: idVendedor,
+            vendedor: nomeVendedor(idVendedor),
+            clienteNome: t.cliente?.nome || "",
+            comandaId: t.id,
             observacao: "",
           });
         }
         movPorProduto.set(pid, cur);
+
+        // Ranking por vendedor (ignora itens sem profissional associado)
+        if (idVendedor) {
+          const rk = rankingMap.get(idVendedor) || {
+            id: idVendedor,
+            nome: nomeVendedor(idVendedor),
+            unidades: 0,
+            faturamento: 0,
+            produtosDistintos: new Set<number>(),
+            transacoesDistintas: new Set<number>(),
+          };
+          rk.unidades += qtd;
+          rk.faturamento += valor;
+          rk.produtosDistintos.add(pid);
+          rk.transacoesDistintas.add(Number(t.id));
+          rankingMap.set(idVendedor, rk);
+        }
       }
     }
 
@@ -1539,10 +1599,26 @@ export async function registerRoutes(
     const emAlerta = lista.filter(p => p.nivel !== "ok");
     const criticos = lista.filter(p => p.nivel === "critico");
 
+    // Converte ranking Set → número
+    const rankingVendedores = Array.from(rankingMap.values())
+      .map(r => ({
+        id: r.id,
+        nome: r.nome,
+        unidades: r.unidades,
+        faturamento: r.faturamento,
+        produtosDistintos: r.produtosDistintos.size,
+        comandas: r.transacoesDistintas.size,
+      }))
+      .sort((a, b) => b.faturamento - a.faturamento || b.unidades - a.unidades);
+
+    // Ordena movimentações de hoje do mais recente para o mais antigo
+    movHoje.sort((a, b) => String(b.data).localeCompare(String(a.data)));
+
     const resumo = {
       atualizadoEm: new Date().toISOString(),
-      fonte: "trinks-vendas-30d",
-      limitacaoApi: "A API Trinks não expõe saldo/custo/valor de estoque. Dados derivados das vendas dos últimos 30 dias.",
+      fonte: "trinks-transacoes-30d",
+      limitacaoApi: "A API Trinks não expõe saldo/custo/valor de estoque. Dados derivados das transações (comandas) dos últimos 30 dias.",
+      janela: { dataInicio: dataInicio30, dataFim: hoje },
       totalProdutos: lista.length,
       produtosEmAlerta: emAlerta.length,
       produtosCriticos: criticos.length,
@@ -1554,6 +1630,7 @@ export async function registerRoutes(
       produtos: lista,
       alertas: emAlerta,
       movimentacoesHoje: movHoje,
+      rankingVendedores,
     };
     setCache(ck, resumo, 5 * 60 * 1000); // 5 minutos
     return resumo;

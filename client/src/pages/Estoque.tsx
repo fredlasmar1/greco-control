@@ -291,7 +291,10 @@ export default function Estoque() {
                             <td className="py-2 px-2 text-muted-foreground font-medium">
                               {medalha || idx + 1}
                             </td>
-                            <td className="py-2 px-2 font-medium">{v.nome}</td>
+                            <td className="py-2 px-2">
+                              <div className="font-medium">{v.nome}</div>
+                              <div className="text-[10px] text-muted-foreground">ID {v.id}</div>
+                            </td>
                             <td className="py-2 px-2 text-right font-semibold">{v.unidades}</td>
                             <td className="py-2 px-2 text-right text-emerald-400 font-medium">
                               {formatCurrency(v.faturamento)}

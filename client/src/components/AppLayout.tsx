@@ -55,7 +55,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const { sidebarOpen, setSidebarOpen } = useStore();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex min-h-screen bg-background">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -68,8 +68,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       {/* Sidebar */}
       <aside
         className={`
-          fixed lg:static inset-y-0 left-0 z-50
-          w-[240px] bg-sidebar border-r border-sidebar-border
+          fixed lg:sticky lg:top-0 inset-y-0 left-0 z-50
+          w-[240px] h-screen lg:h-screen
+          bg-sidebar border-r border-sidebar-border
           flex flex-col transition-transform duration-200
           ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
         `}
@@ -126,9 +127,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         {/* Header */}
-        <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-background flex-shrink-0">
+        <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-background sticky top-0 z-30 flex-shrink-0">
           <div className="flex items-center gap-3">
             <button
               className="lg:hidden p-2.5 rounded-md hover:bg-muted"
@@ -156,7 +157,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6" data-testid="main-content">
+        <main className="flex-1 p-4 lg:p-6" data-testid="main-content">
           {children}
         </main>
       </div>

@@ -1358,6 +1358,16 @@ export async function registerRoutes(
     });
   });
 
+  // GET /api/version — identifica qual código está rodando em produção
+  app.get("/api/version", (_req: Request, res: Response) => {
+    return res.json({
+      build: "2026-04-24-fix-useToast-v2",
+      timestamp: new Date().toISOString(),
+      uptimeSec: Math.round(process.uptime()),
+      nodeVersion: process.version,
+    });
+  });
+
   // ─── GET /api/trinks/estabelecimento ────────────────────
   app.get("/api/trinks/estabelecimento", async (_req: Request, res: Response) => {
     try {

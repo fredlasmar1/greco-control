@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Package, AlertTriangle, TrendingDown, TrendingUp, RefreshCw, Loader2, Search, ArrowDownCircle, ArrowUpCircle } from "lucide-react";
+import { Package, AlertTriangle, TrendingDown, RefreshCw, Loader2, Search, Info } from "lucide-react";
 import { formatCurrency } from "@/lib/demoData";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
@@ -18,21 +18,27 @@ interface Produto {
   valorVenda: number;
   valorEstoque: number;
   nivel: "ok" | "atencao" | "critico";
+  vendidos30d: number;
+  faturamento30d: number;
+  ultimaVenda: string | null;
+  diasDesdeUltimaVenda: number | null;
 }
 
 interface Movimentacao {
-  id: number;
+  id: string | number;
   data: string;
   produtoId: number;
   produtoNome: string;
   tipo: string;
   quantidade: number;
   valor: number;
-  observacao: string;
+  observacao?: string;
 }
 
 interface Resumo {
   atualizadoEm: string;
+  fonte?: string;
+  limitacaoApi?: string;
   totalProdutos: number;
   produtosEmAlerta: number;
   produtosCriticos: number;
@@ -40,9 +46,18 @@ interface Resumo {
   movimentacoesHojeCount: number;
   saidasHoje: number;
   entradasHoje: number;
+  faturamentoProdutos30d?: number;
   produtos: Produto[];
   alertas: Produto[];
   movimentacoesHoje: Movimentacao[];
+}
+
+function formatarDiasUltimaVenda(dias: number | null): string {
+  if (dias === null) return "nunca vendido";
+  if (dias === 0) return "hoje";
+  if (dias === 1) return "ontem";
+  if (dias < 30) return `há ${dias} dias`;
+  return "há +30 dias";
 }
 
 export default function Estoque() {
@@ -87,10 +102,11 @@ export default function Estoque() {
         p.fabricante.toLowerCase().includes(q)
       );
     }
-    // ordena: críticos primeiro, depois atenção, depois ok (por nome)
+    // ordena: críticos primeiro, depois atenção, depois ok (mais vendidos primeiro)
     return [...lista].sort((a, b) => {
       const ord = { critico: 0, atencao: 1, ok: 2 };
       if (ord[a.nivel] !== ord[b.nivel]) return ord[a.nivel] - ord[b.nivel];
+      if (b.vendidos30d !== a.vendidos30d) return b.vendidos30d - a.vendidos30d;
       return a.nome.localeCompare(b.nome);
     });
   }, [resumo, busca, filtroNivel]);
@@ -100,6 +116,11 @@ export default function Estoque() {
     n === "atencao" ? "bg-amber-500/15 text-amber-400 border-amber-500/30" :
     "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
 
+  const labelNivel = (n: string) =>
+    n === "critico" ? "Parado +30d" :
+    n === "atencao" ? "Parado 14–30d" :
+    "Ativo";
+
   return (
     <div className="space-y-4 max-w-[1400px] mx-auto">
       {/* Header */}
@@ -107,10 +128,10 @@ export default function Estoque() {
         <div>
           <h2 className="text-2xl font-semibold flex items-center gap-2">
             <Package className="w-6 h-6 text-primary" />
-            Controle de Estoque
+            Controle de Produtos
           </h2>
           <p className="text-sm text-muted-foreground">
-            Produtos sincronizados com a Trinks · baixa automática por venda/uso
+            Análise de movimentação baseada nas vendas dos últimos 30 dias (Trinks)
           </p>
         </div>
         <Button onClick={carregar} disabled={loading} variant="outline" size="sm">
@@ -119,16 +140,29 @@ export default function Estoque() {
         </Button>
       </div>
 
+      {/* Aviso sobre limitação da API */}
+      <Card className="border-blue-500/20 bg-blue-500/5">
+        <CardContent className="pt-4 flex items-start gap-3">
+          <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+          <div className="text-xs text-muted-foreground">
+            A API da Trinks não expõe saldo atual, custo médio nem estoque mínimo.
+            Por isso, a análise abaixo usa o <strong className="text-foreground">histórico de vendas</strong> dos
+            últimos 30 dias para identificar produtos parados (possível ruptura ou produto sem giro) e produtos ativos.
+            Para saldo exato, consulte diretamente o sistema Trinks.
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Erro */}
       {erro && (
         <Card className="border-red-500/30">
           <CardContent className="pt-4 flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
             <div className="text-sm">
-              <div className="font-medium text-red-400">Não foi possível carregar o estoque</div>
+              <div className="font-medium text-red-400">Não foi possível carregar os produtos</div>
               <div className="text-muted-foreground mt-0.5">{erro}</div>
               <div className="text-muted-foreground mt-1 text-xs">
-                Pode ser limite da API da Trinks (tenta de novo em alguns minutos) ou endpoint ainda não disponível.
+                Pode ser limite da API da Trinks. Tente novamente em alguns minutos.
               </div>
             </div>
           </CardContent>
@@ -147,42 +181,43 @@ export default function Estoque() {
             </Card>
             <Card className={resumo.produtosCriticos > 0 ? "border-red-500/30" : ""}>
               <CardContent className="pt-4">
-                <div className="text-xs text-muted-foreground">Em alerta</div>
+                <div className="text-xs text-muted-foreground">Produtos parados</div>
                 <div className="text-2xl font-semibold mt-1 text-amber-400">
                   {resumo.produtosEmAlerta}
                 </div>
                 {resumo.produtosCriticos > 0 && (
                   <div className="text-[11px] text-red-400 mt-0.5">
-                    {resumo.produtosCriticos} crítico{resumo.produtosCriticos > 1 ? "s" : ""}
+                    {resumo.produtosCriticos} há mais de 30 dias
                   </div>
                 )}
               </CardContent>
             </Card>
             <Card>
               <CardContent className="pt-4">
-                <div className="text-xs text-muted-foreground">Valor em estoque</div>
-                <div className="text-2xl font-semibold mt-1">{formatCurrency(resumo.valorTotalEstoque)}</div>
+                <div className="text-xs text-muted-foreground">Faturamento produtos (30d)</div>
+                <div className="text-2xl font-semibold mt-1">
+                  {formatCurrency(resumo.faturamentoProdutos30d || 0)}
+                </div>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="pt-4">
-                <div className="text-xs text-muted-foreground">Movimentações hoje</div>
+                <div className="text-xs text-muted-foreground">Vendas hoje</div>
                 <div className="text-2xl font-semibold mt-1">{resumo.movimentacoesHojeCount}</div>
-                <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2">
-                  <span className="flex items-center gap-1"><ArrowDownCircle className="w-3 h-3 text-red-400" />{resumo.saidasHoje}</span>
-                  <span className="flex items-center gap-1"><ArrowUpCircle className="w-3 h-3 text-emerald-400" />{resumo.entradasHoje}</span>
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  itens vendidos
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* Alertas */}
+          {/* Alertas - produtos parados */}
           {resumo.alertas.length > 0 && (
             <Card className="border-amber-500/20">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-400" />
-                  Produtos em alerta ({resumo.alertas.length})
+                  Produtos sem giro ({resumo.alertas.length})
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -192,16 +227,12 @@ export default function Estoque() {
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium truncate">{p.nome}</div>
                         <div className="text-[11px] opacity-80">
-                          {p.categoria || "Sem categoria"} · Mínimo: {p.minimo}
+                          {p.categoria || "Sem categoria"} · Última venda: {formatarDiasUltimaVenda(p.diasDesdeUltimaVenda)}
                         </div>
                       </div>
                       <div className="text-right flex-shrink-0 ml-3">
-                        <div className="text-sm font-semibold">
-                          {p.saldo}
-                          <span className="text-[11px] opacity-70 ml-1">em estoque</span>
-                        </div>
                         <div className="text-[11px] uppercase tracking-wide opacity-70">
-                          {p.nivel === "critico" ? "Crítico" : "Atenção"}
+                          {labelNivel(p.nivel)}
                         </div>
                       </div>
                     </div>
@@ -233,7 +264,7 @@ export default function Estoque() {
                         onClick={() => setFiltroNivel(f)}
                         className={`px-3 py-1.5 text-xs ${filtroNivel === f ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted"}`}
                       >
-                        {f === "todos" ? "Todos" : f === "alerta" ? "Alerta" : "Crítico"}
+                        {f === "todos" ? "Todos" : f === "alerta" ? "Parados" : "Sem giro +30d"}
                       </button>
                     ))}
                   </div>
@@ -251,12 +282,10 @@ export default function Estoque() {
                     <thead>
                       <tr className="border-b border-border text-xs text-muted-foreground">
                         <th className="text-left py-2 px-2 font-medium">Produto</th>
-                        <th className="text-left py-2 px-2 font-medium hidden md:table-cell">Categoria</th>
-                        <th className="text-right py-2 px-2 font-medium">Saldo</th>
-                        <th className="text-right py-2 px-2 font-medium hidden sm:table-cell">Mínimo</th>
-                        <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Custo un.</th>
+                        <th className="text-right py-2 px-2 font-medium">Vendidos (30d)</th>
+                        <th className="text-right py-2 px-2 font-medium hidden sm:table-cell">Faturamento (30d)</th>
                         <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Venda un.</th>
-                        <th className="text-right py-2 px-2 font-medium">Valor estoque</th>
+                        <th className="text-left py-2 px-2 font-medium hidden md:table-cell">Última venda</th>
                         <th className="text-center py-2 px-2 font-medium">Status</th>
                       </tr>
                     </thead>
@@ -265,29 +294,25 @@ export default function Estoque() {
                         <tr key={p.id} className="border-b border-border/50 hover:bg-muted/30">
                           <td className="py-2 px-2">
                             <div className="font-medium">{p.nome}</div>
-                            {p.fabricante && (
-                              <div className="text-[11px] text-muted-foreground">{p.fabricante}</div>
+                            {p.categoria && (
+                              <div className="text-[11px] text-muted-foreground">{p.categoria}</div>
                             )}
                           </td>
-                          <td className="py-2 px-2 text-muted-foreground hidden md:table-cell">
-                            {p.categoria || "-"}
+                          <td className="py-2 px-2 text-right font-semibold">
+                            {p.vendidos30d}
                           </td>
-                          <td className="py-2 px-2 text-right font-semibold">{p.saldo}</td>
                           <td className="py-2 px-2 text-right text-muted-foreground hidden sm:table-cell">
-                            {p.minimo || "-"}
-                          </td>
-                          <td className="py-2 px-2 text-right text-muted-foreground hidden lg:table-cell">
-                            {p.custoMedio > 0 ? formatCurrency(p.custoMedio) : "-"}
+                            {p.faturamento30d > 0 ? formatCurrency(p.faturamento30d) : "-"}
                           </td>
                           <td className="py-2 px-2 text-right text-muted-foreground hidden lg:table-cell">
                             {p.valorVenda > 0 ? formatCurrency(p.valorVenda) : "-"}
                           </td>
-                          <td className="py-2 px-2 text-right">
-                            {formatCurrency(p.valorEstoque)}
+                          <td className="py-2 px-2 text-muted-foreground text-xs hidden md:table-cell">
+                            {formatarDiasUltimaVenda(p.diasDesdeUltimaVenda)}
                           </td>
                           <td className="py-2 px-2 text-center">
                             <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-medium border ${corNivel(p.nivel)}`}>
-                              {p.nivel === "critico" ? "Crítico" : p.nivel === "atencao" ? "Atenção" : "OK"}
+                              {labelNivel(p.nivel)}
                             </span>
                           </td>
                         </tr>
@@ -303,41 +328,33 @@ export default function Estoque() {
           {resumo.movimentacoesHoje.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Movimentações de hoje</CardTitle>
+                <CardTitle className="text-sm">Vendas de produtos hoje</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-1 max-h-[400px] overflow-y-auto">
-                  {resumo.movimentacoesHoje.map((m, i) => {
-                    const isSaida = /(saída|saida|venda|uso|consumo)/.test(m.tipo);
-                    return (
-                      <div key={m.id || i} className="flex items-center justify-between px-3 py-2 rounded-md hover:bg-muted/30">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isSaida ? (
-                            <TrendingDown className="w-4 h-4 text-red-400 flex-shrink-0" />
-                          ) : (
-                            <TrendingUp className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                          )}
-                          <div className="min-w-0">
-                            <div className="text-sm truncate">{m.produtoNome || "—"}</div>
-                            <div className="text-[11px] text-muted-foreground capitalize">
-                              {m.tipo || "movimentação"}
-                              {m.observacao && ` · ${m.observacao}`}
-                            </div>
+                  {resumo.movimentacoesHoje.map((m, i) => (
+                    <div key={String(m.id) || i} className="flex items-center justify-between px-3 py-2 rounded-md hover:bg-muted/30">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <TrendingDown className="w-4 h-4 text-red-400 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-sm truncate">{m.produtoNome || "—"}</div>
+                          <div className="text-[11px] text-muted-foreground capitalize">
+                            Venda
                           </div>
-                        </div>
-                        <div className="text-right flex-shrink-0 ml-3">
-                          <div className={`text-sm font-medium ${isSaida ? "text-red-400" : "text-emerald-400"}`}>
-                            {isSaida ? "−" : "+"}{m.quantidade}
-                          </div>
-                          {m.valor > 0 && (
-                            <div className="text-[11px] text-muted-foreground">
-                              {formatCurrency(m.valor)}
-                            </div>
-                          )}
                         </div>
                       </div>
-                    );
-                  })}
+                      <div className="text-right flex-shrink-0 ml-3">
+                        <div className="text-sm font-medium text-red-400">
+                          −{m.quantidade}
+                        </div>
+                        {m.valor > 0 && (
+                          <div className="text-[11px] text-muted-foreground">
+                            {formatCurrency(m.valor)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>

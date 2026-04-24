@@ -247,17 +247,30 @@ export function montarResumoNoite(hoje: ResumoDiaData): string {
   return msg;
 }
 
-// ─── Alertas de Estoque ────────────────────────────────────────────────
+// ─── Alertas de Produtos (giro / sem movimento) ─────────────────────────
+// OBS: A API Trinks não expõe saldo real; alertas são baseados em dias sem venda.
 export interface AlertaEstoque {
   id?: number | string;
   nome: string;
-  saldo: number;
-  minimo: number;
+  saldo?: number;
+  minimo?: number;
   nivel: "critico" | "atencao" | "ok";
+  diasDesdeUltimaVenda?: number | null;
+  ultimaVenda?: string | null;
+  vendidos30d?: number;
+}
+
+function formatarDiasSemVenda(dias: number | null | undefined): string {
+  if (dias === null || dias === undefined) return "sem vendas registradas";
+  if (dias >= 999) return "sem vendas registradas";
+  if (dias === 0) return "vendeu hoje";
+  if (dias === 1) return "vendeu ontem";
+  if (dias < 30) return `última venda há ${dias} dias`;
+  return "sem venda há +30 dias";
 }
 
 /**
- * Monta bloco de alertas de estoque para anexar aos resumos.
+ * Monta bloco de alertas de produtos sem giro para anexar aos resumos.
  * Retorna string vazia se não houver alertas relevantes.
  */
 export function montarAlertasEstoque(alertas: AlertaEstoque[]): string {
@@ -268,24 +281,22 @@ export function montarAlertasEstoque(alertas: AlertaEstoque[]): string {
 
   if (criticos.length === 0 && atencao.length === 0) return "";
 
-  let msg = `📦 <b>Estoque em alerta</b>\n`;
+  let msg = `📦 <b>Produtos sem giro</b>\n`;
 
   if (criticos.length > 0) {
-    msg += `🔴 <b>Crítico (${criticos.length})</b>\n`;
+    msg += `🔴 <b>Parados +30d (${criticos.length})</b>\n`;
     criticos.slice(0, 8).forEach(a => {
-      const saldoTxt = a.saldo <= 0 ? "zerado" : `${a.saldo} un`;
-      const minTxt = a.minimo > 0 ? ` · mín ${a.minimo}` : "";
-      msg += `├ ${escapeHtml(a.nome)}: ${saldoTxt}${minTxt}\n`;
+      msg += `├ ${escapeHtml(a.nome)}: ${formatarDiasSemVenda(a.diasDesdeUltimaVenda)}\n`;
     });
     if (criticos.length > 8) {
-      msg += `└ <i>+${criticos.length - 8} outros críticos</i>\n`;
+      msg += `└ <i>+${criticos.length - 8} outros sem giro</i>\n`;
     }
   }
 
   if (atencao.length > 0) {
-    msg += `🟡 <b>Atenção (${atencao.length})</b>\n`;
+    msg += `🟡 <b>Parados 14–30d (${atencao.length})</b>\n`;
     atencao.slice(0, 5).forEach(a => {
-      msg += `├ ${escapeHtml(a.nome)}: ${a.saldo} un · mín ${a.minimo}\n`;
+      msg += `├ ${escapeHtml(a.nome)}: ${formatarDiasSemVenda(a.diasDesdeUltimaVenda)}\n`;
     });
     if (atencao.length > 5) {
       msg += `└ <i>+${atencao.length - 5} outros em atenção</i>\n`;
@@ -297,22 +308,20 @@ export function montarAlertasEstoque(alertas: AlertaEstoque[]): string {
 }
 
 /**
- * Monta alerta imediato (para notificação pontual quando estoque crítico é detectado).
+ * Monta alerta imediato (para notificação pontual quando muitos produtos parados).
  */
 export function montarAlertaImediatoEstoque(alertas: AlertaEstoque[]): string {
   const criticos = (alertas || []).filter(a => a.nivel === "critico");
   if (criticos.length === 0) return "";
 
-  let msg = `⚠️ <b>Alerta de estoque</b>\n`;
-  msg += `<i>${criticos.length} produto(s) em nível crítico</i>\n\n`;
+  let msg = `⚠️ <b>Alerta de giro de produtos</b>\n`;
+  msg += `<i>${criticos.length} produto(s) sem vendas há mais de 30 dias</i>\n\n`;
   criticos.slice(0, 10).forEach(a => {
-    const saldoTxt = a.saldo <= 0 ? "zerado" : `${a.saldo} un`;
-    const minTxt = a.minimo > 0 ? ` (mín ${a.minimo})` : "";
-    msg += `🔴 ${escapeHtml(a.nome)}: ${saldoTxt}${minTxt}\n`;
+    msg += `🔴 ${escapeHtml(a.nome)}: ${formatarDiasSemVenda(a.diasDesdeUltimaVenda)}\n`;
   });
   if (criticos.length > 10) {
     msg += `\n<i>+${criticos.length - 10} outros…</i>\n`;
   }
-  msg += `\n🔗 <a href="https://greco-control-production.up.railway.app/estoque">Ver detalhes</a>`;
+  msg += `\n🔗 <a href="https://greco-control-production.up.railway.app/#/estoque">Ver detalhes</a>`;
   return msg;
 }

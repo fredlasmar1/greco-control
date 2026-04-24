@@ -1674,17 +1674,26 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
   // Se não tem alerta nenhum e carregou, não mostra nada
   if (data && (data.produtosEmAlerta || 0) === 0) return null;
 
+  const formatarDias = (dias: number | null | undefined): string => {
+    if (dias === null || dias === undefined) return "sem vendas";
+    if (dias >= 999) return "sem vendas";
+    if (dias === 0) return "hoje";
+    if (dias === 1) return "ontem";
+    if (dias < 30) return `há ${dias} dias`;
+    return "+30 dias";
+  };
+
   return (
     <Card className="bg-card border-card-border">
       <CardContent className="p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <div className="flex items-center gap-2">
             <Package className="w-4 h-4 text-amber-400" />
-            <span className="text-sm font-medium">Estoque em alerta</span>
+            <span className="text-sm font-medium">Produtos sem giro</span>
             {data && (
               <span className="text-xs text-muted-foreground">
                 {data.produtosEmAlerta} produto{data.produtosEmAlerta !== 1 ? "s" : ""}
-                {data.produtosCriticos > 0 && ` · ${data.produtosCriticos} crítico${data.produtosCriticos > 1 ? "s" : ""}`}
+                {data.produtosCriticos > 0 && ` · ${data.produtosCriticos} parado${data.produtosCriticos > 1 ? "s" : ""} +30d`}
               </span>
             )}
           </div>
@@ -1692,7 +1701,7 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
         </div>
         {erro ? (
           <div className="text-xs text-muted-foreground">
-            Não foi possível carregar o estoque no momento. {erro}
+            Não foi possível carregar os produtos no momento. {erro}
           </div>
         ) : data && Array.isArray(data.alertas) && data.alertas.length > 0 ? (
           <div className="space-y-1">
@@ -1701,15 +1710,12 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
                 <div className="min-w-0 flex-1">
                   <div className="truncate">{p.nome}</div>
                   <div className="text-[11px] text-muted-foreground">
-                    {p.categoria || "Sem categoria"} · mínimo {p.minimo}
+                    {p.categoria || "Sem categoria"} · última venda {formatarDias(p.diasDesdeUltimaVenda)}
                   </div>
                 </div>
                 <div className="text-right ml-3">
-                  <div className={`text-sm font-semibold ${p.nivel === "critico" ? "text-red-400" : "text-amber-400"}`}>
-                    {p.saldo} un.
-                  </div>
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    {p.nivel === "critico" ? "Crítico" : "Atenção"}
+                  <div className={`text-[10px] uppercase tracking-wide ${p.nivel === "critico" ? "text-red-400" : "text-amber-400"}`}>
+                    {p.nivel === "critico" ? "Parado +30d" : "Parado 14-30d"}
                   </div>
                 </div>
               </div>

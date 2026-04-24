@@ -1361,7 +1361,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-24-fix-useToast-v2",
+      build: "2026-04-24-estoque-vendas-v3",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1409,31 +1409,39 @@ export async function registerRoutes(
   });
 
   // GET /api/trinks/produtos-movimentacoes
+  // NOTA: A API Trinks (v1) NÃO expõe endpoint de movimentação de estoque dedicado.
+  // Usamos /v1/vendas como fonte de movimentação real (saídas por venda de produto).
   app.get("/api/trinks/produtos-movimentacoes", async (req: Request, res: Response) => {
     try {
       const params: Record<string, string> = {};
       if (req.query.dataInicio) params.dataInicio = String(req.query.dataInicio);
       if (req.query.dataFim) params.dataFim = String(req.query.dataFim);
-      if (req.query.produtoId) params.produtoId = String(req.query.produtoId);
-      if (req.query.tipo) params.tipo = String(req.query.tipo);
-      const candidates = ["produtos/movimentacoes", "produtos/movimentacao", "movimentacoes-estoque", "estoque/movimentacoes"];
-      let lastErr: any = null;
-      for (const p of candidates) {
-        try {
-          const data = await trinksFetchAll(p, params);
-          return res.json({ path: p, data });
-        } catch (err: any) {
-          lastErr = err;
-          if (err?.status && err.status !== 404) return handleTrinksError(err, res);
-        }
-      }
-      return handleTrinksError(lastErr || { status: 500, message: "Endpoint de movimentacao nao encontrado" }, res);
+      const vendas: any[] = await trinksFetchAll("vendas", params).catch(() => [] as any[]);
+      // Expande cada venda em uma linha por produto
+      const movimentacoes = (vendas || []).flatMap((v: any) => {
+        const prods = Array.isArray(v.produtos) ? v.produtos : [];
+        return prods.map((p: any) => ({
+          id: `${v.id}-${p.idProduto}`,
+          data: v.dataVenda,
+          produtoId: p.idProduto,
+          produtoNome: p.nomeProduto || "",
+          tipo: "saida",
+          quantidade: Number(p.quantidade || 0),
+          valorUnitario: Number(p.valorUnitario || 0),
+          valor: Number(p.valorLiquido ?? p.subTotal ?? 0),
+          unidade: p.unidadeDeMedida || "",
+        }));
+      });
+      return res.json({ path: "vendas", data: movimentacoes });
     } catch (err: any) {
       return handleTrinksError(err, res);
     }
   });
 
   // Função interna reutilizável para montar resumo de estoque
+  // IMPORTANTE: A API Trinks (v1) não retorna saldo/custo/valor no endpoint /produtos.
+  // Estratégia: usar /v1/vendas (últimos 30 dias) para detectar produtos com movimento,
+  // produtos parados (sem vendas), e agregar estatísticas de saídas.
   async function calcularEstoqueResumo(): Promise<any> {
     const ck = "estoque-resumo";
     const cached = getCached(ck);
@@ -1444,66 +1452,110 @@ export async function registerRoutes(
     const parts = tzFmt.formatToParts(new Date());
     const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
     const hoje = `${pick("year")}-${pick("month")}-${pick("day")}`;
-    let movimentacoes: any[] = [];
-    for (const p of ["produtos/movimentacoes", "produtos/movimentacao", "movimentacoes-estoque"]) {
-      try {
-        movimentacoes = await trinksFetchAll(p, { dataInicio: hoje, dataFim: hoje });
-        break;
-      } catch { continue; }
+
+    // Janela de 30 dias para análise de movimento
+    const d30 = new Date();
+    d30.setDate(d30.getDate() - 30);
+    const parts30 = tzFmt.formatToParts(d30);
+    const pick30 = (t: string) => parts30.find(p => p.type === t)?.value || "";
+    const dataInicio30 = `${pick30("year")}-${pick30("month")}-${pick30("day")}`;
+
+    const vendasMes: any[] = await trinksFetchAll("vendas", {
+      dataInicio: dataInicio30,
+      dataFim: hoje,
+    }).catch(() => [] as any[]);
+
+    // Agrega movimentações por produto (últimos 30d) e separa as de hoje
+    const movPorProduto = new Map<number, { qtd30d: number; valor30d: number; ultimaVenda: string | null; qtdHoje: number; valorHoje: number; valorUnitarioMedio: number }>();
+    const movHoje: any[] = [];
+    for (const v of (vendasMes || [])) {
+      const dataVenda = String(v.dataVenda || "").slice(0, 10);
+      const isHoje = dataVenda === hoje;
+      const prods = Array.isArray(v.produtos) ? v.produtos : [];
+      for (const p of prods) {
+        const pid = Number(p.idProduto);
+        if (!pid) continue;
+        const qtd = Number(p.quantidade || 0);
+        const valor = Number(p.valorLiquido ?? p.subTotal ?? 0);
+        const vu = Number(p.valorUnitario || 0);
+        const cur = movPorProduto.get(pid) || { qtd30d: 0, valor30d: 0, ultimaVenda: null, qtdHoje: 0, valorHoje: 0, valorUnitarioMedio: 0 };
+        cur.qtd30d += qtd;
+        cur.valor30d += valor;
+        if (vu > 0) cur.valorUnitarioMedio = vu; // valor mais recente observado
+        if (!cur.ultimaVenda || dataVenda > cur.ultimaVenda) cur.ultimaVenda = dataVenda;
+        if (isHoje) {
+          cur.qtdHoje += qtd;
+          cur.valorHoje += valor;
+          movHoje.push({
+            id: `${v.id}-${pid}`,
+            data: v.dataVenda,
+            produtoId: pid,
+            produtoNome: p.nomeProduto || "",
+            tipo: "saida",
+            quantidade: qtd,
+            valor,
+            observacao: "",
+          });
+        }
+        movPorProduto.set(pid, cur);
+      }
     }
 
     const lista = (produtos || []).map((p: any) => {
-      const saldo = Number(p.saldoEstoque ?? p.estoqueAtual ?? p.quantidade ?? p.estoque ?? 0);
-      const minimo = Number(p.estoqueMinimo ?? p.minimo ?? 0);
-      const custo = Number(p.custoMedio ?? p.custo ?? p.precoCusto ?? 0);
-      const preco = Number(p.valorVenda ?? p.preco ?? p.valor ?? 0);
+      const mov = movPorProduto.get(Number(p.id));
+      const qtd30d = mov?.qtd30d ?? 0;
+      const ultimaVenda = mov?.ultimaVenda ?? null;
+      const valorVenda = mov?.valorUnitarioMedio ?? 0;
+      const diasDesdeUltimaVenda = ultimaVenda
+        ? Math.floor((new Date(hoje).getTime() - new Date(ultimaVenda).getTime()) / (1000 * 60 * 60 * 24))
+        : 999;
+
+      // Classificação sem dados de saldo real (API não expõe):
+      // - critico: produto SEM movimento nos últimos 30d (pode estar parado ou em ruptura)
+      // - atencao: última venda há mais de 14 dias mas menos de 30
+      // - ok: movimento recente (últimos 14 dias)
       let nivel: "ok" | "atencao" | "critico" = "ok";
-      if (saldo <= 0) nivel = "critico";
-      else if (minimo > 0 && saldo < minimo) nivel = "critico";
-      else if (minimo > 0 && saldo < minimo * 1.5) nivel = "atencao";
+      if (diasDesdeUltimaVenda >= 30) nivel = "critico";
+      else if (diasDesdeUltimaVenda >= 14) nivel = "atencao";
+
       return {
         id: p.id,
         nome: p.nome || p.descricao || "",
         categoria: p.categoria?.nome || p.categoriaNome || "",
         fabricante: p.fabricante?.nome || p.fabricanteNome || "",
-        saldo,
-        minimo,
-        custoMedio: custo,
-        valorVenda: preco,
-        valorEstoque: saldo * custo,
+        saldo: 0, // não disponível via API
+        minimo: 0, // não disponível via API
+        custoMedio: 0, // não disponível via API
+        valorVenda,
+        valorEstoque: 0, // não calculável sem saldo
         nivel,
+        vendidos30d: qtd30d,
+        faturamento30d: mov?.valor30d ?? 0,
+        ultimaVenda,
+        diasDesdeUltimaVenda: ultimaVenda ? diasDesdeUltimaVenda : null,
       };
     });
 
     const emAlerta = lista.filter(p => p.nivel !== "ok");
     const criticos = lista.filter(p => p.nivel === "critico");
-    const valorTotalEstoque = lista.reduce((s, p) => s + p.valorEstoque, 0);
-
-    const movHoje = (movimentacoes || []).map((m: any) => ({
-      id: m.id,
-      data: m.data || m.dataHora,
-      produtoId: m.produtoId || m.produto?.id,
-      produtoNome: m.produtoNome || m.produto?.nome || m.nome || "",
-      tipo: (m.tipo || m.operacao || "").toString().toLowerCase(),
-      quantidade: Number(m.quantidade || 0),
-      valor: Number(m.valor || m.valorTotal || 0),
-      observacao: m.observacao || "",
-    }));
 
     const resumo = {
       atualizadoEm: new Date().toISOString(),
+      fonte: "trinks-vendas-30d",
+      limitacaoApi: "A API Trinks não expõe saldo/custo/valor de estoque. Dados derivados das vendas dos últimos 30 dias.",
       totalProdutos: lista.length,
       produtosEmAlerta: emAlerta.length,
       produtosCriticos: criticos.length,
-      valorTotalEstoque,
+      valorTotalEstoque: 0,
       movimentacoesHojeCount: movHoje.length,
-      saidasHoje: movHoje.filter(m => /(saída|saida|venda|uso|consumo)/.test(m.tipo)).length,
-      entradasHoje: movHoje.filter(m => /(entrada|compra|ajuste)/.test(m.tipo)).length,
+      saidasHoje: movHoje.length,
+      entradasHoje: 0,
+      faturamentoProdutos30d: lista.reduce((s, p) => s + (p.faturamento30d || 0), 0),
       produtos: lista,
       alertas: emAlerta,
       movimentacoesHoje: movHoje,
     };
-    setCache(ck, resumo, 2 * 60 * 1000);
+    setCache(ck, resumo, 5 * 60 * 1000); // 5 minutos
     return resumo;
   }
 

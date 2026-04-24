@@ -1361,7 +1361,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-24-estoque-transacoes-v5-heuristica",
+      build: "2026-04-24-estoque-transacoes-v6-seq",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1477,12 +1477,35 @@ export async function registerRoutes(
     const pick30 = (t: string) => parts30.find(p => p.type === t)?.value || "";
     const dataInicio30 = `${pick30("year")}-${pick30("month")}-${pick30("day")}`;
 
-    const [produtos, transacoes, profissionais, agendamentos] = await Promise.all([
-      trinksFetchAll("produtos").catch(() => [] as any[]),
-      trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: hoje }).catch(() => [] as any[]),
-      trinksFetchAll("profissionais").catch(() => [] as any[]),
-      trinksFetchAll("agendamentos", { dataInicio: dataInicio30, dataFim: hoje }).catch(() => [] as any[]),
-    ]);
+    // Janela menor para agendamentos (heurística de nomes de vendedores)
+    // para não estourar rate limit. 14 dias são suficientes para cobrir
+    // a maior parte dos IDs legados ativos.
+    const d14 = new Date();
+    d14.setDate(d14.getDate() - 14);
+    const parts14 = tzFmt.formatToParts(d14);
+    const pick14 = (t: string) => parts14.find(p => p.type === t)?.value || "";
+    const dataInicio14 = `${pick14("year")}-${pick14("month")}-${pick14("day")}`;
+
+    // Sequencial para não saturar o rate limit da Trinks (40 req/min).
+    // Produtos + profissionais são leves; transações e agendamentos são paginados pesados.
+    const produtos: any[] = await trinksFetchAll("produtos").catch((e: any) => {
+      log(`estoque: erro produtos: ${e?.message}`, "trinks");
+      return [] as any[];
+    });
+    const profissionais: any[] = await trinksFetchAll("profissionais").catch((e: any) => {
+      log(`estoque: erro profissionais: ${e?.message}`, "trinks");
+      return [] as any[];
+    });
+    const transacoes: any[] = await trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: hoje }).catch((e: any) => {
+      log(`estoque: erro transacoes: ${e?.message}`, "trinks");
+      return [] as any[];
+    });
+    // Agendamentos em janela reduzida (14d) para heurística de nomes
+    const agendamentos: any[] = await trinksFetchAll("agendamentos", { dataInicio: dataInicio14, dataFim: hoje }).catch((e: any) => {
+      log(`estoque: erro agendamentos: ${e?.message}`, "trinks");
+      return [] as any[];
+    });
+    log(`estoque: carregados produtos=${produtos.length} profissionais=${profissionais.length} transacoes=${transacoes.length} agendamentos=${agendamentos.length}`, "trinks");
 
     // Mapa ID → nome do profissional (cadastro atual via /v1/profissionais)
     const mapaProf = new Map<number, string>();

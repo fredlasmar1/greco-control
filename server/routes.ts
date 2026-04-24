@@ -1361,7 +1361,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-24-estoque-transacoes-v4",
+      build: "2026-04-24-estoque-transacoes-v5-heuristica",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1477,20 +1477,100 @@ export async function registerRoutes(
     const pick30 = (t: string) => parts30.find(p => p.type === t)?.value || "";
     const dataInicio30 = `${pick30("year")}-${pick30("month")}-${pick30("day")}`;
 
-    const [produtos, transacoes, profissionais] = await Promise.all([
+    const [produtos, transacoes, profissionais, agendamentos] = await Promise.all([
       trinksFetchAll("produtos").catch(() => [] as any[]),
       trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: hoje }).catch(() => [] as any[]),
       trinksFetchAll("profissionais").catch(() => [] as any[]),
+      trinksFetchAll("agendamentos", { dataInicio: dataInicio30, dataFim: hoje }).catch(() => [] as any[]),
     ]);
 
-    // Mapa ID → nome do profissional (vendedor)
+    // Mapa ID → nome do profissional (cadastro atual via /v1/profissionais)
     const mapaProf = new Map<number, string>();
     for (const p of (profissionais || [])) {
       mapaProf.set(Number(p.id), p.nome || p.apelido || `Profissional ${p.id}`);
     }
+
+    // Heurística: a API Trinks guarda em /v1/transacoes IDs legados
+    // (ex: 55740, 653128) que NÃO batem com /v1/profissionais (825xxx, 829xxx).
+    // Para mapear esses IDs legados a nomes reais, cruzamos com /v1/agendamentos
+    // (que contém profissional.id novo + profissional.nome + cliente + data).
+    //
+    // Estratégia 1: índice (dataReferencia, clienteId) → nome
+    //   Quando uma transação tem mesmo cliente+data que um agendamento, assumimos
+    //   que é a mesma visita e o profissional do agendamento vendeu o produto.
+    // Estratégia 2: acumula idLegado → frequência de nomes encontrados,
+    //   usa o mais frequente como fallback geral.
+    type IdxKey = string; // "YYYY-MM-DD|clienteId"
+    const idxAgendPorDataCliente = new Map<IdxKey, { nome: string; idProf: number }[]>();
+    for (const ag of (agendamentos || [])) {
+      const dt = String(ag.dataHoraInicio || ag.data || "").slice(0, 10);
+      const cli = Number(ag.cliente?.id || 0);
+      const nomeProf = ag.profissional?.nome || ag.profissional?.apelido || "";
+      const idProf = Number(ag.profissional?.id || 0);
+      if (!dt || !cli || !nomeProf) continue;
+      const k = `${dt}|${cli}`;
+      const arr = idxAgendPorDataCliente.get(k) || [];
+      arr.push({ nome: nomeProf, idProf });
+      idxAgendPorDataCliente.set(k, arr);
+    }
+
+    // Primeira passada: construir mapa idLegado → {nome: contador}
+    // baseado no cruzamento data+cliente entre transações e agendamentos
+    const freqNomePorIdLegado = new Map<number, Map<string, number>>();
+    for (const t of (transacoes || [])) {
+      const dt = String(t.dataHora || "").slice(0, 10);
+      const cli = Number(t.cliente?.id || 0);
+      if (!dt || !cli) continue;
+      const agCand = idxAgendPorDataCliente.get(`${dt}|${cli}`);
+      if (!agCand || agCand.length === 0) continue;
+
+      // Coleta todos os IDs legados usados na transação (produtos + serviços)
+      const idsLegados = new Set<number>();
+      for (const p of (t.produtos || [])) {
+        const v = Number(p.IdProfissionalQueRealizouAVenda || 0);
+        if (v) idsLegados.add(v);
+      }
+      for (const s of (t.servicos || [])) {
+        const v = Number(s.idProfissionalQueRealizouServico || 0);
+        if (v) idsLegados.add(v);
+      }
+
+      // Se tem 1 agendamento e 1 ID legado → match forte
+      // Se tem N agendamentos e o nome se repete → ainda dá sinal
+      for (const idLeg of idsLegados) {
+        const mp = freqNomePorIdLegado.get(idLeg) || new Map<string, number>();
+        for (const cand of agCand) {
+          const peso = agCand.length === 1 ? 3 : 1; // match 1:1 vale mais
+          mp.set(cand.nome, (mp.get(cand.nome) || 0) + peso);
+        }
+        freqNomePorIdLegado.set(idLeg, mp);
+      }
+    }
+
+    // Consolida: para cada ID legado, escolhe o nome com maior frequência
+    const mapaIdLegado = new Map<number, string>();
+    for (const [idLeg, freq] of freqNomePorIdLegado) {
+      let melhorNome = "";
+      let melhorScore = 0;
+      for (const [nome, score] of freq) {
+        if (score > melhorScore) {
+          melhorScore = score;
+          melhorNome = nome;
+        }
+      }
+      if (melhorNome) mapaIdLegado.set(idLeg, melhorNome);
+    }
+
     const nomeVendedor = (id: number | null | undefined): string => {
       if (!id) return "—";
-      return mapaProf.get(Number(id)) || `Profissional ${id}`;
+      const n = Number(id);
+      // 1º tenta cadastro novo
+      const novo = mapaProf.get(n);
+      if (novo) return novo;
+      // 2º tenta mapa legado inferido
+      const leg = mapaIdLegado.get(n);
+      if (leg) return leg;
+      return `Profissional ${n}`;
     };
 
     // Agregações

@@ -1,7 +1,12 @@
 [build]
 builder = "nixpacks"
-# BUILD_VERSION atualizada em 2026-04-24 15:05 -03 para forçar rebuild após refactor estoque-transacoes-v4
-buildCommand = "npm install --legacy-peer-deps && rm -rf dist && npm run build"
+# BUILD_VERSION atualizada em 2026-04-24 17:05 -03 — fix: build precisa de devDependencies (tsx, vite, esbuild)
+# Railway define NODE_ENV=production, que faz npm pular devDependencies. Forçamos --include=dev.
+buildCommand = "npm install --legacy-peer-deps --include=dev && rm -rf dist && npm run build"
+
+[build.nixpacksConfig]
+# Mantém devDependencies instaladas durante o build
+NPM_CONFIG_PRODUCTION = "false"
 
 [deploy]
 startCommand = "npm start"

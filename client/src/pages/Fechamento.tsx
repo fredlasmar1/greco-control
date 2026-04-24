@@ -99,11 +99,19 @@ export default function Fechamento() {
   const currentWeek = weeklySummaries[weeklySummaries.length - 1];
   const previousWeek = weeklySummaries.length >= 2 ? weeklySummaries[weeklySummaries.length - 2] : null;
 
-  const revenueChange = previousWeek
-    ? ((currentWeek.revenue - previousWeek.revenue) / previousWeek.revenue) * 100
+  // Variacao segura (divisao por zero quando semana anterior tem 0)
+  const safePercent = (atual: number, anterior: number): number => {
+    if (!anterior || anterior === 0) {
+      if (!atual) return 0;
+      return atual > 0 ? 100 : -100;
+    }
+    return ((atual - anterior) / anterior) * 100;
+  };
+  const revenueChange = previousWeek && currentWeek
+    ? safePercent(currentWeek.revenue, previousWeek.revenue)
     : 0;
-  const clientsChange = previousWeek
-    ? ((currentWeek.clients - previousWeek.clients) / previousWeek.clients) * 100
+  const clientsChange = previousWeek && currentWeek
+    ? safePercent(currentWeek.clients, previousWeek.clients)
     : 0;
 
   return (

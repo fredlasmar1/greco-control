@@ -2220,10 +2220,7 @@ export async function registerRoutes(
   // CLIENT DUPLICATES ROUTES
   // ──────────────────────────────────────────────────────────────────
 
-  // ─── GET /api/version — Debug: confirm deployed version ───
-  app.get("/api/version", (_req: Request, res: Response) => {
-    return res.json({ version: "2026-04-06-v2", features: ["duplicados", "precificacao", "financeiro-trinks"] });
-  });
+  // NOTA: rota /api/version já está definida acima (contém build date + uptime).
 
   app.get("/api/clientes/duplicados", async (_req: Request, res: Response) => {
     try {

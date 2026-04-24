@@ -1,6 +1,7 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm install --legacy-peer-deps && npm run build"
+# BUILD_VERSION atualizada em 2026-04-24 11:56 -03 para forçar rebuild após fix useToast
+buildCommand = "npm install --legacy-peer-deps && rm -rf dist && npm run build"
 
 [deploy]
 startCommand = "npm start"

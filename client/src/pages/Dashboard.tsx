@@ -1668,8 +1668,10 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
   useEffect(() => { carregar(); }, []);
 
   if (!data && !erro) return null;
+  // Se deu erro, não mostra nada no dashboard (evita poluir quando Trinks está fora)
+  if (erro) return null;
   // Se não tem alerta nenhum e carregou, não mostra nada
-  if (data && data.produtosEmAlerta === 0 && !erro) return null;
+  if (data && (data.produtosEmAlerta || 0) === 0) return null;
 
   return (
     <Card className="bg-card border-card-border">
@@ -1691,10 +1693,10 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
           <div className="text-xs text-muted-foreground">
             Não foi possível carregar o estoque no momento. {erro}
           </div>
-        ) : data && data.alertas && data.alertas.length > 0 ? (
+        ) : data && Array.isArray(data.alertas) && data.alertas.length > 0 ? (
           <div className="space-y-1">
-            {data.alertas.slice(0, 5).map((p: any) => (
-              <div key={p.id} className="flex items-center justify-between text-sm px-2 py-1.5 rounded hover:bg-muted/30">
+            {data.alertas.slice(0, 5).map((p: any, i: number) => (
+              <div key={p?.id ?? i} className="flex items-center justify-between text-sm px-2 py-1.5 rounded hover:bg-muted/30">
                 <div className="min-w-0 flex-1">
                   <div className="truncate">{p.nome}</div>
                   <div className="text-[11px] text-muted-foreground">

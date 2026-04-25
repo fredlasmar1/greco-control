@@ -1361,7 +1361,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-24-estoque-transacoes-v6-seq",
+      build: "2026-04-25-resumo-manha-com-fechamento-ontem-v7",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1840,16 +1840,24 @@ export async function registerRoutes(
   });
 
   // Função interna: retorna dados completos do dia (usada por endpoint e cron)
-  async function calcularHojeCompleto(): Promise<ResumoDiaData & {
+  // Versão genérica: calcula resumo completo (previsto + fechado) para qualquer dia.
+  // Usada por calcularHojeCompleto() (com data atual) e pelo resumo da manhã
+  // (que precisa do FECHAMENTO de ontem).
+  async function calcularDiaCompleto(dataYMD?: string): Promise<ResumoDiaData & {
     horaAgora: string; breakdown: any; agendamentos: any[]; comandas: any[]; fetchedAt: string;
   }> {
     const tzFmt = new Intl.DateTimeFormat("en-CA", {
       timeZone: "America/Sao_Paulo",
       year: "numeric", month: "2-digit", day: "2-digit",
     });
-    const parts = tzFmt.formatToParts(new Date());
-    const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
-    const hoje = `${pick("year")}-${pick("month")}-${pick("day")}`;
+    let hoje: string;
+    if (dataYMD) {
+      hoje = dataYMD;
+    } else {
+      const parts = tzFmt.formatToParts(new Date());
+      const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
+      hoje = `${pick("year")}-${pick("month")}-${pick("day")}`;
+    }
 
     const [agendData, transData] = await Promise.all([
       trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
@@ -1990,6 +1998,30 @@ export async function registerRoutes(
       agendamentos, comandas,
       fetchedAt: new Date().toISOString(),
     };
+  }
+
+  // Wrapper retrocompatível: calcula sempre o dia atual (em São Paulo).
+  async function calcularHojeCompleto(): Promise<ResumoDiaData & {
+    horaAgora: string; breakdown: any; agendamentos: any[]; comandas: any[]; fetchedAt: string;
+  }> {
+    return calcularDiaCompleto();
+  }
+
+  // Calcula apenas o que aconteceu ontem (útil para o resumo da manhã).
+  // Retorna fechamento real do dia anterior + meta atingida ou não.
+  async function calcularOntemFechado(): Promise<ResumoDiaData & {
+    horaAgora: string; breakdown: any; agendamentos: any[]; comandas: any[]; fetchedAt: string;
+  }> {
+    const tzFmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    const ontem = new Date();
+    ontem.setDate(ontem.getDate() - 1);
+    const parts = tzFmt.formatToParts(ontem);
+    const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
+    const dataOntem = `${pick("year")}-${pick("month")}-${pick("day")}`;
+    return calcularDiaCompleto(dataOntem);
   }
 
   // Função interna: retorna previsão do próximo dia útil (terça..sábado)
@@ -3857,14 +3889,16 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   });
 
   // POST /api/telegram/resumo-manha — monta e envia resumo matinal agora
+  // Inclui FECHAMENTO de ontem + PREVISÃO de hoje + (opcional) previsão de amanhã.
   app.post("/api/telegram/resumo-manha", async (_req: Request, res: Response) => {
     try {
-      const [hoje, amanhaData, estoque] = await Promise.all([
+      const [hoje, ontem, amanhaData, estoque] = await Promise.all([
         calcularHojeCompleto(),
+        calcularOntemFechado().catch(() => null),
         calcularAmanha().catch(() => null),
         calcularEstoqueResumo().catch(() => null),
       ]);
-      let msg = montarResumoManha(hoje, amanhaData);
+      let msg = montarResumoManha(hoje, amanhaData, ontem);
       if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
         const bloco = montarAlertasEstoque(estoque.alertas);
         if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);
@@ -3901,15 +3935,17 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   if (isTelegramConfigured()) {
     try {
       // Manhã: 08:00 ter-sab (dias 2-6 da semana)
+      // Mostra FECHAMENTO do dia anterior + PREVISÃO do dia atual
       cron.schedule("0 8 * * 2-6", async () => {
         log("[cron] disparando resumo da manhã...", "telegram");
         try {
-          const [hoje, amanhaData, estoque] = await Promise.all([
+          const [hoje, ontem, amanhaData, estoque] = await Promise.all([
             calcularHojeCompleto(),
+            calcularOntemFechado().catch(() => null),
             calcularAmanha().catch(() => null),
             calcularEstoqueResumo().catch(() => null),
           ]);
-          let msg = montarResumoManha(hoje, amanhaData);
+          let msg = montarResumoManha(hoje, amanhaData, ontem);
           if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
             const bloco = montarAlertasEstoque(estoque.alertas);
             if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);

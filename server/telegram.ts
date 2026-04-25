@@ -126,24 +126,68 @@ function formatarDataBR(iso: string): string {
 }
 
 /**
- * Monta o resumo da manhã: previsão do dia + previsão de amanhã + meta.
- * Envia geralmente às 8h.
+ * Monta o resumo da manhã:
+ *   1º bloco: FECHAMENTO de ontem (faturamento real + comandas)
+ *   2º bloco: PREVISÃO de hoje (agendamentos + meta)
+ *
+ * Envia geralmente às 8h. Substitui a versão anterior, que mostrava só
+ * previsão do dia atual e não trazia o resultado do dia anterior.
  */
-export function montarResumoManha(hoje: ResumoDiaData, amanha: ResumoAmanhaData | null): string {
+export function montarResumoManha(
+  hoje: ResumoDiaData,
+  amanha: ResumoAmanhaData | null,
+  ontem?: ResumoDiaData | null,
+): string {
   const emoji = progressoEmoji(hoje.progressoPct);
   const dataStr = formatarDataBR(hoje.data);
 
   let msg = `☀️ <b>Bom dia, Fred!</b>\n`;
   msg += `<i>${escapeHtml(dataStr)}</i>\n\n`;
 
-  msg += `📅 <b>Previsão de Hoje</b>\n`;
+  // ── 1º bloco: Fechamento de ontem ──
+  if (ontem) {
+    const ontemStr = formatarDataBR(ontem.data).split(",")[0];
+    const bateu = ontem.fechado >= ontem.metaDiaria;
+    const emojiO = bateu ? "✅" : "🔴";
+    const ticketMedio = ontem.fechado / Math.max(1, ontem.comandasCount);
+
+    msg += `📊 <b>Fechamento de ontem</b> (${escapeHtml(ontemStr)})\n`;
+    msg += `├ Faturamento: <b>${formatCurrency(ontem.fechado)}</b>\n`;
+    msg += `├ Comandas: <b>${ontem.comandasCount}</b>\n`;
+    msg += `├ Ticket médio: ${formatCurrency(ticketMedio)}\n`;
+    msg += `├ Meta: ${formatCurrency(ontem.metaDiaria)}\n`;
+    if (bateu) {
+      const sobra = ontem.fechado - ontem.metaDiaria;
+      msg += `└ ${emojiO} <b>Bateu a meta!</b> +${formatCurrency(sobra)} acima\n`;
+    } else {
+      const falta = ontem.metaDiaria - ontem.fechado;
+      msg += `└ ${emojiO} Faltaram ${formatCurrency(falta)} para a meta\n`;
+    }
+
+    // Top profissionais de ontem (fechado)
+    const rankOntem = (ontem.porProfissional || [])
+      .filter(p => p.fechado > 0)
+      .sort((a, b) => b.fechado - a.fechado)
+      .slice(0, 3);
+    if (rankOntem.length > 0) {
+      msg += `\n🏆 <b>Top de ontem</b>\n`;
+      rankOntem.forEach((p, i) => {
+        const icon = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
+        msg += `${icon} ${escapeHtml(p.nome)}: ${formatCurrency(p.fechado)} (${p.countFechado})\n`;
+      });
+    }
+    msg += `\n`;
+  }
+
+  // ── 2º bloco: Previsão de hoje ──
+  msg += `📅 <b>Previsão de hoje</b>\n`;
   msg += `├ Agendamentos: <b>${hoje.agendamentosCount}</b>\n`;
   msg += `├ Faturamento previsto: <b>${formatCurrency(hoje.totalEsperado)}</b>\n`;
   msg += `├ Meta diária: ${formatCurrency(hoje.metaDiaria)}\n`;
   if (hoje.atingeMeta) {
-    msg += `└ ${emoji} <b>Meta atingida!</b> (+${formatCurrency(hoje.totalEsperado - hoje.metaDiaria)})\n`;
+    msg += `└ ${emoji} <b>Meta já projetada!</b> (+${formatCurrency(hoje.totalEsperado - hoje.metaDiaria)})\n`;
   } else {
-    msg += `└ ${emoji} Falta <b>${formatCurrency(hoje.falta)}</b> para bater a meta\n`;
+    msg += `└ ${emoji} Falta projetar <b>${formatCurrency(hoje.falta)}</b> para a meta\n`;
   }
   msg += `\n<code>${barra(hoje.progressoPct)}</code> ${hoje.progressoPct.toFixed(0)}%\n\n`;
 
@@ -161,7 +205,7 @@ export function montarResumoManha(hoje: ResumoDiaData, amanha: ResumoAmanhaData 
     msg += `\n`;
   }
 
-  // Previsão de amanhã
+  // Previsão de amanhã (mantida como terçeiro bloco — útil em sextas)
   if (amanha && amanha.count > 0) {
     const labelAmanha = amanha.proxDiaUtil ? "próximo dia útil" : "amanhã";
     const emojiA = progressoEmoji(amanha.progressoPct);

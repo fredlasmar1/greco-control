@@ -87,6 +87,13 @@ export interface ResumoDiaData {
     countFechado: number;
     total: number;
   }[];
+  // Atendimentos cobertos por plano de assinatura (não geram comanda).
+  plano?: {
+    count: number;
+    valorTabela: number;
+    atendimentos?: { hora: string; cliente: string; profissional: string; servico: string; valor: number; status: string }[];
+    porProfissional?: { nome: string; count: number; valor: number }[];
+  };
 }
 
 export interface ResumoAmanhaData {
@@ -174,6 +181,15 @@ export function montarResumoManha(
       rankOntem.forEach((p, i) => {
         const icon = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
         msg += `${icon} ${escapeHtml(p.nome)}: ${formatCurrency(p.fechado)} (${p.countFechado})\n`;
+      });
+    }
+
+    // Atendimentos de plano de ontem
+    if (ontem.plano && ontem.plano.count > 0) {
+      msg += `\n🎫 <b>Plano de assinatura</b>: ${ontem.plano.count} atend. (${formatCurrency(ontem.plano.valorTabela)} em tabela)\n`;
+      const rankPlano = (ontem.plano.porProfissional || []).slice(0, 3);
+      rankPlano.forEach(p => {
+        msg += `· ${escapeHtml(p.nome)}: ${p.count}\n`;
       });
     }
     msg += `\n`;
@@ -273,6 +289,20 @@ export function montarResumoNoite(hoje: ResumoDiaData): string {
       const icon = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "▫️";
       msg += `${icon} ${escapeHtml(p.nome)}: ${formatCurrency(p.fechado)} (${p.countFechado})\n`;
     });
+    msg += `\n`;
+  }
+
+  // Atendimentos de plano de assinatura
+  if (hoje.plano && hoje.plano.count > 0) {
+    msg += `🎫 <b>Plano de assinatura</b>\n`;
+    msg += `├ Atendimentos: <b>${hoje.plano.count}</b>\n`;
+    msg += `└ Valor de tabela consumido: ${formatCurrency(hoje.plano.valorTabela)}\n`;
+    const rankPlano = (hoje.plano.porProfissional || []).slice(0, 3);
+    if (rankPlano.length > 0) {
+      rankPlano.forEach(p => {
+        msg += `· ${escapeHtml(p.nome)}: ${p.count}\n`;
+      });
+    }
     msg += `\n`;
   }
 

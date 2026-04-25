@@ -1372,7 +1372,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-25-fix-transacoes-intervalo-v9",
+      build: "2026-04-25-plano-assinatura-v10",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1977,6 +1977,47 @@ export async function registerRoutes(
     const agendamentosRestantes = agendamentos.filter(a => (a.hora || "99:99") >= hhmmAgora);
     const agendamentosJaPassaram = agendamentos.filter(a => (a.hora || "00:00") < hhmmAgora);
     const valorRestante = agendamentosRestantes.reduce((s, a) => s + a.valor, 0);
+    // ─── Atendimentos de PLANO (assinatura) ───────────────────────────
+    // Heurística: agendamento com status "Confirmado" ou "Finalizado"
+    // cujo NOME do cliente NÃO aparece em nenhuma transação do dia.
+    // Trinks não cria comanda para serviço coberto por plano de assinatura.
+    const norm = (s: any) => String(s || "").trim().toLowerCase();
+    const nomesComTransacao = new Set<string>();
+    transLista.forEach((t: any) => {
+      const n = norm(t.cliente?.nome || t.clienteNome);
+      if (n) nomesComTransacao.add(n);
+    });
+    const planoAtendimentos: any[] = [];
+    const porProfissionalPlano: Record<string, { nome: string; count: number; valor: number }> = {};
+    let planoValorTabela = 0;
+    agendLista.forEach((a: any) => {
+      const status = (typeof a.status === "string" ? a.status : (a.status?.nome || a.status?.descricao || "")).toLowerCase();
+      if (!(status.includes("confirm") || status.includes("finaliz"))) return;
+      const nomeCli = norm(a.cliente?.nome || a.clienteNome);
+      if (!nomeCli || nomesComTransacao.has(nomeCli)) return;
+      const val = Number(a.valor || a.valorTotal || 0)
+        || (Array.isArray(a.servicos) ? a.servicos.reduce((s: number, svc: any) => s + Number(svc.preco || svc.valor || 0), 0) : 0);
+      planoValorTabela += val;
+      const profId = String(a.profissionalId || a.profissional?.id || "");
+      const profNome = (a.profissional?.nome || a.profissionalNome || "—").trim();
+      if (profId) {
+        if (!porProfissionalPlano[profId]) porProfissionalPlano[profId] = { nome: profNome, count: 0, valor: 0 };
+        porProfissionalPlano[profId].count += 1;
+        porProfissionalPlano[profId].valor += val;
+      }
+      planoAtendimentos.push({
+        id: a.id,
+        hora: (a.dataHoraInicio || a.dataHora || "").slice(11, 16),
+        cliente: a.cliente?.nome || a.clienteNome || "Cliente",
+        profissional: profNome,
+        servico: a.servico?.nome || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "—"),
+        valor: val,
+        status: status.includes("finaliz") ? "Finalizado" : "Confirmado",
+      });
+    });
+    planoAtendimentos.sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
+    const planoRankingProfs = Object.values(porProfissionalPlano).sort((a, b) => b.count - a.count);
+
     const totalEsperado = Math.max(totalPrevisto, totalFechado + valorRestante);
 
     const metaDia = metaDiaria;
@@ -2015,6 +2056,12 @@ export async function registerRoutes(
       atingeMeta, falta, progressoPct, progressoFechadoPct,
       porProfissional: rankingProfissionais,
       agendamentos, comandas,
+      plano: {
+        count: planoAtendimentos.length,
+        valorTabela: planoValorTabela,
+        atendimentos: planoAtendimentos,
+        porProfissional: planoRankingProfs,
+      },
       fetchedAt: new Date().toISOString(),
     };
   }

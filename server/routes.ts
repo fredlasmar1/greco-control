@@ -1361,7 +1361,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-25-resumo-manha-com-fechamento-ontem-v7",
+      build: "2026-04-25-sem-produtos-sem-giro-v8",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -3890,19 +3890,15 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
 
   // POST /api/telegram/resumo-manha — monta e envia resumo matinal agora
   // Inclui FECHAMENTO de ontem + PREVISÃO de hoje + (opcional) previsão de amanhã.
+  // (Bloco de produtos sem giro foi removido a pedido do usuário.)
   app.post("/api/telegram/resumo-manha", async (_req: Request, res: Response) => {
     try {
-      const [hoje, ontem, amanhaData, estoque] = await Promise.all([
+      const [hoje, ontem, amanhaData] = await Promise.all([
         calcularHojeCompleto(),
         calcularOntemFechado().catch(() => null),
         calcularAmanha().catch(() => null),
-        calcularEstoqueResumo().catch(() => null),
       ]);
-      let msg = montarResumoManha(hoje, amanhaData, ontem);
-      if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
-        const bloco = montarAlertasEstoque(estoque.alertas);
-        if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);
-      }
+      const msg = montarResumoManha(hoje, amanhaData, ontem);
       const r = await enviarMensagem(msg);
       return res.json({ ...r, enviado: r.ok });
     } catch (err: any) {
@@ -3911,17 +3907,11 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   });
 
   // POST /api/telegram/resumo-noite — monta e envia fechamento agora
+  // (Bloco de produtos sem giro foi removido a pedido do usuário.)
   app.post("/api/telegram/resumo-noite", async (_req: Request, res: Response) => {
     try {
-      const [hoje, estoque] = await Promise.all([
-        calcularHojeCompleto(),
-        calcularEstoqueResumo().catch(() => null),
-      ]);
-      let msg = montarResumoNoite(hoje);
-      if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
-        const bloco = montarAlertasEstoque(estoque.alertas);
-        if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);
-      }
+      const hoje = await calcularHojeCompleto();
+      const msg = montarResumoNoite(hoje);
       const r = await enviarMensagem(msg);
       return res.json({ ...r, enviado: r.ok });
     } catch (err: any) {
@@ -3939,17 +3929,12 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       cron.schedule("0 8 * * 2-6", async () => {
         log("[cron] disparando resumo da manhã...", "telegram");
         try {
-          const [hoje, ontem, amanhaData, estoque] = await Promise.all([
+          const [hoje, ontem, amanhaData] = await Promise.all([
             calcularHojeCompleto(),
             calcularOntemFechado().catch(() => null),
             calcularAmanha().catch(() => null),
-            calcularEstoqueResumo().catch(() => null),
           ]);
-          let msg = montarResumoManha(hoje, amanhaData, ontem);
-          if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
-            const bloco = montarAlertasEstoque(estoque.alertas);
-            if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);
-          }
+          const msg = montarResumoManha(hoje, amanhaData, ontem);
           const r = await enviarMensagem(msg);
           log(`[cron] resumo manhã: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
         } catch (err: any) {
@@ -3961,15 +3946,8 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       cron.schedule("0 20 * * 2-6", async () => {
         log("[cron] disparando resumo da noite...", "telegram");
         try {
-          const [hoje, estoque] = await Promise.all([
-            calcularHojeCompleto(),
-            calcularEstoqueResumo().catch(() => null),
-          ]);
-          let msg = montarResumoNoite(hoje);
-          if (estoque && Array.isArray(estoque.alertas) && estoque.alertas.length > 0) {
-            const bloco = montarAlertasEstoque(estoque.alertas);
-            if (bloco) msg = msg.replace(/\n?🔗 <a /, `\n${bloco}🔗 <a `);
-          }
+          const hoje = await calcularHojeCompleto();
+          const msg = montarResumoNoite(hoje);
           const r = await enviarMensagem(msg);
           log(`[cron] resumo noite: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
         } catch (err: any) {

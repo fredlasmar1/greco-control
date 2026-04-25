@@ -870,6 +870,17 @@ async function trinksFetch(
   return data;
 }
 
+// Helper: soma dias a uma string YYYY-MM-DD (TZ-safe via UTC noon).
+function ymdAddDays(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
 // Paginate through all pages of a Trinks endpoint — SEQUENTIAL to control rate
 async function trinksFetchAll(
   endpointPath: string,
@@ -1361,7 +1372,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-25-sem-produtos-sem-giro-v8",
+      build: "2026-04-25-fix-transacoes-intervalo-v9",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1496,7 +1507,9 @@ export async function registerRoutes(
       log(`estoque: erro profissionais: ${e?.message}`, "trinks");
       return [] as any[];
     });
-    const transacoes: any[] = await trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: hoje }).catch((e: any) => {
+    // Trinks /v1/transacoes usa intervalo semi-aberto [dataInicio, dataFim) — somar +1d.
+    const transFim = ymdAddDays(hoje, 1);
+    const transacoes: any[] = await trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: transFim }).catch((e: any) => {
       log(`estoque: erro transacoes: ${e?.message}`, "trinks");
       return [] as any[];
     });
@@ -1773,7 +1786,9 @@ export async function registerRoutes(
       const cached = getCached(cacheKey);
       if (cached) return res.json({ ...cached, fromCache: true });
 
-      const data = await trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: hoje });
+      // Trinks /v1/transacoes usa intervalo semi-aberto [dataInicio, dataFim).
+      const transFim = ymdAddDays(hoje, 1);
+      const data = await trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: transFim });
       const lista = Array.isArray(data) ? data : (data?.data || []);
 
       // Calcula resumo
@@ -1859,9 +1874,13 @@ export async function registerRoutes(
       hoje = `${pick("year")}-${pick("month")}-${pick("day")}`;
     }
 
+    // ⚠️ /v1/transacoes da Trinks usa intervalo SEMI-ABERTO [dataInicio, dataFim).
+    // Para pegar 1 dia inteiro precisamos passar dataFim = dia + 1.
+    // (Já /v1/agendamentos aceita dataInicio=dataFim normalmente.)
+    const transFim = ymdAddDays(hoje, 1);
     const [agendData, transData] = await Promise.all([
       trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
-      trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: hoje }),
+      trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: transFim }),
     ]);
 
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);

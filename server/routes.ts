@@ -28,6 +28,7 @@ import {
 } from "./metasProfissional";
 import {
   montarResumoDiarioIndividual,
+  montarResumoMatinalIndividual,
   montarResumoSemanalIndividual,
   montarResumoMensalIndividual,
   enviarParaProfissional,
@@ -1386,7 +1387,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-metas-individuais-v11c",
+      build: "2026-04-26-equipe-v12",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2246,47 +2247,43 @@ export async function registerRoutes(
       if (n) transKeysPorDia.get(dia)!.add(n);
     });
 
-    // ── Avulso: distribui valor da transação entre profissionais dos itens ──
+    // ── Avulso: atribui o totalPagar INTEGRAL ao profissional principal da transação.
+    // Critério: profissional do item de maior valor (geralmente o serviço principal).
+    // Isso garante: Σ avulso por profissional == Σ totalPagar (igual Dashboard).
     transLista.forEach((t: any) => {
       const totalT = Number(t.totalPagar || 0);
-      const itens: { profId: string; valor: number }[] = [];
-      (t.produtos || []).forEach((p: any) => {
-        const profId = String(p.IdProfissionalQueRealizouAVenda || p.idProfissionalQueRealizouAVenda || "");
-        const valor = Number(p.valorUnitario || p.valor || 0) * Number(p.quantidade || 1);
-        if (profId) itens.push({ profId, valor });
-      });
+      if (totalT === 0) return;
+      const itens: { profId: string; valor: number; tipo: "servico" | "produto" }[] = [];
       (t.servicos || []).forEach((s: any) => {
         const profId = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
         const valor = Number(s.preco || s.valor || 0);
-        if (profId) itens.push({ profId, valor });
+        if (profId) itens.push({ profId, valor, tipo: "servico" });
       });
-      if (itens.length === 0) {
-        const profId = String(t.profissionalId || t.profissional?.id || "");
-        if (profId) {
-          const r = resolveProf(profId);
-          if (r) {
-            const p = ensureProf(r.idPrimario, r.nome, profId);
-            p.avulso.reais += totalT;
-            p.avulso.count += 1;
-          }
-        }
-        return;
+      (t.produtos || []).forEach((p: any) => {
+        const profId = String(p.IdProfissionalQueRealizouAVenda || p.idProfissionalQueRealizouAVenda || "");
+        const valor = Number(p.valorUnitario || p.valor || 0) * Number(p.quantidade || 1);
+        if (profId) itens.push({ profId, valor, tipo: "produto" });
+      });
+
+      // Determina profissional principal: maior valor (serviço pesa mais que produto se empate).
+      let profPrincipal = "";
+      if (itens.length > 0) {
+        const ordenado = [...itens].sort((a, b) => {
+          if (b.valor !== a.valor) return b.valor - a.valor;
+          if (a.tipo === "servico" && b.tipo !== "servico") return -1;
+          if (b.tipo === "servico" && a.tipo !== "servico") return 1;
+          return 0;
+        });
+        profPrincipal = ordenado[0].profId;
+      } else {
+        profPrincipal = String(t.profissionalId || t.profissional?.id || "");
       }
-      const profPrincipal = itens[0].profId;
-      const somaValores = itens.reduce((s, i) => s + i.valor, 0) || 1;
-      const idsContados = new Set<string>();
-      itens.forEach(i => {
-        const r = resolveProf(i.profId);
-        if (!r) return;
-        const p = ensureProf(r.idPrimario, r.nome, i.profId);
-        const proporcao = i.valor / somaValores;
-        p.avulso.reais += totalT * proporcao;
-        // Conta 1 atendimento por idPrimario distinto na mesma comanda
-        if (i.profId === profPrincipal && !idsContados.has(r.idPrimario)) {
-          p.avulso.count += 1;
-          idsContados.add(r.idPrimario);
-        }
-      });
+      if (!profPrincipal) return;
+      const r = resolveProf(profPrincipal);
+      if (!r) return;
+      const p = ensureProf(r.idPrimario, r.nome, profPrincipal);
+      p.avulso.reais += totalT;
+      p.avulso.count += 1;
     });
 
     // ── Plano: agendamentos Confirmado/Finalizado sem transação do mesmo cliente ──
@@ -4445,16 +4442,19 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     try {
       const tipo = String(req.params.tipo).toLowerCase();
       const id = String(req.params.id);
-      if (!["diario", "semanal", "mensal"].includes(tipo)) {
+      if (!["diario", "matinal", "semanal", "mensal"].includes(tipo)) {
         return res.status(400).json({ ok: false, error: `tipo inválido: ${tipo}` });
       }
-      const incluir = tipo === "diario"  ? { dia: true,    mes: true } :
+      const incluir = (tipo === "diario" || tipo === "matinal") ? { dia: true, mes: true } :
                       tipo === "semanal" ? { semana: true, mes: true } :
                                            { mes: true };
-      const payload = await montarPayloadIndividual(id, incluir);
+      // Para 'matinal' o dia de referência é o último dia útil anterior; demais usam hoje.
+      const dataDia = tipo === "matinal" ? diaUtilAnterior(ymdHoje()) : undefined;
+      const payload = await montarPayloadIndividual(id, incluir, { dataDia });
       if (!payload) return res.status(404).json({ ok: false, error: "meta não cadastrada para este profissional" });
       const texto =
-        tipo === "diario"  ? montarResumoDiarioIndividual(payload) :
+        tipo === "diario"  ? montarResumoDiarioIndividual(payload)  :
+        tipo === "matinal" ? montarResumoMatinalIndividual(payload) :
         tipo === "semanal" ? montarResumoSemanalIndividual(payload) :
                              montarResumoMensalIndividual(payload);
       const r = await enviarParaProfissional(payload.meta, texto);
@@ -4468,21 +4468,23 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   app.post("/api/telegram/individual/:tipo", async (req: Request, res: Response) => {
     try {
       const tipo = String(req.params.tipo).toLowerCase();
-      if (!["diario", "semanal", "mensal"].includes(tipo)) {
+      if (!["diario", "matinal", "semanal", "mensal"].includes(tipo)) {
         return res.status(400).json({ ok: false, error: `tipo inválido: ${tipo}` });
       }
       const ativas = await listarMetasAtivas();
       if (ativas.length === 0) return res.json({ ok: true, total: 0, results: [], aviso: "Nenhuma meta com envio ativo" });
-      const incluir = tipo === "diario"  ? { dia: true,    mes: true } :
+      const incluir = (tipo === "diario" || tipo === "matinal") ? { dia: true, mes: true } :
                       tipo === "semanal" ? { semana: true, mes: true } :
                                            { mes: true };
+      const dataDia = tipo === "matinal" ? diaUtilAnterior(ymdHoje()) : undefined;
       const results: any[] = [];
       for (const meta of ativas) {
         try {
-          const payload = await montarPayloadIndividual(meta.profissionalId, incluir);
+          const payload = await montarPayloadIndividual(meta.profissionalId, incluir, { dataDia });
           if (!payload) { results.push({ id: meta.profissionalId, ok: false, error: "sem payload" }); continue; }
           const texto =
-            tipo === "diario"  ? montarResumoDiarioIndividual(payload) :
+            tipo === "diario"  ? montarResumoDiarioIndividual(payload)  :
+            tipo === "matinal" ? montarResumoMatinalIndividual(payload) :
             tipo === "semanal" ? montarResumoSemanalIndividual(payload) :
                                  montarResumoMensalIndividual(payload);
           const r = await enviarParaProfissional(meta, texto);
@@ -4536,23 +4538,25 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
 
       // ─── Crons individuais por profissional (Equipe) ───
       // Helper que dispara mensagem individual para todos ativos
-      async function dispararIndividualParaTodos(tipo: "diario" | "semanal" | "mensal") {
+      async function dispararIndividualParaTodos(tipo: "matinal" | "diario" | "semanal" | "mensal") {
         try {
           const ativas = await listarMetasAtivas();
           if (ativas.length === 0) {
             log(`[cron] individual ${tipo}: nenhuma meta ativa`, "telegram");
             return;
           }
-          const incluir = tipo === "diario"  ? { dia: true,    mes: true } :
+          const incluir = (tipo === "diario" || tipo === "matinal") ? { dia: true, mes: true } :
                           tipo === "semanal" ? { semana: true, mes: true } :
                                                { mes: true };
+          const dataDia = tipo === "matinal" ? diaUtilAnterior(ymdHoje()) : undefined;
           let okCount = 0, falhas = 0;
           for (const meta of ativas) {
             try {
-              const payload = await montarPayloadIndividual(meta.profissionalId, incluir);
+              const payload = await montarPayloadIndividual(meta.profissionalId, incluir, { dataDia });
               if (!payload) { falhas++; continue; }
               const texto =
-                tipo === "diario"  ? montarResumoDiarioIndividual(payload) :
+                tipo === "diario"  ? montarResumoDiarioIndividual(payload)  :
+                tipo === "matinal" ? montarResumoMatinalIndividual(payload) :
                 tipo === "semanal" ? montarResumoSemanalIndividual(payload) :
                                      montarResumoMensalIndividual(payload);
               const r = await enviarParaProfissional(meta, texto);
@@ -4569,10 +4573,10 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         }
       }
 
-      // Diário individual: ter-sáb 20h30 (após o fechamento geral das 20h)
-      cron.schedule("30 20 * * 2-6", async () => {
-        log("[cron] disparando resumo diário individual (Equipe)...", "telegram");
-        await dispararIndividualParaTodos("diario");
+      // Matinal individual: ter-sáb 08h00 (resumo do último dia útil + acumulado mês)
+      cron.schedule("0 8 * * 2-6", async () => {
+        log("[cron] disparando resumo matinal individual (Equipe)...", "telegram");
+        await dispararIndividualParaTodos("matinal");
       }, { timezone: "America/Sao_Paulo" });
 
       // Semanal individual: sábado 21h
@@ -4603,7 +4607,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         await dispararIndividualParaTodos("mensal");
       }, { timezone: "America/Sao_Paulo" });
 
-      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + individual 20h30/sáb 21h/último dia útil 21h", "telegram");
+      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + individual MATINAL 8h/SEMANAL sáb 21h/MENSAL último dia útil 21h", "telegram");
     } catch (err: any) {
       log(`[cron] falha ao registrar schedulers: ${err.message}`, "telegram");
     }

@@ -93,6 +93,59 @@ export function montarResumoDiarioIndividual(p: PayloadIndividual): string {
   return msg;
 }
 
+// ─── Resumo MATINAL (08:00 ter-sáb) ────────────────
+// Tom: início de jornada, motivação, com fechamento de ontem + acumulado mês
+export function montarResumoMatinalIndividual(p: PayloadIndividual): string {
+  const { profissional, meta, dia, mes } = p;
+  const nome = nomePequeno(profissional.nome);
+  const ontemFmt = dia?.dataReferencia
+    ? new Date(dia.dataReferencia + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })
+    : "";
+
+  let msg = `\u2600\ufe0f <b>Bom dia, ${escapeHtml(nome)}!</b>\n`;
+  msg += `<i>Vamos para mais um dia. Aqui est\u00e1 sua posi\u00e7\u00e3o:</i>\n\n`;
+
+  if (dia && (dia.count > 0 || dia.reais > 0)) {
+    const ticket = dia.count > 0 ? dia.reais / dia.count : 0;
+    msg += `\ud83d\udcc6 <b>Ontem (${escapeHtml(ontemFmt)})</b>\n`;
+    msg += `\u251c \ud83d\udcb0 ${formatCurrency(dia.reais)}\n`;
+    msg += `\u251c \ud83d\udc65 ${dia.count} atendimento${dia.count !== 1 ? "s" : ""}\n`;
+    msg += `\u2514 \ud83c\udfaf Ticket m\u00e9dio: ${formatCurrency(ticket)}\n`;
+    if (dia.planoCount > 0) {
+      msg += `   \ud83c\udfab Plano: ${dia.planoCount} (${formatCurrency(dia.planoReais)})\n`;
+    }
+    msg += `\n`;
+  } else if (ontemFmt) {
+    msg += `\ud83d\udcc6 <i>Ontem (${escapeHtml(ontemFmt)}): sem movimento registrado.</i>\n\n`;
+  }
+
+  if (mes && meta.metaReais > 0) {
+    const pctMes = (mes.reais / meta.metaReais) * 100;
+    const pctIdeal = mes.diasUteisTotal > 0 ? (mes.diasUteisDecorridos / mes.diasUteisTotal) * 100 : 0;
+    const farol = pctMes >= pctIdeal - 5 ? "\u2705" : pctMes >= pctIdeal - 15 ? "\u26a0\ufe0f" : "\ud83d\udd34";
+    msg += `\ud83d\udcc5 <b>Acumulado do m\u00eas</b>\n`;
+    msg += `${formatCurrency(mes.reais)} / ${formatCurrency(meta.metaReais)} (<b>${pctMes.toFixed(0)}%</b>) ${farol}\n`;
+    msg += `${progressBar(pctMes)}\n`;
+    if (meta.metaAtendimentos > 0) {
+      const pctAtend = (mes.count / meta.metaAtendimentos) * 100;
+      msg += `\ud83d\udc65 ${mes.count} / ${meta.metaAtendimentos} atend. (${pctAtend.toFixed(0)}%)\n`;
+    }
+    if (mes.diasUteisTotal > mes.diasUteisDecorridos) {
+      const restantes = mes.diasUteisTotal - mes.diasUteisDecorridos;
+      const ritmoNecessario = Math.max(0, (meta.metaReais - mes.reais) / Math.max(1, restantes));
+      msg += `\ud83c\udfaf Faltam ${restantes} dia${restantes !== 1 ? "s" : ""} \u00fatil${restantes !== 1 ? "\u00e9is" : ""} \u00b7 ritmo: ${formatCurrency(ritmoNecessario)}/dia\n`;
+    }
+    if (p.posicaoEquipeMes) {
+      msg += `\ud83c\udfc6 Posi\u00e7\u00e3o no m\u00eas: <b>${p.posicaoEquipeMes.posicao}\u00ba</b> de ${p.posicaoEquipeMes.total}\n`;
+    }
+  } else if (mes) {
+    msg += `\ud83d\udcc5 M\u00eas at\u00e9 agora: ${formatCurrency(mes.reais)} \u00b7 ${mes.count} atend.\n`;
+  }
+
+  msg += `\n\ud83d\udcaa <i>Bom trabalho hoje!</i>`;
+  return msg;
+}
+
 // ─── Resumo SEMANAL ────────────────────────────────
 export function montarResumoSemanalIndividual(p: PayloadIndividual): string {
   const { profissional, meta, semana, mes } = p;

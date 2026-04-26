@@ -16,6 +16,9 @@ import {
   TrendingUp,
   CheckCircle2,
   AlertCircle,
+  Pencil,
+  X,
+  Sun,
 } from "lucide-react";
 
 const fmtBRL = (v: number) =>
@@ -69,7 +72,7 @@ interface DesempenhoApi {
   linhas: LinhaDesempenho[];
 }
 
-type TipoEnvio = "diario" | "semanal" | "mensal";
+type TipoEnvio = "matinal" | "semanal" | "mensal";
 
 interface DraftMeta {
   metaReais: string;
@@ -78,6 +81,7 @@ interface DraftMeta {
   ativoEnvio: boolean;
   dirty: boolean;
   saving: boolean;
+  editing: boolean;
   lastSavedAt?: string;
 }
 
@@ -100,20 +104,25 @@ export default function MetasEquipePainel() {
       const lista: MetaApi[] = m?.metas || [];
       setMetas(lista);
       setDesempenho(d?.ok ? d : null);
-      // Inicializar drafts
-      const novosDrafts: Record<string, DraftMeta> = {};
-      lista.forEach(meta => {
-        novosDrafts[meta.profissionalId] = {
-          metaReais: String(meta.metaReais || 0),
-          metaAtendimentos: String(meta.metaAtendimentos || 0),
-          telegramChatId: meta.telegramChatId || "",
-          ativoEnvio: !!meta.ativoEnvio,
-          dirty: false,
-          saving: false,
-          lastSavedAt: meta.atualizadoEm,
-        };
+      // Inicializar drafts (preserva 'editing' se já estava aberto)
+      setDrafts(prev => {
+        const novos: Record<string, DraftMeta> = {};
+        lista.forEach(meta => {
+          const id = meta.profissionalId;
+          const editing = prev[id]?.editing || false;
+          novos[id] = {
+            metaReais: String(meta.metaReais || 0),
+            metaAtendimentos: String(meta.metaAtendimentos || 0),
+            telegramChatId: meta.telegramChatId || "",
+            ativoEnvio: !!meta.ativoEnvio,
+            dirty: false,
+            saving: false,
+            editing,
+            lastSavedAt: meta.atualizadoEm,
+          };
+        });
+        return novos;
       });
-      setDrafts(novosDrafts);
     } catch (err) {
       console.error("[MetasEquipePainel] erro carregar:", err);
     } finally {
@@ -127,6 +136,28 @@ export default function MetasEquipePainel() {
     setDrafts(prev => ({
       ...prev,
       [id]: { ...prev[id], ...patch, dirty: true },
+    }));
+  }
+
+  function abrirEdicao(id: string) {
+    setDrafts(prev => ({ ...prev, [id]: { ...prev[id], editing: true, dirty: false } }));
+  }
+
+  function cancelarEdicao(id: string) {
+    // Restaura valores originais a partir das metas
+    const meta = metas.find(m => m.profissionalId === id);
+    if (!meta) return;
+    setDrafts(prev => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        metaReais: String(meta.metaReais || 0),
+        metaAtendimentos: String(meta.metaAtendimentos || 0),
+        telegramChatId: meta.telegramChatId || "",
+        ativoEnvio: !!meta.ativoEnvio,
+        dirty: false,
+        editing: false,
+      },
     }));
   }
 
@@ -152,7 +183,7 @@ export default function MetasEquipePainel() {
         setFeedback({ id, type: "ok", msg: "Meta salva" });
         setDrafts(prev => ({
           ...prev,
-          [id]: { ...prev[id], dirty: false, saving: false, lastSavedAt: new Date().toISOString() },
+          [id]: { ...prev[id], dirty: false, saving: false, editing: false, lastSavedAt: new Date().toISOString() },
         }));
         // Recarregar desempenho para refletir novos números
         fetch("/api/equipe/desempenho").then(r => r.json()).then(d => { if (d?.ok) setDesempenho(d); });
@@ -206,7 +237,7 @@ export default function MetasEquipePainel() {
   }
 
   function tipoLabel(t: TipoEnvio) {
-    return t === "diario" ? "Diário" : t === "semanal" ? "Semanal" : "Mensal";
+    return t === "matinal" ? "Manhã" : t === "semanal" ? "Semanal" : "Mensal";
   }
 
   // Mapear desempenho por id pra fácil lookup
@@ -252,8 +283,8 @@ export default function MetasEquipePainel() {
               <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
               Atualizar
             </Button>
-            <Button size="sm" variant="outline" onClick={() => enviarMassa("diario")} disabled={enviarEmMassaTipo !== null} data-testid="btn-bulk-diario">
-              <Send className="w-3.5 h-3.5 mr-1.5" /> Diário (todos)
+            <Button size="sm" variant="outline" onClick={() => enviarMassa("matinal")} disabled={enviarEmMassaTipo !== null} data-testid="btn-bulk-matinal">
+              <Sun className="w-3.5 h-3.5 mr-1.5" /> Manhã (todos)
             </Button>
             <Button size="sm" variant="outline" onClick={() => enviarMassa("semanal")} disabled={enviarEmMassaTipo !== null} data-testid="btn-bulk-semanal">
               <Send className="w-3.5 h-3.5 mr-1.5" /> Semanal (todos)
@@ -324,11 +355,11 @@ export default function MetasEquipePainel() {
                         size="sm"
                         variant="outline"
                         className="h-7 text-[11px] px-2"
-                        onClick={() => enviarAgora(id, "diario")}
-                        disabled={!!enviando[`${id}-diario`]}
-                        data-testid={`btn-enviar-diario-${id}`}
+                        onClick={() => enviarAgora(id, "matinal")}
+                        disabled={!!enviando[`${id}-matinal`]}
+                        data-testid={`btn-enviar-matinal-${id}`}
                       >
-                        <Calendar className="w-3 h-3 mr-1" /> Diário
+                        <Sun className="w-3 h-3 mr-1" /> Manhã
                       </Button>
                       <Button
                         size="sm"
@@ -355,68 +386,128 @@ export default function MetasEquipePainel() {
 
                   {/* Painel de configuração de meta + desempenho */}
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
-                    {/* Inputs de meta + telegram */}
+                    {/* Inputs de meta + telegram (modo leitura por padrão, edição via lápis) */}
                     <div className="md:col-span-5 grid grid-cols-2 gap-2">
-                      <div>
-                        <p className="text-[10px] text-muted-foreground mb-1">Meta R$/mês</p>
-                        <Input
-                          value={draft.metaReais}
-                          onChange={(e) => atualizarDraft(id, { metaReais: e.target.value })}
-                          placeholder="0,00"
-                          className="h-8 text-xs"
-                          inputMode="decimal"
-                          data-testid={`input-meta-reais-${id}`}
-                        />
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-muted-foreground mb-1">Meta atendimentos/mês</p>
-                        <Input
-                          value={draft.metaAtendimentos}
-                          onChange={(e) => atualizarDraft(id, { metaAtendimentos: e.target.value.replace(/[^\d]/g, "") })}
-                          placeholder="0"
-                          className="h-8 text-xs"
-                          inputMode="numeric"
-                          data-testid={`input-meta-atend-${id}`}
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <p className="text-[10px] text-muted-foreground mb-1">Telegram chat_id</p>
-                        <Input
-                          value={draft.telegramChatId}
-                          onChange={(e) => atualizarDraft(id, { telegramChatId: e.target.value.replace(/[^\d-]/g, "") })}
-                          placeholder="ex: 123456789 — vazio usa chat principal"
-                          className="h-8 text-xs font-mono"
-                          inputMode="numeric"
-                          data-testid={`input-chat-id-${id}`}
-                        />
-                      </div>
-                      <div className="col-span-2 flex items-center justify-between gap-2 pt-1">
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={draft.ativoEnvio}
-                            onCheckedChange={(v) => atualizarDraft(id, { ativoEnvio: v })}
-                            data-testid={`switch-ativo-${id}`}
-                          />
-                          <span className="text-[11px] text-muted-foreground">Envio automático ativo</span>
-                        </div>
-                        <Button
-                          size="sm"
-                          className="h-7 text-[11px] px-2.5"
-                          onClick={() => salvarMeta(id)}
-                          disabled={!draft.dirty || draft.saving}
-                          data-testid={`btn-salvar-${id}`}
-                        >
-                          <Save className="w-3 h-3 mr-1" />
-                          {draft.saving ? "Salvando..." : draft.dirty ? "Salvar" : "Salvo"}
-                        </Button>
-                      </div>
-                      {feedback && feedback.id === id && (
-                        <div className={`col-span-2 text-[10px] flex items-center gap-1 ${
-                          feedback.type === "ok" ? "text-green-400" : "text-red-400"
-                        }`}>
-                          {feedback.type === "ok" ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
-                          {feedback.msg}
-                        </div>
+                      {!draft.editing ? (
+                        // ── Modo leitura ──
+                        <>
+                          <div className="col-span-2 grid grid-cols-2 gap-2">
+                            <div className="rounded-md border border-card-border/50 px-2 py-1.5 bg-background/30">
+                              <p className="text-[10px] text-muted-foreground">Meta R$/mês</p>
+                              <p className="text-xs font-semibold">{metaReaisNum > 0 ? fmtBRL(metaReaisNum) : <span className="text-muted-foreground">— não definida</span>}</p>
+                            </div>
+                            <div className="rounded-md border border-card-border/50 px-2 py-1.5 bg-background/30">
+                              <p className="text-[10px] text-muted-foreground">Meta atend./mês</p>
+                              <p className="text-xs font-semibold">{metaAtendNum > 0 ? metaAtendNum : <span className="text-muted-foreground">— não definida</span>}</p>
+                            </div>
+                          </div>
+                          <div className="col-span-2 rounded-md border border-card-border/50 px-2 py-1.5 bg-background/30">
+                            <p className="text-[10px] text-muted-foreground">Telegram chat_id</p>
+                            <p className="text-xs font-mono truncate">{draft.telegramChatId || <span className="text-muted-foreground font-sans">— vazio (usa chat principal)</span>}</p>
+                          </div>
+                          <div className="col-span-2 flex items-center justify-between gap-2 pt-1">
+                            <span className="text-[11px] text-muted-foreground">
+                              Envio automático:{" "}
+                              <span className={draft.ativoEnvio ? "text-green-400 font-semibold" : "text-amber-400 font-semibold"}>
+                                {draft.ativoEnvio ? "ATIVO" : "DESLIGADO"}
+                              </span>
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px] px-2.5"
+                              onClick={() => abrirEdicao(id)}
+                              data-testid={`btn-editar-${id}`}
+                            >
+                              <Pencil className="w-3 h-3 mr-1" /> Editar
+                            </Button>
+                          </div>
+                          {feedback && feedback.id === id && (
+                            <div className={`col-span-2 text-[10px] flex items-center gap-1 ${
+                              feedback.type === "ok" ? "text-green-400" : "text-red-400"
+                            }`}>
+                              {feedback.type === "ok" ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                              {feedback.msg}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        // ── Modo edição ──
+                        <>
+                          <div>
+                            <p className="text-[10px] text-muted-foreground mb-1">Meta R$/mês</p>
+                            <Input
+                              value={draft.metaReais}
+                              onChange={(e) => atualizarDraft(id, { metaReais: e.target.value })}
+                              placeholder="0,00"
+                              className="h-8 text-xs"
+                              inputMode="decimal"
+                              data-testid={`input-meta-reais-${id}`}
+                            />
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-muted-foreground mb-1">Meta atendimentos/mês</p>
+                            <Input
+                              value={draft.metaAtendimentos}
+                              onChange={(e) => atualizarDraft(id, { metaAtendimentos: e.target.value.replace(/[^\d]/g, "") })}
+                              placeholder="0"
+                              className="h-8 text-xs"
+                              inputMode="numeric"
+                              data-testid={`input-meta-atend-${id}`}
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-[10px] text-muted-foreground mb-1">Telegram chat_id</p>
+                            <Input
+                              value={draft.telegramChatId}
+                              onChange={(e) => atualizarDraft(id, { telegramChatId: e.target.value.replace(/[^\d-]/g, "") })}
+                              placeholder="ex: 123456789 — vazio usa chat principal"
+                              className="h-8 text-xs font-mono"
+                              inputMode="numeric"
+                              data-testid={`input-chat-id-${id}`}
+                            />
+                          </div>
+                          <div className="col-span-2 flex items-center justify-between gap-2 pt-1 flex-wrap">
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                checked={draft.ativoEnvio}
+                                onCheckedChange={(v) => atualizarDraft(id, { ativoEnvio: v })}
+                                data-testid={`switch-ativo-${id}`}
+                              />
+                              <span className="text-[11px] text-muted-foreground">Envio automático ativo</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-[11px] px-2.5"
+                                onClick={() => cancelarEdicao(id)}
+                                disabled={draft.saving}
+                                data-testid={`btn-cancelar-${id}`}
+                              >
+                                <X className="w-3 h-3 mr-1" /> Cancelar
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="h-7 text-[11px] px-2.5"
+                                onClick={() => salvarMeta(id)}
+                                disabled={draft.saving}
+                                data-testid={`btn-salvar-${id}`}
+                              >
+                                <Save className="w-3 h-3 mr-1" />
+                                {draft.saving ? "Salvando..." : "Salvar"}
+                              </Button>
+                            </div>
+                          </div>
+                          {feedback && feedback.id === id && (
+                            <div className={`col-span-2 text-[10px] flex items-center gap-1 ${
+                              feedback.type === "ok" ? "text-green-400" : "text-red-400"
+                            }`}>
+                              {feedback.type === "ok" ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                              {feedback.msg}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
 

@@ -1386,7 +1386,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-metas-individuais-v11a",
+      build: "2026-04-26-equipe-metas-individuais-v11b",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -4340,7 +4340,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         ...Object.keys(metas),
       ]);
 
-      const linhas = Array.from(idsTodos).map(id => {
+      const linhasRaw = Array.from(idsTodos).map(id => {
         const profDia = dia.porProfissional[id];
         const profSem = semana.porProfissional[id];
         const profMes = mesData.porProfissional[id];
@@ -4356,6 +4356,13 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
           posicaoMes: posicaoMap.get(id) || null,
           totalProfsRanking: totalProfsComMov,
         };
+      });
+      // Remove linhas "fantasma" (IDs históricos sem nome real e sem movimento e sem meta)
+      const linhas = linhasRaw.filter(l => {
+        if (l.meta) return true;
+        if (l.dia.count > 0 || l.semana.count > 0 || l.mes.count > 0) return true;
+        if (l.dia.reais > 0 || l.semana.reais > 0 || l.mes.reais > 0) return true;
+        return false;
       });
       linhas.sort((a, b) => b.mes.reais - a.mes.reais);
 

@@ -1386,7 +1386,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-metas-individuais-v11",
+      build: "2026-04-26-equipe-metas-individuais-v11a",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2147,15 +2147,17 @@ export async function registerRoutes(
       if (!nomeParaIdPrimario.has(norm(nome))) nomeParaIdPrimario.set(norm(nome), id);
     });
 
-    // ── Heurística ID legado → nome via cruzamento (data, clienteId) com agendamentos ──
+    // ── Heurística ID legado → nome via cruzamento (data, nomeCliente) com agendamentos ──
+    // IMPORTANTE: cliente.id difere entre /v1/agendamentos e /v1/transacoes (namespaces distintos).
+    // O nome do cliente normalizado é o pivot estável.
     type IdxKey = string;
     const idxAgendPorDataCliente = new Map<IdxKey, { nome: string }[]>();
     agendLista.forEach((ag: any) => {
       const dt = String(ag.dataHoraInicio || ag.data || "").slice(0, 10);
-      const cli = Number(ag.cliente?.id || 0);
+      const nomeCli = norm(ag.cliente?.nome);
       const nomeProf = (ag.profissional?.nome || ag.profissional?.apelido || "").trim();
-      if (!dt || !cli || !nomeProf) return;
-      const k = `${dt}|${cli}`;
+      if (!dt || !nomeCli || !nomeProf) return;
+      const k = `${dt}|${nomeCli}`;
       const arr = idxAgendPorDataCliente.get(k) || [];
       arr.push({ nome: nomeProf });
       idxAgendPorDataCliente.set(k, arr);
@@ -2163,9 +2165,9 @@ export async function registerRoutes(
     const freqNomePorIdLegado = new Map<string, Map<string, number>>();
     transLista.forEach((t: any) => {
       const dt = String(t.dataHora || "").slice(0, 10);
-      const cli = Number(t.cliente?.id || 0);
-      if (!dt || !cli) return;
-      const cands = idxAgendPorDataCliente.get(`${dt}|${cli}`);
+      const nomeCli = norm(t.cliente?.nome);
+      if (!dt || !nomeCli) return;
+      const cands = idxAgendPorDataCliente.get(`${dt}|${nomeCli}`);
       if (!cands || cands.length === 0) return;
       const idsLeg = new Set<string>();
       (t.produtos || []).forEach((p: any) => {

@@ -42,6 +42,7 @@ import {
 import { Link } from "wouter";
 import type { Barber } from "@shared/schema";
 import MetasEquipePainel from "@/components/equipe/MetasEquipePainel";
+import ConfigFinanceiraCard from "@/components/equipe/ConfigFinanceiraCard";
 
 // ─── Extended barber type for computed fields ────────────
 interface ComputedBarber extends Barber {
@@ -380,6 +381,9 @@ export default function Equipe() {
         </div>
         <AddBarberDialog />
       </div>
+
+      {/* ── Configuração financeira global (taxa cartão) ── */}
+      <ConfigFinanceiraCard />
 
       {/* ── Painel individual de metas e desempenho por profissional ── */}
       <MetasEquipePainel />

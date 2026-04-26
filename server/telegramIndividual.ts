@@ -33,8 +33,12 @@ export interface DesempenhoPeriodo {
   // Quebra item-a-item por dono real (serviço vs produto). Comissões diferentes!
   servicosReais?: number;
   servicosCount?: number;
+  servicosBruto?: number;
+  servicosLiquido?: number;
   produtosReais?: number;
   produtosCount?: number;
+  produtosBruto?: number;
+  produtosLiquido?: number;
 }
 
 export interface PayloadIndividual {

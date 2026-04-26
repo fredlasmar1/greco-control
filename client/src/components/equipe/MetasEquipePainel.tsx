@@ -57,10 +57,14 @@ interface PeriodoStats {
   planoReais: number;
   planoCount: number;
   // Quebra item-a-item por dono real (serviço vs produto). Comissões diferentes!
-  servicosReais?: number;
+  servicosReais?: number;     // == servicosLiquido (base de comissão)
   servicosCount?: number;
+  servicosBruto?: number;     // preço de tabela do item (sem desconto/taxa)
+  servicosLiquido?: number;   // bruto × fator(totalPagar/Σitens) × (1 - taxa×fraçãoCartão)
   produtosReais?: number;
   produtosCount?: number;
+  produtosBruto?: number;
+  produtosLiquido?: number;
 }
 
 interface MetasCalculadas {
@@ -634,32 +638,35 @@ export default function MetasEquipePainel() {
                               <div className="mt-1.5 space-y-0.5 border-t border-card-border/30 pt-1">
                                 <div className="flex items-center justify-between">
                                   <span className="text-[10px] text-sky-300/80">✂️ Serviços</span>
-                                  <span className="text-[10px] font-semibold text-sky-300">
-                                    {fmtBRL(realizado?.servicosReais || 0)}
+                                  <span className="text-[10px] font-semibold text-sky-300" title={`Bruto (preço tabela): ${fmtBRL(realizado?.servicosBruto || 0)} → Líquido após descontos/taxa: ${fmtBRL(realizado?.servicosLiquido || 0)}`}>
+                                    {fmtBRL(realizado?.servicosLiquido || realizado?.servicosReais || 0)}
                                     <span className="text-muted-foreground ml-1">({realizado?.servicosCount || 0})</span>
                                   </span>
                                 </div>
                                 <div className="flex items-center justify-between">
                                   <span className="text-[10px] text-orange-300/80">🛍️ Produtos</span>
-                                  <span className="text-[10px] font-semibold text-orange-300">
-                                    {fmtBRL(realizado?.produtosReais || 0)}
+                                  <span className="text-[10px] font-semibold text-orange-300" title={`Bruto (preço tabela): ${fmtBRL(realizado?.produtosBruto || 0)} → Líquido após descontos/taxa: ${fmtBRL(realizado?.produtosLiquido || 0)}`}>
+                                    {fmtBRL(realizado?.produtosLiquido || realizado?.produtosReais || 0)}
                                     <span className="text-muted-foreground ml-1">({realizado?.produtosCount || 0})</span>
                                   </span>
                                 </div>
-                                {/* Comissão estimada (só mostra se tem algum % cadastrado) */}
+                                {/* Comissão estimada (só mostra se tem algum % cadastrado) — sobre LÍQUIDO */}
                                 {(() => {
                                   const pctS = linha?.meta?.pctServico || 0;
                                   const pctP = linha?.meta?.pctProduto || 0;
                                   const pctL = linha?.meta?.pctPlano || 0;
                                   if (pctS === 0 && pctP === 0 && pctL === 0) return null;
-                                  const cS = (realizado?.servicosReais || 0) * (pctS / 100);
-                                  const cP = (realizado?.produtosReais || 0) * (pctP / 100);
-                                  const cL = (realizado?.planoReais   || 0) * (pctL / 100);
+                                  const baseS = realizado?.servicosLiquido ?? realizado?.servicosReais ?? 0;
+                                  const baseP = realizado?.produtosLiquido ?? realizado?.produtosReais ?? 0;
+                                  const baseL = realizado?.planoReais   || 0;
+                                  const cS = baseS * (pctS / 100);
+                                  const cP = baseP * (pctP / 100);
+                                  const cL = baseL * (pctL / 100);
                                   const tot = cS + cP + cL;
                                   return (
                                     <div className="mt-1 pt-1 border-t border-card-border/30 flex items-center justify-between">
                                       <span className="text-[10px] text-emerald-300/80 font-semibold">💵 Comissão estimada</span>
-                                      <span className="text-[11px] font-bold text-emerald-300" title={`Serviços: ${fmtBRL(cS)} (${pctS}%) • Produtos: ${fmtBRL(cP)} (${pctP}%) • Plano: ${fmtBRL(cL)} (${pctL}%)`}>
+                                      <span className="text-[11px] font-bold text-emerald-300" title={`Líquido base — Serviços: ${fmtBRL(cS)} (${pctS}% de ${fmtBRL(baseS)}) • Produtos: ${fmtBRL(cP)} (${pctP}% de ${fmtBRL(baseP)}) • Plano: ${fmtBRL(cL)} (${pctL}% de ${fmtBRL(baseL)})`}>
                                         {fmtBRL(tot)}
                                       </span>
                                     </div>

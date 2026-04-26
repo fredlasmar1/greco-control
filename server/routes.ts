@@ -27,6 +27,11 @@ import {
   type MetaProfissional,
 } from "./metasProfissional";
 import {
+  getConfig as getConfigFin,
+  setConfig as setConfigFin,
+  fracaoCartao,
+} from "./configFinanceira";
+import {
   montarResumoDiarioIndividual,
   montarResumoMatinalIndividual,
   montarResumoSemanalIndividual,
@@ -1387,7 +1392,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-v17",
+      build: "2026-04-26-equipe-v18",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2115,11 +2120,12 @@ export async function registerRoutes(
       profissionalId: string; nome: string; idsConhecidos: string[];
       avulso:    { reais: number; count: number };
       plano:     { reais: number; count: number };
-      servicos:  { reais: number; count: number };
-      produtos:  { reais: number; count: number };
+      servicos:  { reais: number; count: number; bruto: number; liquido: number };
+      produtos:  { reais: number; count: number; bruto: number; liquido: number };
       total:     { reais: number; count: number };
     }>;
-    totais: { reais: number; count: number; avulsoReais: number; avulsoCount: number; planoReais: number; planoCount: number; servicosReais: number; servicosCount: number; produtosReais: number; produtosCount: number };
+    totais: { reais: number; count: number; avulsoReais: number; avulsoCount: number; planoReais: number; planoCount: number; servicosReais: number; servicosCount: number; servicosBruto: number; servicosLiquido: number; produtosReais: number; produtosCount: number; produtosBruto: number; produtosLiquido: number };
+    config: { taxaCartaoPct: number };
     fetchedAt: string;
   }> {
     const cacheKey = `equipe-periodo:${dataInicio}:${dataFim}`;
@@ -2226,8 +2232,8 @@ export async function registerRoutes(
       profissionalId: string; nome: string; idsConhecidos: string[];
       avulso:    { reais: number; count: number };
       plano:     { reais: number; count: number };
-      servicos:  { reais: number; count: number };
-      produtos:  { reais: number; count: number };
+      servicos:  { reais: number; count: number; bruto: number; liquido: number };
+      produtos:  { reais: number; count: number; bruto: number; liquido: number };
       total:     { reais: number; count: number };
     }> = {};
     const ensureProf = (idPrim: string, nome: string, idOriginal: string) => {
@@ -2235,13 +2241,17 @@ export async function registerRoutes(
         profissionalId: idPrim, nome, idsConhecidos: [],
         avulso:    { reais: 0, count: 0 },
         plano:     { reais: 0, count: 0 },
-        servicos:  { reais: 0, count: 0 },
-        produtos:  { reais: 0, count: 0 },
+        servicos:  { reais: 0, count: 0, bruto: 0, liquido: 0 },
+        produtos:  { reais: 0, count: 0, bruto: 0, liquido: 0 },
         total:     { reais: 0, count: 0 },
       };
       if (idOriginal && !porProf[idPrim].idsConhecidos.includes(idOriginal)) porProf[idPrim].idsConhecidos.push(idOriginal);
       return porProf[idPrim];
     };
+
+    // Carrega taxa de cartao para descontar do liquido proporcionalmente.
+    const cfg = await getConfigFin();
+    const taxaCartao = (cfg.taxaCartaoPct || 0) / 100; // 0..1
 
     // Índice de nomes de cliente em transações por dia (p/ heurística de plano)
     const transKeysPorDia: Map<string, Set<string>> = new Map();
@@ -2292,29 +2302,48 @@ export async function registerRoutes(
       p.avulso.count += 1;
 
       // ── Quebra item-a-item por dono real (serviços × produtos) ──
-      // O dono do item pode ser DIFERENTE do profissional principal
-      // (ex.: barbeiro vendeu pomada num atendimento da recepção).
-      // Aqui somamos cada item ao SEU profissional verdadeiro.
+      // BRUTO   = soma de valorUnitario × quantidade (preço de tabela do item)
+      // LÍQUIDO = bruto × fator(totalPagar/Σitens) × (1 - taxaCartão × fraçãoCartão)
+      //   - fator absorve descontos/cortesias da transação
+      //   - taxa cartão só incide sobre a parcela que foi paga em cartão
+      const somaServicos = (t.servicos || []).reduce((a: number, s: any) => a + Number(s.preco || s.valor || 0), 0);
+      const somaProdutos = (t.produtos || []).reduce((a: number, pp: any) =>
+        a + (Number(pp.valorUnitario || pp.valor || 0) * Number(pp.quantidade || 1)), 0);
+      const somaItens = somaServicos + somaProdutos;
+      // Fator de proporção: se Σitens=0 (transação só com pacote/sem itens), usa 1.
+      const fator = somaItens > 0 && totalT > 0 ? totalT / somaItens : 1;
+      // Fração do totalPagar que veio em cartão (0..1)
+      const fCart = fracaoCartao(t.formasPagamentos || []);
+      // Multiplicador líquido depois da taxa cartão
+      const ajusteLiquido = fator * (1 - taxaCartao * fCart);
+
       (t.servicos || []).forEach((s: any) => {
         const profId = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
-        const valor = Number(s.preco || s.valor || 0);
-        if (!profId || valor <= 0) return;
+        const valorBruto = Number(s.preco || s.valor || 0);
+        if (!profId || valorBruto <= 0) return;
         const rs = resolveProf(profId);
         if (!rs) return;
         const ps = ensureProf(rs.idPrimario, rs.nome, profId);
-        ps.servicos.reais += valor;
-        ps.servicos.count += 1;
+        const valorLiquido = valorBruto * ajusteLiquido;
+        ps.servicos.bruto   += valorBruto;
+        ps.servicos.liquido += valorLiquido;
+        // 'reais' mantido para compatibilidade = liquido (base de comissão)
+        ps.servicos.reais   += valorLiquido;
+        ps.servicos.count   += 1;
       });
       (t.produtos || []).forEach((pp: any) => {
         const profId = String(pp.IdProfissionalQueRealizouAVenda || pp.idProfissionalQueRealizouAVenda || "");
         const qtd = Number(pp.quantidade || 1);
-        const valor = Number(pp.valorUnitario || pp.valor || 0) * qtd;
-        if (!profId || valor <= 0) return;
+        const valorBruto = Number(pp.valorUnitario || pp.valor || 0) * qtd;
+        if (!profId || valorBruto <= 0) return;
         const rp = resolveProf(profId);
         if (!rp) return;
         const pr = ensureProf(rp.idPrimario, rp.nome, profId);
-        pr.produtos.reais += valor;
-        pr.produtos.count += qtd;
+        const valorLiquido = valorBruto * ajusteLiquido;
+        pr.produtos.bruto   += valorBruto;
+        pr.produtos.liquido += valorLiquido;
+        pr.produtos.reais   += valorLiquido;
+        pr.produtos.count   += qtd;
       });
     });
 
@@ -2349,13 +2378,16 @@ export async function registerRoutes(
         avulsoReais: acc.avulsoReais + p.avulso.reais, avulsoCount: acc.avulsoCount + p.avulso.count,
         planoReais: acc.planoReais + p.plano.reais,   planoCount: acc.planoCount + p.plano.count,
         servicosReais: acc.servicosReais + p.servicos.reais, servicosCount: acc.servicosCount + p.servicos.count,
+        servicosBruto: acc.servicosBruto + p.servicos.bruto, servicosLiquido: acc.servicosLiquido + p.servicos.liquido,
         produtosReais: acc.produtosReais + p.produtos.reais, produtosCount: acc.produtosCount + p.produtos.count,
+        produtosBruto: acc.produtosBruto + p.produtos.bruto, produtosLiquido: acc.produtosLiquido + p.produtos.liquido,
       }),
-      { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, produtosReais: 0, produtosCount: 0 }
+      { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0, produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0 }
     );
 
     const result = {
       dataInicio, dataFim, porProfissional: porProf, totais,
+      config: { taxaCartaoPct: cfg.taxaCartaoPct || 0 },
       _diag: { profCount: profLista.length, agendCount: agendLista.length, transCount: transLista.length, idsLegMapeados: idLegadoParaNome.size },
       fetchedAt: new Date().toISOString(),
     };
@@ -4317,6 +4349,33 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   }
 
   // ─── EQUIPE: endpoints CRUD de metas ──────────────────────────────
+  // ─── Configuração financeira (taxa cartão global) ──────────
+  app.get("/api/config/financeira", async (_req: Request, res: Response) => {
+    try {
+      const cfg = await getConfigFin();
+      return res.json({ ok: true, config: cfg });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.put("/api/config/financeira", async (req: Request, res: Response) => {
+    try {
+      const body = req.body || {};
+      const cfg = await setConfigFin({
+        taxaCartaoPct: Number(body.taxaCartaoPct ?? 0),
+      });
+      // Invalida cache de equipe (por período + completo) pra refletir nova taxa imediatamente
+      try {
+        invalidateCache("equipe-desempenho-completo");
+        invalidateCache("equipe-periodo:");
+      } catch { /* ignore */ }
+      return res.json({ ok: true, config: cfg });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   app.get("/api/metas-profissional", async (_req: Request, res: Response) => {
     try {
       const [metas, profData] = await Promise.all([
@@ -4456,14 +4515,16 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         const profMes = mesData.porProfissional[id];
         const meta = metas[id];
         const nome = (profMes?.nome || profSem?.nome || profDia?.nome || meta?.nome || "—");
-        const z = { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, produtosReais: 0, produtosCount: 0 };
+        const z = { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0, produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0 };
         const metasCalc = calcularMetasProporcionais(meta || null);
         const mkObj = (p: any) => p ? {
           reais: p.total.reais, count: p.total.count,
           avulsoReais: p.avulso.reais, avulsoCount: p.avulso.count,
           planoReais: p.plano.reais, planoCount: p.plano.count,
           servicosReais: p.servicos.reais, servicosCount: p.servicos.count,
+          servicosBruto: p.servicos.bruto, servicosLiquido: p.servicos.liquido,
           produtosReais: p.produtos.reais, produtosCount: p.produtos.count,
+          produtosBruto: p.produtos.bruto, produtosLiquido: p.produtos.liquido,
         } : { ...z };
         const diaObj    = mkObj(profDia);
         const semanaObj = mkObj(profSem);
@@ -4497,6 +4558,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         ok: true,
         referencia: { hoje, semana: { dataInicio: semIni, dataFim: semFim }, mes, diasUteisTotal, diasUteisDecorridos },
         totais: { dia: dia.totais, semana: semana.totais, mes: mesData.totais },
+        config: { taxaCartaoPct: (mesData as any).config?.taxaCartaoPct || 0 },
         linhas,
         _diag: { dia: (dia as any)._diag, semana: (semana as any)._diag, mes: (mesData as any)._diag },
         fetchedAt: new Date().toISOString(),
@@ -4543,9 +4605,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     return {
       profissional: { id: profissionalId, nome: meta.nome },
       meta,
-      dia: profDia ? { dataReferencia: hoje, reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count, servicosReais: profDia.servicos.reais, servicosCount: profDia.servicos.count, produtosReais: profDia.produtos.reais, produtosCount: profDia.produtos.count } : undefined,
-      semana: profSem ? { dataInicio: semIni, dataFim: semFim, reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count, servicosReais: profSem.servicos.reais, servicosCount: profSem.servicos.count, produtosReais: profSem.produtos.reais, produtosCount: profSem.produtos.count } : undefined,
-      mes: profMes ? { mes, diasUteisDecorridos, diasUteisTotal, reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count, servicosReais: profMes.servicos.reais, servicosCount: profMes.servicos.count, produtosReais: profMes.produtos.reais, produtosCount: profMes.produtos.count } : undefined,
+      dia: profDia ? { dataReferencia: hoje, reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count, servicosReais: profDia.servicos.reais, servicosCount: profDia.servicos.count, servicosBruto: profDia.servicos.bruto, servicosLiquido: profDia.servicos.liquido, produtosReais: profDia.produtos.reais, produtosCount: profDia.produtos.count, produtosBruto: profDia.produtos.bruto, produtosLiquido: profDia.produtos.liquido } : undefined,
+      semana: profSem ? { dataInicio: semIni, dataFim: semFim, reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count, servicosReais: profSem.servicos.reais, servicosCount: profSem.servicos.count, servicosBruto: profSem.servicos.bruto, servicosLiquido: profSem.servicos.liquido, produtosReais: profSem.produtos.reais, produtosCount: profSem.produtos.count, produtosBruto: profSem.produtos.bruto, produtosLiquido: profSem.produtos.liquido } : undefined,
+      mes: profMes ? { mes, diasUteisDecorridos, diasUteisTotal, reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count, servicosReais: profMes.servicos.reais, servicosCount: profMes.servicos.count, servicosBruto: profMes.servicos.bruto, servicosLiquido: profMes.servicos.liquido, produtosReais: profMes.produtos.reais, produtosCount: profMes.produtos.count, produtosBruto: profMes.produtos.bruto, produtosLiquido: profMes.produtos.liquido } : undefined,
       posicaoEquipeMes,
     };
   }

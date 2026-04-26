@@ -1387,7 +1387,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-v14",
+      build: "2026-04-26-equipe-v15",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2594,15 +2594,28 @@ export async function registerRoutes(
       const forceRefresh = req.query.force === "true";
 
       // Check if we have a valid full sync cache
+      // CRÍTICO: validar que AMBOS agendamentos E transações têm dados.
+      // Se um deles está zerado em mes corrente, o cache foi corrompido por erro temporário do Trinks.
+      function cacheLooksHealthy(c: any): boolean {
+        if (!c) return false;
+        const ag = c.agendamentos?.length || 0;
+        const tr = c.transacoes?.length || 0;
+        // Em mes ativo, se ag>50 mas tr==0 (ou vice-versa), cache está quebrado.
+        // Tolera ambos zerados (início do mês ou estabelecimento sem movimento).
+        if (ag === 0 && tr === 0) return false;
+        if (ag > 50 && tr === 0) return false; // tem agend mas perdeu trans
+        if (tr > 50 && ag === 0) return false; // tem trans mas perdeu agend
+        return true;
+      }
+
       if (!forceRefresh) {
         const cachedSync = getCached("full_sync");
         if (cachedSync) {
-          const cacheHasData = (cachedSync.agendamentos?.length > 0 || cachedSync.transacoes?.length > 0);
-          if (cacheHasData) {
+          if (cacheLooksHealthy(cachedSync)) {
             log("Sync: returning cached data (use ?force=true to refresh)", "trinks");
             return res.json({ ...cachedSync, fromCache: true });
           } else {
-            log("Sync: memory cache has empty data, fetching fresh", "trinks");
+            log(`Sync: memory cache unhealthy (ag=${cachedSync.agendamentos?.length||0}, tr=${cachedSync.transacoes?.length||0}), fetching fresh`, "trinks");
             invalidateCache("full_sync");
           }
         }
@@ -2612,13 +2625,11 @@ export async function registerRoutes(
       if (!forceRefresh) {
         const diskCache = loadSyncCacheFromDisk();
         if (diskCache) {
-          // Only use disk cache if it has actual data
-          const diskHasData = (diskCache.agendamentos?.length > 0 || diskCache.transacoes?.length > 0);
-          if (diskHasData) {
+          if (cacheLooksHealthy(diskCache)) {
             setCache("full_sync", diskCache);
             return res.json({ ...diskCache, fromCache: true, fromDisk: true });
           } else {
-            log("Sync: disk cache has empty data, fetching fresh", "trinks");
+            log(`Sync: disk cache unhealthy (ag=${diskCache.agendamentos?.length||0}, tr=${diskCache.transacoes?.length||0}), fetching fresh`, "trinks");
           }
         }
       }
@@ -2678,13 +2689,19 @@ export async function registerRoutes(
 
       log(`Sync complete: ${syncResult.profissionais.length} profissionais, ${syncResult.servicos.length} servicos, ${syncResult.agendamentos.length} agendamentos, ${syncResult.transacoes.length} transacoes, ${syncResult.clientes.length} clientes`, "trinks");
 
-      // Only cache if we actually got data (avoid caching empty results)
-      const hasData = syncResult.agendamentos.length > 0 || syncResult.transacoes.length > 0;
-      if (hasData) {
+      // Only cache if we actually got data AND it's healthy
+      // (avoid persistir cache pela metade quando 1 dos fetches falha)
+      const ag = syncResult.agendamentos.length;
+      const tr = syncResult.transacoes.length;
+      const isHealthy = (ag > 0 && tr > 0) || (ag === 0 && tr === 0);
+      const hasAny = ag > 0 || tr > 0;
+      if (isHealthy && hasAny) {
         setCache("full_sync", syncResult);
         saveSyncCacheToDisk(syncResult);
+      } else if (!hasAny) {
+        log("Sync: skipping cache — agendamentos and transacoes both empty", "trinks");
       } else {
-        log("Sync: skipping cache — agendamentos and transacoes are empty", "trinks");
+        log(`Sync: skipping cache — unhealthy (ag=${ag}, tr=${tr}). Result still returned but not cached.`, "trinks");
       }
 
       return res.json(syncResult);

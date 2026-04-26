@@ -1387,7 +1387,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-v15",
+      build: "2026-04-26-equipe-v16",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2113,11 +2113,13 @@ export async function registerRoutes(
     dataInicio: string; dataFim: string;
     porProfissional: Record<string, {
       profissionalId: string; nome: string; idsConhecidos: string[];
-      avulso: { reais: number; count: number };
-      plano:  { reais: number; count: number };
-      total:  { reais: number; count: number };
+      avulso:    { reais: number; count: number };
+      plano:     { reais: number; count: number };
+      servicos:  { reais: number; count: number };
+      produtos:  { reais: number; count: number };
+      total:     { reais: number; count: number };
     }>;
-    totais: { reais: number; count: number; avulsoReais: number; avulsoCount: number; planoReais: number; planoCount: number };
+    totais: { reais: number; count: number; avulsoReais: number; avulsoCount: number; planoReais: number; planoCount: number; servicosReais: number; servicosCount: number; produtosReais: number; produtosCount: number };
     fetchedAt: string;
   }> {
     const cacheKey = `equipe-periodo:${dataInicio}:${dataFim}`;
@@ -2222,16 +2224,20 @@ export async function registerRoutes(
     // Agrega por idPrimario (canonico)
     const porProf: Record<string, {
       profissionalId: string; nome: string; idsConhecidos: string[];
-      avulso: { reais: number; count: number };
-      plano:  { reais: number; count: number };
-      total:  { reais: number; count: number };
+      avulso:    { reais: number; count: number };
+      plano:     { reais: number; count: number };
+      servicos:  { reais: number; count: number };
+      produtos:  { reais: number; count: number };
+      total:     { reais: number; count: number };
     }> = {};
     const ensureProf = (idPrim: string, nome: string, idOriginal: string) => {
       if (!porProf[idPrim]) porProf[idPrim] = {
         profissionalId: idPrim, nome, idsConhecidos: [],
-        avulso: { reais: 0, count: 0 },
-        plano:  { reais: 0, count: 0 },
-        total:  { reais: 0, count: 0 },
+        avulso:    { reais: 0, count: 0 },
+        plano:     { reais: 0, count: 0 },
+        servicos:  { reais: 0, count: 0 },
+        produtos:  { reais: 0, count: 0 },
+        total:     { reais: 0, count: 0 },
       };
       if (idOriginal && !porProf[idPrim].idsConhecidos.includes(idOriginal)) porProf[idPrim].idsConhecidos.push(idOriginal);
       return porProf[idPrim];
@@ -2284,6 +2290,32 @@ export async function registerRoutes(
       const p = ensureProf(r.idPrimario, r.nome, profPrincipal);
       p.avulso.reais += totalT;
       p.avulso.count += 1;
+
+      // ── Quebra item-a-item por dono real (serviços × produtos) ──
+      // O dono do item pode ser DIFERENTE do profissional principal
+      // (ex.: barbeiro vendeu pomada num atendimento da recepção).
+      // Aqui somamos cada item ao SEU profissional verdadeiro.
+      (t.servicos || []).forEach((s: any) => {
+        const profId = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
+        const valor = Number(s.preco || s.valor || 0);
+        if (!profId || valor <= 0) return;
+        const rs = resolveProf(profId);
+        if (!rs) return;
+        const ps = ensureProf(rs.idPrimario, rs.nome, profId);
+        ps.servicos.reais += valor;
+        ps.servicos.count += 1;
+      });
+      (t.produtos || []).forEach((pp: any) => {
+        const profId = String(pp.IdProfissionalQueRealizouAVenda || pp.idProfissionalQueRealizouAVenda || "");
+        const qtd = Number(pp.quantidade || 1);
+        const valor = Number(pp.valorUnitario || pp.valor || 0) * qtd;
+        if (!profId || valor <= 0) return;
+        const rp = resolveProf(profId);
+        if (!rp) return;
+        const pr = ensureProf(rp.idPrimario, rp.nome, profId);
+        pr.produtos.reais += valor;
+        pr.produtos.count += qtd;
+      });
     });
 
     // ── Plano: agendamentos Confirmado/Finalizado sem transação do mesmo cliente ──
@@ -2316,8 +2348,10 @@ export async function registerRoutes(
         reais: acc.reais + p.total.reais, count: acc.count + p.total.count,
         avulsoReais: acc.avulsoReais + p.avulso.reais, avulsoCount: acc.avulsoCount + p.avulso.count,
         planoReais: acc.planoReais + p.plano.reais,   planoCount: acc.planoCount + p.plano.count,
+        servicosReais: acc.servicosReais + p.servicos.reais, servicosCount: acc.servicosCount + p.servicos.count,
+        produtosReais: acc.produtosReais + p.produtos.reais, produtosCount: acc.produtosCount + p.produtos.count,
       }),
-      { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0 }
+      { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, produtosReais: 0, produtosCount: 0 }
     );
 
     const result = {
@@ -4412,11 +4446,18 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         const profMes = mesData.porProfissional[id];
         const meta = metas[id];
         const nome = (profMes?.nome || profSem?.nome || profDia?.nome || meta?.nome || "—");
-        const z = { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0 };
+        const z = { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, produtosReais: 0, produtosCount: 0 };
         const metasCalc = calcularMetasProporcionais(meta || null);
-        const diaObj    = profDia ? { reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count } : { ...z };
-        const semanaObj = profSem ? { reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count } : { ...z };
-        const mesObj    = profMes ? { reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count } : { ...z };
+        const mkObj = (p: any) => p ? {
+          reais: p.total.reais, count: p.total.count,
+          avulsoReais: p.avulso.reais, avulsoCount: p.avulso.count,
+          planoReais: p.plano.reais, planoCount: p.plano.count,
+          servicosReais: p.servicos.reais, servicosCount: p.servicos.count,
+          produtosReais: p.produtos.reais, produtosCount: p.produtos.count,
+        } : { ...z };
+        const diaObj    = mkObj(profDia);
+        const semanaObj = mkObj(profSem);
+        const mesObj    = mkObj(profMes);
         return {
           profissionalId: id, nome,
           meta: meta ? { metaReais: meta.metaReais, metaAtendimentos: meta.metaAtendimentos, telegramChatId: meta.telegramChatId, ativoEnvio: meta.ativoEnvio } : null,
@@ -4492,9 +4533,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     return {
       profissional: { id: profissionalId, nome: meta.nome },
       meta,
-      dia: profDia ? { dataReferencia: hoje, reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count } : undefined,
-      semana: profSem ? { dataInicio: semIni, dataFim: semFim, reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count } : undefined,
-      mes: profMes ? { mes, diasUteisDecorridos, diasUteisTotal, reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count } : undefined,
+      dia: profDia ? { dataReferencia: hoje, reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count, servicosReais: profDia.servicos.reais, servicosCount: profDia.servicos.count, produtosReais: profDia.produtos.reais, produtosCount: profDia.produtos.count } : undefined,
+      semana: profSem ? { dataInicio: semIni, dataFim: semFim, reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count, servicosReais: profSem.servicos.reais, servicosCount: profSem.servicos.count, produtosReais: profSem.produtos.reais, produtosCount: profSem.produtos.count } : undefined,
+      mes: profMes ? { mes, diasUteisDecorridos, diasUteisTotal, reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count, servicosReais: profMes.servicos.reais, servicosCount: profMes.servicos.count, produtosReais: profMes.produtos.reais, produtosCount: profMes.produtos.count } : undefined,
       posicaoEquipeMes,
     };
   }

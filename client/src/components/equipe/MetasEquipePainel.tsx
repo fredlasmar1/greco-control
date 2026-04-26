@@ -52,6 +52,11 @@ interface PeriodoStats {
   avulsoCount: number;
   planoReais: number;
   planoCount: number;
+  // Quebra item-a-item por dono real (serviço vs produto). Comissões diferentes!
+  servicosReais?: number;
+  servicosCount?: number;
+  produtosReais?: number;
+  produtosCount?: number;
 }
 
 interface MetasCalculadas {
@@ -540,6 +545,25 @@ export default function MetasEquipePainel() {
                               <p className="text-[10px] text-amber-400 mt-0.5">
                                 +{realizado?.planoCount} plano ({fmtBRL(realizado?.planoReais || 0)})
                               </p>
+                            )}
+                            {/* Serviços × Produtos: comissões diferentes — mostrar separado */}
+                            {((realizado?.servicosReais || 0) > 0 || (realizado?.produtosReais || 0) > 0) && (
+                              <div className="mt-1.5 space-y-0.5 border-t border-card-border/30 pt-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] text-sky-300/80">✂️ Serviços</span>
+                                  <span className="text-[10px] font-semibold text-sky-300">
+                                    {fmtBRL(realizado?.servicosReais || 0)}
+                                    <span className="text-muted-foreground ml-1">({realizado?.servicosCount || 0})</span>
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] text-orange-300/80">🛍️ Produtos</span>
+                                  <span className="text-[10px] font-semibold text-orange-300">
+                                    {fmtBRL(realizado?.produtosReais || 0)}
+                                    <span className="text-muted-foreground ml-1">({realizado?.produtosCount || 0})</span>
+                                  </span>
+                                </div>
+                              </div>
                             )}
                           </div>
                           <div>

@@ -30,6 +30,11 @@ export interface DesempenhoPeriodo {
   avulsoCount: number;
   planoReais: number;
   planoCount: number;
+  // Quebra item-a-item por dono real (serviço vs produto). Comissões diferentes!
+  servicosReais?: number;
+  servicosCount?: number;
+  produtosReais?: number;
+  produtosCount?: number;
 }
 
 export interface PayloadIndividual {

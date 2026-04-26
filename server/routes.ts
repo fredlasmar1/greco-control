@@ -1387,7 +1387,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-v12",
+      build: "2026-04-26-equipe-v13",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -4354,6 +4354,41 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         ...Object.keys(metas),
       ]);
 
+      // Helper para calcular metas proporcionais por dias úteis trabalhados
+      // Regra: meta diária = metaMensal / diasUteisTotal; meta semanal = diaria * 5
+      function calcularMetasProporcionais(meta: { metaReais: number; metaAtendimentos: number } | null) {
+        if (!meta || diasUteisTotal === 0) {
+          return {
+            mes: { reais: meta?.metaReais || 0, atend: meta?.metaAtendimentos || 0 },
+            semana: { reais: 0, atend: 0 },
+            dia: { reais: 0, atend: 0 },
+            diasUteisTotal,
+            diasUteisDecorridos,
+          };
+        }
+        const reaisDia = meta.metaReais / diasUteisTotal;
+        const atendDia = meta.metaAtendimentos / diasUteisTotal;
+        return {
+          mes: { reais: meta.metaReais, atend: meta.metaAtendimentos },
+          semana: { reais: reaisDia * 5, atend: atendDia * 5 },
+          dia: { reais: reaisDia, atend: atendDia },
+          diasUteisTotal,
+          diasUteisDecorridos,
+        };
+      }
+
+      function calcularStatus(realizado: { reais: number; count: number }, metaJanela: { reais: number; atend: number }) {
+        const temMeta = (metaJanela.reais > 0) || (metaJanela.atend > 0);
+        if (!temMeta) {
+          return { temMeta: false, percReais: 0, percAtend: 0, bateu: false, farol: "sem-meta" as const };
+        }
+        const pR = metaJanela.reais > 0 ? (realizado.reais / metaJanela.reais) * 100 : 0;
+        const pA = metaJanela.atend > 0 ? (realizado.count / metaJanela.atend) * 100 : 0;
+        // Bateu se atingiu a meta principal (R$). Se só tem meta de atendimentos, usa essa.
+        const bateu = metaJanela.reais > 0 ? pR >= 100 : pA >= 100;
+        return { temMeta: true, percReais: Math.round(pR * 10) / 10, percAtend: Math.round(pA * 10) / 10, bateu, farol: (bateu ? "verde" : "vermelho") as "verde" | "vermelho" };
+      }
+
       const linhasRaw = Array.from(idsTodos).map(id => {
         const profDia = dia.porProfissional[id];
         const profSem = semana.porProfissional[id];
@@ -4361,12 +4396,22 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         const meta = metas[id];
         const nome = (profMes?.nome || profSem?.nome || profDia?.nome || meta?.nome || "—");
         const z = { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0 };
+        const metasCalc = calcularMetasProporcionais(meta || null);
+        const diaObj    = profDia ? { reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count } : { ...z };
+        const semanaObj = profSem ? { reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count } : { ...z };
+        const mesObj    = profMes ? { reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count } : { ...z };
         return {
           profissionalId: id, nome,
           meta: meta ? { metaReais: meta.metaReais, metaAtendimentos: meta.metaAtendimentos, telegramChatId: meta.telegramChatId, ativoEnvio: meta.ativoEnvio } : null,
-          dia:    profDia ? { reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count } : { ...z },
-          semana: profSem ? { reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count } : { ...z },
-          mes:    profMes ? { reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count } : { ...z },
+          metasCalculadas: metasCalc,
+          dia: diaObj,
+          semana: semanaObj,
+          mes: mesObj,
+          status: {
+            dia: calcularStatus(diaObj, metasCalc.dia),
+            semana: calcularStatus(semanaObj, metasCalc.semana),
+            mes: calcularStatus(mesObj, metasCalc.mes),
+          },
           posicaoMes: posicaoMap.get(id) || null,
           totalProfsRanking: totalProfsComMov,
         };

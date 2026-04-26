@@ -42,6 +42,7 @@ import {
 import { Link } from "wouter";
 import type { Barber } from "@shared/schema";
 import MetasEquipePainel from "@/components/equipe/MetasEquipePainel";
+import AcompanhamentoConsolidado from "@/components/equipe/AcompanhamentoConsolidado";
 
 // ─── Extended barber type for computed fields ────────────
 interface ComputedBarber extends Barber {
@@ -381,7 +382,10 @@ export default function Equipe() {
         <AddBarberDialog />
       </div>
 
-      {/* ── Painel de Metas + Telegram individuais ── */}
+      {/* ── Acompanhamento consolidado da equipe (quem bateu / quem não bateu) ── */}
+      <AcompanhamentoConsolidado />
+
+      {/* ── Painel individual de metas e desempenho ── */}
       <MetasEquipePainel />
 
       {/* ── Demo mode warning ── */}

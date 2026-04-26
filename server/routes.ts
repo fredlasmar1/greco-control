@@ -22,6 +22,7 @@ import {
 } from "./telegram";
 import {
   getAllMetas,
+  getMeta,
   upsertMeta,
   deleteMeta,
   type MetaProfissional,
@@ -37,6 +38,18 @@ import {
   deleteOverride,
   lookupOverride,
 } from "./overridesItens";
+import {
+  getProdutosSemComissao,
+  setProdutosSemComissao,
+  sugerirSemComissao,
+} from "./produtosSemComissao";
+import {
+  getPagamentoMes,
+  getPagamentosDoMes,
+  upsertPagamentoMes,
+  fecharMes as fecharPagMes,
+  reabrirMes as reabrirPagMes,
+} from "./pagamentos";
 import {
   montarResumoDiarioIndividual,
   montarResumoMatinalIndividual,
@@ -1398,7 +1411,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-conciliacao-v19",
+      build: "2026-04-26-pagamento-v20",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2127,10 +2140,10 @@ export async function registerRoutes(
       avulso:    { reais: number; count: number };
       plano:     { reais: number; count: number };
       servicos:  { reais: number; count: number; bruto: number; liquido: number };
-      produtos:  { reais: number; count: number; bruto: number; liquido: number };
+      produtos:  { reais: number; count: number; bruto: number; liquido: number; liquidoComissionavel: number; brutoComissionavel: number };
       total:     { reais: number; count: number };
     }>;
-    totais: { reais: number; count: number; avulsoReais: number; avulsoCount: number; planoReais: number; planoCount: number; servicosReais: number; servicosCount: number; servicosBruto: number; servicosLiquido: number; produtosReais: number; produtosCount: number; produtosBruto: number; produtosLiquido: number };
+    totais: { reais: number; count: number; avulsoReais: number; avulsoCount: number; planoReais: number; planoCount: number; servicosReais: number; servicosCount: number; servicosBruto: number; servicosLiquido: number; produtosReais: number; produtosCount: number; produtosBruto: number; produtosLiquido: number; produtosLiquidoComissionavel: number; produtosBrutoComissionavel: number };
     config: { taxaCartaoPct: number };
     fetchedAt: string;
   }> {
@@ -2248,7 +2261,7 @@ export async function registerRoutes(
         avulso:    { reais: 0, count: 0 },
         plano:     { reais: 0, count: 0 },
         servicos:  { reais: 0, count: 0, bruto: 0, liquido: 0 },
-        produtos:  { reais: 0, count: 0, bruto: 0, liquido: 0 },
+        produtos:  { reais: 0, count: 0, bruto: 0, liquido: 0, liquidoComissionavel: 0, brutoComissionavel: 0 },
         total:     { reais: 0, count: 0 },
       };
       if (idOriginal && !porProf[idPrim].idsConhecidos.includes(idOriginal)) porProf[idPrim].idsConhecidos.push(idOriginal);
@@ -2262,6 +2275,11 @@ export async function registerRoutes(
     // Carrega overrides manuais de profissional por item (aba Conciliação).
     // Usado quando o Trinks não trouxe profId no item original.
     const overrides = await getOverrides();
+
+    // Lista de produtos que NÃO entram no cálculo de comissão (bebidas, doces).
+    // Bruto/Líquido continuam contando para rastreabilidade; o que muda é o
+    // valor que vai para a base de comissão do profissional.
+    const semComissao = await getProdutosSemComissao();
 
     // Índice de nomes de cliente em transações por dia (p/ heurística de plano)
     const transKeysPorDia: Map<string, Set<string>> = new Map();
@@ -2374,6 +2392,14 @@ export async function registerRoutes(
         pr.produtos.liquido += valorLiquido;
         pr.produtos.reais   += valorLiquido;
         pr.produtos.count   += qtd;
+        // Comissionável: exclui produtos marcados como "sem comissão"
+        // (bebidas, doces, snacks). Usado como base para cálculo de comissão
+        // de produto na aba Pagamento, mantendo bruto/líquido total intactos.
+        const produtoIdStr = String(pp.id || pp.produtoId || "");
+        if (produtoIdStr && !semComissao.has(produtoIdStr)) {
+          pr.produtos.brutoComissionavel   += valorBruto;
+          pr.produtos.liquidoComissionavel += valorLiquido;
+        }
       });
     });
 
@@ -2411,8 +2437,10 @@ export async function registerRoutes(
         servicosBruto: acc.servicosBruto + p.servicos.bruto, servicosLiquido: acc.servicosLiquido + p.servicos.liquido,
         produtosReais: acc.produtosReais + p.produtos.reais, produtosCount: acc.produtosCount + p.produtos.count,
         produtosBruto: acc.produtosBruto + p.produtos.bruto, produtosLiquido: acc.produtosLiquido + p.produtos.liquido,
+        produtosBrutoComissionavel: acc.produtosBrutoComissionavel + p.produtos.brutoComissionavel,
+        produtosLiquidoComissionavel: acc.produtosLiquidoComissionavel + p.produtos.liquidoComissionavel,
       }),
-      { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0, produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0 }
+      { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0, produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0, produtosBrutoComissionavel: 0, produtosLiquidoComissionavel: 0 }
     );
 
     const result = {
@@ -4741,6 +4769,379 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════════
+  // v20 — APIs de PAGAMENTO
+  // ═══════════════════════════════════════════════════════════════════
+
+  // GET /api/produtos/sem-comissao — lista produtos do Trinks + flag isSemComissao
+  app.get("/api/produtos/sem-comissao", async (_req: Request, res: Response) => {
+    try {
+      const [produtos, semComissao] = await Promise.all([
+        trinksFetchAll("produtos").catch(() => [] as any[]),
+        getProdutosSemComissao(),
+      ]);
+      const lista = (produtos || []).map((p: any) => ({
+        id: String(p.id),
+        nome: p.nome || p.descricao || "—",
+        valorVenda: Number(p.valorVenda || p.valorUnitario || 0),
+        isSemComissao: semComissao.has(String(p.id)),
+      })).sort((a: any, b: any) => a.nome.localeCompare(b.nome, "pt-BR"));
+      const sugestoes = sugerirSemComissao(produtos || []);
+      return res.json({
+        ok: true,
+        produtos: lista,
+        ids: Array.from(semComissao),
+        sugestoes,
+        total: lista.length,
+        totalSemComissao: lista.filter((p: any) => p.isSemComissao).length,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // PUT /api/produtos/sem-comissao — substitui a lista completa de IDs
+  app.put("/api/produtos/sem-comissao", async (req: Request, res: Response) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+      const lista = await setProdutosSemComissao(ids.map(String));
+      // Invalida caches de equipe pois a base de comissão muda.
+      try {
+        invalidateCache("equipe-desempenho-completo");
+        invalidateCache("equipe-periodo:");
+      } catch { /* ignore */ }
+      return res.json({ ok: true, ids: lista, total: lista.length });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Helper local: calcula linha de pagamento de um profissional para o mês.
+  // Retorna estrutura pronta para a UI/PDF.
+  async function calcularLinhaPagamento(
+    mes: string,
+    profissionalId: string,
+    profMes: any,
+    meta: any,
+    pagto: any,
+  ) {
+    const servicosLiquido = profMes?.servicos?.liquido || 0;
+    const produtosLiquidoComissionavel = profMes?.produtos?.liquidoComissionavel || 0;
+    const planoReais = profMes?.plano?.reais || 0;
+    const pctServico = Number(meta?.pctServico || 0);
+    const pctProduto = Number(meta?.pctProduto || 0);
+    const pctPlano = Number(meta?.pctPlano || 0);
+    const pctBonusExcedente = Number(meta?.pctBonusExcedente || 0);
+    const metaReais = Number(meta?.metaReais || 0);
+    const salarioFixo = Number(meta?.salarioFixo || 0);
+
+    const comissaoServicos = (servicosLiquido * pctServico) / 100;
+    const comissaoProdutos = (produtosLiquidoComissionavel * pctProduto) / 100;
+    const comissaoPlano = (planoReais * pctPlano) / 100;
+    const excedente = Math.max(0, servicosLiquido - metaReais);
+    const bonusExcedente = (excedente * pctBonusExcedente) / 100;
+    const totalBruto = comissaoServicos + comissaoProdutos + comissaoPlano + bonusExcedente + salarioFixo;
+
+    const vale = Number(pagto?.vale || 0);
+    const ajuste = Number(pagto?.ajuste || 0);
+    const saldoAReceber = totalBruto - vale + ajuste;
+
+    return {
+      profissionalId,
+      nome: profMes?.nome || meta?.nome || "—",
+      // Bases
+      bases: {
+        servicosLiquido,
+        produtosLiquidoComissionavel,
+        produtosLiquidoTotal: profMes?.produtos?.liquido || 0,
+        planoReais,
+      },
+      // Percentuais aplicados
+      percentuais: {
+        pctServico, pctProduto, pctPlano, pctBonusExcedente,
+        metaReais, salarioFixo,
+      },
+      // Componentes calculados
+      calculos: {
+        comissaoServicos,
+        comissaoProdutos,
+        comissaoPlano,
+        excedenteMeta: excedente,
+        bonusExcedente,
+        salarioFixo,
+        totalBruto,
+      },
+      // Estado mensal
+      pagamento: {
+        vale,
+        valeNota: pagto?.valeNota || "",
+        valePagoEm: pagto?.valePagoEm || null,
+        ajuste,
+        ajusteNota: pagto?.ajusteNota || "",
+        saldoAReceber,
+        fechado: !!pagto?.fechado,
+        fechadoEm: pagto?.fechadoEm || null,
+        snapshot: pagto?.snapshot || null,
+      },
+    };
+  }
+
+  // GET /api/pagamento/:mes — linha de pagamento de TODOS os profissionais com meta
+  app.get("/api/pagamento/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      const [y, m] = mes.split("-").map(Number);
+      const dataInicio = `${mes}-01`;
+      const ultimoDia = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
+      const dataFimReal = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+      const hoje = ymdHoje();
+      // Se o mês ainda está em curso, limita até hoje (não calcula no futuro).
+      const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
+
+      const [periodo, metas, pagamentosMes] = await Promise.all([
+        calcularPeriodoPorProfissional(dataInicio, dataFim),
+        getAllMetas(),
+        getPagamentosDoMes(mes),
+      ]);
+
+      const ids = new Set<string>();
+      Object.keys(periodo.porProfissional).forEach(id => ids.add(id));
+      Object.keys(metas).forEach(id => ids.add(id));
+
+      const linhas = await Promise.all(Array.from(ids).map(async (id) => {
+        const profMes = periodo.porProfissional[id];
+        const meta = metas[id];
+        const pagto = pagamentosMes[id];
+        return calcularLinhaPagamento(mes, id, profMes, meta, pagto);
+      }));
+
+      // Ordena por nome
+      linhas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
+      // Totais
+      const totais = linhas.reduce((acc, l) => ({
+        totalBruto: acc.totalBruto + l.calculos.totalBruto,
+        totalVale: acc.totalVale + l.pagamento.vale,
+        totalAjuste: acc.totalAjuste + l.pagamento.ajuste,
+        totalSaldo: acc.totalSaldo + l.pagamento.saldoAReceber,
+      }), { totalBruto: 0, totalVale: 0, totalAjuste: 0, totalSaldo: 0 });
+
+      return res.json({
+        ok: true,
+        mes,
+        dataInicio,
+        dataFim,
+        linhas,
+        totais,
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // PUT /api/pagamento/:mes/:profId — atualiza vale, ajuste, notas
+  app.put("/api/pagamento/:mes/:profId", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      const profId = String(req.params.profId || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      if (!profId) return res.status(400).json({ ok: false, error: "profId obrigatório" });
+      const { vale, valeNota, valePagoEm, ajuste, ajusteNota } = req.body || {};
+      const patch: any = {};
+      if (vale !== undefined) patch.vale = Math.max(0, Number(vale) || 0);
+      if (valeNota !== undefined) patch.valeNota = String(valeNota || "");
+      if (valePagoEm !== undefined) patch.valePagoEm = valePagoEm ? String(valePagoEm) : undefined;
+      if (ajuste !== undefined) patch.ajuste = Number(ajuste) || 0;
+      if (ajusteNota !== undefined) patch.ajusteNota = String(ajusteNota || "");
+      const novo = await upsertPagamentoMes(mes, profId, patch);
+      return res.json({ ok: true, pagamento: novo });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/pagamento/:mes/:profId/fechar — congela snapshot do mês
+  app.post("/api/pagamento/:mes/:profId/fechar", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      const profId = String(req.params.profId || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      const [y, m] = mes.split("-").map(Number);
+      const dataInicio = `${mes}-01`;
+      const ultimoDia = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
+      const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+      const [periodo, meta, pagto] = await Promise.all([
+        calcularPeriodoPorProfissional(dataInicio, dataFim),
+        getMeta(profId),
+        getPagamentoMes(mes, profId),
+      ]);
+      const profMes = periodo.porProfissional[profId];
+      if (!profMes && !meta) return res.status(404).json({ ok: false, error: "Profissional sem dados nem meta no mês" });
+      const linha = await calcularLinhaPagamento(mes, profId, profMes, meta, pagto);
+      const snapshot = {
+        servicosLiquido: linha.bases.servicosLiquido,
+        produtosLiquidoComissionavel: linha.bases.produtosLiquidoComissionavel,
+        planoReais: linha.bases.planoReais,
+        pctServico: linha.percentuais.pctServico,
+        pctProduto: linha.percentuais.pctProduto,
+        pctPlano: linha.percentuais.pctPlano,
+        pctBonusExcedente: linha.percentuais.pctBonusExcedente,
+        metaReais: linha.percentuais.metaReais,
+        salarioFixo: linha.percentuais.salarioFixo,
+        comissaoServicos: linha.calculos.comissaoServicos,
+        comissaoProdutos: linha.calculos.comissaoProdutos,
+        comissaoPlano: linha.calculos.comissaoPlano,
+        bonusExcedente: linha.calculos.bonusExcedente,
+        totalBruto: linha.calculos.totalBruto,
+        saldoAReceber: linha.pagamento.saldoAReceber,
+      };
+      const novo = await fecharPagMes(mes, profId, snapshot);
+      return res.json({ ok: true, pagamento: novo });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/pagamento/:mes/:profId/reabrir — destrava o snapshot
+  app.post("/api/pagamento/:mes/:profId/reabrir", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      const profId = String(req.params.profId || "");
+      const novo = await reabrirPagMes(mes, profId);
+      if (!novo) return res.status(404).json({ ok: false, error: "Pagamento não encontrado" });
+      return res.json({ ok: true, pagamento: novo });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/pagamento/:mes/recibo/:profId — gera PDF do holerite
+  app.get("/api/pagamento/:mes/recibo/:profId", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      const profId = String(req.params.profId || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      const [y, m] = mes.split("-").map(Number);
+      const dataInicio = `${mes}-01`;
+      const ultimoDia = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
+      const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+      const [periodo, meta, pagto] = await Promise.all([
+        calcularPeriodoPorProfissional(dataInicio, dataFim),
+        getMeta(profId),
+        getPagamentoMes(mes, profId),
+      ]);
+      const profMes = periodo.porProfissional[profId];
+      const linha = await calcularLinhaPagamento(mes, profId, profMes, meta, pagto);
+
+      // Se há snapshot fechado, prefere os valores travados (histórico fiel).
+      const snap = pagto?.snapshot;
+      const usarSnap = pagto?.fechado && snap;
+      const valor = (n: number) => `R$ ${n.toFixed(2).replace(".", ",")}`;
+      const mesLabel = (() => {
+        const meses = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+        return `${meses[m - 1]} de ${y}`;
+      })();
+
+      // PDF gerado com pdfkit (já dependência do projeto se existir, senão HTML imprimível)
+      let PDFDocument: any;
+      try {
+        PDFDocument = (await import("pdfkit")).default;
+      } catch {
+        // Fallback: HTML imprimível
+        const html = `<!doctype html><html><head><meta charset="utf-8"><title>Recibo ${linha.nome} ${mes}</title>
+<style>body{font-family:Arial,sans-serif;max-width:600px;margin:24px auto;padding:24px;color:#222}h1{margin:0 0 4px;font-size:18px}h2{margin:24px 0 8px;font-size:14px;border-bottom:1px solid #ccc;padding-bottom:4px}table{width:100%;border-collapse:collapse;margin-bottom:8px}td{padding:6px 8px;border-bottom:1px solid #eee;font-size:13px}td.r{text-align:right;font-variant-numeric:tabular-nums}.tot{font-weight:bold;background:#f5f5f5}.foot{margin-top:48px;border-top:1px solid #000;padding-top:8px;text-align:center;font-size:12px}.assin{margin-top:64px;border-top:1px solid #000;padding-top:4px;text-align:center;font-size:12px}</style></head><body>
+<h1>Greco Barbearia — Recibo de Pagamento</h1>
+<div>Profissional: <b>${linha.nome}</b> · Período: <b>${mesLabel}</b></div>
+${pagto?.fechado ? `<div style="font-size:11px;color:#666">Mês fechado em ${new Date(pagto.fechadoEm || "").toLocaleString("pt-BR")}</div>` : `<div style="font-size:11px;color:#a60">⚠ Prévia (mês não fechado)</div>`}
+<h2>Bases de cálculo</h2><table>
+<tr><td>Serviços (líquido)</td><td class="r">${valor(usarSnap ? snap!.servicosLiquido : linha.bases.servicosLiquido)}</td></tr>
+<tr><td>Produtos comissionáveis (líquido)</td><td class="r">${valor(usarSnap ? snap!.produtosLiquidoComissionavel : linha.bases.produtosLiquidoComissionavel)}</td></tr>
+<tr><td>Plano/assinatura</td><td class="r">${valor(usarSnap ? snap!.planoReais : linha.bases.planoReais)}</td></tr>
+</table>
+<h2>Componentes</h2><table>
+<tr><td>Comissão serviços (${linha.percentuais.pctServico}%)</td><td class="r">${valor(usarSnap ? snap!.comissaoServicos : linha.calculos.comissaoServicos)}</td></tr>
+<tr><td>Comissão produtos (${linha.percentuais.pctProduto}%)</td><td class="r">${valor(usarSnap ? snap!.comissaoProdutos : linha.calculos.comissaoProdutos)}</td></tr>
+<tr><td>Comissão plano (${linha.percentuais.pctPlano}%)</td><td class="r">${valor(usarSnap ? snap!.comissaoPlano : linha.calculos.comissaoPlano)}</td></tr>
+<tr><td>Bônus por exceder meta (${linha.percentuais.pctBonusExcedente}%)</td><td class="r">${valor(usarSnap ? snap!.bonusExcedente : linha.calculos.bonusExcedente)}</td></tr>
+${linha.percentuais.salarioFixo > 0 ? `<tr><td>Salário fixo</td><td class="r">${valor(linha.percentuais.salarioFixo)}</td></tr>` : ""}
+<tr class="tot"><td>Total bruto</td><td class="r">${valor(usarSnap ? snap!.totalBruto : linha.calculos.totalBruto)}</td></tr>
+</table>
+<h2>Pagamentos do mês</h2><table>
+<tr><td>(−) Vale do dia 15</td><td class="r">${valor(linha.pagamento.vale)}</td></tr>
+${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" : "−"}) Ajuste${linha.pagamento.ajusteNota ? " — " + linha.pagamento.ajusteNota : ""}</td><td class="r">${valor(Math.abs(linha.pagamento.ajuste))}</td></tr>` : ""}
+<tr class="tot"><td>Saldo a receber</td><td class="r">${valor(usarSnap ? snap!.saldoAReceber : linha.pagamento.saldoAReceber)}</td></tr>
+</table>
+<div class="assin">Recebi a importância acima descrita</div>
+<div class="foot">Greco Barbearia · Anápolis-GO · Emitido em ${new Date().toLocaleString("pt-BR")}</div>
+</body></html>`;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.send(html);
+      }
+
+      // Geração com pdfkit
+      const doc = new PDFDocument({ size: "A4", margin: 48 });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="recibo-${profId}-${mes}.pdf"`);
+      doc.pipe(res);
+      doc.fontSize(16).text("Greco Barbearia — Recibo de Pagamento", { align: "center" });
+      doc.moveDown(0.4);
+      doc.fontSize(11).text(`Profissional: ${linha.nome}`);
+      doc.text(`Período: ${mesLabel}`);
+      if (pagto?.fechado) doc.fillColor("#666").text(`Mês fechado em ${new Date(pagto.fechadoEm || "").toLocaleString("pt-BR")}`).fillColor("#000");
+      else doc.fillColor("#a60").text("⚠ Prévia (mês não fechado)").fillColor("#000");
+      doc.moveDown(0.6);
+
+      const linhaTab = (label: string, val: string, opts: any = {}) => {
+        const y0 = doc.y;
+        if (opts.bold) doc.font("Helvetica-Bold"); else doc.font("Helvetica");
+        doc.fontSize(opts.bold ? 12 : 11);
+        doc.text(label, 48, y0, { width: 350 });
+        doc.text(val, 48, y0, { width: 500, align: "right" });
+        doc.moveDown(0.3);
+      };
+
+      doc.fontSize(12).font("Helvetica-Bold").text("Bases de cálculo");
+      doc.moveDown(0.2);
+      linhaTab("Serviços (líquido)", valor(usarSnap ? snap!.servicosLiquido : linha.bases.servicosLiquido));
+      linhaTab("Produtos comissionáveis (líquido)", valor(usarSnap ? snap!.produtosLiquidoComissionavel : linha.bases.produtosLiquidoComissionavel));
+      linhaTab("Plano/assinatura", valor(usarSnap ? snap!.planoReais : linha.bases.planoReais));
+      doc.moveDown(0.4);
+
+      doc.fontSize(12).font("Helvetica-Bold").text("Componentes");
+      doc.moveDown(0.2);
+      linhaTab(`Comissão serviços (${linha.percentuais.pctServico}%)`, valor(usarSnap ? snap!.comissaoServicos : linha.calculos.comissaoServicos));
+      linhaTab(`Comissão produtos (${linha.percentuais.pctProduto}%)`, valor(usarSnap ? snap!.comissaoProdutos : linha.calculos.comissaoProdutos));
+      linhaTab(`Comissão plano (${linha.percentuais.pctPlano}%)`, valor(usarSnap ? snap!.comissaoPlano : linha.calculos.comissaoPlano));
+      linhaTab(`Bônus exceder meta (${linha.percentuais.pctBonusExcedente}%)`, valor(usarSnap ? snap!.bonusExcedente : linha.calculos.bonusExcedente));
+      if (linha.percentuais.salarioFixo > 0) linhaTab("Salário fixo", valor(linha.percentuais.salarioFixo));
+      linhaTab("Total bruto", valor(usarSnap ? snap!.totalBruto : linha.calculos.totalBruto), { bold: true });
+      doc.moveDown(0.4);
+
+      doc.fontSize(12).font("Helvetica-Bold").text("Pagamentos do mês");
+      doc.moveDown(0.2);
+      linhaTab("(−) Vale do dia 15", valor(linha.pagamento.vale));
+      if (linha.pagamento.ajuste !== 0) {
+        const sinal = linha.pagamento.ajuste >= 0 ? "+" : "−";
+        const labelAj = linha.pagamento.ajusteNota ? `(${sinal}) Ajuste — ${linha.pagamento.ajusteNota}` : `(${sinal}) Ajuste`;
+        linhaTab(labelAj, valor(Math.abs(linha.pagamento.ajuste)));
+      }
+      linhaTab("Saldo a receber", valor(usarSnap ? snap!.saldoAReceber : linha.pagamento.saldoAReceber), { bold: true });
+
+      doc.moveDown(2.4);
+      const yAss = doc.y;
+      doc.font("Helvetica").fontSize(11);
+      doc.text("_______________________________________________", 48, yAss, { align: "center" });
+      doc.text("Recebi a importância acima descrita", 48, yAss + 14, { align: "center" });
+      doc.fontSize(9).fillColor("#666");
+      doc.text(`Greco Barbearia · Anápolis-GO · Emitido em ${new Date().toLocaleString("pt-BR")}`, 48, yAss + 60, { align: "center" });
+      doc.end();
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // ─── EQUIPE: desempenho consolidado dia/semana/mês ────────────────
   app.get("/api/equipe/desempenho", async (_req: Request, res: Response) => {
     try {
@@ -4818,7 +5219,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         const profMes = mesData.porProfissional[id];
         const meta = metas[id];
         const nome = (profMes?.nome || profSem?.nome || profDia?.nome || meta?.nome || "—");
-        const z = { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0, produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0 };
+        const z = { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0, produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0, produtosBrutoComissionavel: 0, produtosLiquidoComissionavel: 0 };
         const metasCalc = calcularMetasProporcionais(meta || null);
         const mkObj = (p: any) => p ? {
           reais: p.total.reais, count: p.total.count,
@@ -4828,6 +5229,8 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
           servicosBruto: p.servicos.bruto, servicosLiquido: p.servicos.liquido,
           produtosReais: p.produtos.reais, produtosCount: p.produtos.count,
           produtosBruto: p.produtos.bruto, produtosLiquido: p.produtos.liquido,
+          produtosBrutoComissionavel: p.produtos.brutoComissionavel || 0,
+          produtosLiquidoComissionavel: p.produtos.liquidoComissionavel || 0,
         } : { ...z };
         const diaObj    = mkObj(profDia);
         const semanaObj = mkObj(profSem);
@@ -4908,9 +5311,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     return {
       profissional: { id: profissionalId, nome: meta.nome },
       meta,
-      dia: profDia ? { dataReferencia: hoje, reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count, servicosReais: profDia.servicos.reais, servicosCount: profDia.servicos.count, servicosBruto: profDia.servicos.bruto, servicosLiquido: profDia.servicos.liquido, produtosReais: profDia.produtos.reais, produtosCount: profDia.produtos.count, produtosBruto: profDia.produtos.bruto, produtosLiquido: profDia.produtos.liquido } : undefined,
-      semana: profSem ? { dataInicio: semIni, dataFim: semFim, reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count, servicosReais: profSem.servicos.reais, servicosCount: profSem.servicos.count, servicosBruto: profSem.servicos.bruto, servicosLiquido: profSem.servicos.liquido, produtosReais: profSem.produtos.reais, produtosCount: profSem.produtos.count, produtosBruto: profSem.produtos.bruto, produtosLiquido: profSem.produtos.liquido } : undefined,
-      mes: profMes ? { mes, diasUteisDecorridos, diasUteisTotal, reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count, servicosReais: profMes.servicos.reais, servicosCount: profMes.servicos.count, servicosBruto: profMes.servicos.bruto, servicosLiquido: profMes.servicos.liquido, produtosReais: profMes.produtos.reais, produtosCount: profMes.produtos.count, produtosBruto: profMes.produtos.bruto, produtosLiquido: profMes.produtos.liquido } : undefined,
+      dia: profDia ? { dataReferencia: hoje, reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count, servicosReais: profDia.servicos.reais, servicosCount: profDia.servicos.count, servicosBruto: profDia.servicos.bruto, servicosLiquido: profDia.servicos.liquido, produtosReais: profDia.produtos.reais, produtosCount: profDia.produtos.count, produtosBruto: profDia.produtos.bruto, produtosLiquido: profDia.produtos.liquido, produtosBrutoComissionavel: profDia.produtos.brutoComissionavel || 0, produtosLiquidoComissionavel: profDia.produtos.liquidoComissionavel || 0 } : undefined,
+      semana: profSem ? { dataInicio: semIni, dataFim: semFim, reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count, servicosReais: profSem.servicos.reais, servicosCount: profSem.servicos.count, servicosBruto: profSem.servicos.bruto, servicosLiquido: profSem.servicos.liquido, produtosReais: profSem.produtos.reais, produtosCount: profSem.produtos.count, produtosBruto: profSem.produtos.bruto, produtosLiquido: profSem.produtos.liquido, produtosBrutoComissionavel: profSem.produtos.brutoComissionavel || 0, produtosLiquidoComissionavel: profSem.produtos.liquidoComissionavel || 0 } : undefined,
+      mes: profMes ? { mes, diasUteisDecorridos, diasUteisTotal, reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count, servicosReais: profMes.servicos.reais, servicosCount: profMes.servicos.count, servicosBruto: profMes.servicos.bruto, servicosLiquido: profMes.servicos.liquido, produtosReais: profMes.produtos.reais, produtosCount: profMes.produtos.count, produtosBruto: profMes.produtos.bruto, produtosLiquido: profMes.produtos.liquido, produtosBrutoComissionavel: profMes.produtos.brutoComissionavel || 0, produtosLiquidoComissionavel: profMes.produtos.liquidoComissionavel || 0 } : undefined,
       posicaoEquipeMes,
     };
   }

@@ -13,8 +13,13 @@ export interface MetaProfissional {
   atualizadoEm: string;       // ISO timestamp
   // Percentuais de comissão (0-100) por categoria — default 0 (sem comissão)
   pctServico?: number;        // % sobre serviços
-  pctProduto?: number;        // % sobre produtos
+  pctProduto?: number;        // % sobre produtos (apenas comissionáveis — exclui bebidas/doces)
   pctPlano?: number;          // % sobre plano/assinatura
+  // Bônus de meta: % sobre o que excedeu a meta mensal (serviços).
+  // Ex: meta R$10k, fez R$12k, pctBonusExcedente=10 → bônus = R$2k * 10% = R$200
+  pctBonusExcedente?: number; // 0..100
+  // Salário fixo mensal somado ao saldo (default 0).
+  salarioFixo?: number;       // R$ por mês
 }
 
 const KV_KEY = "metas_profissional";
@@ -47,6 +52,8 @@ export async function upsertMeta(input: Partial<MetaProfissional> & { profission
     pctServico: 0,
     pctProduto: 0,
     pctPlano: 0,
+    pctBonusExcedente: 0,
+    salarioFixo: 0,
   };
   const novo: MetaProfissional = {
     ...atual,

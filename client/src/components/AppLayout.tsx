@@ -21,6 +21,7 @@ import {
   Crown,
   Package,
   GitMerge,
+  Wallet,
 } from "lucide-react";
 
 const navItems = [
@@ -34,6 +35,7 @@ const navItems = [
   { path: "/estoque", label: "Estoque", icon: Package },
   { path: "/consolidacao", label: "Consolidação", icon: Banknote },
   { path: "/conciliacao", label: "Conciliação", icon: GitMerge },
+  { path: "/pagamento", label: "Pagamento", icon: Wallet },
   { path: "/assinaturas", label: "Assinaturas", icon: Crown },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
   { path: "/metas", label: "Metas", icon: Target },

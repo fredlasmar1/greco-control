@@ -23,6 +23,7 @@ import ClientesDuplicados from "@/pages/ClientesDuplicados";
 import RaioX from "@/pages/RaioX";
 import Consolidacao from "@/pages/Consolidacao";
 import Conciliacao from "@/pages/Conciliacao";
+import Pagamento from "@/pages/Pagamento";
 import Assinaturas from "@/pages/Assinaturas";
 import Estoque from "@/pages/Estoque";
 import Login from "@/pages/Login";
@@ -57,6 +58,7 @@ function AdminRoutes() {
           <Route path="/estoque" component={Estoque} />
           <Route path="/consolidacao" component={Consolidacao} />
           <Route path="/conciliacao" component={Conciliacao} />
+          <Route path="/pagamento" component={Pagamento} />
           <Route path="/assinaturas" component={Assinaturas} />
           <Route path="/fechamento" component={Fechamento} />
           <Route path="/metas" component={Metas} />

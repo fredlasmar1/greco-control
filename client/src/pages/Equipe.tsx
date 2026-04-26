@@ -42,6 +42,7 @@ import {
 import { Link } from "wouter";
 import type { Barber } from "@shared/schema";
 import MetasEquipePainel from "@/components/equipe/MetasEquipePainel";
+import ProdutosSemComissaoCard from "@/components/equipe/ProdutosSemComissaoCard";
 import ConfigFinanceiraCard from "@/components/equipe/ConfigFinanceiraCard";
 
 // ─── Extended barber type for computed fields ────────────
@@ -384,6 +385,9 @@ export default function Equipe() {
 
       {/* ── Configuração financeira global (taxa cartão) ── */}
       <ConfigFinanceiraCard />
+
+      {/* ── v20: Produtos sem comissão (bebidas/doces) ── */}
+      <ProdutosSemComissaoCard />
 
       {/* ── Painel individual de metas e desempenho por profissional ── */}
       <MetasEquipePainel />

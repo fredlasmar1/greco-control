@@ -47,6 +47,9 @@ interface MetaApi {
   pctServico?: number;
   pctProduto?: number;
   pctPlano?: number;
+  // v20: bônus por meta + salário fixo
+  pctBonusExcedente?: number;
+  salarioFixo?: number;
 }
 
 interface PeriodoStats {
@@ -117,6 +120,9 @@ interface DraftMeta {
   pctServico: string;
   pctProduto: string;
   pctPlano: string;
+  // v20
+  pctBonusExcedente: string;
+  salarioFixo: string;
   dirty: boolean;
   saving: boolean;
   editing: boolean;
@@ -156,6 +162,8 @@ export default function MetasEquipePainel() {
             pctServico: String(meta.pctServico ?? 0),
             pctProduto: String(meta.pctProduto ?? 0),
             pctPlano: String(meta.pctPlano ?? 0),
+            pctBonusExcedente: String(meta.pctBonusExcedente ?? 0),
+            salarioFixo: String(meta.salarioFixo ?? 0),
             dirty: false,
             saving: false,
             editing,
@@ -195,6 +203,8 @@ export default function MetasEquipePainel() {
         pctServico: String(meta.pctServico ?? 0),
         pctProduto: String(meta.pctProduto ?? 0),
         pctPlano: String(meta.pctPlano ?? 0),
+        pctBonusExcedente: String(meta.pctBonusExcedente ?? 0),
+        salarioFixo: String(meta.salarioFixo ?? 0),
         dirty: false,
         editing: false,
       },
@@ -219,6 +229,8 @@ export default function MetasEquipePainel() {
           pctServico: Number(draft.pctServico.replace(",", ".") || 0),
           pctProduto: Number(draft.pctProduto.replace(",", ".") || 0),
           pctPlano: Number(draft.pctPlano.replace(",", ".") || 0),
+          pctBonusExcedente: Number((draft.pctBonusExcedente || "0").replace(",", ".") || 0),
+          salarioFixo: Number((draft.salarioFixo || "0").replace(",", ".") || 0),
         }),
       });
       const j = await r.json();
@@ -556,6 +568,36 @@ export default function MetasEquipePainel() {
                                   className="h-8 text-xs"
                                   inputMode="decimal"
                                   data-testid={`input-pct-plano-${id}`}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                          {/* v20: Bônus por meta + Salário fixo */}
+                          <div className="col-span-2 rounded-md border border-card-border/50 px-2 py-2 bg-background/30">
+                            <p className="text-[10px] text-muted-foreground mb-1.5 font-semibold">
+                              Bônus & Salário fixo (v20)
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <p className="text-[10px] text-emerald-300/80 mb-1">🎯 Bônus % sobre exceder meta</p>
+                                <Input
+                                  value={draft.pctBonusExcedente}
+                                  onChange={(e) => atualizarDraft(id, { pctBonusExcedente: e.target.value.replace(/[^\d.,]/g, "") })}
+                                  placeholder="0"
+                                  className="h-8 text-xs"
+                                  inputMode="decimal"
+                                  data-testid={`input-pct-bonus-${id}`}
+                                />
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-purple-300/80 mb-1">💰 Salário fixo (R$)</p>
+                                <Input
+                                  value={draft.salarioFixo}
+                                  onChange={(e) => atualizarDraft(id, { salarioFixo: e.target.value.replace(/[^\d.,]/g, "") })}
+                                  placeholder="0"
+                                  className="h-8 text-xs"
+                                  inputMode="decimal"
+                                  data-testid={`input-salario-fixo-${id}`}
                                 />
                               </div>
                             </div>

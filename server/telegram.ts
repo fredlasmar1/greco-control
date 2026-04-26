@@ -23,11 +23,14 @@ export function getChatId(): string {
  */
 export async function enviarMensagem(
   texto: string,
-  options: { parseMode?: "HTML" | "MarkdownV2"; disableWebPagePreview?: boolean } = {},
+  options: { parseMode?: "HTML" | "MarkdownV2"; disableWebPagePreview?: boolean; chatId?: string } = {},
 ): Promise<{ ok: boolean; error?: string; messageId?: number }> {
   if (!BOT_TOKEN) {
     return { ok: false, error: "TELEGRAM_BOT_TOKEN não configurado no ambiente" };
   }
+
+  // Se chatId fornecido (e não vazio), usa ele; senão cai no chat principal do dono.
+  const targetChatId = (options.chatId && String(options.chatId).trim()) ? String(options.chatId).trim() : CHAT_ID;
 
   try {
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
@@ -35,7 +38,7 @@ export async function enviarMensagem(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: CHAT_ID,
+        chat_id: targetChatId,
         text: texto,
         parse_mode: options.parseMode || "HTML",
         disable_web_page_preview: options.disableWebPagePreview ?? true,

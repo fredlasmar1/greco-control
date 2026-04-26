@@ -41,6 +41,7 @@ import {
 } from "recharts";
 import { Link } from "wouter";
 import type { Barber } from "@shared/schema";
+import MetasEquipePainel from "@/components/equipe/MetasEquipePainel";
 
 // ─── Extended barber type for computed fields ────────────
 interface ComputedBarber extends Barber {
@@ -379,6 +380,9 @@ export default function Equipe() {
         </div>
         <AddBarberDialog />
       </div>
+
+      {/* ── Painel de Metas + Telegram individuais ── */}
+      <MetasEquipePainel />
 
       {/* ── Demo mode warning ── */}
       {!hasTrinksData && (

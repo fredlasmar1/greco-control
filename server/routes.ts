@@ -20,6 +20,20 @@ import {
   type ResumoDiaData,
   type ResumoAmanhaData,
 } from "./telegram";
+import {
+  getAllMetas,
+  upsertMeta,
+  deleteMeta,
+  type MetaProfissional,
+} from "./metasProfissional";
+import {
+  montarResumoDiarioIndividual,
+  montarResumoSemanalIndividual,
+  montarResumoMensalIndividual,
+  enviarParaProfissional,
+  listarMetasAtivas,
+  type PayloadIndividual,
+} from "./telegramIndividual";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -1372,7 +1386,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-25-plano-assinatura-v10",
+      build: "2026-04-26-equipe-metas-individuais-v11",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2088,6 +2102,220 @@ export async function registerRoutes(
     const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
     const dataOntem = `${pick("year")}-${pick("month")}-${pick("day")}`;
     return calcularDiaCompleto(dataOntem);
+  }
+
+  // ─── Cálculo agregado por profissional em uma janela de tempo ─────────
+  // Usado pela aba Equipe (dia/semana/mês) e pelos resumos individuais.
+  // dataInicio e dataFim são YYYY-MM-DD inclusivos.
+  // Reusa a heurística de plano: agendamento Confirmado/Finalizado sem transação do mesmo cliente.
+  async function calcularPeriodoPorProfissional(dataInicio: string, dataFim: string): Promise<{
+    dataInicio: string; dataFim: string;
+    porProfissional: Record<string, {
+      profissionalId: string; nome: string; idsConhecidos: string[];
+      avulso: { reais: number; count: number };
+      plano:  { reais: number; count: number };
+      total:  { reais: number; count: number };
+    }>;
+    totais: { reais: number; count: number; avulsoReais: number; avulsoCount: number; planoReais: number; planoCount: number };
+    fetchedAt: string;
+  }> {
+    const cacheKey = `equipe-periodo:${dataInicio}:${dataFim}`;
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    // Trinks /v1/transacoes usa intervalo semi-aberto: [dataInicio, dataFim+1)
+    const transFim = ymdAddDays(dataFim, 1);
+    const [profData, agendData, transData] = await Promise.all([
+      trinksFetchAll("profissionais").catch(() => [] as any[]),
+      trinksFetchAll("agendamentos", { dataInicio, dataFim }).catch(() => [] as any[]),
+      trinksFetchAll("transacoes",   { dataInicio, dataFim: transFim }).catch(() => [] as any[]),
+    ]);
+    const profLista = Array.isArray(profData) ? profData : (profData?.data || []);
+    const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
+    const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
+
+    const norm = (s: any) => String(s || "").trim().toLowerCase();
+
+    // ── Mapa ID novo → nome canonico, e nome canonico → ID primário ──
+    const idNovoParaNome: Map<string, string> = new Map();
+    const nomeParaIdPrimario: Map<string, string> = new Map();
+    profLista.forEach((p: any) => {
+      const id = String(p.id);
+      const nome = (p.nome || p.apelido || "").trim();
+      if (!id || !nome) return;
+      idNovoParaNome.set(id, nome);
+      if (!nomeParaIdPrimario.has(norm(nome))) nomeParaIdPrimario.set(norm(nome), id);
+    });
+
+    // ── Heurística ID legado → nome via cruzamento (data, clienteId) com agendamentos ──
+    type IdxKey = string;
+    const idxAgendPorDataCliente = new Map<IdxKey, { nome: string }[]>();
+    agendLista.forEach((ag: any) => {
+      const dt = String(ag.dataHoraInicio || ag.data || "").slice(0, 10);
+      const cli = Number(ag.cliente?.id || 0);
+      const nomeProf = (ag.profissional?.nome || ag.profissional?.apelido || "").trim();
+      if (!dt || !cli || !nomeProf) return;
+      const k = `${dt}|${cli}`;
+      const arr = idxAgendPorDataCliente.get(k) || [];
+      arr.push({ nome: nomeProf });
+      idxAgendPorDataCliente.set(k, arr);
+    });
+    const freqNomePorIdLegado = new Map<string, Map<string, number>>();
+    transLista.forEach((t: any) => {
+      const dt = String(t.dataHora || "").slice(0, 10);
+      const cli = Number(t.cliente?.id || 0);
+      if (!dt || !cli) return;
+      const cands = idxAgendPorDataCliente.get(`${dt}|${cli}`);
+      if (!cands || cands.length === 0) return;
+      const idsLeg = new Set<string>();
+      (t.produtos || []).forEach((p: any) => {
+        const v = String(p.IdProfissionalQueRealizouAVenda || p.idProfissionalQueRealizouAVenda || "");
+        if (v) idsLeg.add(v);
+      });
+      (t.servicos || []).forEach((s: any) => {
+        const v = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
+        if (v) idsLeg.add(v);
+      });
+      idsLeg.forEach(idLeg => {
+        const mp = freqNomePorIdLegado.get(idLeg) || new Map<string, number>();
+        cands.forEach(c => {
+          const peso = cands.length === 1 ? 3 : 1;
+          mp.set(c.nome, (mp.get(c.nome) || 0) + peso);
+        });
+        freqNomePorIdLegado.set(idLeg, mp);
+      });
+    });
+    const idLegadoParaNome = new Map<string, string>();
+    freqNomePorIdLegado.forEach((freq, idLeg) => {
+      let melhorNome = ""; let melhorScore = 0;
+      freq.forEach((score, nome) => { if (score > melhorScore) { melhorScore = score; melhorNome = nome; } });
+      if (melhorNome) idLegadoParaNome.set(idLeg, melhorNome);
+    });
+
+    // Resolve qualquer ID (novo ou legado) → { nome, idPrimario }.
+    const resolveProf = (id: string): { nome: string; idPrimario: string } | null => {
+      if (!id) return null;
+      // 1º ID novo direto
+      const nomeNovo = idNovoParaNome.get(id);
+      if (nomeNovo) return { nome: nomeNovo, idPrimario: nomeParaIdPrimario.get(norm(nomeNovo)) || id };
+      // 2º ID legado mapeado por heurística
+      const nomeLeg = idLegadoParaNome.get(id);
+      if (nomeLeg) {
+        const idPrim = nomeParaIdPrimario.get(norm(nomeLeg)) || id;
+        return { nome: nomeLeg, idPrimario: idPrim };
+      }
+      // 3º desconhecido: usa o próprio ID
+      return { nome: `Profissional ${id}`, idPrimario: id };
+    };
+
+    // Agrega por idPrimario (canonico)
+    const porProf: Record<string, {
+      profissionalId: string; nome: string; idsConhecidos: string[];
+      avulso: { reais: number; count: number };
+      plano:  { reais: number; count: number };
+      total:  { reais: number; count: number };
+    }> = {};
+    const ensureProf = (idPrim: string, nome: string, idOriginal: string) => {
+      if (!porProf[idPrim]) porProf[idPrim] = {
+        profissionalId: idPrim, nome, idsConhecidos: [],
+        avulso: { reais: 0, count: 0 },
+        plano:  { reais: 0, count: 0 },
+        total:  { reais: 0, count: 0 },
+      };
+      if (idOriginal && !porProf[idPrim].idsConhecidos.includes(idOriginal)) porProf[idPrim].idsConhecidos.push(idOriginal);
+      return porProf[idPrim];
+    };
+
+    // Índice de nomes de cliente em transações por dia (p/ heurística de plano)
+    const transKeysPorDia: Map<string, Set<string>> = new Map();
+    transLista.forEach((t: any) => {
+      const dia = (t.dataHora || "").slice(0, 10);
+      if (!dia) return;
+      if (!transKeysPorDia.has(dia)) transKeysPorDia.set(dia, new Set());
+      const n = norm(t.cliente?.nome);
+      if (n) transKeysPorDia.get(dia)!.add(n);
+    });
+
+    // ── Avulso: distribui valor da transação entre profissionais dos itens ──
+    transLista.forEach((t: any) => {
+      const totalT = Number(t.totalPagar || 0);
+      const itens: { profId: string; valor: number }[] = [];
+      (t.produtos || []).forEach((p: any) => {
+        const profId = String(p.IdProfissionalQueRealizouAVenda || p.idProfissionalQueRealizouAVenda || "");
+        const valor = Number(p.valorUnitario || p.valor || 0) * Number(p.quantidade || 1);
+        if (profId) itens.push({ profId, valor });
+      });
+      (t.servicos || []).forEach((s: any) => {
+        const profId = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
+        const valor = Number(s.preco || s.valor || 0);
+        if (profId) itens.push({ profId, valor });
+      });
+      if (itens.length === 0) {
+        const profId = String(t.profissionalId || t.profissional?.id || "");
+        if (profId) {
+          const r = resolveProf(profId);
+          if (r) {
+            const p = ensureProf(r.idPrimario, r.nome, profId);
+            p.avulso.reais += totalT;
+            p.avulso.count += 1;
+          }
+        }
+        return;
+      }
+      const profPrincipal = itens[0].profId;
+      const somaValores = itens.reduce((s, i) => s + i.valor, 0) || 1;
+      const idsContados = new Set<string>();
+      itens.forEach(i => {
+        const r = resolveProf(i.profId);
+        if (!r) return;
+        const p = ensureProf(r.idPrimario, r.nome, i.profId);
+        const proporcao = i.valor / somaValores;
+        p.avulso.reais += totalT * proporcao;
+        // Conta 1 atendimento por idPrimario distinto na mesma comanda
+        if (i.profId === profPrincipal && !idsContados.has(r.idPrimario)) {
+          p.avulso.count += 1;
+          idsContados.add(r.idPrimario);
+        }
+      });
+    });
+
+    // ── Plano: agendamentos Confirmado/Finalizado sem transação do mesmo cliente ──
+    agendLista.forEach((a: any) => {
+      const status = (typeof a.status === "string" ? a.status : (a.status?.nome || a.status?.descricao || "")).toLowerCase();
+      if (!(status.includes("confirm") || status.includes("finaliz"))) return;
+      const dia = (a.dataHoraInicio || a.dataHora || "").slice(0, 10);
+      const nomeCli = norm(a.cliente?.nome);
+      const nomesDoDia = transKeysPorDia.get(dia);
+      if (nomeCli && nomesDoDia && nomesDoDia.has(nomeCli)) return;
+      const profId = String(a.profissionalId || a.profissional?.id || "");
+      if (!profId) return;
+      const r = resolveProf(profId);
+      if (!r) return;
+      const valor = Number(a.valor || a.valorTotal || 0)
+        || (Array.isArray(a.servicos) ? a.servicos.reduce((s: number, sv: any) => s + Number(sv.preco || sv.valor || 0), 0) : 0);
+      const p = ensureProf(r.idPrimario, r.nome, profId);
+      p.plano.reais += valor;
+      p.plano.count += 1;
+    });
+
+    // Totais consolidados por profissional
+    Object.values(porProf).forEach(p => {
+      p.total.reais = p.avulso.reais + p.plano.reais;
+      p.total.count = p.avulso.count + p.plano.count;
+    });
+
+    const totais = Object.values(porProf).reduce(
+      (acc, p) => ({
+        reais: acc.reais + p.total.reais, count: acc.count + p.total.count,
+        avulsoReais: acc.avulsoReais + p.avulso.reais, avulsoCount: acc.avulsoCount + p.avulso.count,
+        planoReais: acc.planoReais + p.plano.reais,   planoCount: acc.planoCount + p.plano.count,
+      }),
+      { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0 }
+    );
+
+    const result = { dataInicio, dataFim, porProfissional: porProf, totais, fetchedAt: new Date().toISOString() };
+    setCache(cacheKey, result, 3 * 60 * 1000); // cache 3min
+    return result;
   }
 
   // Função interna: retorna previsão do próximo dia útil (terça..sábado)
@@ -3985,6 +4213,264 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     }
   });
 
+  // ─── EQUIPE: helpers de janela de tempo (TZ America/Sao_Paulo) ─────
+  function ymdHoje(): string {
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    return fmt.format(new Date());
+  }
+  // Funcionamento: terça a sábado. Semana útil = terça..sábado da semana atual.
+  function janelaSemanaUtil(refYMD?: string): { dataInicio: string; dataFim: string } {
+    const hoje = refYMD || ymdHoje();
+    const [y, m, d] = hoje.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d, 12));
+    const dow = dt.getUTCDay(); // 0=dom, 1=seg, ..., 6=sab
+    let offsetTerca = dow - 2;
+    if (offsetTerca < 0) offsetTerca += 7;
+    const dataInicio = ymdAddDays(hoje, -offsetTerca);
+    return { dataInicio, dataFim: hoje };
+  }
+  function janelaMesAtual(refYMD?: string): { dataInicio: string; dataFim: string; mes: string } {
+    const hoje = refYMD || ymdHoje();
+    const [y, m] = hoje.split("-");
+    return { dataInicio: `${y}-${m}-01`, dataFim: hoje, mes: `${y}-${m}` };
+  }
+  function contarDiasUteis(dataInicio: string, dataFim: string): number {
+    const [y1, m1, d1] = dataInicio.split("-").map(Number);
+    const [y2, m2, d2] = dataFim.split("-").map(Number);
+    const ini = Date.UTC(y1, m1 - 1, d1, 12);
+    const fim = Date.UTC(y2, m2 - 1, d2, 12);
+    let count = 0;
+    for (let t = ini; t <= fim; t += 86400000) {
+      const dow = new Date(t).getUTCDay();
+      if (dow >= 2 && dow <= 6) count += 1;
+    }
+    return count;
+  }
+  function ultimoDiaDoMes(ymd: string): string {
+    const [y, m] = ymd.split("-").map(Number);
+    const last = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
+    return `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+  }
+
+  // ─── EQUIPE: endpoints CRUD de metas ──────────────────────────────
+  app.get("/api/metas-profissional", async (_req: Request, res: Response) => {
+    try {
+      const [metas, profData] = await Promise.all([
+        getAllMetas(),
+        trinksFetchAll("profissionais").catch(() => [] as any[]),
+      ]);
+      const profLista = Array.isArray(profData) ? profData : (profData?.data || []);
+      const lista: any[] = profLista.map((p: any) => {
+        const id = String(p.id);
+        const nome = (p.nome || p.apelido || "").trim();
+        const meta = metas[id] || {
+          profissionalId: id, nome, metaReais: 0, metaAtendimentos: 0,
+          telegramChatId: "", ativoEnvio: false, atualizadoEm: "",
+        };
+        return { ...meta, nome: nome || meta.nome };
+      });
+      const idsTrinks = new Set(profLista.map((p: any) => String(p.id)));
+      Object.values(metas).forEach((m) => { if (!idsTrinks.has(m.profissionalId)) lista.push(m); });
+      lista.sort((a: any, b: any) => (a.nome || "").localeCompare(b.nome || ""));
+      return res.json({ metas: lista });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.put("/api/metas-profissional/:id", async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const body = req.body || {};
+      const meta = await upsertMeta({
+        profissionalId: id,
+        nome: body.nome || "",
+        metaReais: Number(body.metaReais || 0),
+        metaAtendimentos: Number(body.metaAtendimentos || 0),
+        telegramChatId: String(body.telegramChatId || "").trim(),
+        ativoEnvio: !!body.ativoEnvio,
+      });
+      return res.json({ ok: true, meta });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.delete("/api/metas-profissional/:id", async (req: Request, res: Response) => {
+    try {
+      await deleteMeta(String(req.params.id));
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── EQUIPE: desempenho consolidado dia/semana/mês ────────────────
+  app.get("/api/equipe/desempenho", async (_req: Request, res: Response) => {
+    try {
+      const cacheKey = "equipe-desempenho-completo";
+      const cached = getCached(cacheKey);
+      if (cached) return res.json({ ...cached, fromCache: true });
+
+      const hoje = ymdHoje();
+      const { dataInicio: semIni, dataFim: semFim } = janelaSemanaUtil(hoje);
+      const { dataInicio: mesIni, dataFim: mesFim, mes } = janelaMesAtual(hoje);
+      const ultimoDia = ultimoDiaDoMes(hoje);
+      const diasUteisTotal = contarDiasUteis(`${mes}-01`, ultimoDia);
+      const diasUteisDecorridos = contarDiasUteis(`${mes}-01`, hoje);
+
+      const dia = await calcularPeriodoPorProfissional(hoje, hoje);
+      const semana = await calcularPeriodoPorProfissional(semIni, semFim);
+      const mesData = await calcularPeriodoPorProfissional(mesIni, mesFim);
+      const metas = await getAllMetas();
+
+      const profsMes = Object.values(mesData.porProfissional).sort((a, b) => b.total.reais - a.total.reais);
+      const totalProfsComMov = profsMes.length;
+      const posicaoMap = new Map<string, number>();
+      profsMes.forEach((p, i) => posicaoMap.set(p.profissionalId, i + 1));
+
+      const idsTodos = new Set<string>([
+        ...Object.keys(dia.porProfissional),
+        ...Object.keys(semana.porProfissional),
+        ...Object.keys(mesData.porProfissional),
+        ...Object.keys(metas),
+      ]);
+
+      const linhas = Array.from(idsTodos).map(id => {
+        const profDia = dia.porProfissional[id];
+        const profSem = semana.porProfissional[id];
+        const profMes = mesData.porProfissional[id];
+        const meta = metas[id];
+        const nome = (profMes?.nome || profSem?.nome || profDia?.nome || meta?.nome || "—");
+        const z = { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0 };
+        return {
+          profissionalId: id, nome,
+          meta: meta ? { metaReais: meta.metaReais, metaAtendimentos: meta.metaAtendimentos, telegramChatId: meta.telegramChatId, ativoEnvio: meta.ativoEnvio } : null,
+          dia:    profDia ? { reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count } : { ...z },
+          semana: profSem ? { reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count } : { ...z },
+          mes:    profMes ? { reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count } : { ...z },
+          posicaoMes: posicaoMap.get(id) || null,
+          totalProfsRanking: totalProfsComMov,
+        };
+      });
+      linhas.sort((a, b) => b.mes.reais - a.mes.reais);
+
+      const result = {
+        ok: true,
+        referencia: { hoje, semana: { dataInicio: semIni, dataFim: semFim }, mes, diasUteisTotal, diasUteisDecorridos },
+        totais: { dia: dia.totais, semana: semana.totais, mes: mesData.totais },
+        linhas,
+        fetchedAt: new Date().toISOString(),
+      };
+      setCache(cacheKey, result, 3 * 60 * 1000);
+      return res.json(result);
+    } catch (err: any) {
+      log(`[equipe/desempenho] erro: ${err.message}`, "equipe");
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── EQUIPE: helper p/ montar payload individual ──────────────────
+  async function montarPayloadIndividual(
+    profissionalId: string,
+    incluir: { dia?: boolean; semana?: boolean; mes?: boolean },
+  ): Promise<PayloadIndividual | null> {
+    const metas = await getAllMetas();
+    const meta = metas[profissionalId];
+    if (!meta) return null;
+
+    const hoje = ymdHoje();
+    const { dataInicio: semIni, dataFim: semFim } = janelaSemanaUtil(hoje);
+    const { dataInicio: mesIni, dataFim: mesFim, mes } = janelaMesAtual(hoje);
+    const ultimoDia = ultimoDiaDoMes(hoje);
+    const diasUteisTotal = contarDiasUteis(`${mes}-01`, ultimoDia);
+    const diasUteisDecorridos = contarDiasUteis(`${mes}-01`, hoje);
+
+    const diaData = incluir.dia    ? await calcularPeriodoPorProfissional(hoje, hoje)    : null;
+    const semData = incluir.semana ? await calcularPeriodoPorProfissional(semIni, semFim) : null;
+    const mesData = incluir.mes    ? await calcularPeriodoPorProfissional(mesIni, mesFim) : null;
+
+    const profDia = diaData?.porProfissional?.[profissionalId];
+    const profSem = semData?.porProfissional?.[profissionalId];
+    const profMes = mesData?.porProfissional?.[profissionalId];
+
+    let posicaoEquipeMes: { posicao: number; total: number } | undefined;
+    if (mesData) {
+      const ord = Object.values(mesData.porProfissional).sort((a, b) => b.total.reais - a.total.reais);
+      const idx = ord.findIndex(p => p.profissionalId === profissionalId);
+      if (idx >= 0) posicaoEquipeMes = { posicao: idx + 1, total: ord.length };
+    }
+
+    return {
+      profissional: { id: profissionalId, nome: meta.nome },
+      meta,
+      dia: profDia ? { dataReferencia: hoje, reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count } : undefined,
+      semana: profSem ? { dataInicio: semIni, dataFim: semFim, reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count } : undefined,
+      mes: profMes ? { mes, diasUteisDecorridos, diasUteisTotal, reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count } : undefined,
+      posicaoEquipeMes,
+    };
+  }
+
+  // POST /api/telegram/individual/:tipo/:id — envia para um profissional
+  app.post("/api/telegram/individual/:tipo/:id", async (req: Request, res: Response) => {
+    try {
+      const tipo = String(req.params.tipo).toLowerCase();
+      const id = String(req.params.id);
+      if (!["diario", "semanal", "mensal"].includes(tipo)) {
+        return res.status(400).json({ ok: false, error: `tipo inválido: ${tipo}` });
+      }
+      const incluir = tipo === "diario"  ? { dia: true,    mes: true } :
+                      tipo === "semanal" ? { semana: true, mes: true } :
+                                           { mes: true };
+      const payload = await montarPayloadIndividual(id, incluir);
+      if (!payload) return res.status(404).json({ ok: false, error: "meta não cadastrada para este profissional" });
+      const texto =
+        tipo === "diario"  ? montarResumoDiarioIndividual(payload) :
+        tipo === "semanal" ? montarResumoSemanalIndividual(payload) :
+                             montarResumoMensalIndividual(payload);
+      const r = await enviarParaProfissional(payload.meta, texto);
+      return res.json({ ...r, enviado: r.ok, preview: texto });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/telegram/individual/:tipo — envia para todos os ativos
+  app.post("/api/telegram/individual/:tipo", async (req: Request, res: Response) => {
+    try {
+      const tipo = String(req.params.tipo).toLowerCase();
+      if (!["diario", "semanal", "mensal"].includes(tipo)) {
+        return res.status(400).json({ ok: false, error: `tipo inválido: ${tipo}` });
+      }
+      const ativas = await listarMetasAtivas();
+      if (ativas.length === 0) return res.json({ ok: true, total: 0, results: [], aviso: "Nenhuma meta com envio ativo" });
+      const incluir = tipo === "diario"  ? { dia: true,    mes: true } :
+                      tipo === "semanal" ? { semana: true, mes: true } :
+                                           { mes: true };
+      const results: any[] = [];
+      for (const meta of ativas) {
+        try {
+          const payload = await montarPayloadIndividual(meta.profissionalId, incluir);
+          if (!payload) { results.push({ id: meta.profissionalId, ok: false, error: "sem payload" }); continue; }
+          const texto =
+            tipo === "diario"  ? montarResumoDiarioIndividual(payload) :
+            tipo === "semanal" ? montarResumoSemanalIndividual(payload) :
+                                 montarResumoMensalIndividual(payload);
+          const r = await enviarParaProfissional(meta, texto);
+          results.push({ id: meta.profissionalId, nome: meta.nome, ok: r.ok, viaProprio: r.viaProprio, error: r.error });
+        } catch (err: any) {
+          results.push({ id: meta.profissionalId, ok: false, error: err.message });
+        }
+        await new Promise(r => setTimeout(r, 250));
+      }
+      return res.json({ ok: true, total: ativas.length, results });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // ─── Scheduler (cron interno) ───────────────────────────────
   // Roda de terça a sábado (dia de funcionamento) em TZ America/Sao_Paulo
   // 8h — resumo da manhã; 20h — fechamento do dia
@@ -4021,7 +4507,76 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         }
       }, { timezone: "America/Sao_Paulo" });
 
-      log("[cron] schedulers Telegram ativos: 8h e 20h (terça a sábado)", "telegram");
+      // ─── Crons individuais por profissional (Equipe) ───
+      // Helper que dispara mensagem individual para todos ativos
+      async function dispararIndividualParaTodos(tipo: "diario" | "semanal" | "mensal") {
+        try {
+          const ativas = await listarMetasAtivas();
+          if (ativas.length === 0) {
+            log(`[cron] individual ${tipo}: nenhuma meta ativa`, "telegram");
+            return;
+          }
+          const incluir = tipo === "diario"  ? { dia: true,    mes: true } :
+                          tipo === "semanal" ? { semana: true, mes: true } :
+                                               { mes: true };
+          let okCount = 0, falhas = 0;
+          for (const meta of ativas) {
+            try {
+              const payload = await montarPayloadIndividual(meta.profissionalId, incluir);
+              if (!payload) { falhas++; continue; }
+              const texto =
+                tipo === "diario"  ? montarResumoDiarioIndividual(payload) :
+                tipo === "semanal" ? montarResumoSemanalIndividual(payload) :
+                                     montarResumoMensalIndividual(payload);
+              const r = await enviarParaProfissional(meta, texto);
+              if (r.ok) okCount++; else falhas++;
+            } catch (err: any) {
+              falhas++;
+              log(`[cron] individual ${tipo} ${meta.nome}: erro ${err.message}`, "telegram");
+            }
+            await new Promise(r => setTimeout(r, 300));
+          }
+          log(`[cron] individual ${tipo}: ${okCount}/${ativas.length} enviados (falhas: ${falhas})`, "telegram");
+        } catch (err: any) {
+          log(`[cron] individual ${tipo}: erro geral ${err.message}`, "telegram");
+        }
+      }
+
+      // Diário individual: ter-sáb 20h30 (após o fechamento geral das 20h)
+      cron.schedule("30 20 * * 2-6", async () => {
+        log("[cron] disparando resumo diário individual (Equipe)...", "telegram");
+        await dispararIndividualParaTodos("diario");
+      }, { timezone: "America/Sao_Paulo" });
+
+      // Semanal individual: sábado 21h
+      cron.schedule("0 21 * * 6", async () => {
+        log("[cron] disparando resumo semanal individual (Equipe)...", "telegram");
+        await dispararIndividualParaTodos("semanal");
+      }, { timezone: "America/Sao_Paulo" });
+
+      // Mensal individual: 28-31 do mês às 21h, ter-sáb,
+      // e só dispara se hoje for o último dia útil do mês.
+      cron.schedule("0 21 28-31 * 2-6", async () => {
+        const hoje = ymdHoje();
+        const ultimo = ultimoDiaDoMes(hoje);
+        // Avançar dia a dia a partir de hoje até o último dia do mês:
+        // se nenhum desses for dia útil (ter-sáb), então hoje é o último dia útil do mês.
+        const [y, m, d] = hoje.split("-").map(Number);
+        const [, , ld] = ultimo.split("-").map(Number);
+        let temDiaUtilDepois = false;
+        for (let dd = d + 1; dd <= ld; dd++) {
+          const dow = new Date(Date.UTC(y, m - 1, dd, 12)).getUTCDay();
+          if (dow >= 2 && dow <= 6) { temDiaUtilDepois = true; break; }
+        }
+        if (temDiaUtilDepois) {
+          log(`[cron] mensal individual pulado: ${hoje} não é o último dia útil`, "telegram");
+          return;
+        }
+        log(`[cron] disparando resumo mensal individual (último dia útil: ${hoje})...`, "telegram");
+        await dispararIndividualParaTodos("mensal");
+      }, { timezone: "America/Sao_Paulo" });
+
+      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + individual 20h30/sáb 21h/último dia útil 21h", "telegram");
     } catch (err: any) {
       log(`[cron] falha ao registrar schedulers: ${err.message}`, "telegram");
     }

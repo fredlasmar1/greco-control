@@ -4971,7 +4971,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n√
       const [y, m] = mes.split("-").map(Number);
       const dataInicio = `${mes}-01`;
       const ultimoDia = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
-      const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+      const dataFimReal = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+      const hoje = ymdHoje();
+      const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
       const [periodo, meta, pagto] = await Promise.all([
         calcularPeriodoPorProfissional(dataInicio, dataFim),
         getMeta(profId),
@@ -5026,7 +5028,10 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n√
       const [y, m] = mes.split("-").map(Number);
       const dataInicio = `${mes}-01`;
       const ultimoDia = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
-      const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+      const dataFimReal = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+      const hoje = ymdHoje();
+      // Mesma janela do GET /api/pagamento ‚Äî n√£o calcula plano de dias futuros.
+      const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
       const [periodo, meta, pagto] = await Promise.all([
         calcularPeriodoPorProfissional(dataInicio, dataFim),
         getMeta(profId),

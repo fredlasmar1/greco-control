@@ -43,6 +43,10 @@ interface MetaApi {
   telegramChatId: string;
   ativoEnvio: boolean;
   atualizadoEm: string;
+  // Percentuais de comissão (0-100). Default 0 (sem comissão).
+  pctServico?: number;
+  pctProduto?: number;
+  pctPlano?: number;
 }
 
 interface PeriodoStats {
@@ -78,7 +82,7 @@ interface StatusJanela {
 interface LinhaDesempenho {
   profissionalId: string;
   nome: string;
-  meta: { metaReais: number; metaAtendimentos: number; telegramChatId: string; ativoEnvio: boolean } | null;
+  meta: { metaReais: number; metaAtendimentos: number; telegramChatId: string; ativoEnvio: boolean; pctServico?: number; pctProduto?: number; pctPlano?: number } | null;
   metasCalculadas: MetasCalculadas;
   dia: PeriodoStats;
   semana: PeriodoStats;
@@ -106,6 +110,9 @@ interface DraftMeta {
   metaAtendimentos: string;
   telegramChatId: string;
   ativoEnvio: boolean;
+  pctServico: string;
+  pctProduto: string;
+  pctPlano: string;
   dirty: boolean;
   saving: boolean;
   editing: boolean;
@@ -142,6 +149,9 @@ export default function MetasEquipePainel() {
             metaAtendimentos: String(meta.metaAtendimentos || 0),
             telegramChatId: meta.telegramChatId || "",
             ativoEnvio: !!meta.ativoEnvio,
+            pctServico: String(meta.pctServico ?? 0),
+            pctProduto: String(meta.pctProduto ?? 0),
+            pctPlano: String(meta.pctPlano ?? 0),
             dirty: false,
             saving: false,
             editing,
@@ -178,6 +188,9 @@ export default function MetasEquipePainel() {
         metaAtendimentos: String(meta.metaAtendimentos || 0),
         telegramChatId: meta.telegramChatId || "",
         ativoEnvio: !!meta.ativoEnvio,
+        pctServico: String(meta.pctServico ?? 0),
+        pctProduto: String(meta.pctProduto ?? 0),
+        pctPlano: String(meta.pctPlano ?? 0),
         dirty: false,
         editing: false,
       },
@@ -199,6 +212,9 @@ export default function MetasEquipePainel() {
           metaAtendimentos: Number(draft.metaAtendimentos || 0),
           telegramChatId: draft.telegramChatId.trim(),
           ativoEnvio: draft.ativoEnvio,
+          pctServico: Number(draft.pctServico.replace(",", ".") || 0),
+          pctProduto: Number(draft.pctProduto.replace(",", ".") || 0),
+          pctPlano: Number(draft.pctPlano.replace(",", ".") || 0),
         }),
       });
       const j = await r.json();
@@ -382,6 +398,32 @@ export default function MetasEquipePainel() {
                               <p className="text-xs font-semibold">{metaAtendNum > 0 ? metaAtendNum : <span className="text-muted-foreground">— não definida</span>}</p>
                             </div>
                           </div>
+                          {/* Comissões cadastradas (só mostra se algum % > 0) */}
+                          {(() => {
+                            const pS = linha?.meta?.pctServico || 0;
+                            const pP = linha?.meta?.pctProduto || 0;
+                            const pL = linha?.meta?.pctPlano   || 0;
+                            if (pS === 0 && pP === 0 && pL === 0) return null;
+                            return (
+                              <div className="col-span-2 rounded-md border border-emerald-500/20 px-2 py-1.5 bg-emerald-500/5">
+                                <p className="text-[10px] text-emerald-300/80 mb-1 font-semibold">Comissões cadastradas</p>
+                                <div className="grid grid-cols-3 gap-1 text-[11px]">
+                                  <div className="text-center">
+                                    <span className="text-sky-300/80">✂️ Serv</span>
+                                    <p className="font-bold text-sky-300">{pS}%</p>
+                                  </div>
+                                  <div className="text-center">
+                                    <span className="text-orange-300/80">🛍️ Prod</span>
+                                    <p className="font-bold text-orange-300">{pP}%</p>
+                                  </div>
+                                  <div className="text-center">
+                                    <span className="text-amber-300/80">📅 Plano</span>
+                                    <p className="font-bold text-amber-300">{pL}%</p>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           {/* Metas derivadas (calculadas pelo backend) */}
                           {(metaReaisNum > 0 || metaAtendNum > 0) && (
                             <div className="col-span-2 rounded-md border border-card-border/50 px-2 py-1.5 bg-background/30">
@@ -473,6 +515,47 @@ export default function MetasEquipePainel() {
                               data-testid={`input-chat-id-${id}`}
                             />
                           </div>
+                          {/* Percentuais de comissão por categoria */}
+                          <div className="col-span-2 rounded-md border border-card-border/50 px-2 py-2 bg-background/30">
+                            <p className="text-[10px] text-muted-foreground mb-1.5 font-semibold">
+                              Comissões (% sobre o realizado)
+                            </p>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div>
+                                <p className="text-[10px] text-sky-300/80 mb-1">✂️ Serviço</p>
+                                <Input
+                                  value={draft.pctServico}
+                                  onChange={(e) => atualizarDraft(id, { pctServico: e.target.value.replace(/[^\d.,]/g, "") })}
+                                  placeholder="0"
+                                  className="h-8 text-xs"
+                                  inputMode="decimal"
+                                  data-testid={`input-pct-servico-${id}`}
+                                />
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-orange-300/80 mb-1">🛍️ Produto</p>
+                                <Input
+                                  value={draft.pctProduto}
+                                  onChange={(e) => atualizarDraft(id, { pctProduto: e.target.value.replace(/[^\d.,]/g, "") })}
+                                  placeholder="0"
+                                  className="h-8 text-xs"
+                                  inputMode="decimal"
+                                  data-testid={`input-pct-produto-${id}`}
+                                />
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-amber-300/80 mb-1">📅 Plano</p>
+                                <Input
+                                  value={draft.pctPlano}
+                                  onChange={(e) => atualizarDraft(id, { pctPlano: e.target.value.replace(/[^\d.,]/g, "") })}
+                                  placeholder="0"
+                                  className="h-8 text-xs"
+                                  inputMode="decimal"
+                                  data-testid={`input-pct-plano-${id}`}
+                                />
+                              </div>
+                            </div>
+                          </div>
                           <div className="col-span-2 flex items-center justify-between gap-2 pt-1 flex-wrap">
                             <div className="flex items-center gap-2">
                               <Switch
@@ -547,7 +630,7 @@ export default function MetasEquipePainel() {
                               </p>
                             )}
                             {/* Serviços × Produtos: comissões diferentes — mostrar separado */}
-                            {((realizado?.servicosReais || 0) > 0 || (realizado?.produtosReais || 0) > 0) && (
+                            {((realizado?.servicosReais || 0) > 0 || (realizado?.produtosReais || 0) > 0 || (realizado?.planoReais || 0) > 0) && (
                               <div className="mt-1.5 space-y-0.5 border-t border-card-border/30 pt-1">
                                 <div className="flex items-center justify-between">
                                   <span className="text-[10px] text-sky-300/80">✂️ Serviços</span>
@@ -563,6 +646,25 @@ export default function MetasEquipePainel() {
                                     <span className="text-muted-foreground ml-1">({realizado?.produtosCount || 0})</span>
                                   </span>
                                 </div>
+                                {/* Comissão estimada (só mostra se tem algum % cadastrado) */}
+                                {(() => {
+                                  const pctS = linha?.meta?.pctServico || 0;
+                                  const pctP = linha?.meta?.pctProduto || 0;
+                                  const pctL = linha?.meta?.pctPlano || 0;
+                                  if (pctS === 0 && pctP === 0 && pctL === 0) return null;
+                                  const cS = (realizado?.servicosReais || 0) * (pctS / 100);
+                                  const cP = (realizado?.produtosReais || 0) * (pctP / 100);
+                                  const cL = (realizado?.planoReais   || 0) * (pctL / 100);
+                                  const tot = cS + cP + cL;
+                                  return (
+                                    <div className="mt-1 pt-1 border-t border-card-border/30 flex items-center justify-between">
+                                      <span className="text-[10px] text-emerald-300/80 font-semibold">💵 Comissão estimada</span>
+                                      <span className="text-[11px] font-bold text-emerald-300" title={`Serviços: ${fmtBRL(cS)} (${pctS}%) • Produtos: ${fmtBRL(cP)} (${pctP}%) • Plano: ${fmtBRL(cL)} (${pctL}%)`}>
+                                        {fmtBRL(tot)}
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             )}
                           </div>

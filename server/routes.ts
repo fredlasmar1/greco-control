@@ -1387,7 +1387,7 @@ export async function registerRoutes(
   // GET /api/version ‚Äî identifica qual c√≥digo est√° rodando em produ√ß√£o
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-v16",
+      build: "2026-04-26-equipe-v17",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -4330,6 +4330,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n√
         const meta = metas[id] || {
           profissionalId: id, nome, metaReais: 0, metaAtendimentos: 0,
           telegramChatId: "", ativoEnvio: false, atualizadoEm: "",
+          pctServico: 0, pctProduto: 0, pctPlano: 0,
         };
         return { ...meta, nome: nome || meta.nome };
       });
@@ -4346,6 +4347,12 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n√
     try {
       const id = String(req.params.id);
       const body = req.body || {};
+      // Helper para clamp 0..100 nos percentuais
+      const clampPct = (v: any): number => {
+        const n = Number(v);
+        if (!isFinite(n) || isNaN(n)) return 0;
+        return Math.max(0, Math.min(100, n));
+      };
       const meta = await upsertMeta({
         profissionalId: id,
         nome: body.nome || "",
@@ -4353,6 +4360,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n√
         metaAtendimentos: Number(body.metaAtendimentos || 0),
         telegramChatId: String(body.telegramChatId || "").trim(),
         ativoEnvio: !!body.ativoEnvio,
+        pctServico: clampPct(body.pctServico),
+        pctProduto: clampPct(body.pctProduto),
+        pctPlano: clampPct(body.pctPlano),
       });
       return res.json({ ok: true, meta });
     } catch (err: any) {
@@ -4460,7 +4470,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n√
         const mesObj    = mkObj(profMes);
         return {
           profissionalId: id, nome,
-          meta: meta ? { metaReais: meta.metaReais, metaAtendimentos: meta.metaAtendimentos, telegramChatId: meta.telegramChatId, ativoEnvio: meta.ativoEnvio } : null,
+          meta: meta ? { metaReais: meta.metaReais, metaAtendimentos: meta.metaAtendimentos, telegramChatId: meta.telegramChatId, ativoEnvio: meta.ativoEnvio, pctServico: meta.pctServico || 0, pctProduto: meta.pctProduto || 0, pctPlano: meta.pctPlano || 0 } : null,
           metasCalculadas: metasCalc,
           dia: diaObj,
           semana: semanaObj,

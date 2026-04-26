@@ -11,6 +11,10 @@ export interface MetaProfissional {
   telegramChatId: string;     // chat_id próprio (vazio = cai no chat principal)
   ativoEnvio: boolean;        // se recebe resumos individuais
   atualizadoEm: string;       // ISO timestamp
+  // Percentuais de comissão (0-100) por categoria — default 0 (sem comissão)
+  pctServico?: number;        // % sobre serviços
+  pctProduto?: number;        // % sobre produtos
+  pctPlano?: number;          // % sobre plano/assinatura
 }
 
 const KV_KEY = "metas_profissional";
@@ -40,6 +44,9 @@ export async function upsertMeta(input: Partial<MetaProfissional> & { profission
     telegramChatId: "",
     ativoEnvio: false,
     atualizadoEm: new Date().toISOString(),
+    pctServico: 0,
+    pctProduto: 0,
+    pctPlano: 0,
   };
   const novo: MetaProfissional = {
     ...atual,

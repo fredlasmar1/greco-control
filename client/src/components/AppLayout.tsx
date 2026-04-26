@@ -20,6 +20,7 @@ import {
   Banknote,
   Crown,
   Package,
+  GitMerge,
 } from "lucide-react";
 
 const navItems = [
@@ -32,6 +33,7 @@ const navItems = [
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
   { path: "/estoque", label: "Estoque", icon: Package },
   { path: "/consolidacao", label: "Consolidação", icon: Banknote },
+  { path: "/conciliacao", label: "Conciliação", icon: GitMerge },
   { path: "/assinaturas", label: "Assinaturas", icon: Crown },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
   { path: "/metas", label: "Metas", icon: Target },

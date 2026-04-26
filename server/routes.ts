@@ -32,6 +32,12 @@ import {
   fracaoCartao,
 } from "./configFinanceira";
 import {
+  getOverrides,
+  setOverride,
+  deleteOverride,
+  lookupOverride,
+} from "./overridesItens";
+import {
   montarResumoDiarioIndividual,
   montarResumoMatinalIndividual,
   montarResumoSemanalIndividual,
@@ -1392,7 +1398,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-v18",
+      build: "2026-04-26-conciliacao-v19",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2253,6 +2259,10 @@ export async function registerRoutes(
     const cfg = await getConfigFin();
     const taxaCartao = (cfg.taxaCartaoPct || 0) / 100; // 0..1
 
+    // Carrega overrides manuais de profissional por item (aba Conciliação).
+    // Usado quando o Trinks não trouxe profId no item original.
+    const overrides = await getOverrides();
+
     // Índice de nomes de cliente em transações por dia (p/ heurística de plano)
     const transKeysPorDia: Map<string, Set<string>> = new Map();
     transLista.forEach((t: any) => {
@@ -2269,14 +2279,34 @@ export async function registerRoutes(
     transLista.forEach((t: any) => {
       const totalT = Number(t.totalPagar || 0);
       if (totalT === 0) return;
+      // Helper local: resolve profId aplicando override manual quando o original é vazio/skip.
+      // Retorna "" se item deve ser ignorado (skip=true ou sem override e sem profId).
+      const transId = String(t.id || "");
+      const profIdServico = (s: any, idx: number): string => {
+        const original = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
+        if (original) return original;
+        const ov = lookupOverride(overrides, transId, "s", idx);
+        if (!ov) return "";
+        if (ov.skip) return ""; // explicitamente ignorado
+        return ov.profissionalId || "";
+      };
+      const profIdProduto = (p: any, idx: number): string => {
+        const original = String(p.IdProfissionalQueRealizouAVenda || p.idProfissionalQueRealizouAVenda || "");
+        if (original) return original;
+        const ov = lookupOverride(overrides, transId, "p", idx);
+        if (!ov) return "";
+        if (ov.skip) return "";
+        return ov.profissionalId || "";
+      };
+
       const itens: { profId: string; valor: number; tipo: "servico" | "produto" }[] = [];
-      (t.servicos || []).forEach((s: any) => {
-        const profId = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
+      (t.servicos || []).forEach((s: any, i: number) => {
+        const profId = profIdServico(s, i);
         const valor = Number(s.preco || s.valor || 0);
         if (profId) itens.push({ profId, valor, tipo: "servico" });
       });
-      (t.produtos || []).forEach((p: any) => {
-        const profId = String(p.IdProfissionalQueRealizouAVenda || p.idProfissionalQueRealizouAVenda || "");
+      (t.produtos || []).forEach((p: any, i: number) => {
+        const profId = profIdProduto(p, i);
         const valor = Number(p.valorUnitario || p.valor || 0) * Number(p.quantidade || 1);
         if (profId) itens.push({ profId, valor, tipo: "produto" });
       });
@@ -2317,8 +2347,8 @@ export async function registerRoutes(
       // Multiplicador líquido depois da taxa cartão
       const ajusteLiquido = fator * (1 - taxaCartao * fCart);
 
-      (t.servicos || []).forEach((s: any) => {
-        const profId = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
+      (t.servicos || []).forEach((s: any, i: number) => {
+        const profId = profIdServico(s, i);
         const valorBruto = Number(s.preco || s.valor || 0);
         if (!profId || valorBruto <= 0) return;
         const rs = resolveProf(profId);
@@ -2331,8 +2361,8 @@ export async function registerRoutes(
         ps.servicos.reais   += valorLiquido;
         ps.servicos.count   += 1;
       });
-      (t.produtos || []).forEach((pp: any) => {
-        const profId = String(pp.IdProfissionalQueRealizouAVenda || pp.idProfissionalQueRealizouAVenda || "");
+      (t.produtos || []).forEach((pp: any, i: number) => {
+        const profId = profIdProduto(pp, i);
         const qtd = Number(pp.quantidade || 1);
         const valorBruto = Number(pp.valorUnitario || pp.valor || 0) * qtd;
         if (!profId || valorBruto <= 0) return;
@@ -4371,6 +4401,279 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         invalidateCache("equipe-periodo:");
       } catch { /* ignore */ }
       return res.json({ ok: true, config: cfg });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── CONCILIAÇÃO: órfãs + batimento diário caixa-vs-equipe ──────────────────
+  // Considera "órfão" um item (serviço ou produto) que veio do Trinks
+  // SEM profissional vinculado e que ainda não tem override manual (atribuída
+  // ou marcada como skip). Também retorna o batimento diário total Trinks vs
+  // soma da equipe para evidenciar divergências.
+  app.get("/api/conciliacao/orfas", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.query.mes || "").match(/^\d{4}-\d{2}$/)
+        ? String(req.query.mes)
+        : ymdHoje().slice(0, 7);
+      const dataInicio = `${mes}-01`;
+      const hoje = ymdHoje();
+      // Se mês atual: até hoje. Senão: até último dia do mês.
+      const dataFim = mes === hoje.slice(0, 7) ? hoje : ultimoDiaDoMes(`${mes}-01`);
+      const transFim = ymdAddDays(dataFim, 1);
+
+      const [transData, profData, overrides] = await Promise.all([
+        trinksFetchAll("transacoes", { dataInicio, dataFim: transFim }).catch(() => [] as any[]),
+        trinksFetchAll("profissionais").catch(() => [] as any[]),
+        getOverrides(),
+      ]);
+      const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
+      const profLista = Array.isArray(profData) ? profData : (profData?.data || []);
+
+      // Mapa id Trinks -> nome (só IDs novos cadastrados)
+      const profNome = new Map<string, string>();
+      profLista.forEach((p: any) => {
+        const id = String(p.id || "");
+        const nome = (p.nome || p.apelido || "").trim();
+        if (id && nome) profNome.set(id, nome);
+      });
+
+      // Agrega órfãs e batimento diário
+      type Orfa = {
+        transacaoId: string;
+        dataHora: string;
+        cliente: string;
+        tipo: "servico" | "produto";
+        index: number;
+        descricao: string;
+        valor: number;
+        // Se houver override aplicado, mostra o atual
+        overrideProfId?: string;
+        overrideProfNome?: string;
+        overrideSkip?: boolean;
+      };
+      const orfas: Orfa[] = [];
+      const batPorDia = new Map<string, { trinksTotal: number; trinksCount: number }>();
+
+      transLista.forEach((t: any) => {
+        const dia = String(t.dataHora || "").slice(0, 10);
+        const total = Number(t.totalPagar || 0);
+        const transId = String(t.id || "");
+        if (dia) {
+          const cur = batPorDia.get(dia) || { trinksTotal: 0, trinksCount: 0 };
+          cur.trinksTotal += total;
+          cur.trinksCount += 1;
+          batPorDia.set(dia, cur);
+        }
+        const nomeCli = String(t.cliente?.nome || "").trim();
+
+        (t.servicos || []).forEach((s: any, i: number) => {
+          const original = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
+          if (original) return; // tem dono, não é órfã
+          const valor = Number(s.preco || s.valor || 0);
+          if (valor <= 0) return; // ignora itens zerados (cortesia interna)
+          const ov = lookupOverride(overrides, transId, "s", i);
+          orfas.push({
+            transacaoId: transId,
+            dataHora: t.dataHora || "",
+            cliente: nomeCli,
+            tipo: "servico",
+            index: i,
+            descricao: s.nome || s.descricao || s.servico?.nome || "Serviço",
+            valor,
+            overrideProfId: ov?.profissionalId || undefined,
+            overrideProfNome: ov?.profissionalId ? profNome.get(ov.profissionalId) : undefined,
+            overrideSkip: ov?.skip || undefined,
+          });
+        });
+        (t.produtos || []).forEach((p: any, i: number) => {
+          const original = String(p.IdProfissionalQueRealizouAVenda || p.idProfissionalQueRealizouAVenda || "");
+          if (original) return;
+          const qtd = Number(p.quantidade || 1);
+          const valor = Number(p.valorUnitario || p.valor || 0) * qtd;
+          if (valor <= 0) return;
+          const ov = lookupOverride(overrides, transId, "p", i);
+          orfas.push({
+            transacaoId: transId,
+            dataHora: t.dataHora || "",
+            cliente: nomeCli,
+            tipo: "produto",
+            index: i,
+            descricao: p.descricao || p.produto?.nome || p.nome || "Produto",
+            valor,
+            overrideProfId: ov?.profissionalId || undefined,
+            overrideProfNome: ov?.profissionalId ? profNome.get(ov.profissionalId) : undefined,
+            overrideSkip: ov?.skip || undefined,
+          });
+        });
+      });
+
+      // Soma da equipe por dia: reagrega aqui só com totalPagar das transações
+      // que têm ao menos um item com profId (original ou via override).
+      // Mais barato que rodar calcularPeriodoPorProfissional só pra batimento.
+      const equipePorDia = new Map<string, number>();
+      transLista.forEach((t: any) => {
+        const dia = String(t.dataHora || "").slice(0, 10);
+        const total = Number(t.totalPagar || 0);
+        if (!dia || total === 0) return;
+        // Só conta no "equipe" se tem ao menos 1 item com profId resolvido (com ou sem override)
+        const transId = String(t.id || "");
+        let temDono = false;
+        (t.servicos || []).forEach((s: any, i: number) => {
+          const original = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
+          if (original) { temDono = true; return; }
+          const ov = lookupOverride(overrides, transId, "s", i);
+          if (ov && !ov.skip && ov.profissionalId) temDono = true;
+        });
+        if (!temDono) {
+          (t.produtos || []).forEach((p: any, i: number) => {
+            const original = String(p.IdProfissionalQueRealizouAVenda || p.idProfissionalQueRealizouAVenda || "");
+            if (original) { temDono = true; return; }
+            const ov = lookupOverride(overrides, transId, "p", i);
+            if (ov && !ov.skip && ov.profissionalId) temDono = true;
+          });
+        }
+        if (!temDono) return;
+        equipePorDia.set(dia, (equipePorDia.get(dia) || 0) + total);
+      });
+
+      const diasSet = new Set<string>();
+      Array.from(batPorDia.keys()).forEach(d => diasSet.add(d));
+      Array.from(equipePorDia.keys()).forEach(d => diasSet.add(d));
+      const dias = Array.from(diasSet).sort();
+      const batimento = dias.map(dia => {
+        const tk = batPorDia.get(dia) || { trinksTotal: 0, trinksCount: 0 };
+        const eq = equipePorDia.get(dia) || 0;
+        return {
+          dia,
+          trinksTotal: Math.round(tk.trinksTotal * 100) / 100,
+          trinksCount: tk.trinksCount,
+          equipeTotal: Math.round(eq * 100) / 100,
+          diferenca: Math.round((tk.trinksTotal - eq) * 100) / 100,
+        };
+      });
+
+      // Conta de órfãs pendentes (sem override válido)
+      const pendentes = orfas.filter(o => !o.overrideProfId && !o.overrideSkip).length;
+
+      return res.json({
+        ok: true,
+        mes,
+        periodo: { dataInicio, dataFim },
+        orfas,
+        pendentes,
+        totalOrfas: orfas.length,
+        valorOrfas: Math.round(orfas.reduce((s, o) => s + o.valor, 0) * 100) / 100,
+        batimento,
+        totaisPeriodo: {
+          trinksTotal: Math.round(batimento.reduce((s, b) => s + b.trinksTotal, 0) * 100) / 100,
+          equipeTotal: Math.round(batimento.reduce((s, b) => s + b.equipeTotal, 0) * 100) / 100,
+          diferenca: Math.round(batimento.reduce((s, b) => s + b.diferenca, 0) * 100) / 100,
+        },
+        // util p/ frontend popular o select de profissionais
+        profissionais: profLista.map((p: any) => ({
+          id: String(p.id),
+          nome: (p.nome || p.apelido || "").trim(),
+        })).filter((p: any) => p.nome).sort((a: any, b: any) => a.nome.localeCompare(b.nome)),
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      log(`[conciliacao/orfas] erro: ${err.message}`, "conciliacao");
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/conciliacao/status?mes=YYYY-MM — leve, só conta. Usado para gate.
+  app.get("/api/conciliacao/status", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.query.mes || "").match(/^\d{4}-\d{2}$/)
+        ? String(req.query.mes)
+        : ymdHoje().slice(0, 7);
+      const dataInicio = `${mes}-01`;
+      const hoje = ymdHoje();
+      const dataFim = mes === hoje.slice(0, 7) ? hoje : ultimoDiaDoMes(`${mes}-01`);
+      const transFim = ymdAddDays(dataFim, 1);
+      const [transData, overrides] = await Promise.all([
+        trinksFetchAll("transacoes", { dataInicio, dataFim: transFim }).catch(() => [] as any[]),
+        getOverrides(),
+      ]);
+      const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
+      let pendentes = 0;
+      let valorPendente = 0;
+      transLista.forEach((t: any) => {
+        const transId = String(t.id || "");
+        (t.servicos || []).forEach((s: any, i: number) => {
+          const original = String(s.idProfissionalQueRealizouServico || s.IdProfissionalQueRealizouOServico || "");
+          if (original) return;
+          const valor = Number(s.preco || s.valor || 0);
+          if (valor <= 0) return;
+          const ov = lookupOverride(overrides, transId, "s", i);
+          if (ov && (ov.skip || ov.profissionalId)) return;
+          pendentes += 1; valorPendente += valor;
+        });
+        (t.produtos || []).forEach((p: any, i: number) => {
+          const original = String(p.IdProfissionalQueRealizouAVenda || p.idProfissionalQueRealizouAVenda || "");
+          if (original) return;
+          const qtd = Number(p.quantidade || 1);
+          const valor = Number(p.valorUnitario || p.valor || 0) * qtd;
+          if (valor <= 0) return;
+          const ov = lookupOverride(overrides, transId, "p", i);
+          if (ov && (ov.skip || ov.profissionalId)) return;
+          pendentes += 1; valorPendente += valor;
+        });
+      });
+      return res.json({
+        ok: true,
+        mes,
+        pendentes,
+        valorPendente: Math.round(valorPendente * 100) / 100,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // PUT /api/conciliacao/atribuir — grava override de um item específico
+  app.put("/api/conciliacao/atribuir", async (req: Request, res: Response) => {
+    try {
+      const { transacaoId, tipo, index, profissionalId, skip } = req.body || {};
+      if (!transacaoId) return res.status(400).json({ ok: false, error: "transacaoId obrigatório" });
+      if (tipo !== "s" && tipo !== "p") return res.status(400).json({ ok: false, error: "tipo deve ser 's' ou 'p'" });
+      const idx = Number(index);
+      if (!isFinite(idx) || idx < 0) return res.status(400).json({ ok: false, error: "index inválido" });
+      if (!skip && !profissionalId) return res.status(400).json({ ok: false, error: "profissionalId obrigatório quando skip=false" });
+      const item = await setOverride(
+        String(transacaoId),
+        tipo as "s" | "p",
+        idx,
+        skip ? "" : String(profissionalId),
+        { skip: !!skip },
+      );
+      // Invalida caches de equipe pra refletir override imediatamente
+      try {
+        invalidateCache("equipe-desempenho-completo");
+        invalidateCache("equipe-periodo:");
+      } catch { /* ignore */ }
+      return res.json({ ok: true, override: item });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // DELETE /api/conciliacao/atribuir — remove override (volta a ser órfão)
+  app.delete("/api/conciliacao/atribuir", async (req: Request, res: Response) => {
+    try {
+      const { transacaoId, tipo, index } = req.body || {};
+      if (!transacaoId) return res.status(400).json({ ok: false, error: "transacaoId obrigatório" });
+      if (tipo !== "s" && tipo !== "p") return res.status(400).json({ ok: false, error: "tipo deve ser 's' ou 'p'" });
+      const idx = Number(index);
+      if (!isFinite(idx) || idx < 0) return res.status(400).json({ ok: false, error: "index inválido" });
+      await deleteOverride(String(transacaoId), tipo as "s" | "p", idx);
+      try {
+        invalidateCache("equipe-desempenho-completo");
+        invalidateCache("equipe-periodo:");
+      } catch { /* ignore */ }
+      return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }

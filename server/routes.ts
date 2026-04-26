@@ -1386,7 +1386,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-equipe-metas-individuais-v11b",
+      build: "2026-04-26-equipe-metas-individuais-v11c",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2125,11 +2125,19 @@ export async function registerRoutes(
 
     // Trinks /v1/transacoes usa intervalo semi-aberto: [dataInicio, dataFim+1)
     const transFim = ymdAddDays(dataFim, 1);
-    const [profData, agendData, transData] = await Promise.all([
-      trinksFetchAll("profissionais").catch(() => [] as any[]),
-      trinksFetchAll("agendamentos", { dataInicio, dataFim }).catch(() => [] as any[]),
-      trinksFetchAll("transacoes",   { dataInicio, dataFim: transFim }).catch(() => [] as any[]),
-    ]);
+    // Buscar serial p/ não estourar rate limit do Trinks
+    const profData = await trinksFetchAll("profissionais").catch((e: any) => {
+      log(`[periodo ${dataInicio}..${dataFim}] erro profissionais: ${e?.message}`, "equipe");
+      return [] as any[];
+    });
+    const agendData = await trinksFetchAll("agendamentos", { dataInicio, dataFim }).catch((e: any) => {
+      log(`[periodo ${dataInicio}..${dataFim}] erro agendamentos: ${e?.message}`, "equipe");
+      return [] as any[];
+    });
+    const transData = await trinksFetchAll("transacoes", { dataInicio, dataFim: transFim }).catch((e: any) => {
+      log(`[periodo ${dataInicio}..${dataFim}] erro transacoes: ${e?.message}`, "equipe");
+      return [] as any[];
+    });
     const profLista = Array.isArray(profData) ? profData : (profData?.data || []);
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
     const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
@@ -2315,7 +2323,11 @@ export async function registerRoutes(
       { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0 }
     );
 
-    const result = { dataInicio, dataFim, porProfissional: porProf, totais, fetchedAt: new Date().toISOString() };
+    const result = {
+      dataInicio, dataFim, porProfissional: porProf, totais,
+      _diag: { profCount: profLista.length, agendCount: agendLista.length, transCount: transLista.length, idsLegMapeados: idLegadoParaNome.size },
+      fetchedAt: new Date().toISOString(),
+    };
     setCache(cacheKey, result, 3 * 60 * 1000); // cache 3min
     return result;
   }
@@ -4323,10 +4335,15 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const diasUteisTotal = contarDiasUteis(`${mes}-01`, ultimoDia);
       const diasUteisDecorridos = contarDiasUteis(`${mes}-01`, hoje);
 
+      // Serial para evitar competir pelo rate limit do Trinks (40/min) com 9 fetches paralelos.
+      log(`[equipe/desempenho] calculando dia ${hoje}...`, "equipe");
       const dia = await calcularPeriodoPorProfissional(hoje, hoje);
+      log(`[equipe/desempenho] calculando semana ${semIni}..${semFim}...`, "equipe");
       const semana = await calcularPeriodoPorProfissional(semIni, semFim);
+      log(`[equipe/desempenho] calculando mês ${mesIni}..${mesFim}...`, "equipe");
       const mesData = await calcularPeriodoPorProfissional(mesIni, mesFim);
       const metas = await getAllMetas();
+      log(`[equipe/desempenho] dia=${Object.keys(dia.porProfissional).length} sem=${Object.keys(semana.porProfissional).length} mes=${Object.keys(mesData.porProfissional).length} metas=${Object.keys(metas).length}`, "equipe");
 
       const profsMes = Object.values(mesData.porProfissional).sort((a, b) => b.total.reais - a.total.reais);
       const totalProfsComMov = profsMes.length;
@@ -4371,6 +4388,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         referencia: { hoje, semana: { dataInicio: semIni, dataFim: semFim }, mes, diasUteisTotal, diasUteisDecorridos },
         totais: { dia: dia.totais, semana: semana.totais, mes: mesData.totais },
         linhas,
+        _diag: { dia: (dia as any)._diag, semana: (semana as any)._diag, mes: (mesData as any)._diag },
         fetchedAt: new Date().toISOString(),
       };
       setCache(cacheKey, result, 3 * 60 * 1000);

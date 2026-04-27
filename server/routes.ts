@@ -47,8 +47,19 @@ import {
   getProdutosCustos,
   setProdutoCusto,
   setProdutosCustosBulk,
+  setProdutoMinimo,
   getCustoOf,
+  getMinimoOf,
 } from "./produtosCustos";
+import {
+  getMovimentacoesEstoque,
+  addMovimentacao,
+  deleteMovimentacao,
+  getDeltasPorProduto,
+  getMovimentacoesDe,
+  type MovimentacaoEstoque,
+  type TipoMovimentacao,
+} from "./movimentacoesEstoque";
 import {
   getPagamentoMes,
   getPagamentosDoMes,
@@ -1417,7 +1428,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-27-precos-edicao-v22",
+      build: "2026-04-27-controle-estoque-v23",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1544,6 +1555,9 @@ export async function registerRoutes(
 
     // Custos/preços manuais cadastrados localmente (kv_store)
     const custosMap = await getProdutosCustos();
+    // Movimentações manuais (entradas/saídas/inventário) cadastradas localmente
+    const movs = await getMovimentacoesEstoque();
+    const deltaPorProd = getDeltasPorProduto(movs);
 
     // Sequencial para não saturar o rate limit da Trinks (40 req/min).
     // Produtos + profissionais são leves; transações e agendamentos são paginados pesados.
@@ -1742,13 +1756,21 @@ export async function registerRoutes(
       const precoVendaCatalogo = Number(p.preco || 0);
       // efetivo: manual > catálogo Trinks > observado nas transações
       const valorVenda = precoVendaManual || precoVendaCatalogo || valorVendaObs;
+      const minimo = Number(custoEntry?.minimo || 0);
 
-      // Classificação sem dados de saldo real (API não expõe):
-      // - critico: produto SEM movimento nos últimos 30d (pode estar parado ou em ruptura)
-      // - atencao: última venda há mais de 14 dias mas menos de 30
-      // - ok: movimento recente (últimos 14 dias)
-      let nivel: "ok" | "atencao" | "critico" = "ok";
-      if (diasDesdeUltimaVenda >= 30) nivel = "critico";
+      // Saldo derivado dos ajustes manuais (Trinks não fornece saldo).
+      // Baseline 0 + soma dos deltas (entradas +, saídas -, inventário ajusta para contagem).
+      const saldo = Math.max(0, Number(deltaPorProd[idStr] || 0));
+      const valorEstoque = saldo * custoUnit;
+
+      // Classificação:
+      // - ruptura: saldo abaixo do mínimo cadastrado (prioridade máxima)
+      // - critico: produto SEM movimento nos últimos 30d (parado)
+      // - atencao: última venda há mais de 14 dias
+      // - ok: movimento recente
+      let nivel: "ok" | "atencao" | "critico" | "ruptura" = "ok";
+      if (minimo > 0 && saldo <= minimo) nivel = "ruptura";
+      else if (diasDesdeUltimaVenda >= 30) nivel = "critico";
       else if (diasDesdeUltimaVenda >= 14) nivel = "atencao";
 
       return {
@@ -1756,15 +1778,15 @@ export async function registerRoutes(
         nome: p.nome || p.descricao || "",
         categoria: p.categoria?.nome || p.categoriaNome || "",
         fabricante: p.fabricante?.nome || p.fabricanteNome || "",
-        saldo: 0, // não disponível via API
-        minimo: 0, // não disponível via API
+        saldo,
+        minimo,
         custoMedio: custoUnit, // preço de COMPRA cadastrado manualmente
         custo: custoUnit,
         precoVendaManual: precoVendaManual || null,
         precoVendaCatalogo,
         precoVendaObservado: valorVendaObs,
         valorVenda, // efetivo
-        valorEstoque: 0, // não calculável sem saldo
+        valorEstoque,
         nivel,
         vendidos30d: qtd30d,
         faturamento30d: mov?.valor30d ?? 0,
@@ -5244,6 +5266,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           precoVendaCatalogo: pcat || 0,      // preço do catálogo Trinks
           precoVendaObservado: pobs || 0,     // último preço visto em vendas
           custo: Number(c?.custo || 0),
+          minimo: Number(c?.minimo || 0),
           atualizadoEm: c?.atualizadoEm || null,
           atualizadoPor: c?.atualizadoPor || null,
         };
@@ -5300,6 +5323,118 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       invalidateCache("vendas-produtos");
       invalidateCache("estoque");
       return res.json({ ok: true, count: items.length });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ═══ v23: Controle de estoque — ajustes manuais e estoque mínimo ═════════════════
+
+  // PUT /api/produtos/minimo/:id — atualiza o estoque mínimo de um produto
+  // body: { minimo: number | null }  (null limpa)
+  app.put("/api/produtos/minimo/:id", async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id || "");
+      if (!id) return res.status(400).json({ ok: false, error: "id obrigatório" });
+      const raw = req.body?.minimo;
+      let minimo: number | null;
+      if (raw === null || raw === undefined || raw === "") {
+        minimo = null;
+      } else {
+        minimo = Number(raw);
+        if (Number.isNaN(minimo)) return res.status(400).json({ ok: false, error: "minimo deve ser numérico ou null" });
+      }
+      const atualizadoPor = (req as any).user?.username || "admin";
+      await setProdutoMinimo(id, minimo, atualizadoPor);
+      invalidateCache("estoque");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/estoque/movimentacoes — lista todas as movimentações manuais
+  // Query params: produtoId? (filtra por produto), limit? (default 200)
+  app.get("/api/estoque/movimentacoes", async (req: Request, res: Response) => {
+    try {
+      const produtoId = String(req.query.produtoId || "").trim();
+      const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 200));
+      const all = await getMovimentacoesEstoque();
+      let lista = all;
+      if (produtoId) lista = getMovimentacoesDe(all, produtoId);
+      else lista = [...all].sort((a, b) => (b.data || "").localeCompare(a.data || ""));
+      // Enriquecer com nome do produto
+      const produtos: any[] = await trinksFetchAll("produtos").catch(() => [] as any[]);
+      const nomePorId = new Map<string, string>();
+      for (const p of produtos) nomePorId.set(String(p.id), p.nome || p.descricao || "");
+      const out = lista.slice(0, limit).map((m) => ({
+        ...m,
+        produtoNome: nomePorId.get(String(m.produtoId)) || "",
+      }));
+      return res.json({ ok: true, movimentacoes: out, total: lista.length });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/estoque/movimentacoes — cria um ajuste manual
+  // body: { produtoId, tipo: "entrada"|"saida"|"inventario", quantidade, motivo?, custoUnitario? }
+  // Para tipo="inventario", quantidade = saldo final desejado (contagem física)
+  app.post("/api/estoque/movimentacoes", async (req: Request, res: Response) => {
+    try {
+      const body = req.body || {};
+      const produtoId = String(body.produtoId || "").trim();
+      if (!produtoId) return res.status(400).json({ ok: false, error: "produtoId obrigatório" });
+      const tipo = String(body.tipo || "") as TipoMovimentacao;
+      if (!(["entrada", "saida", "inventario"] as const).includes(tipo as any)) {
+        return res.status(400).json({ ok: false, error: "tipo inválido (entrada|saida|inventario)" });
+      }
+      const quantidade = Number(body.quantidade);
+      if (Number.isNaN(quantidade) || quantidade < 0) {
+        return res.status(400).json({ ok: false, error: "quantidade inválida" });
+      }
+
+      // Custo unitário: se não vier no body, usa o cadastrado
+      const custosMap = await getProdutosCustos();
+      let custoUnitario = Number(body.custoUnitario);
+      if (Number.isNaN(custoUnitario) || custoUnitario <= 0) {
+        custoUnitario = getCustoOf(custosMap, produtoId);
+      }
+
+      // Para inventário, descobre o saldo atual (delta acumulado)
+      let saldoAnterior: number | undefined;
+      if (tipo === "inventario") {
+        const movs = await getMovimentacoesEstoque();
+        const deltas = getDeltasPorProduto(movs);
+        saldoAnterior = Math.max(0, Number(deltas[produtoId] || 0));
+      }
+
+      const usuario = (req as any).user?.username || "admin";
+      const mov = await addMovimentacao({
+        produtoId,
+        tipo,
+        quantidade,
+        custoUnitario,
+        motivo: String(body.motivo || ""),
+        usuario,
+        saldoAnterior,
+      });
+      invalidateCache("estoque");
+      return res.json({ ok: true, movimentacao: mov });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  // DELETE /api/estoque/movimentacoes/:id — remove um ajuste (correção de erro)
+  app.delete("/api/estoque/movimentacoes/:id", async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id || "");
+      if (!id) return res.status(400).json({ ok: false, error: "id obrigatório" });
+      const ok = await deleteMovimentacao(id);
+      if (!ok) return res.status(404).json({ ok: false, error: "movimentação não encontrada" });
+      invalidateCache("estoque");
+      return res.json({ ok: true });
     } catch (err: any) {
       return res.status(400).json({ ok: false, error: err.message });
     }
@@ -5936,7 +6071,34 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         await dispararIndividualParaTodos("mensal");
       }, { timezone: "America/Sao_Paulo" });
 
-      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + individual MATINAL 8h/SEMANAL sáb 21h/MENSAL último dia útil 21h", "telegram");
+      // Alerta diário de estoque baixo: ter-sáb 09h00 (após o resumo da manhã)
+      // Envia uma mensagem consolidada com produtos abaixo do mínimo cadastrado.
+      cron.schedule("0 9 * * 2-6", async () => {
+        try {
+          const resumo = await calcularEstoqueResumo();
+          const ruptura = (resumo?.produtos || []).filter((p: any) => p.nivel === "ruptura");
+          if (ruptura.length === 0) {
+            log("[cron] alerta estoque: nenhum produto em ruptura", "telegram");
+            return;
+          }
+          const linhas = ruptura
+            .sort((a: any, b: any) => (a.saldo - a.minimo) - (b.saldo - b.minimo))
+            .slice(0, 30)
+            .map((p: any) => {
+              const fmt = (n: number) => Number(n || 0).toLocaleString("pt-BR");
+              return `• *${p.nome}* — saldo *${fmt(p.saldo)}* / mínimo ${fmt(p.minimo)}`;
+            })
+            .join("\n");
+          const extras = ruptura.length > 30 ? `\n\n_+ ${ruptura.length - 30} outros itens_` : "";
+          const msg = `📦 *Alerta de estoque baixo*\n\n${ruptura.length} produto(s) abaixo do mínimo:\n\n${linhas}${extras}`;
+          const r = await enviarMensagem(msg);
+          log(`[cron] alerta estoque: ${ruptura.length} itens, ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
+        } catch (err: any) {
+          log(`[cron] erro alerta estoque: ${err.message}`, "telegram");
+        }
+      }, { timezone: "America/Sao_Paulo" });
+
+      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + alerta estoque 9h (ter-sáb) + individual MATINAL 8h/SEMANAL sáb 21h/MENSAL último dia útil 21h", "telegram");
     } catch (err: any) {
       log(`[cron] falha ao registrar schedulers: ${err.message}`, "telegram");
     }

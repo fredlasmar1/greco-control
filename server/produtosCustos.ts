@@ -7,6 +7,7 @@
 // { [produtoId: string]: {
 //     custo: number;
 //     precoVenda?: number;        // se definido, sobrescreve o preço Trinks/observado
+//     minimo?: number;            // estoque mínimo para alertas (v23)
 //     atualizadoEm: string;
 //     atualizadoPor?: string;
 //   }
@@ -20,6 +21,7 @@ const KV_KEY = "produtos_custos";
 export type CustoProduto = {
   custo: number;
   precoVenda?: number;
+  minimo?: number;
   atualizadoEm: string;
   atualizadoPor?: string;
 };
@@ -117,4 +119,34 @@ export function getPrecoVendaManualOf(map: MapaCustos, produtoId: string | numbe
   const id = String(produtoId || "");
   const v = map[id]?.precoVenda;
   return typeof v === "number" && v > 0 ? v : undefined;
+}
+
+export function getMinimoOf(map: MapaCustos, produtoId: string | number): number {
+  const id = String(produtoId || "");
+  return Number(map[id]?.minimo || 0);
+}
+
+export async function setProdutoMinimo(
+  produtoId: string,
+  minimo: number | null,
+  atualizadoPor?: string
+): Promise<MapaCustos> {
+  const id = String(produtoId || "").trim();
+  if (!id) throw new Error("produtoId obrigatório");
+  const all = await getProdutosCustos();
+  const prev = all[id] || ({ custo: 0, atualizadoEm: new Date().toISOString() } as CustoProduto);
+  const next: CustoProduto = {
+    ...prev,
+    atualizadoEm: new Date().toISOString(),
+    atualizadoPor: atualizadoPor ?? prev.atualizadoPor,
+  };
+  if (minimo === null || minimo === undefined) {
+    delete next.minimo;
+  } else {
+    next.minimo = Math.max(0, Number(minimo) || 0);
+  }
+  all[id] = next;
+  await kvSet(KV_KEY, all);
+  invalidateProdutosCustosCache();
+  return all;
 }

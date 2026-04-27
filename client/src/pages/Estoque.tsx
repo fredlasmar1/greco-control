@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Package, AlertTriangle, TrendingDown, RefreshCw, Loader2, Search, Info, Trophy, User, Pencil, Save, X } from "lucide-react";
+import { Package, AlertTriangle, TrendingDown, RefreshCw, Loader2, Search, Info, Trophy, User, Pencil, Save, X, Plus, Minus, ClipboardList, History, Trash2, ArrowUpCircle, ArrowDownCircle } from "lucide-react";
 import { formatCurrency } from "@/lib/demoData";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
@@ -23,11 +23,25 @@ interface Produto {
   precoVendaObservado?: number;
   valorVenda: number;
   valorEstoque: number;
-  nivel: "ok" | "atencao" | "critico";
+  nivel: "ok" | "atencao" | "critico" | "ruptura";
   vendidos30d: number;
   faturamento30d: number;
   ultimaVenda: string | null;
   diasDesdeUltimaVenda: number | null;
+}
+
+interface MovimentacaoManual {
+  id: string;
+  produtoId: string;
+  produtoNome?: string;
+  tipo: "entrada" | "saida" | "inventario";
+  quantidade: number;
+  delta: number;
+  custoUnitario: number;
+  motivo: string;
+  data: string;
+  usuario?: string;
+  saldoAnterior?: number;
 }
 
 interface Movimentacao {
@@ -88,8 +102,10 @@ export default function Estoque() {
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
-  const [filtroNivel, setFiltroNivel] = useState<"todos" | "alerta" | "critico">("todos");
+  const [filtroNivel, setFiltroNivel] = useState<"todos" | "alerta" | "critico" | "ruptura">("todos");
   const [editando, setEditando] = useState<Produto | null>(null);
+  const [ajustando, setAjustando] = useState<Produto | null>(null);
+  const [historicoDe, setHistoricoDe] = useState<Produto | null>(null);
 
   async function carregar() {
     setLoading(true);
@@ -118,6 +134,7 @@ export default function Estoque() {
     let lista = resumo.produtos;
     if (filtroNivel === "alerta") lista = lista.filter(p => p.nivel !== "ok");
     if (filtroNivel === "critico") lista = lista.filter(p => p.nivel === "critico");
+    if (filtroNivel === "ruptura") lista = lista.filter(p => p.nivel === "ruptura");
     if (busca.trim()) {
       const q = busca.toLowerCase();
       lista = lista.filter(p =>
@@ -126,9 +143,9 @@ export default function Estoque() {
         p.fabricante.toLowerCase().includes(q)
       );
     }
-    // ordena: críticos primeiro, depois atenção, depois ok (mais vendidos primeiro)
+    // ordena: ruptura primeiro, depois críticos, atenção, ok (mais vendidos primeiro)
     return [...lista].sort((a, b) => {
-      const ord = { critico: 0, atencao: 1, ok: 2 };
+      const ord: Record<string, number> = { ruptura: 0, critico: 1, atencao: 2, ok: 3 };
       if (ord[a.nivel] !== ord[b.nivel]) return ord[a.nivel] - ord[b.nivel];
       if (b.vendidos30d !== a.vendidos30d) return b.vendidos30d - a.vendidos30d;
       return a.nome.localeCompare(b.nome);
@@ -136,11 +153,13 @@ export default function Estoque() {
   }, [resumo, busca, filtroNivel]);
 
   const corNivel = (n: string) =>
+    n === "ruptura" ? "bg-red-600/20 text-red-400 border-red-600/40" :
     n === "critico" ? "bg-red-500/15 text-red-400 border-red-500/30" :
     n === "atencao" ? "bg-amber-500/15 text-amber-400 border-amber-500/30" :
     "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
 
   const labelNivel = (n: string) =>
+    n === "ruptura" ? "Estoque baixo" :
     n === "critico" ? "Parado +30d" :
     n === "atencao" ? "Parado 14–30d" :
     "Ativo";
@@ -169,11 +188,7 @@ export default function Estoque() {
         <CardContent className="pt-4 flex items-start gap-3">
           <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-muted-foreground">
-            A API da Trinks não expõe saldo atual, custo médio nem estoque mínimo.
-            Por isso, a análise abaixo usa o <strong className="text-foreground">histórico de comandas (transações)</strong> dos
-            últimos 30 dias para identificar produtos parados, produtos ativos e
-            <strong className="text-foreground"> quem vendeu cada item</strong> (profissional responsável pela venda).
-            Para saldo exato, consulte diretamente o sistema Trinks.
+            A API da Trinks não expõe saldo de estoque. O <strong className="text-foreground">saldo abaixo é calculado</strong> a partir dos <strong className="text-foreground">ajustes manuais</strong> que você registra (entradas, saídas e inventários). Use o botão <ClipboardList className="w-3 h-3 inline" /> em cada produto para registrar uma compra, perda ou contagem física. As vendas via Trinks também são usadas para identificar produtos parados.
           </div>
         </CardContent>
       </Card>
@@ -346,13 +361,13 @@ export default function Estoque() {
                     />
                   </div>
                   <div className="flex rounded-md border border-border overflow-hidden">
-                    {(["todos", "alerta", "critico"] as const).map((f) => (
+                    {(["todos", "ruptura", "alerta", "critico"] as const).map((f) => (
                       <button
                         key={f}
                         onClick={() => setFiltroNivel(f)}
                         className={`px-3 py-1.5 text-xs ${filtroNivel === f ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted"}`}
                       >
-                        {f === "todos" ? "Todos" : f === "alerta" ? "Parados" : "Sem giro +30d"}
+                        {f === "todos" ? "Todos" : f === "ruptura" ? "Estoque baixo" : f === "alerta" ? "Parados" : "Sem giro +30d"}
                       </button>
                     ))}
                   </div>
@@ -370,13 +385,14 @@ export default function Estoque() {
                     <thead>
                       <tr className="border-b border-border text-xs text-muted-foreground">
                         <th className="text-left py-2 px-2 font-medium">Produto</th>
+                        <th className="text-right py-2 px-2 font-medium">Saldo</th>
                         <th className="text-right py-2 px-2 font-medium">Vendidos (30d)</th>
                         <th className="text-right py-2 px-2 font-medium hidden sm:table-cell">Faturamento (30d)</th>
                         <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Preço compra</th>
                         <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Preço venda</th>
                         <th className="text-left py-2 px-2 font-medium hidden md:table-cell">Última venda</th>
                         <th className="text-center py-2 px-2 font-medium">Status</th>
-                        <th className="text-center py-2 px-2 font-medium w-16">Ações</th>
+                        <th className="text-center py-2 px-2 font-medium w-28">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -389,6 +405,14 @@ export default function Estoque() {
                             <div className="font-medium">{p.nome}</div>
                             {p.categoria && (
                               <div className="text-[11px] text-muted-foreground">{p.categoria}</div>
+                            )}
+                          </td>
+                          <td className="py-2 px-2 text-right">
+                            <div className={`font-semibold ${p.nivel === "ruptura" ? "text-red-400" : ""}`}>
+                              {p.saldo}
+                            </div>
+                            {p.minimo > 0 && (
+                              <div className="text-[10px] text-muted-foreground">mín {p.minimo}</div>
                             )}
                           </td>
                           <td className="py-2 px-2 text-right font-semibold">
@@ -421,16 +445,38 @@ export default function Estoque() {
                             </span>
                           </td>
                           <td className="py-2 px-2 text-center">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0"
-                              onClick={() => setEditando(p)}
-                              title="Editar preço de compra e venda"
-                              data-testid={`btn-editar-${p.id}`}
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
+                            <div className="flex items-center justify-center gap-0.5">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => setAjustando(p)}
+                                title="Ajustar saldo (entrada/saída/inventário)"
+                                data-testid={`btn-ajustar-${p.id}`}
+                              >
+                                <ClipboardList className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => setHistoricoDe(p)}
+                                title="Histórico de movimentações"
+                                data-testid={`btn-historico-${p.id}`}
+                              >
+                                <History className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() => setEditando(p)}
+                                title="Editar preço de compra e venda"
+                                data-testid={`btn-editar-${p.id}`}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                         );
@@ -515,6 +561,33 @@ export default function Estoque() {
           }}
           onErro={(msg) => toast({ title: "Erro ao salvar", description: msg, variant: "destructive" })}
           onSucesso={(msg) => toast({ title: "Atualizado", description: msg })}
+        />
+      )}
+
+      {/* Modal de ajuste de saldo */}
+      {ajustando && (
+        <AjustarSaldoModal
+          produto={ajustando}
+          onClose={() => setAjustando(null)}
+          onSalvo={() => {
+            setAjustando(null);
+            carregar();
+          }}
+          onErro={(msg) => toast({ title: "Erro", description: msg, variant: "destructive" })}
+          onSucesso={(msg) => toast({ title: "Saldo atualizado", description: msg })}
+        />
+      )}
+
+      {/* Modal de histórico de movimentações */}
+      {historicoDe && (
+        <HistoricoMovimentacoesModal
+          produto={historicoDe}
+          onClose={() => setHistoricoDe(null)}
+          onAlterado={() => {
+            carregar();
+          }}
+          onErro={(msg) => toast({ title: "Erro", description: msg, variant: "destructive" })}
+          onSucesso={(msg) => toast({ title: "Removido", description: msg })}
         />
       )}
     </div>
@@ -652,6 +725,382 @@ function EditarProdutoModal({
           <Button size="sm" onClick={salvar} disabled={salvando} data-testid="btn-salvar">
             {salvando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
             Salvar
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal de ajuste de saldo (entrada/saída/inventário) + estoque mínimo ──
+function AjustarSaldoModal({
+  produto,
+  onClose,
+  onSalvo,
+  onErro,
+  onSucesso,
+}: {
+  produto: Produto;
+  onClose: () => void;
+  onSalvo: () => void;
+  onErro: (msg: string) => void;
+  onSucesso: (msg: string) => void;
+}) {
+  const [tipo, setTipo] = useState<"entrada" | "saida" | "inventario">("entrada");
+  const [quantidade, setQuantidade] = useState<string>("");
+  const [motivo, setMotivo] = useState<string>("");
+  const [minimo, setMinimo] = useState<string>(produto.minimo > 0 ? String(produto.minimo) : "");
+  const [salvando, setSalvando] = useState(false);
+  const [salvandoMin, setSalvandoMin] = useState(false);
+
+  const parse = (v: string) => Number(String(v).replace(",", ".")) || 0;
+  const qtdNum = parse(quantidade);
+
+  // saldo final previsto após o ajuste
+  const saldoFinal = useMemo(() => {
+    if (tipo === "entrada") return produto.saldo + qtdNum;
+    if (tipo === "saida") return Math.max(0, produto.saldo - qtdNum);
+    return qtdNum; // inventário: o saldo vira a contagem
+  }, [tipo, qtdNum, produto.saldo]);
+
+  const submeterMovimentacao = async () => {
+    if (qtdNum < 0 || (tipo !== "inventario" && qtdNum <= 0)) {
+      onErro("Informe uma quantidade válida");
+      return;
+    }
+    setSalvando(true);
+    try {
+      const r = await authFetch(`${API_BASE}/api/estoque/movimentacoes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          produtoId: String(produto.id),
+          tipo,
+          quantidade: qtdNum,
+          motivo: motivo.trim(),
+        }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Falha ao salvar");
+      onSucesso(`${produto.nome}: saldo agora é ${saldoFinal}`);
+      onSalvo();
+    } catch (e: any) {
+      onErro(e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const salvarMinimo = async () => {
+    setSalvandoMin(true);
+    try {
+      const minNum = minimo.trim() === "" ? null : parse(minimo);
+      const r = await authFetch(`${API_BASE}/api/produtos/minimo/${produto.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ minimo: minNum }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Falha ao salvar mínimo");
+      onSucesso(`Estoque mínimo de ${produto.nome} atualizado`);
+      onSalvo();
+    } catch (e: any) {
+      onErro(e.message);
+    } finally {
+      setSalvandoMin(false);
+    }
+  };
+
+  const tipoLabel: Record<string, string> = {
+    entrada: "Entrada (compra/reposição)",
+    saida: "Saída (perda/uso interno)",
+    inventario: "Inventário (contagem física)",
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-background rounded-lg shadow-lg max-w-md w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+        data-testid="ajustar-saldo-modal"
+      >
+        <div className="px-5 py-4 border-b flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold flex items-center gap-2">
+              <ClipboardList className="h-4 w-4" />
+              Ajustar saldo
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{produto.nome}</p>
+            <p className="text-[11px] text-muted-foreground">
+              Saldo atual: <span className="font-medium text-foreground">{produto.saldo}</span>
+              {produto.minimo > 0 && <> · mínimo {produto.minimo}</>}
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {/* Tipo de movimentação */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1.5">Tipo de movimentação</label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(["entrada", "saida", "inventario"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTipo(t)}
+                  className={`px-2 py-2 text-xs rounded-md border transition ${
+                    tipo === t
+                      ? t === "entrada"
+                        ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
+                        : t === "saida"
+                          ? "bg-red-500/15 border-red-500/40 text-red-400"
+                          : "bg-blue-500/15 border-blue-500/40 text-blue-400"
+                      : "border-border text-muted-foreground hover:bg-muted"
+                  }`}
+                  data-testid={`btn-tipo-${t}`}
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    {t === "entrada" && <Plus className="w-3 h-3" />}
+                    {t === "saida" && <Minus className="w-3 h-3" />}
+                    {t === "inventario" && <ClipboardList className="w-3 h-3" />}
+                    {t === "entrada" ? "Entrada" : t === "saida" ? "Saída" : "Inventário"}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1.5">{tipoLabel[tipo]}</p>
+          </div>
+
+          {/* Quantidade */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">
+              {tipo === "inventario" ? "Quantidade contada (saldo final)" : "Quantidade"}
+            </label>
+            <Input
+              type="number"
+              step="1"
+              min="0"
+              value={quantidade}
+              onChange={(e) => setQuantidade(e.target.value)}
+              placeholder="0"
+              data-testid="input-quantidade"
+            />
+            {qtdNum > 0 && (
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Após o ajuste, saldo será: <strong className="text-foreground">{saldoFinal}</strong>
+                {tipo === "saida" && qtdNum > produto.saldo && (
+                  <span className="text-amber-400 ml-1">(mais que o saldo atual; ficará em 0)</span>
+                )}
+              </p>
+            )}
+          </div>
+
+          {/* Motivo */}
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Motivo (opcional)</label>
+            <Input
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder={
+                tipo === "entrada"
+                  ? "ex: compra fornecedor X"
+                  : tipo === "saida"
+                    ? "ex: quebra, uso interno"
+                    : "ex: contagem física mensal"
+              }
+              data-testid="input-motivo"
+            />
+          </div>
+
+          <div className="flex justify-end">
+            <Button size="sm" onClick={submeterMovimentacao} disabled={salvando || qtdNum < 0} data-testid="btn-confirmar-ajuste">
+              {salvando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+              Registrar ajuste
+            </Button>
+          </div>
+
+          {/* Estoque mínimo */}
+          <div className="border-t pt-4">
+            <label className="text-xs text-muted-foreground block mb-1">
+              Estoque mínimo (alerta)
+            </label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                step="1"
+                min="0"
+                value={minimo}
+                onChange={(e) => setMinimo(e.target.value)}
+                placeholder="ex: 5"
+                className="flex-1"
+                data-testid="input-minimo"
+              />
+              <Button size="sm" variant="outline" onClick={salvarMinimo} disabled={salvandoMin}>
+                {salvandoMin ? <Loader2 className="h-4 w-4 animate-spin" /> : "Salvar mínimo"}
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Quando o saldo ficar igual ou abaixo do mínimo, o produto entra em alerta (vermelho) e aparece no resumo diário do Telegram. Deixe em branco para desativar.
+            </p>
+          </div>
+        </div>
+
+        <div className="px-5 py-3 border-t flex items-center justify-end">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Fechar
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal de histórico de movimentações ────────────────────────────────────
+function HistoricoMovimentacoesModal({
+  produto,
+  onClose,
+  onAlterado,
+  onErro,
+  onSucesso,
+}: {
+  produto: Produto;
+  onClose: () => void;
+  onAlterado: () => void;
+  onErro: (msg: string) => void;
+  onSucesso: (msg: string) => void;
+}) {
+  const [movs, setMovs] = useState<MovimentacaoManual[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [removendoId, setRemovendoId] = useState<string | null>(null);
+
+  async function carregar() {
+    setLoading(true);
+    try {
+      const r = await authFetch(
+        `${API_BASE}/api/estoque/movimentacoes?produtoId=${produto.id}&limit=200`
+      );
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Falha ao carregar");
+      setMovs(j.movimentacoes || []);
+    } catch (e: any) {
+      onErro(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [produto.id]);
+
+  const remover = async (id: string) => {
+    if (!confirm("Remover este ajuste? O saldo será recalculado.")) return;
+    setRemovendoId(id);
+    try {
+      const r = await authFetch(`${API_BASE}/api/estoque/movimentacoes/${id}`, { method: "DELETE" });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Falha ao remover");
+      onSucesso("Ajuste removido");
+      await carregar();
+      onAlterado();
+    } catch (e: any) {
+      onErro(e.message);
+    } finally {
+      setRemovendoId(null);
+    }
+  };
+
+  const tipoIcon = (tipo: string) =>
+    tipo === "entrada" ? <ArrowUpCircle className="w-4 h-4 text-emerald-400" /> :
+    tipo === "saida" ? <ArrowDownCircle className="w-4 h-4 text-red-400" /> :
+    <ClipboardList className="w-4 h-4 text-blue-400" />;
+
+  const tipoLabel = (tipo: string) =>
+    tipo === "entrada" ? "Entrada" : tipo === "saida" ? "Saída" : "Inventário";
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-background rounded-lg shadow-lg max-w-2xl w-full max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+        data-testid="historico-modal"
+      >
+        <div className="px-5 py-4 border-b flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold flex items-center gap-2">
+              <History className="h-4 w-4" />
+              Histórico de movimentações
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{produto.nome} · saldo atual: {produto.saldo}</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : movs.length === 0 ? (
+            <div className="text-sm text-muted-foreground text-center py-8">
+              Nenhum ajuste manual registrado para este produto ainda.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {movs.map((m) => {
+                const dataFmt = new Date(m.data).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+                return (
+                  <div key={m.id} className="flex items-start gap-3 px-3 py-2 rounded-md border border-border">
+                    <div className="mt-0.5">{tipoIcon(m.tipo)}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium">{tipoLabel(m.tipo)}</span>
+                        <span className={`text-sm font-semibold ${
+                          m.delta > 0 ? "text-emerald-400" : m.delta < 0 ? "text-red-400" : "text-muted-foreground"
+                        }`}>
+                          {m.delta > 0 ? "+" : ""}{m.delta}
+                        </span>
+                        {m.tipo === "inventario" && (
+                          <span className="text-[11px] text-muted-foreground">
+                            (de {m.saldoAnterior ?? 0} para {m.quantidade})
+                          </span>
+                        )}
+                      </div>
+                      {m.motivo && (
+                        <div className="text-xs text-muted-foreground mt-0.5">{m.motivo}</div>
+                      )}
+                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                        {dataFmt}{m.usuario ? ` · ${m.usuario}` : ""}
+                        {m.custoUnitario > 0 && (
+                          <> · custo unit. {formatCurrency(m.custoUnitario)}</>
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={() => remover(m.id)}
+                      disabled={removendoId === m.id}
+                      title="Remover este ajuste"
+                    >
+                      {removendoId === m.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t flex items-center justify-end">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Fechar
           </Button>
         </div>
       </div>

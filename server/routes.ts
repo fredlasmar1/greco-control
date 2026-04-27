@@ -5197,11 +5197,9 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       d30.setDate(d30.getDate() - 30);
       const dataInicio30 = d30.toISOString().slice(0, 10);
       const transFim = ymdAddDays(hojeYmd, 1);
-      const [produtos, custos, transacoes] = await Promise.all([
-        trinksFetchAll("produtos").catch(() => [] as any[]),
-        getProdutosCustos(),
-        trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: transFim }).catch(() => [] as any[]),
-      ]);
+      const custos = await getProdutosCustos();
+      const produtos: any[] = await trinksFetchAll("produtos").catch(() => [] as any[]);
+      const transacoes: any[] = await trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: transFim }).catch(() => [] as any[]);
       // Preço médio observado nas vendas
       const precoObservado = new Map<string, number>();
       for (const t of transacoes || []) {
@@ -5286,13 +5284,30 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const d14 = new Date();
       d14.setDate(d14.getDate() - 14);
       const dataInicio14 = d14.toISOString().slice(0, 10);
-      const [produtos, profissionais, transacoes, agendamentos, custosMap] = await Promise.all([
-        trinksFetchAll("produtos").catch(() => [] as any[]),
-        trinksFetchAll("profissionais").catch(() => [] as any[]),
-        trinksFetchAll("transacoes", { dataInicio, dataFim: transFim }).catch(() => [] as any[]),
-        trinksFetchAll("agendamentos", { dataInicio: dataInicio14, dataFim: hoje }).catch(() => [] as any[]),
-        getProdutosCustos(),
-      ]);
+      // SEQUENCIAL: rate limit Trinks 40/min. Paralelizar 4 fetches paginados
+      // estoura e zera silenciosamente.
+      const custosMap = await getProdutosCustos();
+      log(`[vendas-produtos] mes=${mes} carregando produtos...`, "trinks");
+      const produtos: any[] = await trinksFetchAll("produtos").catch((e: any) => {
+        log(`[vendas-produtos] erro produtos: ${e?.message}`, "trinks");
+        return [];
+      });
+      log(`[vendas-produtos] produtos=${produtos.length} carregando profissionais...`, "trinks");
+      const profissionais: any[] = await trinksFetchAll("profissionais").catch((e: any) => {
+        log(`[vendas-produtos] erro profissionais: ${e?.message}`, "trinks");
+        return [];
+      });
+      log(`[vendas-produtos] profissionais=${profissionais.length} carregando transacoes...`, "trinks");
+      const transacoes: any[] = await trinksFetchAll("transacoes", { dataInicio, dataFim: transFim }).catch((e: any) => {
+        log(`[vendas-produtos] erro transacoes: ${e?.message}`, "trinks");
+        return [];
+      });
+      log(`[vendas-produtos] transacoes=${transacoes.length} carregando agendamentos...`, "trinks");
+      const agendamentos: any[] = await trinksFetchAll("agendamentos", { dataInicio: dataInicio14, dataFim: hoje }).catch((e: any) => {
+        log(`[vendas-produtos] erro agendamentos: ${e?.message}`, "trinks");
+        return [];
+      });
+      log(`[vendas-produtos] agendamentos=${agendamentos.length}`, "trinks");
 
       const mapaProf = new Map<number, string>();
       for (const p of profissionais || []) {

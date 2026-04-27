@@ -1411,7 +1411,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-pagamento-v20",
+      build: "2026-04-26-pagamento-v20.2",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2141,6 +2141,7 @@ export async function registerRoutes(
       plano:     { reais: number; count: number };
       servicos:  { reais: number; count: number; bruto: number; liquido: number };
       produtos:  { reais: number; count: number; bruto: number; liquido: number; liquidoComissionavel: number; brutoComissionavel: number };
+      taxaCartao: number; // taxa de cartão agregada (já abatida do líquido)
       total:     { reais: number; count: number };
     }>;
     totais: { reais: number; count: number; avulsoReais: number; avulsoCount: number; planoReais: number; planoCount: number; servicosReais: number; servicosCount: number; servicosBruto: number; servicosLiquido: number; produtosReais: number; produtosCount: number; produtosBruto: number; produtosLiquido: number; produtosLiquidoComissionavel: number; produtosBrutoComissionavel: number };
@@ -2262,6 +2263,7 @@ export async function registerRoutes(
         plano:     { reais: 0, count: 0 },
         servicos:  { reais: 0, count: 0, bruto: 0, liquido: 0 },
         produtos:  { reais: 0, count: 0, bruto: 0, liquido: 0, liquidoComissionavel: 0, brutoComissionavel: 0 },
+        taxaCartao: 0,
         total:     { reais: 0, count: 0 },
       };
       if (idOriginal && !porProf[idPrim].idsConhecidos.includes(idOriginal)) porProf[idPrim].idsConhecidos.push(idOriginal);
@@ -2364,6 +2366,8 @@ export async function registerRoutes(
       const fCart = fracaoCartao(t.formasPagamentos || []);
       // Multiplicador líquido depois da taxa cartão
       const ajusteLiquido = fator * (1 - taxaCartao * fCart);
+      // Multiplicador da taxa cartão em si (para agregar em separado).
+      const fatorTaxaCartao = fator * taxaCartao * fCart;
 
       (t.servicos || []).forEach((s: any, i: number) => {
         const profId = profIdServico(s, i);
@@ -2378,6 +2382,7 @@ export async function registerRoutes(
         // 'reais' mantido para compatibilidade = liquido (base de comissão)
         ps.servicos.reais   += valorLiquido;
         ps.servicos.count   += 1;
+        ps.taxaCartao       += valorBruto * fatorTaxaCartao;
       });
       (t.produtos || []).forEach((pp: any, i: number) => {
         const profId = profIdProduto(pp, i);
@@ -2392,6 +2397,7 @@ export async function registerRoutes(
         pr.produtos.liquido += valorLiquido;
         pr.produtos.reais   += valorLiquido;
         pr.produtos.count   += qtd;
+        pr.taxaCartao       += valorBruto * fatorTaxaCartao;
         // Comissionável: exclui produtos marcados como "sem comissão"
         // (bebidas, doces, snacks). Usado como base para cálculo de comissão
         // de produto na aba Pagamento, mantendo bruto/líquido total intactos.
@@ -4828,6 +4834,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const servicosLiquido = profMes?.servicos?.liquido || 0;
     const produtosLiquidoComissionavel = profMes?.produtos?.liquidoComissionavel || 0;
     const planoReais = profMes?.plano?.reais || 0;
+    const taxaCartaoEstimada = profMes?.taxaCartao || 0; // informativo (já abatido no líquido)
     const pctServico = Number(meta?.pctServico || 0);
     const pctProduto = Number(meta?.pctProduto || 0);
     const pctPlano = Number(meta?.pctPlano || 0);
@@ -4844,7 +4851,8 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
 
     const vale = Number(pagto?.vale || 0);
     const ajuste = Number(pagto?.ajuste || 0);
-    const saldoAReceber = totalBruto - vale + ajuste;
+    const consumoInterno = Number(pagto?.consumoInterno || 0);
+    const saldoAReceber = totalBruto - vale - consumoInterno + ajuste;
 
     return {
       profissionalId,
@@ -4855,6 +4863,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         produtosLiquidoComissionavel,
         produtosLiquidoTotal: profMes?.produtos?.liquido || 0,
         planoReais,
+        taxaCartaoEstimada,
       },
       // Percentuais aplicados
       percentuais: {
@@ -4878,6 +4887,8 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         valePagoEm: pagto?.valePagoEm || null,
         ajuste,
         ajusteNota: pagto?.ajusteNota || "",
+        consumoInterno,
+        consumoInternoNota: pagto?.consumoInternoNota || "",
         saldoAReceber,
         fechado: !!pagto?.fechado,
         fechadoEm: pagto?.fechadoEm || null,
@@ -4924,8 +4935,10 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         totalBruto: acc.totalBruto + l.calculos.totalBruto,
         totalVale: acc.totalVale + l.pagamento.vale,
         totalAjuste: acc.totalAjuste + l.pagamento.ajuste,
+        totalConsumoInterno: acc.totalConsumoInterno + l.pagamento.consumoInterno,
+        totalTaxaCartao: acc.totalTaxaCartao + l.bases.taxaCartaoEstimada,
         totalSaldo: acc.totalSaldo + l.pagamento.saldoAReceber,
-      }), { totalBruto: 0, totalVale: 0, totalAjuste: 0, totalSaldo: 0 });
+      }), { totalBruto: 0, totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalTaxaCartao: 0, totalSaldo: 0 });
 
       return res.json({
         ok: true,
@@ -4948,13 +4961,15 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const profId = String(req.params.profId || "");
       if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
       if (!profId) return res.status(400).json({ ok: false, error: "profId obrigatório" });
-      const { vale, valeNota, valePagoEm, ajuste, ajusteNota } = req.body || {};
+      const { vale, valeNota, valePagoEm, ajuste, ajusteNota, consumoInterno, consumoInternoNota } = req.body || {};
       const patch: any = {};
       if (vale !== undefined) patch.vale = Math.max(0, Number(vale) || 0);
       if (valeNota !== undefined) patch.valeNota = String(valeNota || "");
       if (valePagoEm !== undefined) patch.valePagoEm = valePagoEm ? String(valePagoEm) : undefined;
       if (ajuste !== undefined) patch.ajuste = Number(ajuste) || 0;
       if (ajusteNota !== undefined) patch.ajusteNota = String(ajusteNota || "");
+      if (consumoInterno !== undefined) patch.consumoInterno = Math.max(0, Number(consumoInterno) || 0);
+      if (consumoInternoNota !== undefined) patch.consumoInternoNota = String(consumoInternoNota || "");
       const novo = await upsertPagamentoMes(mes, profId, patch);
       return res.json({ ok: true, pagamento: novo });
     } catch (err: any) {
@@ -4997,6 +5012,8 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         comissaoPlano: linha.calculos.comissaoPlano,
         bonusExcedente: linha.calculos.bonusExcedente,
         totalBruto: linha.calculos.totalBruto,
+        consumoInterno: linha.pagamento.consumoInterno,
+        taxaCartaoEstimada: linha.bases.taxaCartaoEstimada,
         saldoAReceber: linha.pagamento.saldoAReceber,
       };
       const novo = await fecharPagMes(mes, profId, snapshot);
@@ -5064,6 +5081,7 @@ ${pagto?.fechado ? `<div style="font-size:11px;color:#666">Mês fechado em ${new
 <tr><td>Serviços (líquido)</td><td class="r">${valor(usarSnap ? snap!.servicosLiquido : linha.bases.servicosLiquido)}</td></tr>
 <tr><td>Produtos comissionáveis (líquido)</td><td class="r">${valor(usarSnap ? snap!.produtosLiquidoComissionavel : linha.bases.produtosLiquidoComissionavel)}</td></tr>
 <tr><td>Plano/assinatura</td><td class="r">${valor(usarSnap ? snap!.planoReais : linha.bases.planoReais)}</td></tr>
+${(() => { const tx = usarSnap ? (snap as any).taxaCartaoEstimada || 0 : linha.bases.taxaCartaoEstimada; return tx > 0 ? `<tr style="color:#666"><td>(info) Taxa cartão já abatida</td><td class="r">− ${valor(tx)}</td></tr>` : ""; })()}
 </table>
 <h2>Componentes</h2><table>
 <tr><td>Comissão serviços (${linha.percentuais.pctServico}%)</td><td class="r">${valor(usarSnap ? snap!.comissaoServicos : linha.calculos.comissaoServicos)}</td></tr>
@@ -5074,7 +5092,8 @@ ${linha.percentuais.salarioFixo > 0 ? `<tr><td>Salário fixo</td><td class="r">$
 <tr class="tot"><td>Total bruto</td><td class="r">${valor(usarSnap ? snap!.totalBruto : linha.calculos.totalBruto)}</td></tr>
 </table>
 <h2>Pagamentos do mês</h2><table>
-<tr><td>(−) Vale do dia 15</td><td class="r">${valor(linha.pagamento.vale)}</td></tr>
+<tr><td>(−) Vale do dia 15${linha.pagamento.valeNota ? " — " + linha.pagamento.valeNota : ""}</td><td class="r">${valor(linha.pagamento.vale)}</td></tr>
+${linha.pagamento.consumoInterno > 0 ? `<tr><td>(−) Consumo interno${linha.pagamento.consumoInternoNota ? " — " + linha.pagamento.consumoInternoNota : ""}</td><td class="r">${valor(linha.pagamento.consumoInterno)}</td></tr>` : ""}
 ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" : "−"}) Ajuste${linha.pagamento.ajusteNota ? " — " + linha.pagamento.ajusteNota : ""}</td><td class="r">${valor(Math.abs(linha.pagamento.ajuste))}</td></tr>` : ""}
 <tr class="tot"><td>Saldo a receber</td><td class="r">${valor(usarSnap ? snap!.saldoAReceber : linha.pagamento.saldoAReceber)}</td></tr>
 </table>
@@ -5112,6 +5131,14 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       linhaTab("Serviços (líquido)", valor(usarSnap ? snap!.servicosLiquido : linha.bases.servicosLiquido));
       linhaTab("Produtos comissionáveis (líquido)", valor(usarSnap ? snap!.produtosLiquidoComissionavel : linha.bases.produtosLiquidoComissionavel));
       linhaTab("Plano/assinatura", valor(usarSnap ? snap!.planoReais : linha.bases.planoReais));
+      {
+        const tx = usarSnap ? (snap as any).taxaCartaoEstimada || 0 : linha.bases.taxaCartaoEstimada;
+        if (tx > 0) {
+          doc.fillColor("#666");
+          linhaTab("(info) Taxa cartão já abatida", `− ${valor(tx)}`);
+          doc.fillColor("#000");
+        }
+      }
       doc.moveDown(0.4);
 
       doc.fontSize(12).font("Helvetica-Bold").text("Componentes");
@@ -5126,7 +5153,12 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
 
       doc.fontSize(12).font("Helvetica-Bold").text("Pagamentos do mês");
       doc.moveDown(0.2);
-      linhaTab("(−) Vale do dia 15", valor(linha.pagamento.vale));
+      const labelVale = linha.pagamento.valeNota ? `(−) Vale do dia 15 — ${linha.pagamento.valeNota}` : "(−) Vale do dia 15";
+      linhaTab(labelVale, valor(linha.pagamento.vale));
+      if (linha.pagamento.consumoInterno > 0) {
+        const labelCons = linha.pagamento.consumoInternoNota ? `(−) Consumo interno — ${linha.pagamento.consumoInternoNota}` : "(−) Consumo interno";
+        linhaTab(labelCons, valor(linha.pagamento.consumoInterno));
+      }
       if (linha.pagamento.ajuste !== 0) {
         const sinal = linha.pagamento.ajuste >= 0 ? "+" : "−";
         const labelAj = linha.pagamento.ajusteNota ? `(${sinal}) Ajuste — ${linha.pagamento.ajusteNota}` : `(${sinal}) Ajuste`;

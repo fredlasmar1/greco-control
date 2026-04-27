@@ -16,6 +16,8 @@ export interface PagamentoMes {
   valePagoEm?: string;   // ISO — quando foi marcado como pago
   ajuste: number;        // ajuste manual no saldo (positivo ou negativo)
   ajusteNota?: string;
+  consumoInterno: number;     // consumo interno do barbeiro no mês (desconta do saldo)
+  consumoInternoNota?: string;
   fechado: boolean;      // se true, snapshot é imutável
   fechadoEm?: string;    // ISO
   // Snapshot dos valores no momento do fechamento (preservado para histórico
@@ -35,7 +37,9 @@ export interface PagamentoMes {
     comissaoPlano: number;
     bonusExcedente: number;
     totalBruto: number;     // tudo somado (sem subtrair vale)
-    saldoAReceber: number;  // totalBruto - vale + ajuste
+    consumoInterno: number;
+    taxaCartaoEstimada: number; // informativo (já abatido no líquido)
+    saldoAReceber: number;  // totalBruto - vale - consumoInterno + ajuste
   };
   atualizadoEm: string;
 }
@@ -89,6 +93,7 @@ export async function upsertPagamentoMes(
     mes,
     vale: 0,
     ajuste: 0,
+    consumoInterno: 0,
     fechado: false,
     atualizadoEm: new Date().toISOString(),
   };
@@ -117,7 +122,7 @@ export async function fecharMes(
   const all = await loadAll();
   if (!all[mes]) all[mes] = {};
   const atual = all[mes][profissionalId] || {
-    profissionalId, mes, vale: 0, ajuste: 0, fechado: false,
+    profissionalId, mes, vale: 0, ajuste: 0, consumoInterno: 0, fechado: false,
     atualizadoEm: new Date().toISOString(),
   };
   const novo: PagamentoMes = {

@@ -53,6 +53,8 @@ type Linha = {
     valePagoEm: string | null;
     ajuste: number;
     ajusteNota: string;
+    consumoInterno: number;
+    consumoInternoNota: string;
     saldoAReceber: number;
     fechado: boolean;
     fechadoEm: string | null;
@@ -66,7 +68,7 @@ type RespApi = {
   dataInicio: string;
   dataFim: string;
   linhas: Linha[];
-  totais: { totalBruto: number; totalVale: number; totalAjuste: number; totalSaldo: number };
+  totais: { totalBruto: number; totalVale: number; totalAjuste: number; totalConsumoInterno: number; totalTaxaCartao: number; totalSaldo: number };
 };
 
 type StatusConcil = {
@@ -87,8 +89,8 @@ export default function Pagamento() {
   const [status, setStatus] = useState<StatusConcil | null>(null);
   const [loading, setLoading] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
-  const [edit, setEdit] = useState<{ vale: string; valeNota: string; ajuste: string; ajusteNota: string }>({
-    vale: "", valeNota: "", ajuste: "", ajusteNota: "",
+  const [edit, setEdit] = useState<{ vale: string; valeNota: string; ajuste: string; ajusteNota: string; consumoInterno: string; consumoInternoNota: string }>({
+    vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "",
   });
   const [salvando, setSalvando] = useState(false);
   const [acaoLinha, setAcaoLinha] = useState<string | null>(null);
@@ -126,12 +128,14 @@ export default function Pagamento() {
       valeNota: l.pagamento.valeNota || "",
       ajuste: String(l.pagamento.ajuste || 0),
       ajusteNota: l.pagamento.ajusteNota || "",
+      consumoInterno: String(l.pagamento.consumoInterno || 0),
+      consumoInternoNota: l.pagamento.consumoInternoNota || "",
     });
   };
 
   const cancelarEdicao = () => {
     setEditandoId(null);
-    setEdit({ vale: "", valeNota: "", ajuste: "", ajusteNota: "" });
+    setEdit({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "" });
   };
 
   const salvarEdicao = async (l: Linha) => {
@@ -145,6 +149,8 @@ export default function Pagamento() {
           valeNota: edit.valeNota,
           ajuste: Number(edit.ajuste.replace(",", ".")) || 0,
           ajusteNota: edit.ajusteNota,
+          consumoInterno: Number(edit.consumoInterno.replace(",", ".")) || 0,
+          consumoInternoNota: edit.consumoInternoNota,
         }),
       });
       const j = await r.json();
@@ -205,7 +211,8 @@ export default function Pagamento() {
       l.bases.produtosLiquidoComissionavel > 0 ||
       l.percentuais.metaReais > 0 ||
       l.pagamento.vale > 0 ||
-      l.pagamento.ajuste !== 0
+      l.pagamento.ajuste !== 0 ||
+      l.pagamento.consumoInterno > 0
     );
   }, [data]);
 
@@ -216,7 +223,7 @@ export default function Pagamento() {
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             Aba Pagamento
-            <Badge variant="outline" className="text-xs">v20</Badge>
+            <Badge variant="outline" className="text-xs">v20.2</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -252,10 +259,12 @@ export default function Pagamento() {
             )}
           </div>
           {data && (
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
               <Stat label="Total bruto" valor={data.totais.totalBruto} />
               <Stat label="Total vale" valor={data.totais.totalVale} muted />
+              <Stat label="Total consumo" valor={data.totais.totalConsumoInterno || 0} muted />
               <Stat label="Total ajuste" valor={data.totais.totalAjuste} muted />
+              <Stat label="Taxa cartão (info)" valor={data.totais.totalTaxaCartao || 0} muted />
               <Stat label="Total a pagar" valor={data.totais.totalSaldo} bold />
             </div>
           )}
@@ -288,6 +297,7 @@ export default function Pagamento() {
                     <th className="py-2 px-2 text-right">Bônus meta</th>
                     <th className="py-2 px-2 text-right">Total bruto</th>
                     <th className="py-2 px-2 text-right">Vale (15)</th>
+                    <th className="py-2 px-2 text-right">Consumo</th>
                     <th className="py-2 px-2 text-right">Ajuste</th>
                     <th className="py-2 px-2 text-right font-semibold">Saldo</th>
                     <th className="py-2 pl-2 text-right">Ações</th>
@@ -345,6 +355,21 @@ export default function Pagamento() {
                             />
                           ) : (
                             <>R$ {fmtBRL(l.pagamento.vale)}</>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 text-right tabular-nums">
+                          {editando ? (
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={edit.consumoInterno}
+                              onChange={e => setEdit({ ...edit, consumoInterno: e.target.value })}
+                              className="w-24 h-8 text-right"
+                              data-testid={`consumo-${l.profissionalId}`}
+                            />
+                          ) : (
+                            <>R$ {fmtBRL(l.pagamento.consumoInterno)}</>
                           )}
                         </td>
                         <td className="py-2 px-2 text-right tabular-nums">
@@ -435,13 +460,21 @@ export default function Pagamento() {
             <CardTitle className="text-sm">Notas da edição</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Nota do vale</label>
                 <Input
                   value={edit.valeNota}
                   onChange={e => setEdit({ ...edit, valeNota: e.target.value })}
                   placeholder="opcional"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Nota do consumo</label>
+                <Input
+                  value={edit.consumoInternoNota}
+                  onChange={e => setEdit({ ...edit, consumoInternoNota: e.target.value })}
+                  placeholder="ex: 2 cervejas + amendoim"
                 />
               </div>
               <div>

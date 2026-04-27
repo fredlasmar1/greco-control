@@ -96,6 +96,16 @@ export default function VendasProdutos() {
   const [data, setData] = useState<RespVendas | null>(null);
   const [loading, setLoading] = useState(false);
   const [showCustos, setShowCustos] = useState(false);
+  const [ordemProdutos, setOrdemProdutos] = useState<"receita" | "unidades" | "margem">("receita");
+
+  const produtosOrdenados = useMemo(() => {
+    if (!data) return [];
+    const arr = [...data.produtos];
+    if (ordemProdutos === "unidades") arr.sort((a, b) => b.unidades - a.unidades);
+    else if (ordemProdutos === "margem") arr.sort((a, b) => b.margemRS - a.margemRS);
+    else arr.sort((a, b) => b.receita - a.receita);
+    return arr;
+  }, [data, ordemProdutos]);
 
   const carregar = async () => {
     if (!/^\d{4}-\d{2}$/.test(mes)) return;
@@ -222,15 +232,43 @@ export default function VendasProdutos() {
         </CardContent>
       </Card>
 
-      {/* Top produtos */}
+      {/* Ranking de produtos */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
-            <Package className="h-5 w-5" />
-            Produtos vendidos
+            <Trophy className="h-5 w-5" />
+            Ranking de produtos mais vendidos
+            <Badge variant="outline" className="text-xs">por {ordemProdutos === "receita" ? "receita" : "unidades"}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs text-muted-foreground">Ordenar por:</span>
+            <Button
+              size="sm"
+              variant={ordemProdutos === "receita" ? "default" : "outline"}
+              onClick={() => setOrdemProdutos("receita")}
+              className="h-7"
+            >
+              Receita (R$)
+            </Button>
+            <Button
+              size="sm"
+              variant={ordemProdutos === "unidades" ? "default" : "outline"}
+              onClick={() => setOrdemProdutos("unidades")}
+              className="h-7"
+            >
+              Quantidade
+            </Button>
+            <Button
+              size="sm"
+              variant={ordemProdutos === "margem" ? "default" : "outline"}
+              onClick={() => setOrdemProdutos("margem")}
+              className="h-7"
+            >
+              Margem R$
+            </Button>
+          </div>
           {!data || data.produtos.length === 0 ? (
             <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
           ) : (
@@ -238,6 +276,7 @@ export default function VendasProdutos() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left border-b text-xs text-muted-foreground">
+                    <th className="py-2 px-2 w-12">#</th>
                     <th className="py-2 px-2">Produto</th>
                     <th className="py-2 px-2">Categoria</th>
                     <th className="py-2 px-2 text-right">Unid.</th>
@@ -250,11 +289,17 @@ export default function VendasProdutos() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.produtos.map(p => (
-                    <tr key={p.id} className="border-b last:border-0 hover:bg-muted/30">
+                  {produtosOrdenados.map((p, i) => (
+                    <tr key={p.id} className={`border-b last:border-0 hover:bg-muted/30 ${i < 3 ? "bg-muted/20" : ""}`}>
+                      <td className="py-2 px-2 text-base">
+                        {i === 0 ? <span title="1º lugar">🥇</span>
+                          : i === 1 ? <span title="2º lugar">🥈</span>
+                          : i === 2 ? <span title="3º lugar">🥉</span>
+                          : <span className="text-muted-foreground text-sm">{i + 1}</span>}
+                      </td>
                       <td className="py-2 px-2 font-medium">{p.nome}</td>
                       <td className="py-2 px-2 text-muted-foreground text-xs">{p.categoria || "—"}</td>
-                      <td className="py-2 px-2 text-right tabular-nums">{p.unidades}</td>
+                      <td className="py-2 px-2 text-right tabular-nums font-semibold">{p.unidades}</td>
                       <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(p.precoVendaMedio)}</td>
                       <td className="py-2 px-2 text-right tabular-nums">
                         {p.custoUnit > 0 ? `R$ ${fmtBRL(p.custoUnit)}` : <span className="text-yellow-600 text-xs">sem custo</span>}

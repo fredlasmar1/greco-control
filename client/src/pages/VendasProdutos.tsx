@@ -1,0 +1,451 @@
+import { useEffect, useMemo, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Loader2,
+  RefreshCw,
+  TrendingUp,
+  Trophy,
+  Package,
+  Settings,
+  Search,
+  Save,
+  AlertTriangle,
+  DollarSign,
+  Percent,
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { authFetch } from "@/lib/authStore";
+
+// ──────────────────────────────────────────────────────────────────────
+// Aba VENDAS DE PRODUTOS (v21) — substitui Raio-X
+// ──────────────────────────────────────────────────────────────────────
+
+const API_BASE = (globalThis as any).__API_BASE__ || "";
+
+type Produto = {
+  id: string;
+  nome: string;
+  categoria: string;
+  fabricante: string;
+  unidades: number;
+  receita: number;
+  custoTotal: number;
+  precoVendaMedio: number;
+  custoUnit: number;
+  margemRS: number;
+  margemPct: number;
+};
+
+type Vendedor = {
+  id: number;
+  nome: string;
+  unidades: number;
+  receita: number;
+  custoTotal: number;
+  margemRS: number;
+  margemPct: number;
+  produtosDistintos: number;
+  comandas: number;
+  ticketMedio: number;
+};
+
+type RespVendas = {
+  ok: boolean;
+  mes: string;
+  dataInicio: string;
+  dataFim: string;
+  totais: {
+    unidades: number;
+    receita: number;
+    custo: number;
+    margemRS: number;
+    margemPct: number;
+    comandasComProduto: number;
+    produtosDistintos: number;
+    produtosSemCusto: number;
+  };
+  produtos: Produto[];
+  ranking: Vendedor[];
+  atualizadoEm: string;
+};
+
+type ProdutoCusto = {
+  id: string;
+  nome: string;
+  categoria: string;
+  fabricante: string;
+  precoVenda: number;
+  custo: number;
+  atualizadoEm: string | null;
+};
+
+const fmtBRL = (v: number) =>
+  v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function mesAtualYM(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+export default function VendasProdutos() {
+  const { toast } = useToast();
+  const [mes, setMes] = useState<string>(mesAtualYM());
+  const [data, setData] = useState<RespVendas | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showCustos, setShowCustos] = useState(false);
+
+  const carregar = async () => {
+    if (!/^\d{4}-\d{2}$/.test(mes)) return;
+    setLoading(true);
+    try {
+      const r = await authFetch(`${API_BASE}/api/vendas-produtos/${mes}`);
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Erro");
+      setData(j);
+    } catch (e: any) {
+      toast({ title: "Erro ao carregar", description: e.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { carregar(); /* eslint-disable-next-line */ }, [mes]);
+
+  return (
+    <div className="max-w-7xl mx-auto space-y-4 pb-8" data-testid="vendas-produtos-page">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <TrendingUp className="h-5 w-5" />
+            Vendas de Produtos
+            <Badge variant="outline" className="text-xs">v21</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Mês</label>
+              <Input
+                type="month"
+                value={mes}
+                onChange={e => setMes(e.target.value)}
+                className="w-40"
+                data-testid="filtro-mes"
+              />
+            </div>
+            <Button onClick={carregar} disabled={loading} variant="outline" size="sm">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+              Atualizar
+            </Button>
+            <Button onClick={() => setShowCustos(true)} variant="outline" size="sm" data-testid="abrir-custos">
+              <Settings className="h-4 w-4 mr-1" />
+              Cadastrar custos
+            </Button>
+          </div>
+
+          {data && (
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
+              <Stat icon={<Package className="h-4 w-4" />} label="Unidades" valor={data.totais.unidades} />
+              <Stat icon={<DollarSign className="h-4 w-4" />} label="Receita" reais={data.totais.receita} bold />
+              <Stat label="Custo total" reais={data.totais.custo} muted />
+              <Stat icon={<TrendingUp className="h-4 w-4" />} label="Margem R$" reais={data.totais.margemRS} bold />
+              <Stat icon={<Percent className="h-4 w-4" />} label="Margem %" valor={Number(data.totais.margemPct.toFixed(1))} suffix="%" />
+              <Stat label="Produtos sem custo" valor={data.totais.produtosSemCusto} alerta={data.totais.produtosSemCusto > 0} />
+            </div>
+          )}
+
+          {data && data.totais.produtosSemCusto > 0 && (
+            <div className="mt-3 flex items-start gap-2 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-xs text-yellow-900">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                <strong>{data.totais.produtosSemCusto}</strong> produto(s) sem custo cadastrado — a margem está incompleta. Clique em
+                <em> Cadastrar custos</em> para atualizar.
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Ranking de vendedores */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Trophy className="h-5 w-5" />
+            Ranking de vendedores
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!data || data.ranking.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left border-b text-xs text-muted-foreground">
+                    <th className="py-2 px-2 w-12">#</th>
+                    <th className="py-2 px-2">Profissional</th>
+                    <th className="py-2 px-2 text-right">Comandas</th>
+                    <th className="py-2 px-2 text-right">Unidades</th>
+                    <th className="py-2 px-2 text-right">Receita</th>
+                    <th className="py-2 px-2 text-right">Custo</th>
+                    <th className="py-2 px-2 text-right">Margem R$</th>
+                    <th className="py-2 px-2 text-right">Margem %</th>
+                    <th className="py-2 px-2 text-right">Ticket médio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.ranking.map((v, i) => (
+                    <tr key={v.id} className="border-b last:border-0 hover:bg-muted/30">
+                      <td className="py-2 px-2">
+                        {i === 0 ? <span className="text-yellow-500">🥇</span>
+                          : i === 1 ? <span className="text-gray-400">🥈</span>
+                          : i === 2 ? <span className="text-amber-600">🥉</span>
+                          : <span className="text-muted-foreground">{i + 1}</span>}
+                      </td>
+                      <td className="py-2 px-2 font-medium">{v.nome}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">{v.comandas}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">{v.unidades}</td>
+                      <td className="py-2 px-2 text-right tabular-nums font-semibold">R$ {fmtBRL(v.receita)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">R$ {fmtBRL(v.custoTotal)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(v.margemRS)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">{v.margemPct.toFixed(1)}%</td>
+                      <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(v.ticketMedio)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Top produtos */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Package className="h-5 w-5" />
+            Produtos vendidos
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!data || data.produtos.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left border-b text-xs text-muted-foreground">
+                    <th className="py-2 px-2">Produto</th>
+                    <th className="py-2 px-2">Categoria</th>
+                    <th className="py-2 px-2 text-right">Unid.</th>
+                    <th className="py-2 px-2 text-right">Preço venda</th>
+                    <th className="py-2 px-2 text-right">Custo unit.</th>
+                    <th className="py-2 px-2 text-right">Receita</th>
+                    <th className="py-2 px-2 text-right">Custo total</th>
+                    <th className="py-2 px-2 text-right">Margem R$</th>
+                    <th className="py-2 px-2 text-right">Margem %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.produtos.map(p => (
+                    <tr key={p.id} className="border-b last:border-0 hover:bg-muted/30">
+                      <td className="py-2 px-2 font-medium">{p.nome}</td>
+                      <td className="py-2 px-2 text-muted-foreground text-xs">{p.categoria || "—"}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">{p.unidades}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(p.precoVendaMedio)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">
+                        {p.custoUnit > 0 ? `R$ ${fmtBRL(p.custoUnit)}` : <span className="text-yellow-600 text-xs">sem custo</span>}
+                      </td>
+                      <td className="py-2 px-2 text-right tabular-nums font-semibold">R$ {fmtBRL(p.receita)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">R$ {fmtBRL(p.custoTotal)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(p.margemRS)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">{p.margemPct.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {showCustos && <CustosModal onClose={() => { setShowCustos(false); carregar(); }} />}
+    </div>
+  );
+}
+
+// ─── Stat card ────────────────────────────────────────────────────────
+function Stat({
+  icon, label, valor, reais, suffix, muted, bold, alerta,
+}: {
+  icon?: React.ReactNode;
+  label: string;
+  valor?: number;
+  reais?: number;
+  suffix?: string;
+  muted?: boolean;
+  bold?: boolean;
+  alerta?: boolean;
+}) {
+  return (
+    <div className={`rounded border px-3 py-2 ${alerta ? "border-yellow-300 bg-yellow-50" : "bg-card"}`}>
+      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <div className={`tabular-nums ${bold ? "font-bold" : muted ? "text-muted-foreground" : ""}`}>
+        {reais !== undefined ? `R$ ${fmtBRL(reais)}` : `${valor ?? 0}${suffix || ""}`}
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal de cadastro de custos ──────────────────────────────────────
+function CustosModal({ onClose }: { onClose: () => void }) {
+  const { toast } = useToast();
+  const [produtos, setProdutos] = useState<ProdutoCusto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [edits, setEdits] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await authFetch(`${API_BASE}/api/produtos/custos`);
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error);
+        setProdutos(j.produtos || []);
+      } catch (e: any) {
+        toast({ title: "Erro ao carregar", description: e.message, variant: "destructive" });
+      } finally {
+        setLoading(false);
+      }
+    })();
+    /* eslint-disable-next-line */
+  }, []);
+
+  const filtrados = useMemo(() => {
+    const q = busca.toLowerCase().trim();
+    if (!q) return produtos;
+    return produtos.filter(p => p.nome.toLowerCase().includes(q) || p.categoria.toLowerCase().includes(q));
+  }, [produtos, busca]);
+
+  const setEdit = (id: string, v: string) => setEdits(e => ({ ...e, [id]: v }));
+
+  const salvarTudo = async () => {
+    const items = Object.entries(edits)
+      .map(([id, v]) => ({ id, custo: Number(String(v).replace(",", ".")) || 0 }))
+      .filter(it => !Number.isNaN(it.custo));
+    if (items.length === 0) {
+      toast({ title: "Nada para salvar" });
+      return;
+    }
+    setSalvando(true);
+    try {
+      const r = await authFetch(`${API_BASE}/api/produtos/custos`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error);
+      toast({ title: "Custos atualizados", description: `${j.count} produto(s)` });
+      // Atualiza visual
+      setProdutos(prev => prev.map(p => {
+        const e = edits[p.id];
+        if (e === undefined) return p;
+        return { ...p, custo: Number(String(e).replace(",", ".")) || 0, atualizadoEm: new Date().toISOString() };
+      }));
+      setEdits({});
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-background rounded-lg shadow-lg max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Settings className="h-5 w-5" />
+            <h2 className="font-semibold">Cadastro de custos dos produtos</h2>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>Fechar</Button>
+        </div>
+
+        <div className="px-5 py-3 border-b flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="h-4 w-4 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={busca}
+              onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar produto..."
+              className="pl-8"
+            />
+          </div>
+          <Button onClick={salvarTudo} disabled={salvando || Object.keys(edits).length === 0}>
+            {salvando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+            Salvar {Object.keys(edits).length > 0 ? `(${Object.keys(edits).length})` : ""}
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-3">
+          {loading ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-background border-b">
+                <tr className="text-left text-xs text-muted-foreground">
+                  <th className="py-2 px-2">Produto</th>
+                  <th className="py-2 px-2">Categoria</th>
+                  <th className="py-2 px-2 text-right">Preço venda</th>
+                  <th className="py-2 px-2 text-right w-32">Custo (R$)</th>
+                  <th className="py-2 px-2 text-right w-24">Margem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtrados.map(p => {
+                  const editVal = edits[p.id];
+                  const custoAtual = editVal !== undefined ? Number(String(editVal).replace(",", ".")) || 0 : p.custo;
+                  const margem = p.precoVenda > 0 ? ((p.precoVenda - custoAtual) / p.precoVenda) * 100 : 0;
+                  return (
+                    <tr key={p.id} className="border-b last:border-0 hover:bg-muted/30">
+                      <td className="py-2 px-2 font-medium">{p.nome}</td>
+                      <td className="py-2 px-2 text-muted-foreground text-xs">{p.categoria || "—"}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(p.precoVenda)}</td>
+                      <td className="py-2 px-2 text-right">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editVal !== undefined ? editVal : (p.custo || "")}
+                          onChange={e => setEdit(p.id, e.target.value)}
+                          className="w-24 h-8 text-right ml-auto"
+                          placeholder="0,00"
+                        />
+                      </td>
+                      <td className={`py-2 px-2 text-right tabular-nums text-xs ${custoAtual > 0 ? (margem < 30 ? "text-red-600" : margem < 50 ? "text-yellow-600" : "text-green-600") : "text-muted-foreground"}`}>
+                        {custoAtual > 0 ? `${margem.toFixed(0)}%` : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t flex items-center justify-between text-xs text-muted-foreground">
+          <span>{filtrados.length} produto(s) listado(s)</span>
+          <span>Custos ficam salvos localmente e aparecem na aba Vendas de Produtos</span>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -20,7 +20,7 @@ import Fechamento from "@/pages/Fechamento";
 import Metas from "@/pages/Metas";
 import Configuracoes from "@/pages/Configuracoes";
 import ClientesDuplicados from "@/pages/ClientesDuplicados";
-import RaioX from "@/pages/RaioX";
+import VendasProdutos from "@/pages/VendasProdutos";
 import Consolidacao from "@/pages/Consolidacao";
 import Conciliacao from "@/pages/Conciliacao";
 import Pagamento from "@/pages/Pagamento";
@@ -64,7 +64,7 @@ function AdminRoutes() {
           <Route path="/metas" component={Metas} />
           <Route path="/duplicados" component={ClientesDuplicados} />
           <Route path="/configuracoes" component={Configuracoes} />
-          <Route path="/raio-x" component={RaioX} />
+          <Route path="/vendas-produtos" component={VendasProdutos} />
           <Route component={NotFound} />
         </Switch>
       </ErrorBoundary>

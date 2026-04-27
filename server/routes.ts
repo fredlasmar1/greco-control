@@ -44,6 +44,12 @@ import {
   sugerirSemComissao,
 } from "./produtosSemComissao";
 import {
+  getProdutosCustos,
+  setProdutoCusto,
+  setProdutosCustosBulk,
+  getCustoOf,
+} from "./produtosCustos";
+import {
   getPagamentoMes,
   getPagamentosDoMes,
   upsertPagamentoMes,
@@ -1411,7 +1417,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-26-pagamento-v20.2",
+      build: "2026-04-27-vendas-produtos-v21",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -5174,6 +5180,259 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       doc.fontSize(9).fillColor("#666");
       doc.text(`Greco Barbearia · Anápolis-GO · Emitido em ${new Date().toLocaleString("pt-BR")}`, 48, yAss + 60, { align: "center" });
       doc.end();
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ═══ v21: Aba VENDAS DE PRODUTOS ══════════════════════════════════════
+
+  // GET /api/produtos/custos — lista todos os produtos do catálogo Trinks
+  // mesclados com custos cadastrados localmente.
+  app.get("/api/produtos/custos", async (_req: Request, res: Response) => {
+    try {
+      const [produtos, custos] = await Promise.all([
+        trinksFetchAll("produtos").catch(() => [] as any[]),
+        getProdutosCustos(),
+      ]);
+      const lista = (produtos || []).map((p: any) => {
+        const id = String(p.id);
+        const c = custos[id];
+        return {
+          id,
+          nome: p.nome || p.descricao || "",
+          categoria: p.categoria?.nome || p.categoriaNome || "",
+          fabricante: p.fabricante?.nome || p.fabricanteNome || "",
+          precoVenda: Number(p.preco || 0),
+          custo: Number(c?.custo || 0),
+          atualizadoEm: c?.atualizadoEm || null,
+          atualizadoPor: c?.atualizadoPor || null,
+        };
+      }).sort((a: any, b: any) => a.nome.localeCompare(b.nome, "pt-BR"));
+      return res.json({ ok: true, produtos: lista });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // PUT /api/produtos/custos/:id — atualiza custo de um produto
+  app.put("/api/produtos/custos/:id", async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id || "");
+      const custo = Number(req.body?.custo);
+      if (!id) return res.status(400).json({ ok: false, error: "id obrigatório" });
+      if (Number.isNaN(custo)) return res.status(400).json({ ok: false, error: "custo deve ser numérico" });
+      const atualizadoPor = (req as any).user?.username || "admin";
+      await setProdutoCusto(id, custo, atualizadoPor);
+      invalidateCache("vendas-produtos");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  // PUT /api/produtos/custos — update em lote {items:[{id,custo}]}
+  app.put("/api/produtos/custos", async (req: Request, res: Response) => {
+    try {
+      const items = Array.isArray(req.body?.items) ? req.body.items : [];
+      const atualizadoPor = (req as any).user?.username || "admin";
+      await setProdutosCustosBulk(items, atualizadoPor);
+      invalidateCache("vendas-produtos");
+      return res.json({ ok: true, count: items.length });
+    } catch (err: any) {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/vendas-produtos/:mes — agrega vendas de produtos de um mês
+  // com custo cadastrado, margem, ranking de barbeiros e top produtos.
+  // Reaproveita /v1/transacoes (mesma fonte da aba Estoque).
+  app.get("/api/vendas-produtos/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      }
+      const ck = `vendas-produtos:${mes}`;
+      const cached = getCached(ck);
+      if (cached) return res.json({ ...cached, fromCache: true });
+
+      const dataInicio = `${mes}-01`;
+      const ultimoDia = ultimoDiaDoMes(`${mes}-01`);
+      const hoje = ymdHoje();
+      const dataFim = ultimoDia < hoje ? ultimoDia : hoje;
+      const transFim = ymdAddDays(dataFim, 1); // intervalo semi-aberto
+
+      const [produtos, profissionais, transacoes, custosMap] = await Promise.all([
+        trinksFetchAll("produtos").catch(() => [] as any[]),
+        trinksFetchAll("profissionais").catch(() => [] as any[]),
+        trinksFetchAll("transacoes", { dataInicio, dataFim: transFim }).catch(() => [] as any[]),
+        getProdutosCustos(),
+      ]);
+
+      const mapaProf = new Map<number, string>();
+      for (const p of profissionais || []) {
+        mapaProf.set(Number(p.id), p.nome || p.apelido || `Profissional ${p.id}`);
+      }
+
+      // Agrega por produto
+      type ProdAgg = {
+        id: string;
+        nome: string;
+        categoria: string;
+        fabricante: string;
+        unidades: number;
+        receita: number;
+        custoTotal: number;
+        precoVendaMedio: number;
+        custoUnit: number;
+        margemRS: number;
+        margemPct: number;
+      };
+      const porProduto = new Map<string, ProdAgg>();
+
+      // Ranking por vendedor
+      type VendAgg = {
+        id: number;
+        nome: string;
+        unidades: number;
+        receita: number;
+        custoTotal: number;
+        margemRS: number;
+        margemPct: number;
+        produtosDistintos: Set<string>;
+        comandas: Set<number>;
+      };
+      const porVendedor = new Map<number, VendAgg>();
+
+      let totalUnidades = 0;
+      let totalReceita = 0;
+      let totalCusto = 0;
+      const comandasComProduto = new Set<number>();
+
+      for (const t of transacoes || []) {
+        const prods = Array.isArray(t.produtos) ? t.produtos : [];
+        if (prods.length === 0) continue;
+        comandasComProduto.add(Number(t.id));
+        for (const p of prods) {
+          const pid = String(p.id || "");
+          if (!pid) continue;
+          const qtd = Number(p.quantidade || 0);
+          const vu = Number(p.valorUnitario || 0);
+          const receita = vu * qtd;
+          const custoUnit = Number(custosMap[pid]?.custo || 0);
+          const custoTotal = custoUnit * qtd;
+          const idVend = Number(p.IdProfissionalQueRealizouAVenda || 0) || null;
+
+          totalUnidades += qtd;
+          totalReceita += receita;
+          totalCusto += custoTotal;
+
+          // produto
+          const prod = porProduto.get(pid) || {
+            id: pid,
+            nome: p.nome || "",
+            categoria: "",
+            fabricante: "",
+            unidades: 0,
+            receita: 0,
+            custoTotal: 0,
+            precoVendaMedio: 0,
+            custoUnit,
+            margemRS: 0,
+            margemPct: 0,
+          };
+          prod.unidades += qtd;
+          prod.receita += receita;
+          prod.custoTotal += custoTotal;
+          if (vu > 0) prod.precoVendaMedio = vu;
+          prod.custoUnit = custoUnit;
+          porProduto.set(pid, prod);
+
+          // vendedor
+          if (idVend) {
+            const vd = porVendedor.get(idVend) || {
+              id: idVend,
+              nome: mapaProf.get(idVend) || `Profissional ${idVend}`,
+              unidades: 0,
+              receita: 0,
+              custoTotal: 0,
+              margemRS: 0,
+              margemPct: 0,
+              produtosDistintos: new Set<string>(),
+              comandas: new Set<number>(),
+            };
+            vd.unidades += qtd;
+            vd.receita += receita;
+            vd.custoTotal += custoTotal;
+            vd.produtosDistintos.add(pid);
+            vd.comandas.add(Number(t.id));
+            porVendedor.set(idVend, vd);
+          }
+        }
+      }
+
+      // Enriquece nomes/categoria via catálogo
+      const catalogoMap = new Map<string, any>();
+      for (const p of produtos || []) catalogoMap.set(String(p.id), p);
+      const produtosArr = Array.from(porProduto.values()).map(p => {
+        const cat = catalogoMap.get(p.id);
+        const nomeCat = cat?.categoria?.nome || cat?.categoriaNome || "";
+        const fab = cat?.fabricante?.nome || cat?.fabricanteNome || "";
+        const margemRS = p.receita - p.custoTotal;
+        const margemPct = p.receita > 0 ? (margemRS / p.receita) * 100 : 0;
+        return {
+          ...p,
+          nome: p.nome || cat?.nome || "",
+          categoria: nomeCat,
+          fabricante: fab,
+          margemRS,
+          margemPct,
+        };
+      }).sort((a, b) => b.receita - a.receita);
+
+      const vendedoresArr = Array.from(porVendedor.values()).map(v => {
+        const margemRS = v.receita - v.custoTotal;
+        const margemPct = v.receita > 0 ? (margemRS / v.receita) * 100 : 0;
+        return {
+          id: v.id,
+          nome: v.nome,
+          unidades: v.unidades,
+          receita: v.receita,
+          custoTotal: v.custoTotal,
+          margemRS,
+          margemPct,
+          produtosDistintos: v.produtosDistintos.size,
+          comandas: v.comandas.size,
+          ticketMedio: v.comandas.size > 0 ? v.receita / v.comandas.size : 0,
+        };
+      }).sort((a, b) => b.receita - a.receita);
+
+      const totalMargemRS = totalReceita - totalCusto;
+      const totalMargemPct = totalReceita > 0 ? (totalMargemRS / totalReceita) * 100 : 0;
+      const produtosSemCusto = produtosArr.filter(p => p.custoUnit === 0).length;
+
+      const resp = {
+        ok: true,
+        mes,
+        dataInicio,
+        dataFim,
+        totais: {
+          unidades: totalUnidades,
+          receita: totalReceita,
+          custo: totalCusto,
+          margemRS: totalMargemRS,
+          margemPct: totalMargemPct,
+          comandasComProduto: comandasComProduto.size,
+          produtosDistintos: produtosArr.length,
+          produtosSemCusto,
+        },
+        produtos: produtosArr,
+        ranking: vendedoresArr,
+        atualizadoEm: new Date().toISOString(),
+      };
+      setCache(ck, resp, 5 * 60 * 1000);
+      return res.json(resp);
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }

@@ -5475,11 +5475,32 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         };
       }).sort((a, b) => b.receita - a.receita);
 
-      const vendedoresArr = Array.from(porVendedor.values()).map(v => {
+      // Consolida por NOME (Trinks usa vários IDs legados para o mesmo profissional).
+      // Se 3 IDs distintos resolvem para "Carlos André", soma tudo numa linha só.
+      const consolidadoPorNome = new Map<string, {
+        ids: number[]; nome: string; unidades: number; receita: number;
+        custoTotal: number; produtosDistintos: Set<string>; comandas: Set<number>;
+      }>();
+      for (const v of porVendedor.values()) {
+        const key = v.nome.trim().toUpperCase();
+        const cur = consolidadoPorNome.get(key) || {
+          ids: [], nome: v.nome, unidades: 0, receita: 0, custoTotal: 0,
+          produtosDistintos: new Set<string>(), comandas: new Set<number>(),
+        };
+        cur.ids.push(v.id);
+        cur.unidades += v.unidades;
+        cur.receita += v.receita;
+        cur.custoTotal += v.custoTotal;
+        v.produtosDistintos.forEach(p => cur.produtosDistintos.add(p));
+        v.comandas.forEach(c => cur.comandas.add(c));
+        consolidadoPorNome.set(key, cur);
+      }
+      const vendedoresArr = Array.from(consolidadoPorNome.values()).map(v => {
         const margemRS = v.receita - v.custoTotal;
         const margemPct = v.receita > 0 ? (margemRS / v.receita) * 100 : 0;
         return {
-          id: v.id,
+          id: v.ids[0], // primeiro ID (para chave React)
+          ids: v.ids,
           nome: v.nome,
           unidades: v.unidades,
           receita: v.receita,

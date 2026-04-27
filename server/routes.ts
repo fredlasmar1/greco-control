@@ -1417,7 +1417,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-27-vendas-produtos-v21",
+      build: "2026-04-27-precos-edicao-v22",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1541,6 +1541,9 @@ export async function registerRoutes(
     const parts14 = tzFmt.formatToParts(d14);
     const pick14 = (t: string) => parts14.find(p => p.type === t)?.value || "";
     const dataInicio14 = `${pick14("year")}-${pick14("month")}-${pick14("day")}`;
+
+    // Custos/preços manuais cadastrados localmente (kv_store)
+    const custosMap = await getProdutosCustos();
 
     // Sequencial para não saturar o rate limit da Trinks (40 req/min).
     // Produtos + profissionais são leves; transações e agendamentos são paginados pesados.
@@ -1723,13 +1726,22 @@ export async function registerRoutes(
     }
 
     const lista = (produtos || []).map((p: any) => {
+      const idStr = String(p.id);
       const mov = movPorProduto.get(Number(p.id));
       const qtd30d = mov?.qtd30d ?? 0;
       const ultimaVenda = mov?.ultimaVenda ?? null;
-      const valorVenda = mov?.valorUnitarioMedio ?? 0;
+      const valorVendaObs = mov?.valorUnitarioMedio ?? 0;
       const diasDesdeUltimaVenda = ultimaVenda
         ? Math.floor((new Date(hoje).getTime() - new Date(ultimaVenda).getTime()) / (1000 * 60 * 60 * 24))
         : 999;
+
+      // Custos/preços manuais cadastrados localmente
+      const custoEntry = custosMap[idStr];
+      const custoUnit = Number(custoEntry?.custo || 0);
+      const precoVendaManual = typeof custoEntry?.precoVenda === "number" && custoEntry.precoVenda > 0 ? custoEntry.precoVenda : 0;
+      const precoVendaCatalogo = Number(p.preco || 0);
+      // efetivo: manual > catálogo Trinks > observado nas transações
+      const valorVenda = precoVendaManual || precoVendaCatalogo || valorVendaObs;
 
       // Classificação sem dados de saldo real (API não expõe):
       // - critico: produto SEM movimento nos últimos 30d (pode estar parado ou em ruptura)
@@ -1746,8 +1758,12 @@ export async function registerRoutes(
         fabricante: p.fabricante?.nome || p.fabricanteNome || "",
         saldo: 0, // não disponível via API
         minimo: 0, // não disponível via API
-        custoMedio: 0, // não disponível via API
-        valorVenda,
+        custoMedio: custoUnit, // preço de COMPRA cadastrado manualmente
+        custo: custoUnit,
+        precoVendaManual: precoVendaManual || null,
+        precoVendaCatalogo,
+        precoVendaObservado: valorVendaObs,
+        valorVenda, // efetivo
         valorEstoque: 0, // não calculável sem saldo
         nivel,
         vendidos30d: qtd30d,
@@ -5215,12 +5231,18 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         const c = custos[id];
         const pcat = Number(p.preco || 0);
         const pobs = precoObservado.get(id) || 0;
+        const precoManual = typeof c?.precoVenda === "number" && c.precoVenda > 0 ? c.precoVenda : 0;
+        // efetivo: manual > catálogo > observado
+        const precoEfetivo = precoManual || pcat || pobs;
         return {
           id,
           nome: p.nome || p.descricao || "",
           categoria: p.categoria?.nome || p.categoriaNome || "",
           fabricante: p.fabricante?.nome || p.fabricanteNome || "",
-          precoVenda: pcat || pobs, // prioriza catálogo se tiver, senão usa observado
+          precoVenda: precoEfetivo,           // preço efetivo (usado nas telas)
+          precoVendaManual: precoManual || null, // preço cadastrado manualmente (null se não houver)
+          precoVendaCatalogo: pcat || 0,      // preço do catálogo Trinks
+          precoVendaObservado: pobs || 0,     // último preço visto em vendas
           custo: Number(c?.custo || 0),
           atualizadoEm: c?.atualizadoEm || null,
           atualizadoPor: c?.atualizadoPor || null,
@@ -5232,29 +5254,51 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     }
   });
 
-  // PUT /api/produtos/custos/:id — atualiza custo de um produto
+  // PUT /api/produtos/custos/:id — atualiza custo (e opcionalmente preço de venda) de um produto
+  // body: { custo: number, precoVenda?: number | null }
+  //   - precoVenda undefined: mantém o atual
+  //   - precoVenda null: limpa (volta a usar catálogo Trinks)
+  //   - precoVenda número: sobrescreve
   app.put("/api/produtos/custos/:id", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id || "");
-      const custo = Number(req.body?.custo);
       if (!id) return res.status(400).json({ ok: false, error: "id obrigatório" });
-      if (Number.isNaN(custo)) return res.status(400).json({ ok: false, error: "custo deve ser numérico" });
+      const body = req.body || {};
+      let custo: number;
+      if (body.custo === undefined) {
+        // permite atualizar só o precoVenda mantendo o custo anterior
+        const atual = await getProdutosCustos();
+        custo = Number(atual[id]?.custo || 0);
+      } else {
+        custo = Number(body.custo);
+        if (Number.isNaN(custo)) return res.status(400).json({ ok: false, error: "custo deve ser numérico" });
+      }
+      let precoVenda: number | null | undefined = undefined;
+      if (body.precoVenda === null) {
+        precoVenda = null;
+      } else if (body.precoVenda !== undefined) {
+        const n = Number(body.precoVenda);
+        if (Number.isNaN(n)) return res.status(400).json({ ok: false, error: "precoVenda deve ser numérico ou null" });
+        precoVenda = n;
+      }
       const atualizadoPor = (req as any).user?.username || "admin";
-      await setProdutoCusto(id, custo, atualizadoPor);
+      await setProdutoCusto(id, custo, atualizadoPor, precoVenda);
       invalidateCache("vendas-produtos");
+      invalidateCache("estoque");
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(400).json({ ok: false, error: err.message });
     }
   });
 
-  // PUT /api/produtos/custos — update em lote {items:[{id,custo}]}
+  // PUT /api/produtos/custos — update em lote {items:[{id,custo?,precoVenda?}]}
   app.put("/api/produtos/custos", async (req: Request, res: Response) => {
     try {
       const items = Array.isArray(req.body?.items) ? req.body.items : [];
       const atualizadoPor = (req as any).user?.username || "admin";
       await setProdutosCustosBulk(items, atualizadoPor);
       invalidateCache("vendas-produtos");
+      invalidateCache("estoque");
       return res.json({ ok: true, count: items.length });
     } catch (err: any) {
       return res.status(400).json({ ok: false, error: err.message });
@@ -5402,7 +5446,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           const pid = String(p.id || "");
           if (!pid) continue;
           const qtd = Number(p.quantidade || 0);
-          const vu = Number(p.valorUnitario || 0);
+          const vuTrans = Number(p.valorUnitario || 0);
+          const precoVendaManual = Number(custosMap[pid]?.precoVenda || 0);
+          // Se houver preço manual cadastrado, ele sobrescreve o que veio na transação
+          const vu = precoVendaManual > 0 ? precoVendaManual : vuTrans;
           const receita = vu * qtd;
           const custoUnit = Number(custosMap[pid]?.custo || 0);
           const custoTotal = custoUnit * qtd;

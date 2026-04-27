@@ -15,6 +15,8 @@ import {
   AlertTriangle,
   DollarSign,
   Percent,
+  Pencil,
+  X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
@@ -77,7 +79,10 @@ type ProdutoCusto = {
   nome: string;
   categoria: string;
   fabricante: string;
-  precoVenda: number;
+  precoVenda: number;            // efetivo (manual > catálogo > observado)
+  precoVendaManual?: number | null;
+  precoVendaCatalogo?: number;
+  precoVendaObservado?: number;
   custo: number;
   atualizadoEm: string | null;
 };
@@ -97,6 +102,7 @@ export default function VendasProdutos() {
   const [loading, setLoading] = useState(false);
   const [showCustos, setShowCustos] = useState(false);
   const [ordemProdutos, setOrdemProdutos] = useState<"receita" | "unidades" | "margem">("receita");
+  const [editandoId, setEditandoId] = useState<string | null>(null);
 
   const produtosOrdenados = useMemo(() => {
     if (!data) return [];
@@ -131,7 +137,7 @@ export default function VendasProdutos() {
           <CardTitle className="flex items-center gap-2 text-base">
             <TrendingUp className="h-5 w-5" />
             Vendas de Produtos
-            <Badge variant="outline" className="text-xs">v21</Badge>
+            <Badge variant="outline" className="text-xs">v22</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -152,7 +158,7 @@ export default function VendasProdutos() {
             </Button>
             <Button onClick={() => setShowCustos(true)} variant="outline" size="sm" data-testid="abrir-custos">
               <Settings className="h-4 w-4 mr-1" />
-              Cadastrar custos
+              Preços de compra/venda
             </Button>
           </div>
 
@@ -286,6 +292,7 @@ export default function VendasProdutos() {
                     <th className="py-2 px-2 text-right">Custo total</th>
                     <th className="py-2 px-2 text-right">Margem R$</th>
                     <th className="py-2 px-2 text-right">Margem %</th>
+                    <th className="py-2 px-2 w-10 text-center">✏️</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -308,6 +315,18 @@ export default function VendasProdutos() {
                       <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">R$ {fmtBRL(p.custoTotal)}</td>
                       <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(p.margemRS)}</td>
                       <td className="py-2 px-2 text-right tabular-nums">{p.margemPct.toFixed(1)}%</td>
+                      <td className="py-2 px-2 text-center">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={() => setEditandoId(p.id)}
+                          title="Editar preço de compra e venda"
+                          data-testid={`btn-editar-${p.id}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -318,6 +337,136 @@ export default function VendasProdutos() {
       </Card>
 
       {showCustos && <CustosModal onClose={() => { setShowCustos(false); carregar(); }} />}
+      {editandoId && (
+        <EditarPrecoModal
+          produtoId={editandoId}
+          onClose={() => setEditandoId(null)}
+          onSalvo={() => { setEditandoId(null); carregar(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de edição rápida (1 produto: custo + preço venda) ────────────────
+function EditarPrecoModal({
+  produtoId,
+  onClose,
+  onSalvo,
+}: {
+  produtoId: string;
+  onClose: () => void;
+  onSalvo: () => void;
+}) {
+  const { toast } = useToast();
+  const [produto, setProduto] = useState<ProdutoCusto | null>(null);
+  const [custo, setCusto] = useState("");
+  const [precoVenda, setPrecoVenda] = useState("");
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await authFetch(`${API_BASE}/api/produtos/custos`);
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error);
+        const p = (j.produtos || []).find((x: ProdutoCusto) => String(x.id) === String(produtoId));
+        if (!p) throw new Error("Produto não encontrado");
+        setProduto(p);
+        setCusto(p.custo > 0 ? String(p.custo) : "");
+        setPrecoVenda(p.precoVendaManual && p.precoVendaManual > 0 ? String(p.precoVendaManual) : "");
+      } catch (e: any) {
+        toast({ title: "Erro", description: e.message, variant: "destructive" });
+        onClose();
+      } finally {
+        setCarregando(false);
+      }
+    })();
+    /* eslint-disable-next-line */
+  }, [produtoId]);
+
+  const parse = (v: string) => Number(String(v).replace(",", ".")) || 0;
+  const custoNum = parse(custo);
+  const vendaNum = parse(precoVenda);
+  const margem = vendaNum > 0 ? ((vendaNum - custoNum) / vendaNum) * 100 : 0;
+
+  const salvar = async () => {
+    setSalvando(true);
+    try {
+      const body: any = { custo: custoNum };
+      body.precoVenda = precoVenda.trim() === "" ? null : vendaNum;
+      const r = await authFetch(`${API_BASE}/api/produtos/custos/${produtoId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Falha ao salvar");
+      toast({ title: "Atualizado", description: produto?.nome });
+      onSalvo();
+    } catch (e: any) {
+      toast({ title: "Erro", description: e.message, variant: "destructive" });
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-background rounded-lg shadow-lg max-w-md w-full" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold flex items-center gap-2">
+              <Pencil className="h-4 w-4" /> Editar preços
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{produto?.nome || "—"}</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0"><X className="h-4 w-4" /></Button>
+        </div>
+
+        {carregando ? (
+          <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+        ) : (
+          <>
+            <div className="px-5 py-4 space-y-4">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Preço de compra (R$)</label>
+                <Input type="number" step="0.01" min="0" value={custo} onChange={e => setCusto(e.target.value)} placeholder="0,00" />
+                <p className="text-[11px] text-muted-foreground mt-1">Quanto você paga ao fornecedor.</p>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Preço de venda (R$)</label>
+                <Input
+                  type="number" step="0.01" min="0"
+                  value={precoVenda}
+                  onChange={e => setPrecoVenda(e.target.value)}
+                  placeholder={produto?.precoVendaCatalogo ? `Trinks: ${produto.precoVendaCatalogo.toFixed(2)}` : "0,00"}
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {produto?.precoVendaCatalogo ? <>Trinks: R$ {fmtBRL(produto.precoVendaCatalogo)}. </> : null}
+                  Deixe em branco para usar o do Trinks.
+                </p>
+              </div>
+              {custoNum > 0 && vendaNum > 0 && (
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs flex items-center justify-between">
+                  <span className="text-muted-foreground">Margem</span>
+                  <span className={`font-semibold ${margem < 30 ? "text-red-500" : margem < 50 ? "text-amber-500" : "text-emerald-500"}`}>
+                    R$ {fmtBRL(vendaNum - custoNum)} ({margem.toFixed(1)}%)
+                  </span>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={onClose} disabled={salvando}>Cancelar</Button>
+              <Button size="sm" onClick={salvar} disabled={salvando}>
+                {salvando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+                Salvar
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -355,7 +504,8 @@ function CustosModal({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [busca, setBusca] = useState("");
-  const [edits, setEdits] = useState<Record<string, string>>({});
+  // edits: { [id]: { custo?: string, precoVenda?: string } }
+  const [edits, setEdits] = useState<Record<string, { custo?: string; precoVenda?: string }>>({});
 
   useEffect(() => {
     (async () => {
@@ -379,12 +529,21 @@ function CustosModal({ onClose }: { onClose: () => void }) {
     return produtos.filter(p => p.nome.toLowerCase().includes(q) || p.categoria.toLowerCase().includes(q));
   }, [produtos, busca]);
 
-  const setEdit = (id: string, v: string) => setEdits(e => ({ ...e, [id]: v }));
+  const parse = (v: string) => Number(String(v).replace(",", ".")) || 0;
+  const setEditCusto = (id: string, v: string) =>
+    setEdits(e => ({ ...e, [id]: { ...(e[id] || {}), custo: v } }));
+  const setEditVenda = (id: string, v: string) =>
+    setEdits(e => ({ ...e, [id]: { ...(e[id] || {}), precoVenda: v } }));
 
   const salvarTudo = async () => {
-    const items = Object.entries(edits)
-      .map(([id, v]) => ({ id, custo: Number(String(v).replace(",", ".")) || 0 }))
-      .filter(it => !Number.isNaN(it.custo));
+    const items = Object.entries(edits).map(([id, ed]) => {
+      const it: any = { id };
+      if (ed.custo !== undefined) it.custo = parse(ed.custo);
+      if (ed.precoVenda !== undefined) {
+        it.precoVenda = ed.precoVenda.trim() === "" ? null : parse(ed.precoVenda);
+      }
+      return it;
+    });
     if (items.length === 0) {
       toast({ title: "Nada para salvar" });
       return;
@@ -398,12 +557,24 @@ function CustosModal({ onClose }: { onClose: () => void }) {
       });
       const j = await r.json();
       if (!j.ok) throw new Error(j.error);
-      toast({ title: "Custos atualizados", description: `${j.count} produto(s)` });
+      toast({ title: "Preços atualizados", description: `${j.count} produto(s)` });
       // Atualiza visual
       setProdutos(prev => prev.map(p => {
-        const e = edits[p.id];
-        if (e === undefined) return p;
-        return { ...p, custo: Number(String(e).replace(",", ".")) || 0, atualizadoEm: new Date().toISOString() };
+        const ed = edits[p.id];
+        if (!ed) return p;
+        const next: ProdutoCusto = { ...p, atualizadoEm: new Date().toISOString() };
+        if (ed.custo !== undefined) next.custo = parse(ed.custo);
+        if (ed.precoVenda !== undefined) {
+          if (ed.precoVenda.trim() === "") {
+            next.precoVendaManual = null;
+            next.precoVenda = next.precoVendaCatalogo || next.precoVendaObservado || 0;
+          } else {
+            const novoVenda = parse(ed.precoVenda);
+            next.precoVendaManual = novoVenda;
+            next.precoVenda = novoVenda;
+          }
+        }
+        return next;
       }));
       setEdits({});
     } catch (e: any) {
@@ -415,11 +586,11 @@ function CustosModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-background rounded-lg shadow-lg max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-background rounded-lg shadow-lg max-w-5xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-5 py-4 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Settings className="h-5 w-5" />
-            <h2 className="font-semibold">Cadastro de custos dos produtos</h2>
+            <h2 className="font-semibold">Preços de compra e venda dos produtos</h2>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose}>Fechar</Button>
         </div>
@@ -449,34 +620,53 @@ function CustosModal({ onClose }: { onClose: () => void }) {
                 <tr className="text-left text-xs text-muted-foreground">
                   <th className="py-2 px-2">Produto</th>
                   <th className="py-2 px-2">Categoria</th>
-                  <th className="py-2 px-2 text-right">Preço venda</th>
-                  <th className="py-2 px-2 text-right w-32">Custo (R$)</th>
-                  <th className="py-2 px-2 text-right w-24">Margem</th>
+                  <th className="py-2 px-2 text-right w-32">Preço compra</th>
+                  <th className="py-2 px-2 text-right w-32">Preço venda</th>
+                  <th className="py-2 px-2 text-right w-20">Margem</th>
                 </tr>
               </thead>
               <tbody>
                 {filtrados.map(p => {
-                  const editVal = edits[p.id];
-                  const custoAtual = editVal !== undefined ? Number(String(editVal).replace(",", ".")) || 0 : p.custo;
-                  const margem = p.precoVenda > 0 ? ((p.precoVenda - custoAtual) / p.precoVenda) * 100 : 0;
+                  const ed = edits[p.id] || {};
+                  const custoAtual = ed.custo !== undefined ? parse(ed.custo) : p.custo;
+                  // valor exibido no campo de venda: edit ou precoVendaManual (NUNCA o catálogo)
+                  let vendaStr: string;
+                  if (ed.precoVenda !== undefined) vendaStr = ed.precoVenda;
+                  else if (p.precoVendaManual && p.precoVendaManual > 0) vendaStr = String(p.precoVendaManual);
+                  else vendaStr = "";
+                  const vendaAtual = vendaStr.trim() !== ""
+                    ? parse(vendaStr)
+                    : (p.precoVendaCatalogo || p.precoVendaObservado || p.precoVenda || 0);
+                  const margem = vendaAtual > 0 ? ((vendaAtual - custoAtual) / vendaAtual) * 100 : 0;
                   return (
                     <tr key={p.id} className="border-b last:border-0 hover:bg-muted/30">
                       <td className="py-2 px-2 font-medium">{p.nome}</td>
                       <td className="py-2 px-2 text-muted-foreground text-xs">{p.categoria || "—"}</td>
-                      <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(p.precoVenda)}</td>
                       <td className="py-2 px-2 text-right">
                         <Input
                           type="number"
                           step="0.01"
                           min="0"
-                          value={editVal !== undefined ? editVal : (p.custo || "")}
-                          onChange={e => setEdit(p.id, e.target.value)}
+                          value={ed.custo !== undefined ? ed.custo : (p.custo || "")}
+                          onChange={e => setEditCusto(p.id, e.target.value)}
                           className="w-24 h-8 text-right ml-auto"
                           placeholder="0,00"
                         />
                       </td>
-                      <td className={`py-2 px-2 text-right tabular-nums text-xs ${custoAtual > 0 ? (margem < 30 ? "text-red-600" : margem < 50 ? "text-yellow-600" : "text-green-600") : "text-muted-foreground"}`}>
-                        {custoAtual > 0 ? `${margem.toFixed(0)}%` : "—"}
+                      <td className="py-2 px-2 text-right">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={vendaStr}
+                          onChange={e => setEditVenda(p.id, e.target.value)}
+                          className="w-24 h-8 text-right ml-auto"
+                          placeholder={p.precoVendaCatalogo ? `Trinks: ${p.precoVendaCatalogo.toFixed(2)}` : "0,00"}
+                          title={p.precoVendaCatalogo ? `Preço do Trinks: R$ ${fmtBRL(p.precoVendaCatalogo)}` : ""}
+                        />
+                      </td>
+                      <td className={`py-2 px-2 text-right tabular-nums text-xs ${custoAtual > 0 && vendaAtual > 0 ? (margem < 30 ? "text-red-600" : margem < 50 ? "text-yellow-600" : "text-green-600") : "text-muted-foreground"}`}>
+                        {custoAtual > 0 && vendaAtual > 0 ? `${margem.toFixed(0)}%` : "—"}
                       </td>
                     </tr>
                   );
@@ -488,7 +678,7 @@ function CustosModal({ onClose }: { onClose: () => void }) {
 
         <div className="px-5 py-3 border-t flex items-center justify-between text-xs text-muted-foreground">
           <span>{filtrados.length} produto(s) listado(s)</span>
-          <span>Custos ficam salvos localmente e aparecem na aba Vendas de Produtos</span>
+          <span>Preço de venda em branco = usar o cadastrado no Trinks</span>
         </div>
       </div>
     </div>

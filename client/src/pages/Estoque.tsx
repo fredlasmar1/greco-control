@@ -2,8 +2,10 @@ import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Package, AlertTriangle, TrendingDown, RefreshCw, Loader2, Search, Info, Trophy, User } from "lucide-react";
+import { Package, AlertTriangle, TrendingDown, RefreshCw, Loader2, Search, Info, Trophy, User, Pencil, Save, X } from "lucide-react";
 import { formatCurrency } from "@/lib/demoData";
+import { useToast } from "@/hooks/use-toast";
+import { authFetch } from "@/lib/authStore";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
@@ -15,6 +17,10 @@ interface Produto {
   saldo: number;
   minimo: number;
   custoMedio: number;
+  custo?: number;
+  precoVendaManual?: number | null;
+  precoVendaCatalogo?: number;
+  precoVendaObservado?: number;
   valorVenda: number;
   valorEstoque: number;
   nivel: "ok" | "atencao" | "critico";
@@ -77,11 +83,13 @@ function formatarDiasUltimaVenda(dias: number | null): string {
 }
 
 export default function Estoque() {
+  const { toast } = useToast();
   const [resumo, setResumo] = useState<Resumo | null>(null);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [filtroNivel, setFiltroNivel] = useState<"todos" | "alerta" | "critico">("todos");
+  const [editando, setEditando] = useState<Produto | null>(null);
 
   async function carregar() {
     setLoading(true);
@@ -364,13 +372,18 @@ export default function Estoque() {
                         <th className="text-left py-2 px-2 font-medium">Produto</th>
                         <th className="text-right py-2 px-2 font-medium">Vendidos (30d)</th>
                         <th className="text-right py-2 px-2 font-medium hidden sm:table-cell">Faturamento (30d)</th>
-                        <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Venda un.</th>
+                        <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Preço compra</th>
+                        <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Preço venda</th>
                         <th className="text-left py-2 px-2 font-medium hidden md:table-cell">Última venda</th>
                         <th className="text-center py-2 px-2 font-medium">Status</th>
+                        <th className="text-center py-2 px-2 font-medium w-16">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {produtosFiltrados.map((p) => (
+                      {produtosFiltrados.map((p) => {
+                        const custo = Number(p.custo ?? p.custoMedio ?? 0);
+                        const precoVenda = Number(p.valorVenda || 0);
+                        return (
                         <tr key={p.id} className="border-b border-border/50 hover:bg-muted/30">
                           <td className="py-2 px-2">
                             <div className="font-medium">{p.nome}</div>
@@ -384,8 +397,20 @@ export default function Estoque() {
                           <td className="py-2 px-2 text-right text-muted-foreground hidden sm:table-cell">
                             {p.faturamento30d > 0 ? formatCurrency(p.faturamento30d) : "-"}
                           </td>
+                          <td className="py-2 px-2 text-right hidden lg:table-cell">
+                            {custo > 0 ? (
+                              <span className="text-muted-foreground">{formatCurrency(custo)}</span>
+                            ) : (
+                              <span className="text-amber-400 text-xs">cadastrar</span>
+                            )}
+                          </td>
                           <td className="py-2 px-2 text-right text-muted-foreground hidden lg:table-cell">
-                            {p.valorVenda > 0 ? formatCurrency(p.valorVenda) : "-"}
+                            {precoVenda > 0 ? (
+                              <span className={p.precoVendaManual ? "text-emerald-400" : ""}>
+                                {formatCurrency(precoVenda)}
+                                {p.precoVendaManual ? <span className="ml-1 text-[10px]">(manual)</span> : null}
+                              </span>
+                            ) : "-"}
                           </td>
                           <td className="py-2 px-2 text-muted-foreground text-xs hidden md:table-cell">
                             {formatarDiasUltimaVenda(p.diasDesdeUltimaVenda)}
@@ -395,8 +420,21 @@ export default function Estoque() {
                               {labelNivel(p.nivel)}
                             </span>
                           </td>
+                          <td className="py-2 px-2 text-center">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setEditando(p)}
+                              title="Editar preço de compra e venda"
+                              data-testid={`btn-editar-${p.id}`}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                          </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -465,6 +503,158 @@ export default function Estoque() {
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
       )}
+
+      {/* Modal de edição de preços */}
+      {editando && (
+        <EditarProdutoModal
+          produto={editando}
+          onClose={() => setEditando(null)}
+          onSalvo={() => {
+            setEditando(null);
+            carregar();
+          }}
+          onErro={(msg) => toast({ title: "Erro ao salvar", description: msg, variant: "destructive" })}
+          onSucesso={(msg) => toast({ title: "Atualizado", description: msg })}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de edição de preços (custo + venda) ──────────────────────────
+function EditarProdutoModal({
+  produto,
+  onClose,
+  onSalvo,
+  onErro,
+  onSucesso,
+}: {
+  produto: Produto;
+  onClose: () => void;
+  onSalvo: () => void;
+  onErro: (msg: string) => void;
+  onSucesso: (msg: string) => void;
+}) {
+  const [custo, setCusto] = useState<string>(
+    produto.custo && produto.custo > 0 ? String(produto.custo) : ""
+  );
+  const [precoVenda, setPrecoVenda] = useState<string>(
+    produto.precoVendaManual && produto.precoVendaManual > 0 ? String(produto.precoVendaManual) : ""
+  );
+  const [salvando, setSalvando] = useState(false);
+
+  const parse = (v: string) => Number(String(v).replace(",", ".")) || 0;
+  const custoNum = parse(custo);
+  const vendaNum = parse(precoVenda);
+  const margem = vendaNum > 0 && custoNum >= 0 ? ((vendaNum - custoNum) / vendaNum) * 100 : 0;
+
+  const salvar = async () => {
+    setSalvando(true);
+    try {
+      const body: any = { custo: custoNum };
+      if (precoVenda.trim() === "") {
+        body.precoVenda = null; // limpa manual, volta a usar Trinks
+      } else {
+        body.precoVenda = vendaNum;
+      }
+      const r = await authFetch(`${API_BASE}/api/produtos/custos/${produto.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Falha ao salvar");
+      onSucesso(`${produto.nome} atualizado`);
+      onSalvo();
+    } catch (e: any) {
+      onErro(e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-background rounded-lg shadow-lg max-w-md w-full"
+        onClick={(e) => e.stopPropagation()}
+        data-testid="editar-produto-modal"
+      >
+        <div className="px-5 py-4 border-b flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold flex items-center gap-2">
+              <Pencil className="h-4 w-4" />
+              Editar preços
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{produto.nome}</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} className="h-8 w-8 p-0">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Preço de compra (R$)</label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={custo}
+              onChange={(e) => setCusto(e.target.value)}
+              placeholder="0,00"
+              data-testid="input-custo"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Quanto você paga ao fornecedor por unidade.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Preço de venda (R$)</label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={precoVenda}
+              onChange={(e) => setPrecoVenda(e.target.value)}
+              placeholder={
+                produto.precoVendaCatalogo && produto.precoVendaCatalogo > 0
+                  ? `Trinks: ${produto.precoVendaCatalogo.toFixed(2)}`
+                  : "0,00"
+              }
+              data-testid="input-preco-venda"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              {produto.precoVendaCatalogo && produto.precoVendaCatalogo > 0 ? (
+                <>Trinks: {formatCurrency(produto.precoVendaCatalogo)}. </>
+              ) : null}
+              Deixe em branco para usar o preço do Trinks.
+            </p>
+          </div>
+
+          {custoNum > 0 && vendaNum > 0 && (
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Margem</span>
+                <span className={`font-semibold ${margem < 30 ? "text-red-400" : margem < 50 ? "text-amber-400" : "text-emerald-400"}`}>
+                  {(vendaNum - custoNum).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ({margem.toFixed(1)}%)
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t flex items-center justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={salvando}>
+            Cancelar
+          </Button>
+          <Button size="sm" onClick={salvar} disabled={salvando} data-testid="btn-salvar">
+            {salvando ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+            Salvar
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

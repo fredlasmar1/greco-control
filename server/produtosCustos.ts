@@ -1,9 +1,16 @@
-// Cadastro local de pre\u00e7os de custo dos produtos.
-// A API Trinks (v1) N\u00c3O exp\u00f5e custo dos produtos, ent\u00e3o mantemos esse
-// dado em kv_store mapeado por ID de produto Trinks.
+// Cadastro local de preços de custo e (opcionalmente) preços de venda dos produtos.
+// A API Trinks (v1) NÃO expõe custo dos produtos, e o preço de venda do catálogo
+// nem sempre reflete o que está sendo cobrado nas comandas. Por isso, mantemos
+// custos e (opcionalmente) preços de venda em kv_store, mapeados por ID Trinks.
 //
 // Persistido em kv_store sob a chave "produtos_custos" como um objeto:
-// { [produtoId: string]: { custo: number; atualizadoEm: string; atualizadoPor?: string } }
+// { [produtoId: string]: {
+//     custo: number;
+//     precoVenda?: number;        // se definido, sobrescreve o preço Trinks/observado
+//     atualizadoEm: string;
+//     atualizadoPor?: string;
+//   }
+// }
 
 import { kvGet, kvSet } from "./db";
 import { log } from "./index";
@@ -12,6 +19,7 @@ const KV_KEY = "produtos_custos";
 
 export type CustoProduto = {
   custo: number;
+  precoVenda?: number;
   atualizadoEm: string;
   atualizadoPor?: string;
 };
@@ -41,29 +49,59 @@ export function invalidateProdutosCustosCache() {
   cacheAt = 0;
 }
 
-export async function setProdutoCusto(produtoId: string, custo: number, atualizadoPor?: string): Promise<MapaCustos> {
+export async function setProdutoCusto(
+  produtoId: string,
+  custo: number,
+  atualizadoPor?: string,
+  precoVenda?: number | null
+): Promise<MapaCustos> {
   const id = String(produtoId || "").trim();
-  if (!id) throw new Error("produtoId obrigat\u00f3rio");
+  if (!id) throw new Error("produtoId obrigatório");
   const valor = Math.max(0, Number(custo) || 0);
   const all = await getProdutosCustos();
-  all[id] = {
+  const prev = all[id] || ({} as CustoProduto);
+  const next: CustoProduto = {
     custo: valor,
     atualizadoEm: new Date().toISOString(),
     atualizadoPor,
   };
+  // precoVenda: se vier null, limpa; se vier undefined, mantém anterior; se vier número, atualiza
+  if (precoVenda === null) {
+    // limpa
+  } else if (typeof precoVenda === "number" && !Number.isNaN(precoVenda)) {
+    next.precoVenda = Math.max(0, precoVenda);
+  } else if (typeof prev.precoVenda === "number") {
+    next.precoVenda = prev.precoVenda;
+  }
+  all[id] = next;
   await kvSet(KV_KEY, all);
   invalidateProdutosCustosCache();
   return all;
 }
 
-export async function setProdutosCustosBulk(items: Array<{ id: string; custo: number }>, atualizadoPor?: string): Promise<MapaCustos> {
+export async function setProdutosCustosBulk(
+  items: Array<{ id: string; custo?: number; precoVenda?: number | null }>,
+  atualizadoPor?: string
+): Promise<MapaCustos> {
   const all = await getProdutosCustos();
   const ts = new Date().toISOString();
   for (const it of items || []) {
     const id = String(it?.id || "").trim();
     if (!id) continue;
-    const valor = Math.max(0, Number(it?.custo) || 0);
-    all[id] = { custo: valor, atualizadoEm: ts, atualizadoPor };
+    const prev = all[id] || ({} as CustoProduto);
+    const next: CustoProduto = {
+      custo: it?.custo !== undefined ? Math.max(0, Number(it.custo) || 0) : Number(prev.custo || 0),
+      atualizadoEm: ts,
+      atualizadoPor,
+    };
+    if (it?.precoVenda === null) {
+      // limpa
+    } else if (typeof it?.precoVenda === "number" && !Number.isNaN(it.precoVenda)) {
+      next.precoVenda = Math.max(0, it.precoVenda);
+    } else if (typeof prev.precoVenda === "number") {
+      next.precoVenda = prev.precoVenda;
+    }
+    all[id] = next;
   }
   await kvSet(KV_KEY, all);
   invalidateProdutosCustosCache();
@@ -73,4 +111,10 @@ export async function setProdutosCustosBulk(items: Array<{ id: string; custo: nu
 export function getCustoOf(map: MapaCustos, produtoId: string | number): number {
   const id = String(produtoId || "");
   return Number(map[id]?.custo || 0);
+}
+
+export function getPrecoVendaManualOf(map: MapaCustos, produtoId: string | number): number | undefined {
+  const id = String(produtoId || "");
+  const v = map[id]?.precoVenda;
+  return typeof v === "number" && v > 0 ? v : undefined;
 }

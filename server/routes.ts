@@ -5188,22 +5188,41 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   // ═══ v21: Aba VENDAS DE PRODUTOS ══════════════════════════════════════
 
   // GET /api/produtos/custos — lista todos os produtos do catálogo Trinks
-  // mesclados com custos cadastrados localmente.
+  // mesclados com preço médio observado nas vendas dos últimos 30 dias
+  // (Trinks /produtos não expõe preço) + custos cadastrados localmente.
   app.get("/api/produtos/custos", async (_req: Request, res: Response) => {
     try {
-      const [produtos, custos] = await Promise.all([
+      const hojeYmd = ymdHoje();
+      const d30 = new Date();
+      d30.setDate(d30.getDate() - 30);
+      const dataInicio30 = d30.toISOString().slice(0, 10);
+      const transFim = ymdAddDays(hojeYmd, 1);
+      const [produtos, custos, transacoes] = await Promise.all([
         trinksFetchAll("produtos").catch(() => [] as any[]),
         getProdutosCustos(),
+        trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: transFim }).catch(() => [] as any[]),
       ]);
+      // Preço médio observado nas vendas
+      const precoObservado = new Map<string, number>();
+      for (const t of transacoes || []) {
+        for (const p of (t.produtos || [])) {
+          const id = String(p.id || "");
+          if (!id) continue;
+          const vu = Number(p.valorUnitario || 0);
+          if (vu > 0) precoObservado.set(id, vu);
+        }
+      }
       const lista = (produtos || []).map((p: any) => {
         const id = String(p.id);
         const c = custos[id];
+        const pcat = Number(p.preco || 0);
+        const pobs = precoObservado.get(id) || 0;
         return {
           id,
           nome: p.nome || p.descricao || "",
           categoria: p.categoria?.nome || p.categoriaNome || "",
           fabricante: p.fabricante?.nome || p.fabricanteNome || "",
-          precoVenda: Number(p.preco || 0),
+          precoVenda: pcat || pobs, // prioriza catálogo se tiver, senão usa observado
           custo: Number(c?.custo || 0),
           atualizadoEm: c?.atualizadoEm || null,
           atualizadoPor: c?.atualizadoPor || null,
@@ -5263,10 +5282,15 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const dataFim = ultimoDia < hoje ? ultimoDia : hoje;
       const transFim = ymdAddDays(dataFim, 1); // intervalo semi-aberto
 
-      const [produtos, profissionais, transacoes, custosMap] = await Promise.all([
+      // Janela menor para agendamentos (heurística de IDs legados)
+      const d14 = new Date();
+      d14.setDate(d14.getDate() - 14);
+      const dataInicio14 = d14.toISOString().slice(0, 10);
+      const [produtos, profissionais, transacoes, agendamentos, custosMap] = await Promise.all([
         trinksFetchAll("produtos").catch(() => [] as any[]),
         trinksFetchAll("profissionais").catch(() => [] as any[]),
         trinksFetchAll("transacoes", { dataInicio, dataFim: transFim }).catch(() => [] as any[]),
+        trinksFetchAll("agendamentos", { dataInicio: dataInicio14, dataFim: hoje }).catch(() => [] as any[]),
         getProdutosCustos(),
       ]);
 
@@ -5274,6 +5298,51 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       for (const p of profissionais || []) {
         mapaProf.set(Number(p.id), p.nome || p.apelido || `Profissional ${p.id}`);
       }
+
+      // Heurística: Trinks /v1/transacoes guarda IDs legados (ex: 55740, 653128)
+      // que não batem com /v1/profissionais (825xxx). Cruzamos via agendamentos
+      // por (data, clienteId) para inferir o nome real.
+      const idxAgendPorDataCliente = new Map<string, { nome: string }[]>();
+      for (const ag of agendamentos || []) {
+        const dt = String(ag.dataHoraInicio || ag.data || "").slice(0, 10);
+        const cli = Number(ag.cliente?.id || 0);
+        const nomeProf = ag.profissional?.nome || ag.profissional?.apelido || "";
+        if (!dt || !cli || !nomeProf) continue;
+        const k = `${dt}|${cli}`;
+        const arr = idxAgendPorDataCliente.get(k) || [];
+        arr.push({ nome: nomeProf });
+        idxAgendPorDataCliente.set(k, arr);
+      }
+      const freqNomePorIdLegado = new Map<number, Map<string, number>>();
+      for (const t of transacoes || []) {
+        const dt = String(t.dataHora || "").slice(0, 10);
+        const cli = Number(t.cliente?.id || 0);
+        if (!dt || !cli) continue;
+        const cand = idxAgendPorDataCliente.get(`${dt}|${cli}`);
+        if (!cand || cand.length === 0) continue;
+        const idsLegados = new Set<number>();
+        for (const pp of (t.produtos || [])) {
+          const v = Number(pp.IdProfissionalQueRealizouAVenda || 0);
+          if (v) idsLegados.add(v);
+        }
+        for (const idLeg of idsLegados) {
+          const mp = freqNomePorIdLegado.get(idLeg) || new Map<string, number>();
+          for (const c of cand) {
+            const peso = cand.length === 1 ? 3 : 1;
+            mp.set(c.nome, (mp.get(c.nome) || 0) + peso);
+          }
+          freqNomePorIdLegado.set(idLeg, mp);
+        }
+      }
+      const mapaIdLegado = new Map<number, string>();
+      for (const [idLeg, freq] of freqNomePorIdLegado) {
+        let melhor = "", melhorScore = 0;
+        for (const [n, s] of freq) if (s > melhorScore) { melhorScore = s; melhor = n; }
+        if (melhor) mapaIdLegado.set(idLeg, melhor);
+      }
+      const nomeVendedor = (id: number): string => {
+        return mapaProf.get(id) || mapaIdLegado.get(id) || `Profissional ${id}`;
+      };
 
       // Agrega por produto
       type ProdAgg = {
@@ -5353,7 +5422,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           if (idVend) {
             const vd = porVendedor.get(idVend) || {
               id: idVend,
-              nome: mapaProf.get(idVend) || `Profissional ${idVend}`,
+              nome: nomeVendedor(idVend),
               unidades: 0,
               receita: 0,
               custoTotal: 0,

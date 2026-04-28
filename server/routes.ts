@@ -976,11 +976,16 @@ async function trinksFetchAll(
     }
   }
 
-  // Cache the result
-  const ttl = CACHE_TTLS[endpointPath] || 15 * 60 * 1000;
-  setCache(cacheKey, allItems, ttl);
-  log(`Cache SET for ${endpointPath}: ${allItems.length} items (TTL: ${Math.round(ttl / 60000)}min)`, "trinks");
-  
+  // Cache the result — mas NUNCA cachear lista vazia (provavelmente erro silencioso da Trinks)
+  // Sem essa guarda, um 429/timeout transient deixaria o sistema travado mostrando "0 produtos" até o TTL expirar.
+  if (allItems.length > 0) {
+    const ttl = CACHE_TTLS[endpointPath] || 15 * 60 * 1000;
+    setCache(cacheKey, allItems, ttl);
+    log(`Cache SET for ${endpointPath}: ${allItems.length} items (TTL: ${Math.round(ttl / 60000)}min)`, "trinks");
+  } else {
+    log(`Cache SKIPPED for ${endpointPath}: lista vazia (possível falha silenciosa, não será cacheada)`, "trinks");
+  }
+
   return allItems;
 }
 
@@ -1428,7 +1433,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-27-controle-estoque-v23",
+      build: "2026-04-28-no-cache-empty-v23.1",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,

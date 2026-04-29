@@ -31,6 +31,7 @@ import {
   getConfig as getConfigFin,
   setConfig as setConfigFin,
   fracaoCartao,
+  calcularCustoFixoPorMinuto,
 } from "./configFinanceira";
 import {
   getOverrides,
@@ -1433,7 +1434,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-29-precif-v24-etapa1",
+      build: "2026-04-29-precif-v24-etapa2",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -3812,15 +3813,9 @@ Regras CRÍTICAS:
     return res.json(allEntries);
   });
 
-  // ─── GET /api/financeiro/totais/:mes — Totais agregados por categoria de um mês
-  // mes no formato YYYY-MM (ex: 2026-04). Soma manuais + auto-gerados (Trinks).
-  // Retorna { mes, totalFixas, totalVariaveis, totalReceitas, totalParcelamentos, totalInvestimentos, saldo }
-  app.get("/api/financeiro/totais/:mes", (req: Request, res: Response) => {
-    const mes = String(req.params.mes || "");
-    if (!/^\d{4}-\d{2}$/.test(mes)) {
-      return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
-    }
-
+  // Helper interno: calcula totais agregados por categoria para um mês YYYY-MM.
+  // Reusado pelo endpoint /api/financeiro/totais/:mes e pelo cálculo de custo fixo/min.
+  function computeTotaisDoMes(mes: string) {
     // 1) Lançamentos manuais do mês
     const manuais = financeEntries.filter(e => e.date.startsWith(mes));
 
@@ -3919,7 +3914,7 @@ Regras CRÍTICAS:
 
     const saldo = totalReceitas - totalFixas - totalVariaveis - totalParcelamentos - totalInvestimentos;
 
-    return res.json({
+    return {
       mes,
       totalFixas: Number(totalFixas.toFixed(2)),
       totalVariaveis: Number(totalVariaveis.toFixed(2)),
@@ -3927,7 +3922,40 @@ Regras CRÍTICAS:
       totalParcelamentos: Number(totalParcelamentos.toFixed(2)),
       totalInvestimentos: Number(totalInvestimentos.toFixed(2)),
       saldo: Number(saldo.toFixed(2)),
-    });
+    };
+  }
+
+  // ─── GET /api/financeiro/totais/:mes — Totais agregados por categoria de um mês
+  // mes no formato YYYY-MM (ex: 2026-04). Soma manuais + auto-gerados (Trinks).
+  app.get("/api/financeiro/totais/:mes", (req: Request, res: Response) => {
+    const mes = String(req.params.mes || "");
+    if (!/^\d{4}-\d{2}$/.test(mes)) {
+      return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
+    }
+    return res.json(computeTotaisDoMes(mes));
+  });
+
+  // ─── GET /api/config/operacional/custo-fixo-minuto/:mes — v24
+  // Retorna o custo fixo por minuto de cadeira para um mês especifico,
+  // combinando totalFixas do mês com cadeiras/horas/dias/ocupacao da config.
+  app.get("/api/config/operacional/custo-fixo-minuto/:mes", async (req: Request, res: Response) => {
+    const mes = String(req.params.mes || "");
+    if (!/^\d{4}-\d{2}$/.test(mes)) {
+      return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
+    }
+    try {
+      const cfg = await getConfigFin();
+      const totais = computeTotaisDoMes(mes);
+      const result = calcularCustoFixoPorMinuto(mes, totais.totalFixas, {
+        cadeiras: cfg.cadeiras,
+        horasDia: cfg.horasDia,
+        diasMes: cfg.diasMes,
+        ocupacaoPct: cfg.ocupacaoPct,
+      });
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
   });
 
   // ─── POST /api/financeiro — Add single entry
@@ -4593,9 +4621,14 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   app.put("/api/config/financeira", async (req: Request, res: Response) => {
     try {
       const body = req.body || {};
-      const cfg = await setConfigFin({
-        taxaCartaoPct: Number(body.taxaCartaoPct ?? 0),
-      });
+      // Aceita atualizações parciais. Se um campo não vier, mantém o valor atual.
+      const patch: any = {};
+      if (body.taxaCartaoPct !== undefined) patch.taxaCartaoPct = Number(body.taxaCartaoPct);
+      if (body.cadeiras !== undefined) patch.cadeiras = Number(body.cadeiras);
+      if (body.horasDia !== undefined) patch.horasDia = Number(body.horasDia);
+      if (body.diasMes !== undefined) patch.diasMes = Number(body.diasMes);
+      if (body.ocupacaoPct !== undefined) patch.ocupacaoPct = Number(body.ocupacaoPct);
+      const cfg = await setConfigFin(patch);
       // Invalida cache de equipe (por período + completo) pra refletir nova taxa imediatamente
       try {
         invalidateCache("equipe-desempenho-completo");

@@ -121,13 +121,18 @@ Não persiste — só recalcula visualmente client-side.
 - Git: `fredlasmar@gmail.com` · Fred Lasmar
 - Repo: `fredlasmar1/greco-control` (push com `api_credentials=["github"]`)
 
-## Próximo plano — v25 (esboço)
+## Próximo plano — v25 (decidido com o Fred em 29/04/2026)
 
-Objetivo: poder operar o sistema mesmo com Trinks em 429.
+**Objetivo**: operar o sistema mesmo com Trinks em 429.
 
-Tópicos a definir na próxima sessão:
-- [ ] Tela de **lançamento manual de agendamentos** (data, profissional, serviço, cliente, valor, status)
-- [ ] Tela de **lançamento manual de faturamento diário** (totais por profissional/categoria/forma de pagamento)
-- [ ] Toggle **"modo offline"** que faz o app ignorar a Trinks e usar só os dados manuais
-- [ ] Ao voltar a Trinks, definir estratégia de **merge/conciliação** (manual vs Trinks)
-- [ ] Persistência: kv_store ou tabela Drizzle nova
+**Decisões já tomadas:**
+- Prioridade: **ambos os tipos de lançamento manual, com FATURAMENTO AGREGADO PRIMEIRO** (rápido), depois agendamento individual.
+- Conflito quando Trinks voltar: **Trinks prevalece** sobre o manual. Os dados manuais do mesmo período viram histórico/auditoria (não somam, não duplicam).
+
+**Etapas sugeridas (a confirmar na próxima sessão):**
+1. Schema + persistência de "faturamento manual diário" (totais por profissional, categoria, forma de pagamento) — kv_store provavelmente basta
+2. Tela de lançamento agregado (1 form por dia, ter-sáb)
+3. Integrar dados manuais nos endpoints/dashboards que hoje dependem da Trinks (com flag `fonte: 'manual' | 'trinks'`)
+4. Tela de lançamento por agendamento individual
+5. Lógica de "Trinks prevalece": ao receber dados Trinks de um dia que tem manual, marcar manual como `superseded` e exibir avisos
+6. Build/commit/push/deploy

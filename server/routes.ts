@@ -9,6 +9,12 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
 import { kvGet, kvSet, waitForDb, isDbReady } from "./db";
+import * as trinksImport from "./trinksImport";
+import type {
+  TrinksImportPayload,
+  TrinksImportType,
+  ImportSummary,
+} from "./trinksImport";
 import * as cron from "node-cron";
 import {
   enviarMensagem,
@@ -1479,7 +1485,7 @@ export async function registerRoutes(
       if (!req.file) return res.status(400).json({ error: "Arquivo não enviado." });
       let payload: TrinksImportPayload;
       try {
-        payload = parseTrinksCsv(req.file.buffer);
+        payload = trinksImport.parseTrinksCsv(req.file.buffer);
       } catch (e: any) {
         return res.status(400).json({
           error: e.message || "Falha ao processar o CSV.",
@@ -1494,13 +1500,13 @@ export async function registerRoutes(
       if (payload.tipo === "ranking") {
         for (const p of payload.periodos) {
           if (!p.mes) continue;
-          const s = summarize(payload, importadoEm, p.mes);
-          const chave = kvKeyFor("ranking", p.mes);
+          const s = trinksImport.summarize(payload, importadoEm, p.mes);
+          const chave = trinksImport.kvKeyFor("ranking", p.mes);
           summaries.push({ ...s, chave, sobrescreve: idx[chave] || null });
         }
       } else {
-        const s = summarize(payload, importadoEm);
-        const chave = kvKeyFor(payload.tipo, payload.mes);
+        const s = trinksImport.summarize(payload, importadoEm);
+        const chave = trinksImport.kvKeyFor(payload.tipo, payload.mes);
         summaries.push({ ...s, chave, sobrescreve: idx[chave] || null });
       }
 
@@ -1551,7 +1557,7 @@ export async function registerRoutes(
       if (!req.file) return res.status(400).json({ error: "Arquivo não enviado." });
       let payload: TrinksImportPayload;
       try {
-        payload = parseTrinksCsv(req.file.buffer);
+        payload = trinksImport.parseTrinksCsv(req.file.buffer);
       } catch (e: any) {
         return res.status(400).json({ error: e.message || "Falha ao processar o CSV." });
       }
@@ -1568,16 +1574,16 @@ export async function registerRoutes(
             geradoEm: payload.geradoEm,
             periodos: [p],
           };
-          const chave = kvKeyFor("ranking", p.mes);
+          const chave = trinksImport.kvKeyFor("ranking", p.mes);
           await kvSet(chave, subPayload);
-          const s = summarize(payload, importadoEm, p.mes);
+          const s = trinksImport.summarize(payload, importadoEm, p.mes);
           idx[chave] = s;
           persistidas.push(s);
         }
       } else {
-        const chave = kvKeyFor(payload.tipo, payload.mes);
+        const chave = trinksImport.kvKeyFor(payload.tipo, payload.mes);
         await kvSet(chave, payload);
-        const s = summarize(payload, importadoEm);
+        const s = trinksImport.summarize(payload, importadoEm);
         idx[chave] = s;
         persistidas.push(s);
       }
@@ -1618,7 +1624,7 @@ export async function registerRoutes(
       if (!/^\d{4}-\d{2}$/.test(mes)) {
         return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM." });
       }
-      const data = await kvGet<TrinksImportPayload>(kvKeyFor(tipo, mes));
+      const data = await kvGet<TrinksImportPayload>(trinksImport.kvKeyFor(tipo, mes));
       if (!data) return res.status(404).json({ error: "Importação não encontrada." });
       return res.json({ ok: true, data });
     } catch (err: any) {
@@ -1634,7 +1640,7 @@ export async function registerRoutes(
       if (!/^(financeiro|dre|ranking)$/.test(tipo) || !/^\d{4}-\d{2}$/.test(mes)) {
         return res.status(400).json({ error: "Parâmetros inválidos." });
       }
-      const chave = kvKeyFor(tipo, mes);
+      const chave = trinksImport.kvKeyFor(tipo, mes);
       await kvSet(chave, null);
       const idx = await loadTrinksImportIndex();
       delete idx[chave];

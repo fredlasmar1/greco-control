@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -38,6 +39,7 @@ import {
   ChevronUp,
   FileText,
   Copy,
+  FlaskConical,
 } from "lucide-react";
 import {
   BarChart,
@@ -432,6 +434,8 @@ export default function Precificacao() {
 
   const [editingService, setEditingService] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // v24 Etapa 5: modo simulação (toggle 'travar custo antes da comissão') — só visualização, não persiste
+  const [modoSimulacao, setModoSimulacao] = useState<boolean>(false);
 
   // Fetch saved costs from server
   const { data: savedCosts = [] } = useQuery<ServiceCostData[]>({
@@ -561,7 +565,11 @@ export default function Precificacao() {
 
       // Fórmulas v24
       const custoFixoRateado = s.duration * cfm;
-      const commissionValue = s.price * (comissaoPct / 100);
+      // v24 Etapa 5: em modo simulação, comissão = (preço − ficha) × % (trava custo antes da comissão)
+      // No modo padrão, comissão = preço × % (sobre o preço cheio)
+      const commissionValue = modoSimulacao
+        ? Math.max(0, s.price - totalCost) * (comissaoPct / 100)
+        : s.price * (comissaoPct / 100);
       const custoTotal = totalCost + custoFixoRateado + commissionValue;
       const netProfit = s.price - custoTotal;
       const margin = s.price > 0 ? (netProfit / s.price) * 100 : 0;
@@ -593,7 +601,7 @@ export default function Precificacao() {
         critical: margin < 15,
       };
     });
-  }, [services, savedCosts, cfm]);
+  }, [services, savedCosts, cfm, modoSimulacao]);
 
   // Summary KPIs
   const summary = useMemo(() => {
@@ -657,9 +665,29 @@ export default function Precificacao() {
             <span className="text-primary ml-1">• Dados Trinks</span>
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Percent className="w-4 h-4" />
-          <span>Comissão automática por categoria: <strong className="text-primary">VIP/Express 50%</strong> • <strong className="text-primary">demais 40%</strong></span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Percent className="w-4 h-4" />
+            <span>Comissão por categoria: <strong className="text-primary">VIP/Express 50%</strong> • <strong className="text-primary">demais 40%</strong></span>
+          </div>
+          {/* v24 Etapa 5: toggle modo simulação */}
+          <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-border bg-card/50">
+            <FlaskConical className={`w-3.5 h-3.5 ${modoSimulacao ? "text-amber-400" : "text-muted-foreground"}`} />
+            <Label htmlFor="toggle-simulacao" className="text-xs cursor-pointer select-none">
+              Travar custo antes da comissão
+            </Label>
+            <Switch
+              id="toggle-simulacao"
+              checked={modoSimulacao}
+              onCheckedChange={setModoSimulacao}
+              data-testid="toggle-modo-simulacao"
+            />
+            {modoSimulacao && (
+              <Badge variant="outline" className="text-[10px] h-5 border-amber-400/40 text-amber-400 bg-amber-400/10">
+                Simulação
+              </Badge>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1020,6 +1048,7 @@ export default function Precificacao() {
           <p className="mt-1">Fórmula v24: <strong>Custo total = ficha + (duração × custo fixo/min) + (preço × comissão%)</strong></p>
           <p className="mt-0.5">Preço sugerido = (ficha + custo fixo rateado) ÷ (1 − comissão% − margem desejada%)</p>
           <p className="mt-0.5 text-muted-foreground">Comissão automática: VIP/Express 50%, demais 40%. Margem desejada padrão: Cortes/Barbas 30%, Químicas/Estética 35%, Depilação/VIP 40%.</p>
+          <p className="mt-1"><strong>Modo simulação</strong> (toggle no topo): comissão = <strong>(preço − ficha) × %</strong> em vez de preço × %. Útil para travar o custo do produto antes da comissão. Não altera dados — só recalcula visualmente.</p>
         </div>
       </div>
     </div>

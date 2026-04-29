@@ -1433,7 +1433,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-28-no-cache-empty-v23.1",
+      build: "2026-04-29-precif-v24-etapa1",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -3810,6 +3810,124 @@ Regras CRÍTICAS:
       return b.createdAt.localeCompare(a.createdAt);
     });
     return res.json(allEntries);
+  });
+
+  // ─── GET /api/financeiro/totais/:mes — Totais agregados por categoria de um mês
+  // mes no formato YYYY-MM (ex: 2026-04). Soma manuais + auto-gerados (Trinks).
+  // Retorna { mes, totalFixas, totalVariaveis, totalReceitas, totalParcelamentos, totalInvestimentos, saldo }
+  app.get("/api/financeiro/totais/:mes", (req: Request, res: Response) => {
+    const mes = String(req.params.mes || "");
+    if (!/^\d{4}-\d{2}$/.test(mes)) {
+      return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
+    }
+
+    // 1) Lançamentos manuais do mês
+    const manuais = financeEntries.filter(e => e.date.startsWith(mes));
+
+    // 2) Lançamentos auto-gerados (Trinks): receita do dia + comissões + material
+    const auto: FinanceEntry[] = [];
+    const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
+    if (syncCache) {
+      const transacoes = syncCache.transacoes || [];
+      const dailyRev: Record<string, number> = {};
+      transacoes.forEach((t: any) => {
+        const raw = t.dataHora || t.dataReferencia || t.data || "";
+        const date = typeof raw === "string" ? raw.split("T")[0] : "";
+        if (!date || !date.startsWith(mes)) return;
+        dailyRev[date] = (dailyRev[date] || 0) + Number(t.totalPagar || 0);
+      });
+      Object.entries(dailyRev).forEach(([date, val]) => {
+        auto.push({
+          id: `trinks-rev-${date}`, date, description: "Faturamento Trinks",
+          amount: val, category: "receita", recurrent: false, createdAt: date + "T23:59:59.000Z",
+        });
+      });
+
+      // Comissões + material — usa mesma lógica do GET /api/financeiro
+      const agendamentos = syncCache.agendamentos || [];
+      const COMMISSION_RATE = 0.40;
+      const profDayMap: Record<string, { revenue: number }> = {};
+      agendamentos.forEach((a: any) => {
+        const statusName = (a.status?.nome || "").toLowerCase();
+        if (statusName !== "finalizado") return;
+        const raw = a.dataHoraInicio || "";
+        const date = typeof raw === "string" ? raw.split("T")[0] : "";
+        if (!date || !date.startsWith(mes)) return;
+        const profId = a.profissional?.id || "unknown";
+        const key = `${date}_${profId}`;
+        if (!profDayMap[key]) profDayMap[key] = { revenue: 0 };
+        profDayMap[key].revenue += Number(a.valor || 0);
+      });
+      const commissionByDay: Record<string, number> = {};
+      Object.entries(profDayMap).forEach(([key, data]) => {
+        const date = key.split("_")[0];
+        const c = data.revenue * COMMISSION_RATE;
+        if (c > 0) commissionByDay[date] = (commissionByDay[date] || 0) + c;
+      });
+      Object.entries(commissionByDay).forEach(([date, total]) => {
+        auto.push({
+          id: `trinks-comm-${date}`, date, description: "Comissões do dia",
+          amount: -total, category: "variavel", recurrent: false, createdAt: date + "T23:59:58.000Z",
+        });
+      });
+
+      if (serviceCosts.length > 0) {
+        const costMap: Record<string, number> = {};
+        serviceCosts.forEach(sc => {
+          const total = (sc.items || []).reduce((s: number, item: any) =>
+            s + (Number(item.quantity) || 0) * (Number(item.unitCost) || 0), 0);
+          if (total > 0) costMap[sc.serviceId] = total;
+        });
+        if (Object.keys(costMap).length > 0) {
+          const materialByDay: Record<string, number> = {};
+          agendamentos.forEach((a: any) => {
+            const statusName = (a.status?.nome || "").toLowerCase();
+            if (statusName !== "finalizado") return;
+            const raw = a.dataHoraInicio || "";
+            const date = typeof raw === "string" ? raw.split("T")[0] : "";
+            if (!date || !date.startsWith(mes)) return;
+            const svcId = String(a.servico?.id || "");
+            const cost = costMap[svcId];
+            if (cost && cost > 0) materialByDay[date] = (materialByDay[date] || 0) + cost;
+          });
+          Object.entries(materialByDay).forEach(([date, total]) => {
+            auto.push({
+              id: `trinks-mat-${date}`, date, description: "Custo de material",
+              amount: -total, category: "variavel", recurrent: false, createdAt: date + "T23:59:57.000Z",
+            });
+          });
+        }
+      }
+    }
+
+    // 3) Soma por categoria. Lançamentos têm sinal: receitas positivas, despesas negativas.
+    // Aqui retornamos o VALOR ABSOLUTO somado por categoria (mais útil pro custo fixo/min).
+    const todos = [...manuais, ...auto];
+    let totalFixas = 0, totalVariaveis = 0, totalReceitas = 0,
+        totalParcelamentos = 0, totalInvestimentos = 0;
+
+    todos.forEach(e => {
+      const v = Math.abs(Number(e.amount) || 0);
+      switch (e.category) {
+        case "fixo": totalFixas += v; break;
+        case "variavel": totalVariaveis += v; break;
+        case "receita": totalReceitas += v; break;
+        case "parcelamento": totalParcelamentos += v; break;
+        case "investimento": totalInvestimentos += v; break;
+      }
+    });
+
+    const saldo = totalReceitas - totalFixas - totalVariaveis - totalParcelamentos - totalInvestimentos;
+
+    return res.json({
+      mes,
+      totalFixas: Number(totalFixas.toFixed(2)),
+      totalVariaveis: Number(totalVariaveis.toFixed(2)),
+      totalReceitas: Number(totalReceitas.toFixed(2)),
+      totalParcelamentos: Number(totalParcelamentos.toFixed(2)),
+      totalInvestimentos: Number(totalInvestimentos.toFixed(2)),
+      saldo: Number(saldo.toFixed(2)),
+    });
   });
 
   // ─── POST /api/financeiro — Add single entry

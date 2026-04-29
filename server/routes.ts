@@ -33,7 +33,12 @@ import {
   fracaoCartao,
   calcularCustoFixoPorMinuto,
 } from "./configFinanceira";
-import { getComissaoPctDoServico, getCategoriaServico } from "./comissaoCategoria";
+import {
+  getComissaoPctDoServico,
+  getCategoriaServico,
+  getMargemDesejadaDefault,
+  calcularMargemServico,
+} from "./comissaoCategoria";
 import {
   getOverrides,
   setOverride,
@@ -602,6 +607,11 @@ interface ServiceCostEntry {
   serviceId: string;
   serviceName: string;
   items: CostItem[];
+  // v24: overrides opcionais por serviço.
+  // Se ausentes, sistema usa defaults (comissão pela categoria do serviço,
+  // margem desejada pela categoria do produto/serviço).
+  comissaoPct?: number;        // 0..100. Override da comissão automática.
+  margemDesejadaPct?: number;  // 0..100. Margem alvo para o preço sugerido.
 }
 
 const SERVICE_COSTS_FILE = path.join(process.cwd(), ".service-costs.json");
@@ -1435,7 +1445,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-29-precif-v24-etapa3",
+      build: "2026-04-29-precif-v24-etapa4",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -3626,17 +3636,29 @@ Regras CRÍTICAS:
     if (!Array.isArray(costs)) {
       return res.status(400).json({ error: "costs must be an array" });
     }
-    serviceCosts = costs.map((c: any) => ({
-      serviceId: String(c.serviceId || ""),
-      serviceName: String(c.serviceName || ""),
-      items: Array.isArray(c.items) ? c.items.map((item: any) => ({
-        id: String(item.id || ""),
-        name: String(item.name || ""),
-        category: String(item.category || "outro"),
-        quantity: Number(item.quantity || 0),
-        unitCost: Number(item.unitCost || 0),
-      })) : [],
-    }));
+    serviceCosts = costs.map((c: any) => {
+      const entry: ServiceCostEntry = {
+        serviceId: String(c.serviceId || ""),
+        serviceName: String(c.serviceName || ""),
+        items: Array.isArray(c.items) ? c.items.map((item: any) => ({
+          id: String(item.id || ""),
+          name: String(item.name || ""),
+          category: String(item.category || "outro"),
+          quantity: Number(item.quantity || 0),
+          unitCost: Number(item.unitCost || 0),
+        })) : [],
+      };
+      // Persistir overrides apenas se vierem com valor válido (0..100).
+      if (c.comissaoPct !== undefined && c.comissaoPct !== null && c.comissaoPct !== "") {
+        const v = Number(c.comissaoPct);
+        if (isFinite(v)) entry.comissaoPct = Math.max(0, Math.min(100, v));
+      }
+      if (c.margemDesejadaPct !== undefined && c.margemDesejadaPct !== null && c.margemDesejadaPct !== "") {
+        const v = Number(c.margemDesejadaPct);
+        if (isFinite(v)) entry.margemDesejadaPct = Math.max(0, Math.min(100, v));
+      }
+      return entry;
+    });
     saveServiceCosts();
     log(`Service costs: saved ${serviceCosts.length} entries`, "costs");
     return res.json({ ok: true, count: serviceCosts.length });
@@ -4045,6 +4067,127 @@ Regras CRÍTICAS:
         ocupacaoPct: cfg.ocupacaoPct,
       });
       return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── GET /api/precificacao/contexto/:mes — v24
+  // Pacote de contexto que a tela Precificação consome de uma vez:
+  //   - parametros operacionais (cadeiras/horas/dias/ocupacao)
+  //   - totalFixas do mês
+  //   - custoFixoPorMinuto já calculado
+  app.get("/api/precificacao/contexto/:mes", async (req: Request, res: Response) => {
+    const mes = String(req.params.mes || "");
+    if (!/^\d{4}-\d{2}$/.test(mes)) {
+      return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
+    }
+    try {
+      const cfg = await getConfigFin();
+      const totais = computeTotaisDoMes(mes);
+      const cfm = calcularCustoFixoPorMinuto(mes, totais.totalFixas, {
+        cadeiras: cfg.cadeiras,
+        horasDia: cfg.horasDia,
+        diasMes: cfg.diasMes,
+        ocupacaoPct: cfg.ocupacaoPct,
+      });
+      return res.json({
+        ok: true,
+        mes,
+        operacional: {
+          cadeiras: cfg.cadeiras,
+          horasDia: cfg.horasDia,
+          diasMes: cfg.diasMes,
+          ocupacaoPct: cfg.ocupacaoPct,
+        },
+        totalFixas: totais.totalFixas,
+        minutosProdutivosMes: cfm.minutosProdutivosMes,
+        custoFixoPorMinuto: cfm.custoFixoPorMinuto,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ─── POST /api/precificacao/calcular — v24
+  // Recebe lista de servicos e retorna calculo expandido para cada um.
+  // Body: { mes: "YYYY-MM", servicos: [{ id, nome, categoria, preco, duracao }, ...] }
+  // Output: { contexto, servicos: [{ ...input, fichaTecnica, comissaoPct, margemDesejadaPct, calculo }] }
+  app.post("/api/precificacao/calcular", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.body?.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
+      }
+      const servicos = Array.isArray(req.body?.servicos) ? req.body.servicos : [];
+      const cfg = await getConfigFin();
+      const totais = computeTotaisDoMes(mes);
+      const cfm = calcularCustoFixoPorMinuto(mes, totais.totalFixas, {
+        cadeiras: cfg.cadeiras,
+        horasDia: cfg.horasDia,
+        diasMes: cfg.diasMes,
+        ocupacaoPct: cfg.ocupacaoPct,
+      });
+
+      const result = servicos.map((s: any) => {
+        const id = String(s.id || "");
+        const nome = String(s.nome || "");
+        const categoria = String(s.categoria || "");
+        const preco = Number(s.preco || 0);
+        const duracao = Number(s.duracao || 0);
+
+        // Ficha técnica salva (soma dos itens)
+        const sc = serviceCosts.find(c => c.serviceId === id);
+        const fichaTecnica = sc ? sc.items.reduce((sum, it) =>
+          sum + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0) : 0;
+
+        // Comissão: override se houver, senão regra por categoria
+        const comissaoPct = sc?.comissaoPct !== undefined
+          ? sc.comissaoPct
+          : Math.round(getComissaoPctDoServico(nome) * 100);
+
+        // Margem desejada: override se houver, senão default por categoria
+        const margemDesejadaPct = sc?.margemDesejadaPct !== undefined
+          ? sc.margemDesejadaPct
+          : getMargemDesejadaDefault(categoria, nome);
+
+        const calculo = calcularMargemServico({
+          preco,
+          duracaoMin: duracao,
+          fichaTecnica,
+          custoFixoPorMinuto: cfm.custoFixoPorMinuto,
+          comissaoPct,
+          margemDesejadaPct,
+        });
+
+        return {
+          id, nome, categoria, preco, duracao,
+          fichaTecnica: Number(fichaTecnica.toFixed(2)),
+          itensFicha: sc ? sc.items.length : 0,
+          comissaoPct,
+          comissaoOverride: sc?.comissaoPct !== undefined,
+          margemDesejadaPct,
+          margemDesejadaOverride: sc?.margemDesejadaPct !== undefined,
+          ...calculo,
+        };
+      });
+
+      return res.json({
+        ok: true,
+        mes,
+        contexto: {
+          totalFixas: totais.totalFixas,
+          minutosProdutivosMes: cfm.minutosProdutivosMes,
+          custoFixoPorMinuto: cfm.custoFixoPorMinuto,
+          operacional: {
+            cadeiras: cfg.cadeiras,
+            horasDia: cfg.horasDia,
+            diasMes: cfg.diasMes,
+            ocupacaoPct: cfg.ocupacaoPct,
+          },
+        },
+        servicos: result,
+      });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }

@@ -63,6 +63,36 @@ interface ServiceCostData {
   serviceId: string;
   serviceName: string;
   items: CostItem[];
+  comissaoPct?: number;        // v24: override por serviço
+  margemDesejadaPct?: number;  // v24: override por serviço
+}
+
+// v24: Contexto operacional do mês (custo fixo/min)
+interface PrecificacaoContexto {
+  ok: boolean;
+  mes: string;
+  operacional: { cadeiras: number; horasDia: number; diasMes: number; ocupacaoPct: number };
+  totalFixas: number;
+  minutosProdutivosMes: number;
+  custoFixoPorMinuto: number;
+}
+
+// v24: Helpers de detecção (espelham backend)
+function normTxt(s: any): string {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+function comissaoPctPadrao(servicoNome: string): number {
+  const n = normTxt(servicoNome);
+  return /\bvip\b|\bexpress\b/.test(n) ? 50 : 40;
+}
+function margemDesejadaPadrao(categoria: string, servicoNome: string): number {
+  const txt = `${normTxt(categoria)} ${normTxt(servicoNome)}`;
+  if (/\bvip\b/.test(txt)) return 40;
+  if (/depilac/.test(txt)) return 40;
+  if (/quimic|tintur|colorac|descolor|alisa|progressiv|relaxa|matiza/.test(txt)) return 35;
+  if (/estetic|limpez|hidrat|sobrancelh|pestan|massag|micropigment/.test(txt)) return 35;
+  if (/corte|barba|cabelo|combo|navalh/.test(txt)) return 30;
+  return 30;
 }
 
 // ─── Preset items common in barbershops ───────────────────
@@ -394,13 +424,50 @@ export default function Precificacao() {
   const { isConnected, trinks } = useTrinksStore();
   const hasTrinksData = isConnected && trinks !== null;
 
-  const [commission, setCommission] = useState(40);
+  // Mes corrente YYYY-MM (sempre America/Sao_Paulo via tz do servidor; aqui usamos o mes local)
+  const mesAtual = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }, []);
+
   const [editingService, setEditingService] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   // Fetch saved costs from server
   const { data: savedCosts = [] } = useQuery<ServiceCostData[]>({
     queryKey: ["/api/service-costs"],
+  });
+
+  // v24: Contexto operacional do mês (custo fixo por minuto)
+  const { data: contexto } = useQuery<PrecificacaoContexto>({
+    queryKey: ["/api/precificacao/contexto", mesAtual],
+    queryFn: async () => {
+      const r = await apiRequest("GET", `/api/precificacao/contexto/${mesAtual}`);
+      return r.json();
+    },
+  });
+
+  // v24: estado local editável dos parâmetros operacionais (no painel topo)
+  const [opLocal, setOpLocal] = useState<{ cadeiras: number; horasDia: number; diasMes: number; ocupacaoPct: number } | null>(null);
+  useEffect(() => {
+    if (contexto?.operacional && !opLocal) {
+      setOpLocal({ ...contexto.operacional });
+    }
+  }, [contexto, opLocal]);
+
+  // v24: Mutation para salvar parâmetros operacionais
+  const opMutation = useMutation({
+    mutationFn: async (op: { cadeiras: number; horasDia: number; diasMes: number; ocupacaoPct: number }) => {
+      const res = await apiRequest("PUT", "/api/config/financeira", op);
+      return res.json();
+    },
+    onSuccess: () => {
+      qClient.invalidateQueries({ queryKey: ["/api/precificacao/contexto"] });
+      toast({ description: "Parâmetros operacionais atualizados." });
+    },
+    onError: (err: any) => {
+      toast({ description: err.message || "Erro ao salvar parâmetros.", variant: "destructive" });
+    },
   });
 
   // Save mutation
@@ -476,21 +543,48 @@ export default function Precificacao() {
     saveMutation.mutate(updated);
   };
 
-  // Analysis per service
+  // v24: Análise expandida por serviço (custo fixo rateado + comissão por categoria + preço sugerido)
+  const cfm = contexto?.custoFixoPorMinuto || 0;
   const analysis = useMemo(() => {
     return services.map((s: any) => {
-      const totalCost = getTotalCost(s.id);
-      const commissionValue = s.price * (commission / 100);
-      const netProfit = s.price - totalCost - commissionValue;
+      const totalCost = getTotalCost(s.id);                    // ficha técnica
+      const sc = savedCosts.find(c => c.serviceId === s.id);
+      const itemCount = sc?.items.length || 0;
+
+      // Comissão e margem desejada: override se houver, senão defaults por categoria
+      const comissaoPct = sc?.comissaoPct !== undefined
+        ? sc.comissaoPct
+        : comissaoPctPadrao(s.name);
+      const margemDesejadaPct = sc?.margemDesejadaPct !== undefined
+        ? sc.margemDesejadaPct
+        : margemDesejadaPadrao(s.category, s.name);
+
+      // Fórmulas v24
+      const custoFixoRateado = s.duration * cfm;
+      const commissionValue = s.price * (comissaoPct / 100);
+      const custoTotal = totalCost + custoFixoRateado + commissionValue;
+      const netProfit = s.price - custoTotal;
       const margin = s.price > 0 ? (netProfit / s.price) * 100 : 0;
-      const itemCount = getItems(s.id).length;
+
+      // Preço sugerido baseado em margem desejada
+      const denom = 1 - (comissaoPct / 100) - (margemDesejadaPct / 100);
+      const precoSugerido = denom > 0 ? (totalCost + custoFixoRateado) / denom : null;
+      const precoSugeridoErro = denom <= 0
+        ? `Comissão (${comissaoPct}%) + margem (${margemDesejadaPct}%) ≥ 100%`
+        : null;
 
       return {
         ...s,
         totalCost,
+        custoFixoRateado,
+        comissaoPct,
+        margemDesejadaPct,
         commissionValue,
+        custoTotal,
         netProfit,
         margin,
+        precoSugerido,
+        precoSugeridoErro,
         revenueMonth: s.price * s.usage,
         profitMonth: netProfit * s.usage,
         itemCount,
@@ -499,7 +593,7 @@ export default function Precificacao() {
         critical: margin < 15,
       };
     });
-  }, [services, savedCosts, commission]);
+  }, [services, savedCosts, cfm]);
 
   // Summary KPIs
   const summary = useMemo(() => {
@@ -563,18 +657,91 @@ export default function Precificacao() {
             <span className="text-primary ml-1">• Dados Trinks</span>
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Percent className="w-4 h-4 text-muted-foreground" />
-          <span className="text-xs text-muted-foreground">Comissão:</span>
-          <Input
-            type="number"
-            value={commission}
-            onChange={e => setCommission(Number(e.target.value) || 0)}
-            className="w-16 h-8 text-sm text-center"
-          />
-          <span className="text-xs text-muted-foreground">%</span>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Percent className="w-4 h-4" />
+          <span>Comissão automática por categoria: <strong className="text-primary">VIP/Express 50%</strong> • <strong className="text-primary">demais 40%</strong></span>
         </div>
       </div>
+
+      {/* v24: Painel Operacional — parâmetros para custo fixo/min */}
+      <Card className="bg-card border-card-border">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Calculator className="w-4 h-4 text-primary" />
+            Parâmetros Operacionais (custo fixo por minuto de cadeira)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div>
+              <Label className="text-[11px] text-muted-foreground">Cadeiras</Label>
+              <Input
+                type="number" min={1}
+                value={opLocal?.cadeiras ?? ""}
+                onChange={e => opLocal && setOpLocal({ ...opLocal, cadeiras: Number(e.target.value) || 0 })}
+                className="h-8 text-sm"
+                data-testid="input-cadeiras"
+              />
+            </div>
+            <div>
+              <Label className="text-[11px] text-muted-foreground">Horas/dia</Label>
+              <Input
+                type="number" min={1} max={24}
+                value={opLocal?.horasDia ?? ""}
+                onChange={e => opLocal && setOpLocal({ ...opLocal, horasDia: Number(e.target.value) || 0 })}
+                className="h-8 text-sm"
+                data-testid="input-horas"
+              />
+            </div>
+            <div>
+              <Label className="text-[11px] text-muted-foreground">Dias/mês</Label>
+              <Input
+                type="number" min={1} max={31}
+                value={opLocal?.diasMes ?? ""}
+                onChange={e => opLocal && setOpLocal({ ...opLocal, diasMes: Number(e.target.value) || 0 })}
+                className="h-8 text-sm"
+                data-testid="input-dias"
+              />
+            </div>
+            <div>
+              <Label className="text-[11px] text-muted-foreground">Ocupação média (%)</Label>
+              <Input
+                type="number" min={0} max={100}
+                value={opLocal?.ocupacaoPct ?? ""}
+                onChange={e => opLocal && setOpLocal({ ...opLocal, ocupacaoPct: Number(e.target.value) || 0 })}
+                className="h-8 text-sm"
+                data-testid="input-ocupacao"
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-between flex-wrap gap-3 pt-2 border-t border-border/50">
+            <div className="text-xs space-y-0.5">
+              <div>
+                Despesas fixas do mês: <strong className="text-red-400">{formatCurrency(contexto?.totalFixas || 0)}</strong>
+                {(contexto?.totalFixas || 0) === 0 && (
+                  <span className="text-muted-foreground ml-1">(cadastre em Financeiro)</span>
+                )}
+              </div>
+              <div>
+                Minutos produtivos/mês: <strong>{(contexto?.minutosProdutivosMes || 0).toLocaleString("pt-BR")}</strong>
+              </div>
+              <div>
+                Custo fixo por minuto: <strong className="text-primary">{formatCurrency(contexto?.custoFixoPorMinuto || 0)}/min</strong>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              className="bg-primary hover:bg-primary/80 text-white h-8 text-xs"
+              disabled={!opLocal || opMutation.isPending}
+              onClick={() => opLocal && opMutation.mutate(opLocal)}
+              data-testid="button-salvar-operacional"
+            >
+              <Save className="w-3 h-3 mr-1" />
+              Salvar parâmetros
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -730,6 +897,14 @@ export default function Precificacao() {
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                     </div>
+                    <div className="text-right w-20 hidden lg:block">
+                      <p className="text-[10px] text-muted-foreground">Sugerido</p>
+                      {item.precoSugerido !== null && item.itemCount > 0 ? (
+                        <p className="text-xs font-medium text-primary">{formatCurrency(item.precoSugerido)}</p>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </div>
                     <div className="text-right w-10">
                       <p className="text-[10px] text-muted-foreground">Mês</p>
                       <p className="text-xs">{item.usage}x</p>
@@ -749,9 +924,16 @@ export default function Precificacao() {
                     {/* Mobile stats */}
                     <div className="sm:hidden grid grid-cols-2 gap-2 mb-3">
                       <div><p className="text-[10px] text-muted-foreground">Preço</p><p className="text-sm font-semibold">{formatCurrency(item.price)}</p></div>
-                      <div><p className="text-[10px] text-muted-foreground">Custo</p><p className="text-sm text-red-400">{item.itemCount > 0 ? formatCurrency(item.totalCost) : "—"}</p></div>
-                      <div><p className="text-[10px] text-muted-foreground">Comissão ({commission}%)</p><p className="text-sm text-orange-400">{formatCurrency(item.commissionValue)}</p></div>
+                      <div><p className="text-[10px] text-muted-foreground">Ficha técnica</p><p className="text-sm text-red-400">{item.itemCount > 0 ? formatCurrency(item.totalCost) : "—"}</p></div>
+                      <div><p className="text-[10px] text-muted-foreground">Custo fixo ({item.duration}min)</p><p className="text-sm text-red-400">{formatCurrency(item.custoFixoRateado)}</p></div>
+                      <div><p className="text-[10px] text-muted-foreground">Comissão ({item.comissaoPct}%)</p><p className="text-sm text-orange-400">{formatCurrency(item.commissionValue)}</p></div>
                       <div><p className="text-[10px] text-muted-foreground">Lucro</p><p className={`text-sm font-semibold ${item.netProfit >= 0 ? "text-green-500" : "text-red-500"}`}>{item.itemCount > 0 ? formatCurrency(item.netProfit) : "—"}</p></div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">Preço sugerido (margem {item.margemDesejadaPct}%)</p>
+                        <p className="text-sm font-semibold text-primary">
+                          {item.precoSugerido !== null ? formatCurrency(item.precoSugerido) : "—"}
+                        </p>
+                      </div>
                     </div>
 
                     {/* Items preview */}
@@ -835,7 +1017,9 @@ export default function Precificacao() {
           <p>2. Clique em "Criar Ficha Técnica" para adicionar os itens de custo (produtos, descartáveis, etc.)</p>
           <p>3. Use "Itens Comuns" para adicionar rapidamente itens frequentes de barbearia</p>
           <p>4. Use "Copiar de..." para copiar a ficha de um serviço similar</p>
-          <p className="mt-1">Fórmula: <strong>Lucro = Preço − Custos − Comissão ({commission}%)</strong></p>
+          <p className="mt-1">Fórmula v24: <strong>Custo total = ficha + (duração × custo fixo/min) + (preço × comissão%)</strong></p>
+          <p className="mt-0.5">Preço sugerido = (ficha + custo fixo rateado) ÷ (1 − comissão% − margem desejada%)</p>
+          <p className="mt-0.5 text-muted-foreground">Comissão automática: VIP/Express 50%, demais 40%. Margem desejada padrão: Cortes/Barbas 30%, Químicas/Estética 35%, Depilação/VIP 40%.</p>
         </div>
       </div>
     </div>

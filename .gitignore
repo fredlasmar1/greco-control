@@ -5,3 +5,6 @@ dist/
 .trinks-cache.json
 .financeiro-data.json
 *.log
+
+.usuarios.json
+.service-costs.json

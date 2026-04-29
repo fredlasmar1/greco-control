@@ -33,6 +33,7 @@ import {
   fracaoCartao,
   calcularCustoFixoPorMinuto,
 } from "./configFinanceira";
+import { getComissaoPctDoServico, getCategoriaServico } from "./comissaoCategoria";
 import {
   getOverrides,
   setOverride,
@@ -1434,7 +1435,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-29-precif-v24-etapa2",
+      build: "2026-04-29-precif-v24-etapa3",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -3708,10 +3709,12 @@ Regras CRÍTICAS:
 
     if (syncCache) {
       const agendamentos = syncCache.agendamentos || [];
-      const COMMISSION_RATE = 0.40; // 40% default
 
-      // Group finalized agendamentos by professional per day
-      const profDayMap: Record<string, { name: string; revenue: number; count: number }> = {};
+      // v24: comissão POR CATEGORIA do serviço (50% VIP/Express, 40% resto).
+      // Agregamos por (profissional, dia, categoria) para mostrar nos detalhes
+      // do lançamento diário quanto saiu como 40% e quanto como 50%.
+      type ProfDiaCat = { name: string; revenue: number; count: number; pct: number };
+      const profDayCatMap: Record<string, ProfDiaCat> = {};
 
       agendamentos.forEach((a: any) => {
         const statusName = (a.status?.nome || "").toLowerCase();
@@ -3722,31 +3725,37 @@ Regras CRÍTICAS:
 
         const profName = a.profissional?.nome || "Profissional";
         const profId = a.profissional?.id || "unknown";
-        const key = `${date}_${profId}`;
-        if (!profDayMap[key]) profDayMap[key] = { name: profName, revenue: 0, count: 0 };
-        profDayMap[key].revenue += Number(a.valor || 0);
-        profDayMap[key].count += 1;
+        const servicoNome = a.servico?.nome
+          || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "")
+          || "";
+        const pct = getComissaoPctDoServico(servicoNome, profName);
+        const key = `${date}_${profId}_${pct}`;
+        if (!profDayCatMap[key]) profDayCatMap[key] = { name: profName, revenue: 0, count: 0, pct };
+        profDayCatMap[key].revenue += Number(a.valor || 0);
+        profDayCatMap[key].count += 1;
       });
 
-      // Group commissions by date (aggregate all professionals per day)
+      // Agrupa as comissões por dia (somando todos profissionais e categorias).
+      // Mantém breakdown nos detalhes para auditoria.
       const commissionByDay: Record<string, { total: number; details: string[] }> = {};
 
-      Object.entries(profDayMap).forEach(([key, data]) => {
+      Object.entries(profDayCatMap).forEach(([key, data]) => {
         const date = key.split("_")[0];
-        const commission = data.revenue * COMMISSION_RATE;
+        const commission = data.revenue * data.pct;
         if (commission <= 0) return;
 
         if (!commissionByDay[date]) commissionByDay[date] = { total: 0, details: [] };
         commissionByDay[date].total += commission;
         const firstName = data.name.split(" ")[0];
-        commissionByDay[date].details.push(`${firstName}: R$${commission.toFixed(0)} (${data.count} atend.)`);
+        const pctLabel = Math.round(data.pct * 100);
+        commissionByDay[date].details.push(`${firstName} ${pctLabel}%: R$${commission.toFixed(0)} (${data.count} atend.)`);
       });
 
       Object.entries(commissionByDay).forEach(([date, data]) => {
         trinksCommissions.push({
           id: `trinks-comm-${date}`,
           date,
-          description: `Comissões do dia (40%)`,
+          description: `Comissões do dia`,
           amount: -data.total,
           category: "variavel",
           subcategory: "Comissões",
@@ -3838,25 +3847,29 @@ Regras CRÍTICAS:
         });
       });
 
-      // Comissões + material — usa mesma lógica do GET /api/financeiro
+      // Comissões + material — v24: comissão por categoria (50% VIP/Express, 40% resto)
       const agendamentos = syncCache.agendamentos || [];
-      const COMMISSION_RATE = 0.40;
-      const profDayMap: Record<string, { revenue: number }> = {};
+      const profDayCatMap: Record<string, { revenue: number; pct: number }> = {};
       agendamentos.forEach((a: any) => {
         const statusName = (a.status?.nome || "").toLowerCase();
         if (statusName !== "finalizado") return;
         const raw = a.dataHoraInicio || "";
         const date = typeof raw === "string" ? raw.split("T")[0] : "";
         if (!date || !date.startsWith(mes)) return;
+        const profName = a.profissional?.nome || "";
         const profId = a.profissional?.id || "unknown";
-        const key = `${date}_${profId}`;
-        if (!profDayMap[key]) profDayMap[key] = { revenue: 0 };
-        profDayMap[key].revenue += Number(a.valor || 0);
+        const servicoNome = a.servico?.nome
+          || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "")
+          || "";
+        const pct = getComissaoPctDoServico(servicoNome, profName);
+        const key = `${date}_${profId}_${pct}`;
+        if (!profDayCatMap[key]) profDayCatMap[key] = { revenue: 0, pct };
+        profDayCatMap[key].revenue += Number(a.valor || 0);
       });
       const commissionByDay: Record<string, number> = {};
-      Object.entries(profDayMap).forEach(([key, data]) => {
+      Object.entries(profDayCatMap).forEach(([key, data]) => {
         const date = key.split("_")[0];
-        const c = data.revenue * COMMISSION_RATE;
+        const c = data.revenue * data.pct;
         if (c > 0) commissionByDay[date] = (commissionByDay[date] || 0) + c;
       });
       Object.entries(commissionByDay).forEach(([date, total]) => {
@@ -3933,6 +3946,85 @@ Regras CRÍTICAS:
       return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
     }
     return res.json(computeTotaisDoMes(mes));
+  });
+
+  // ─── GET /api/financeiro/comissoes-debug/:mes — v24
+  // Log de diferença: antes (40% global) vs depois (por categoria).
+  // Usado para validar manualmente o impacto da nova regra antes/depois
+  // do deploy. Não altera nada — só retorna numeros.
+  app.get("/api/financeiro/comissoes-debug/:mes", (req: Request, res: Response) => {
+    const mes = String(req.params.mes || "");
+    if (!/^\d{4}-\d{2}$/.test(mes)) {
+      return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
+    }
+    const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
+    if (!syncCache) {
+      return res.json({ mes, ok: false, motivo: "Sem sync cache (Trinks). Sincronize primeiro." });
+    }
+    const agendamentos = syncCache.agendamentos || [];
+    let totalRevenue = 0, totalAntes = 0, totalDepois = 0;
+    let countVipExpress = 0, countPadrao = 0;
+    let revenueVipExpress = 0, revenuePadrao = 0;
+    const porProfissional: Record<string, { nome: string; categoria: string; pct: number; receita: number; comAntes: number; comDepois: number; atendimentos: number }> = {};
+
+    agendamentos.forEach((a: any) => {
+      const statusName = (a.status?.nome || "").toLowerCase();
+      if (statusName !== "finalizado") return;
+      const raw = a.dataHoraInicio || "";
+      const date = typeof raw === "string" ? raw.split("T")[0] : "";
+      if (!date || !date.startsWith(mes)) return;
+      const valor = Number(a.valor || 0);
+      if (valor <= 0) return;
+
+      const profName = a.profissional?.nome || "Profissional";
+      const profId = String(a.profissional?.id || "unknown");
+      const servicoNome = a.servico?.nome
+        || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "")
+        || "";
+      const categoria = getCategoriaServico(servicoNome, profName);
+      const pctDepois = getComissaoPctDoServico(servicoNome, profName);
+      const pctAntes = 0.40;
+
+      totalRevenue += valor;
+      totalAntes += valor * pctAntes;
+      totalDepois += valor * pctDepois;
+      if (categoria === "vip_express") { countVipExpress++; revenueVipExpress += valor; }
+      else { countPadrao++; revenuePadrao += valor; }
+
+      if (!porProfissional[profId]) {
+        porProfissional[profId] = { nome: profName, categoria, pct: pctDepois, receita: 0, comAntes: 0, comDepois: 0, atendimentos: 0 };
+      }
+      porProfissional[profId].receita += valor;
+      porProfissional[profId].comAntes += valor * pctAntes;
+      porProfissional[profId].comDepois += valor * pctDepois;
+      porProfissional[profId].atendimentos += 1;
+    });
+
+    const profissionais = Object.values(porProfissional)
+      .map(p => ({
+        nome: p.nome, categoria: p.categoria,
+        comissaoPct: Math.round(p.pct * 100),
+        atendimentos: p.atendimentos,
+        receita: Number(p.receita.toFixed(2)),
+        comAntes: Number(p.comAntes.toFixed(2)),
+        comDepois: Number(p.comDepois.toFixed(2)),
+        delta: Number((p.comDepois - p.comAntes).toFixed(2)),
+      }))
+      .sort((a, b) => b.receita - a.receita);
+
+    return res.json({
+      mes,
+      totalReceita: Number(totalRevenue.toFixed(2)),
+      antesGlobal40: Number(totalAntes.toFixed(2)),
+      depoisPorCategoria: Number(totalDepois.toFixed(2)),
+      diferenca: Number((totalDepois - totalAntes).toFixed(2)),
+      diferencaPct: totalAntes > 0 ? Number((((totalDepois - totalAntes) / totalAntes) * 100).toFixed(2)) : 0,
+      atendimentosVipExpress: countVipExpress,
+      atendimentosPadrao: countPadrao,
+      receitaVipExpress: Number(revenueVipExpress.toFixed(2)),
+      receitaPadrao: Number(revenuePadrao.toFixed(2)),
+      porProfissional: profissionais,
+    });
   });
 
   // ─── GET /api/config/operacional/custo-fixo-minuto/:mes — v24

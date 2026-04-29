@@ -1452,7 +1452,201 @@ export async function registerRoutes(
     });
   });
 
-  // ─── GET /api/trinks/estabelecimento ────────────────────
+  // ============================================================================
+  // v25 Etapa 1: IMPORTAÇÃO DE RELATÓRIOS CSV DA TRINKS
+  // Permite operar mesmo com a Trinks API em 429.
+  // ============================================================================
+
+  type TrinksImportIndex = Record<string, ImportSummary>;
+  const TRINKS_IMPORT_INDEX_KEY = "trinks_import:_index";
+
+  async function loadTrinksImportIndex(): Promise<TrinksImportIndex> {
+    try {
+      const idx = await kvGet<TrinksImportIndex>(TRINKS_IMPORT_INDEX_KEY);
+      return idx || {};
+    } catch {
+      return {};
+    }
+  }
+
+  async function saveTrinksImportIndex(idx: TrinksImportIndex): Promise<void> {
+    await kvSet(TRINKS_IMPORT_INDEX_KEY, idx);
+  }
+
+  // POST /api/trinks-import/preview — retorna preview SEM persistir
+  app.post("/api/trinks-import/preview", upload.single("file"), async (req: Request, res: Response) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Arquivo não enviado." });
+      let payload: TrinksImportPayload;
+      try {
+        payload = parseTrinksCsv(req.file.buffer);
+      } catch (e: any) {
+        return res.status(400).json({
+          error: e.message || "Falha ao processar o CSV.",
+          arquivo: req.file.originalname,
+        });
+      }
+
+      const importadoEm = new Date().toISOString();
+      const idx = await loadTrinksImportIndex();
+      const summaries: Array<ImportSummary & { chave: string; sobrescreve: ImportSummary | null }> = [];
+
+      if (payload.tipo === "ranking") {
+        for (const p of payload.periodos) {
+          if (!p.mes) continue;
+          const s = summarize(payload, importadoEm, p.mes);
+          const chave = kvKeyFor("ranking", p.mes);
+          summaries.push({ ...s, chave, sobrescreve: idx[chave] || null });
+        }
+      } else {
+        const s = summarize(payload, importadoEm);
+        const chave = kvKeyFor(payload.tipo, payload.mes);
+        summaries.push({ ...s, chave, sobrescreve: idx[chave] || null });
+      }
+
+      const previewData: any = { tipo: payload.tipo };
+      if (payload.tipo === "financeiro") {
+        previewData.mes = payload.mes;
+        previewData.periodoInicio = payload.periodoInicio;
+        previewData.periodoFim = payload.periodoFim;
+        previewData.totalLinhas = payload.totalLinhas;
+        previewData.totalValor = payload.totalValor;
+        previewData.resumoPorForma = payload.resumoPorForma;
+        previewData.amostra = payload.rows.slice(0, 5);
+      } else if (payload.tipo === "dre") {
+        previewData.mes = payload.mes;
+        previewData.totalReceitas = payload.totalReceitas;
+        previewData.totalDespesas = payload.totalDespesas;
+        previewData.resultadoPeriodo = payload.resultadoPeriodo;
+        previewData.receitas = payload.receitas;
+        previewData.despesasSubgrupos = payload.despesasSubgrupos;
+      } else if (payload.tipo === "ranking") {
+        previewData.periodos = payload.periodos.map(p => ({
+          mes: p.mes,
+          periodoInicio: p.periodoInicio,
+          periodoFim: p.periodoFim,
+          total: p.total,
+          qtdProfissionais: p.profissionais.length,
+          top3: p.profissionais.slice(0, 3),
+        }));
+      }
+
+      log(`Trinks import preview: ${req.file.originalname} → ${payload.tipo} (${summaries.length} chave(s))`, "trinks-import");
+      return res.json({
+        ok: true,
+        arquivo: req.file.originalname,
+        tamanhoBytes: req.file.size,
+        preview: previewData,
+        chaves: summaries,
+      });
+    } catch (err: any) {
+      log(`Trinks import preview error: ${err?.message}`, "trinks-import");
+      return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // POST /api/trinks-import/confirm — persiste em kv_store (sobrescreve)
+  app.post("/api/trinks-import/confirm", upload.single("file"), async (req: Request, res: Response) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Arquivo não enviado." });
+      let payload: TrinksImportPayload;
+      try {
+        payload = parseTrinksCsv(req.file.buffer);
+      } catch (e: any) {
+        return res.status(400).json({ error: e.message || "Falha ao processar o CSV." });
+      }
+
+      const importadoEm = new Date().toISOString();
+      const idx = await loadTrinksImportIndex();
+      const persistidas: ImportSummary[] = [];
+
+      if (payload.tipo === "ranking") {
+        for (const p of payload.periodos) {
+          if (!p.mes) continue;
+          const subPayload = {
+            tipo: "ranking" as const,
+            geradoEm: payload.geradoEm,
+            periodos: [p],
+          };
+          const chave = kvKeyFor("ranking", p.mes);
+          await kvSet(chave, subPayload);
+          const s = summarize(payload, importadoEm, p.mes);
+          idx[chave] = s;
+          persistidas.push(s);
+        }
+      } else {
+        const chave = kvKeyFor(payload.tipo, payload.mes);
+        await kvSet(chave, payload);
+        const s = summarize(payload, importadoEm);
+        idx[chave] = s;
+        persistidas.push(s);
+      }
+
+      await saveTrinksImportIndex(idx);
+      log(`Trinks import confirm: ${req.file.originalname} → ${persistidas.length} chave(s)`, "trinks-import");
+      return res.json({ ok: true, importadas: persistidas });
+    } catch (err: any) {
+      log(`Trinks import confirm error: ${err?.message}`, "trinks-import");
+      return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // GET /api/trinks-import/list — lista importações feitas
+  app.get("/api/trinks-import/list", async (_req: Request, res: Response) => {
+    try {
+      const idx = await loadTrinksImportIndex();
+      const items = Object.entries(idx)
+        .map(([chave, s]) => ({ chave, ...s }))
+        .sort((a, b) => {
+          if (a.mes !== b.mes) return b.mes.localeCompare(a.mes);
+          return a.tipo.localeCompare(b.tipo);
+        });
+      return res.json({ ok: true, items });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // GET /api/trinks-import/:tipo/:mes — retorna payload completo
+  app.get("/api/trinks-import/:tipo/:mes", async (req: Request, res: Response) => {
+    try {
+      const tipo = req.params.tipo as TrinksImportType;
+      const mes = req.params.mes;
+      if (!/^(financeiro|dre|ranking)$/.test(tipo)) {
+        return res.status(400).json({ error: "Tipo inválido. Use: financeiro | dre | ranking." });
+      }
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM." });
+      }
+      const data = await kvGet<TrinksImportPayload>(kvKeyFor(tipo, mes));
+      if (!data) return res.status(404).json({ error: "Importação não encontrada." });
+      return res.json({ ok: true, data });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // DELETE /api/trinks-import/:tipo/:mes — remove
+  app.delete("/api/trinks-import/:tipo/:mes", async (req: Request, res: Response) => {
+    try {
+      const tipo = req.params.tipo as TrinksImportType;
+      const mes = req.params.mes;
+      if (!/^(financeiro|dre|ranking)$/.test(tipo) || !/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ error: "Parâmetros inválidos." });
+      }
+      const chave = kvKeyFor(tipo, mes);
+      await kvSet(chave, null);
+      const idx = await loadTrinksImportIndex();
+      delete idx[chave];
+      await saveTrinksImportIndex(idx);
+      log(`Trinks import delete: ${chave}`, "trinks-import");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // ─── endpoints originais da Trinks API (mantidos intactos) ───
   app.get("/api/trinks/estabelecimento", async (_req: Request, res: Response) => {
     try {
       const data = await trinksFetchAll("estabelecimentos", undefined, { skipEstabHeader: true });

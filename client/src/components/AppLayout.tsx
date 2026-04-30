@@ -22,6 +22,7 @@ import {
   Package,
   GitMerge,
   Wallet,
+  FileUp,
 } from "lucide-react";
 
 const navItems = [
@@ -40,6 +41,7 @@ const navItems = [
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
   { path: "/metas", label: "Metas", icon: Target },
   { path: "/duplicados", label: "Duplicados", icon: UserX },
+  { path: "/importar-trinks", label: "Importar Trinks", icon: FileUp },
   { path: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 

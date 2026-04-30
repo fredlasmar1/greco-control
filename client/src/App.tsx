@@ -26,6 +26,7 @@ import Conciliacao from "@/pages/Conciliacao";
 import Pagamento from "@/pages/Pagamento";
 import Assinaturas from "@/pages/Assinaturas";
 import Estoque from "@/pages/Estoque";
+import ImportarTrinks from "@/pages/ImportarTrinks";
 import Login from "@/pages/Login";
 import { CopilotDrawer } from "@/components/CopilotDrawer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -65,6 +66,7 @@ function AdminRoutes() {
           <Route path="/duplicados" component={ClientesDuplicados} />
           <Route path="/configuracoes" component={Configuracoes} />
           <Route path="/vendas-produtos" component={VendasProdutos} />
+          <Route path="/importar-trinks" component={ImportarTrinks} />
           <Route component={NotFound} />
         </Switch>
       </ErrorBoundary>

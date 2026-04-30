@@ -70,6 +70,7 @@ import {
   Cell,
 } from "recharts";
 import { Link } from "wouter";
+import DashboardImportSummaryCard from "@/components/dashboard/DashboardImportSummaryCard";
 
 interface KPICardProps {
   title: string;
@@ -600,6 +601,9 @@ export default function Dashboard() {
         </div>
         <FecharDiaDialog />
       </div>
+
+      {/* v25 Etapa 3: Resumo do mês via CSV importado (só aparece se houver import) */}
+      <DashboardImportSummaryCard />
 
       {/* Revenue Highlight */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

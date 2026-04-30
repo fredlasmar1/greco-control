@@ -619,6 +619,153 @@ export interface ImportSummary {
   descricao: string;
 }
 
+// ─── Helpers de integração (Etapa 3) ─────────────────────────────────────────
+//
+// O CSV "Ranking comparativo" da Trinks traz, por profissional, valores agregados
+// já consolidados (qtdAtendimentos, totalServicos, totalProdutos, valorTotal,
+// ticketMedio, etc). Convertendo para o mesmo formato usado pelo endpoint
+// /api/equipe/desempenho permitimos que a tela Equipe siga funcionando quando
+// a API Trinks estiver indisponível (HTTP 429).
+//
+// IMPORTANTE: o CSV não distingue avulso × plano nem tem detalhe de comissão.
+// Aproximamos: total = valorTotal; serviços = totalServicos; produtos =
+// totalProdutos; avulso recebe o total (plano = 0) — pode ser ajustado se o
+// usuário decidir tratar plano à parte no futuro.
+
+/** Normaliza nome para matching (lowercase + sem acentos). */
+function normalizaNome(s: string): string {
+  return (s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+export interface ImportPeriodoStats {
+  reais: number;
+  count: number;
+}
+
+export interface ImportPeriodoProfissional {
+  profissionalId: string;
+  nome: string;
+  idsConhecidos: string[];
+  avulso: ImportPeriodoStats;
+  plano: ImportPeriodoStats;
+  servicos: ImportPeriodoStats & { bruto: number; liquido: number };
+  produtos: ImportPeriodoStats & { bruto: number; liquido: number; liquidoComissionavel: number; brutoComissionavel: number };
+  taxaCartao: number;
+  total: ImportPeriodoStats;
+}
+
+export interface ImportPeriodoTotais {
+  reais: number; count: number;
+  avulsoReais: number; avulsoCount: number;
+  planoReais: number; planoCount: number;
+  servicosReais: number; servicosCount: number; servicosBruto: number; servicosLiquido: number;
+  produtosReais: number; produtosCount: number; produtosBruto: number; produtosLiquido: number;
+  produtosLiquidoComissionavel: number; produtosBrutoComissionavel: number;
+}
+
+export interface ImportPeriodoResultado {
+  dataInicio: string;
+  dataFim: string;
+  porProfissional: Record<string, ImportPeriodoProfissional>;
+  totais: ImportPeriodoTotais;
+  config: { taxaCartaoPct: number };
+  fetchedAt: string;
+  fonte: "trinks-import";
+}
+
+/**
+ * Converte um período de ranking importado em formato compatível com
+ * calcularPeriodoPorProfissional. Faz match profissional → ID por nome usando
+ * o mapa fornecido (geralmente das metas cadastradas).
+ */
+export function rankingPeriodoParaResultado(
+  periodo: RankingPeriodo,
+  nomeParaIdPrimario: Map<string, string>,
+  config: { taxaCartaoPct: number } = { taxaCartaoPct: 0 },
+): ImportPeriodoResultado {
+  const porProfissional: Record<string, ImportPeriodoProfissional> = {};
+  const totais: ImportPeriodoTotais = {
+    reais: 0, count: 0,
+    avulsoReais: 0, avulsoCount: 0,
+    planoReais: 0, planoCount: 0,
+    servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0,
+    produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0,
+    produtosLiquidoComissionavel: 0, produtosBrutoComissionavel: 0,
+  };
+
+  periodo.profissionais.forEach((p, idx) => {
+    const nomeNorm = normalizaNome(p.profissional);
+    const idPrim = nomeParaIdPrimario.get(nomeNorm) || `import:${nomeNorm || idx}`;
+    const servicosReais = p.totalServicos;
+    const produtosReais = p.totalProdutos;
+    const totalReais = p.valorTotal;
+    const totalCount = p.qtdAtendimentos;
+    const numServ = p.numServicosRealizados;
+    const unidProd = p.unidadesProdutos;
+
+    porProfissional[idPrim] = {
+      profissionalId: idPrim,
+      nome: p.profissional,
+      idsConhecidos: [idPrim],
+      avulso: { reais: totalReais, count: totalCount },
+      plano:  { reais: 0, count: 0 },
+      servicos: { reais: servicosReais, count: numServ, bruto: servicosReais, liquido: servicosReais },
+      produtos: { reais: produtosReais, count: unidProd, bruto: produtosReais, liquido: produtosReais, liquidoComissionavel: produtosReais, brutoComissionavel: produtosReais },
+      taxaCartao: 0,
+      total: { reais: totalReais, count: totalCount },
+    };
+
+    totais.reais += totalReais;
+    totais.count += totalCount;
+    totais.avulsoReais += totalReais;
+    totais.avulsoCount += totalCount;
+    totais.servicosReais += servicosReais;
+    totais.servicosCount += numServ;
+    totais.servicosBruto += servicosReais;
+    totais.servicosLiquido += servicosReais;
+    totais.produtosReais += produtosReais;
+    totais.produtosCount += unidProd;
+    totais.produtosBruto += produtosReais;
+    totais.produtosLiquido += produtosReais;
+    totais.produtosLiquidoComissionavel += produtosReais;
+    totais.produtosBrutoComissionavel += produtosReais;
+  });
+
+  return {
+    dataInicio: periodo.periodoInicio,
+    dataFim: periodo.periodoFim,
+    porProfissional,
+    totais,
+    config,
+    fetchedAt: new Date().toISOString(),
+    fonte: "trinks-import",
+  };
+}
+
+/** Vazio em formato compatível (para janelas dia/semana sem dado importado). */
+export function periodoVazio(dataInicio: string, dataFim: string): ImportPeriodoResultado {
+  return {
+    dataInicio,
+    dataFim,
+    porProfissional: {},
+    totais: {
+      reais: 0, count: 0,
+      avulsoReais: 0, avulsoCount: 0,
+      planoReais: 0, planoCount: 0,
+      servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0,
+      produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0,
+      produtosLiquidoComissionavel: 0, produtosBrutoComissionavel: 0,
+    },
+    config: { taxaCartaoPct: 0 },
+    fetchedAt: new Date().toISOString(),
+    fonte: "trinks-import",
+  };
+}
+
 export function summarize(payload: TrinksImportPayload, importadoEm: string, mesOverride?: string): ImportSummary {
   if (payload.tipo === "financeiro") {
     return {

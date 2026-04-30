@@ -1451,7 +1451,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-29-trinks-import-v25-etapa2",
+      build: "2026-04-29-trinks-import-v25-etapa3",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -1649,6 +1649,235 @@ export async function registerRoutes(
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // ============================================================================
+  // v25 Etapa 3: INTEGRAÇÃO dos imports com dashboards existentes
+  // Quando a Trinks API está fora (HTTP 429) consumimos os CSVs persistidos.
+  // ============================================================================
+
+  // GET /api/equipe/desempenho-import/:mes
+  // Entrega no MESMO formato de /api/equipe/desempenho, porém alimentado pelo
+  // ranking importado do mês. Janelas dia/semana ficam zeradas (CSV é mensal).
+  // Resposta inclui flag fonte="trinks-import" para a UI mostrar badge.
+  app.get("/api/equipe/desempenho-import/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = req.params.mes;
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ ok: false, error: "Mês inválido. Use YYYY-MM." });
+      }
+
+      const chaveRanking = trinksImport.kvKeyFor("ranking", mes);
+      const rankingData = await kvGet<any>(chaveRanking);
+      if (!rankingData) {
+        return res.status(404).json({ ok: false, error: `Nenhum ranking importado para ${mes}.` });
+      }
+
+      const periodo = rankingData?.periodos?.[0];
+      if (!periodo) {
+        return res.status(404).json({ ok: false, error: `Ranking ${mes} está vazio.` });
+      }
+
+      // Mapa nome → profissionalId via metas cadastradas (mesmo padrão usado em
+      // calcularPeriodoPorProfissional). Quando não casa, usamos id sintético
+      // "import:<nome>" — a tela ainda exibe o profissional.
+      const metas = await getAllMetas();
+      const nomeParaIdPrimario = new Map<string, string>();
+      for (const meta of Object.values(metas)) {
+        const norm = (meta.nome || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+        if (norm) nomeParaIdPrimario.set(norm, meta.profissionalId);
+      }
+
+      const cfgFin = await getConfigFin().catch(() => null);
+      const config = { taxaCartaoPct: (cfgFin as any)?.taxaCartaoPct || 0 };
+
+      const mesData = trinksImport.rankingPeriodoParaResultado(periodo, nomeParaIdPrimario, config);
+      // dia/semana = vazio (CSV é mensal). Mantemos formato compatível.
+      const diaVazio = trinksImport.periodoVazio(periodo.periodoInicio, periodo.periodoInicio);
+      const semVazio = trinksImport.periodoVazio(periodo.periodoInicio, periodo.periodoFim);
+
+      // Referência: usa o mês do ranking. dias úteis calculados sobre o intervalo do CSV.
+      const ultimoDia = ultimoDiaDoMes(`${mes}-01`);
+      const diasUteisTotal = contarDiasUteis(`${mes}-01`, ultimoDia);
+      const diasUteisDecorridos = contarDiasUteis(`${mes}-01`, periodo.periodoFim);
+
+      // Posição no mês
+      const profsMes = Object.values(mesData.porProfissional).sort((a, b) => b.total.reais - a.total.reais);
+      const totalProfsComMov = profsMes.length;
+      const posicaoMap = new Map<string, number>();
+      profsMes.forEach((p, i) => posicaoMap.set(p.profissionalId, i + 1));
+
+      const idsTodos = new Set<string>([
+        ...Object.keys(mesData.porProfissional),
+        ...Object.keys(metas),
+      ]);
+
+      function calcularMetasProporcionais(meta: { metaReais: number; metaAtendimentos: number } | null) {
+        if (!meta || diasUteisTotal === 0) {
+          return {
+            mes: { reais: meta?.metaReais || 0, atend: meta?.metaAtendimentos || 0 },
+            semana: { reais: 0, atend: 0 },
+            dia: { reais: 0, atend: 0 },
+            diasUteisTotal,
+            diasUteisDecorridos,
+          };
+        }
+        const reaisDia = meta.metaReais / diasUteisTotal;
+        const atendDia = meta.metaAtendimentos / diasUteisTotal;
+        return {
+          mes: { reais: meta.metaReais, atend: meta.metaAtendimentos },
+          semana: { reais: reaisDia * 5, atend: atendDia * 5 },
+          dia: { reais: reaisDia, atend: atendDia },
+          diasUteisTotal,
+          diasUteisDecorridos,
+        };
+      }
+
+      function calcularStatus(realizado: { reais: number; count: number }, metaJanela: { reais: number; atend: number }) {
+        const temMeta = (metaJanela.reais > 0) || (metaJanela.atend > 0);
+        if (!temMeta) {
+          return { temMeta: false, percReais: 0, percAtend: 0, bateu: false, farol: "sem-meta" as const };
+        }
+        const pR = metaJanela.reais > 0 ? (realizado.reais / metaJanela.reais) * 100 : 0;
+        const pA = metaJanela.atend > 0 ? (realizado.count / metaJanela.atend) * 100 : 0;
+        const bateu = metaJanela.reais > 0 ? pR >= 100 : pA >= 100;
+        return { temMeta: true, percReais: Math.round(pR * 10) / 10, percAtend: Math.round(pA * 10) / 10, bateu, farol: (bateu ? "verde" : "vermelho") as "verde" | "vermelho" };
+      }
+
+      const z = { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0, produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0, produtosBrutoComissionavel: 0, produtosLiquidoComissionavel: 0 };
+      const mkObj = (p: any) => p ? {
+        reais: p.total.reais, count: p.total.count,
+        avulsoReais: p.avulso.reais, avulsoCount: p.avulso.count,
+        planoReais: p.plano.reais, planoCount: p.plano.count,
+        servicosReais: p.servicos.reais, servicosCount: p.servicos.count,
+        servicosBruto: p.servicos.bruto, servicosLiquido: p.servicos.liquido,
+        produtosReais: p.produtos.reais, produtosCount: p.produtos.count,
+        produtosBruto: p.produtos.bruto, produtosLiquido: p.produtos.liquido,
+        produtosBrutoComissionavel: p.produtos.brutoComissionavel || 0,
+        produtosLiquidoComissionavel: p.produtos.liquidoComissionavel || 0,
+      } : { ...z };
+
+      const linhasRaw = Array.from(idsTodos).map(id => {
+        const profMes = mesData.porProfissional[id];
+        const meta = metas[id];
+        const nome = (profMes?.nome || meta?.nome || "—");
+        const metasCalc = calcularMetasProporcionais(meta || null);
+        const diaObj = { ...z };
+        const semanaObj = { ...z };
+        const mesObj = mkObj(profMes);
+        return {
+          profissionalId: id, nome,
+          meta: meta ? { metaReais: meta.metaReais, metaAtendimentos: meta.metaAtendimentos, telegramChatId: meta.telegramChatId, ativoEnvio: meta.ativoEnvio, pctServico: meta.pctServico || 0, pctProduto: meta.pctProduto || 0, pctPlano: meta.pctPlano || 0 } : null,
+          metasCalculadas: metasCalc,
+          dia: diaObj,
+          semana: semanaObj,
+          mes: mesObj,
+          status: {
+            dia: calcularStatus(diaObj, metasCalc.dia),
+            semana: calcularStatus(semanaObj, metasCalc.semana),
+            mes: calcularStatus(mesObj, metasCalc.mes),
+          },
+          posicaoMes: posicaoMap.get(id) || null,
+          totalProfsRanking: totalProfsComMov,
+        };
+      }).filter(l => {
+        if (l.meta) return true;
+        if (l.mes.count > 0 || l.mes.reais > 0) return true;
+        return false;
+      });
+      linhasRaw.sort((a, b) => b.mes.reais - a.mes.reais);
+
+      const result = {
+        ok: true,
+        fonte: "trinks-import" as const,
+        referencia: {
+          hoje: ymdHoje(),
+          semana: { dataInicio: periodo.periodoInicio, dataFim: periodo.periodoFim },
+          mes,
+          diasUteisTotal,
+          diasUteisDecorridos,
+          periodoCSV: { inicio: periodo.periodoInicio, fim: periodo.periodoFim },
+        },
+        totais: { dia: diaVazio.totais, semana: semVazio.totais, mes: mesData.totais },
+        config,
+        linhas: linhasRaw,
+        importInfo: { geradoEm: rankingData?.geradoEm || null },
+        fetchedAt: new Date().toISOString(),
+      };
+      return res.json(result);
+    } catch (err: any) {
+      log(`[equipe/desempenho-import] erro: ${err.message}`, "equipe");
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/dashboard/import/:mes
+  // Resumo agregado (financeiro + DRE + ranking) do mês, já formatado para
+  // alimentar o Dashboard quando a API ao vivo não estiver disponível.
+  app.get("/api/dashboard/import/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = req.params.mes;
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ ok: false, error: "Mês inválido. Use YYYY-MM." });
+      }
+
+      const [fin, dre, rank] = await Promise.all([
+        kvGet<any>(trinksImport.kvKeyFor("financeiro", mes)),
+        kvGet<any>(trinksImport.kvKeyFor("dre", mes)),
+        kvGet<any>(trinksImport.kvKeyFor("ranking", mes)),
+      ]);
+
+      const periodo = rank?.periodos?.[0];
+      const top = (periodo?.profissionais || [])
+        .slice()
+        .sort((a: any, b: any) => b.valorTotal - a.valorTotal)
+        .slice(0, 10)
+        .map((p: any) => ({
+          nome: p.profissional,
+          funcao: p.funcao,
+          valorTotal: p.valorTotal,
+          atendimentos: p.qtdAtendimentos,
+          ticketMedio: p.ticketMedio,
+        }));
+
+      const out: any = {
+        ok: true,
+        fonte: "trinks-import" as const,
+        mes,
+        disponivel: { financeiro: !!fin, dre: !!dre, ranking: !!rank },
+      };
+
+      if (fin) {
+        out.financeiro = {
+          totalLinhas: fin.totalLinhas,
+          totalValor: fin.totalValor,
+          periodoInicio: fin.periodoInicio,
+          periodoFim: fin.periodoFim,
+          resumoPorForma: fin.resumoPorForma || {},
+        };
+      }
+      if (dre) {
+        out.dre = {
+          totalReceitas: dre.totalReceitas,
+          totalDespesas: dre.totalDespesas,
+          resultadoPeriodo: dre.resultadoPeriodo,
+          despesasSubgrupos: (dre.despesasSubgrupos || []).map((s: any) => ({ nome: s.nome, total: s.total })),
+        };
+      }
+      if (rank && periodo) {
+        out.ranking = {
+          periodoInicio: periodo.periodoInicio,
+          periodoFim: periodo.periodoFim,
+          totalProfs: periodo.profissionais.length,
+          total: periodo.total,
+          top10: top,
+        };
+      }
+
+      return res.json(out);
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }
   });
 

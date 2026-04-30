@@ -107,9 +107,22 @@ interface DesempenhoApi {
     mes: string;
     diasUteisTotal: number;
     diasUteisDecorridos: number;
+    periodoCSV?: { inicio: string; fim: string };
   };
   totais: { dia: any; semana: any; mes: any };
   linhas: LinhaDesempenho[];
+  fonte?: "trinks-api" | "trinks-import";
+  importInfo?: { geradoEm: string | null };
+}
+
+interface ImportItem {
+  chave: string;
+  tipo: "financeiro" | "dre" | "ranking";
+  mes: string;
+  totalValor: number;
+  totalLinhas?: number;
+  importadoEm: string;
+  descricao: string;
 }
 
 interface DraftMeta {
@@ -138,15 +151,68 @@ export default function MetasEquipePainel() {
   const [drafts, setDrafts] = useState<Record<string, DraftMeta>>({});
   const [feedback, setFeedback] = useState<{ id: string; type: "ok" | "err"; msg: string } | null>(null);
   const [janelaAtiva, setJanelaAtiva] = useState<JanelaAtiva>("mes");
+  // v25 Etapa 3: histórico via CSV importado
+  const [importsRanking, setImportsRanking] = useState<ImportItem[]>([]);
+  const [mesSelecionado, setMesSelecionado] = useState<string>(""); // "" = mês atual via API
+  const [fonteAtiva, setFonteAtiva] = useState<"trinks-api" | "trinks-import" | null>(null);
 
-  async function carregar() {
+  async function carregar(mesForcado?: string) {
     setLoading(true);
     try {
-      const [m, d] = await Promise.all([
+      // Sempre buscar metas + lista de imports (rankings disponíveis para histórico)
+      const [m, importsResp] = await Promise.all([
         fetch("/api/metas-profissional").then(r => r.json()),
-        fetch("/api/equipe/desempenho").then(r => r.json()),
+        fetch("/api/trinks-import/list").then(r => r.json()).catch(() => ({ items: [] })),
       ]);
       const lista: MetaApi[] = m?.metas || [];
+      const imps: ImportItem[] = (importsResp?.items || []).filter((i: ImportItem) => i.tipo === "ranking");
+      setImportsRanking(imps);
+
+      // Decisão de fonte:
+      //  - mesForcado especificado → sempre /desempenho-import/<mes>
+      //  - senão tenta API ao vivo; se vier vazia E houver import do mês atual, faz fallback
+      let d: DesempenhoApi | null = null;
+      let fonteResolvida: "trinks-api" | "trinks-import" | null = null;
+
+      if (mesForcado) {
+        try {
+          const r = await fetch(`/api/equipe/desempenho-import/${mesForcado}`);
+          if (r.ok) {
+            d = await r.json();
+            fonteResolvida = "trinks-import";
+          }
+        } catch {}
+      } else {
+        try {
+          const r = await fetch("/api/equipe/desempenho");
+          if (r.ok) {
+            const j = await r.json();
+            if (j?.ok) {
+              const totalMov = (j?.linhas || []).reduce((s: number, l: any) => s + (l?.mes?.reais || 0), 0);
+              if (totalMov > 0) {
+                d = j;
+                fonteResolvida = "trinks-api";
+              }
+            }
+          }
+        } catch {}
+        // Fallback automático: API vazia + import do mês atual existe
+        if (!d) {
+          const hojeISO = new Date().toISOString().slice(0, 7); // YYYY-MM
+          const temImport = imps.some(i => i.mes === hojeISO);
+          if (temImport) {
+            try {
+              const r = await fetch(`/api/equipe/desempenho-import/${hojeISO}`);
+              if (r.ok) {
+                d = await r.json();
+                fonteResolvida = "trinks-import";
+              }
+            } catch {}
+          }
+        }
+      }
+
+      setFonteAtiva(fonteResolvida);
       setMetas(lista);
       setDesempenho(d?.ok ? d : null);
       setDrafts(prev => {
@@ -179,7 +245,14 @@ export default function MetasEquipePainel() {
     }
   }
 
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => { carregar(mesSelecionado || undefined); }, [mesSelecionado]);
+
+  // v25 Etapa 3: quando a fonte for CSV importado, só a janela 'mes' tem dados.
+  useEffect(() => {
+    if (fonteAtiva === "trinks-import" && janelaAtiva !== "mes") {
+      setJanelaAtiva("mes");
+    }
+  }, [fonteAtiva]);
 
   function atualizarDraft(id: string, patch: Partial<DraftMeta>) {
     setDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch, dirty: true } }));
@@ -241,7 +314,7 @@ export default function MetasEquipePainel() {
           [id]: { ...prev[id], dirty: false, saving: false, editing: false, lastSavedAt: new Date().toISOString() },
         }));
         // recarregar para ter desempenho com farol atualizado
-        carregar();
+        carregar(mesSelecionado || undefined);
       } else {
         setFeedback({ id, type: "err", msg: j.error || "Erro ao salvar" });
         setDrafts(prev => ({ ...prev, [id]: { ...prev[id], saving: false } }));
@@ -298,7 +371,7 @@ export default function MetasEquipePainel() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={carregar} disabled={loading} data-testid="btn-recarregar-equipe">
+            <Button size="sm" variant="outline" onClick={() => carregar(mesSelecionado || undefined)} disabled={loading} data-testid="btn-recarregar-equipe">
               <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
               Atualizar
             </Button>
@@ -310,14 +383,17 @@ export default function MetasEquipePainel() {
           {(["dia", "semana", "mes"] as JanelaAtiva[]).map(j => {
             const { label, Icon, descricao } = janelaInfo[j];
             const ativo = janelaAtiva === j;
+            const desabilitado = fonteAtiva === "trinks-import" && j !== "mes";
             return (
               <Button
                 key={j}
                 size="sm"
                 variant={ativo ? "default" : "outline"}
-                className={`h-8 text-[11px] ${ativo ? "" : "bg-background/30"}`}
+                disabled={desabilitado}
+                className={`h-8 text-[11px] ${ativo ? "" : "bg-background/30"} ${desabilitado ? "opacity-40" : ""}`}
                 onClick={() => setJanelaAtiva(j)}
                 data-testid={`btn-janela-${j}`}
+                title={desabilitado ? "Indisponível — CSV de ranking é mensal" : undefined}
               >
                 <Icon className="w-3.5 h-3.5 mr-1.5" />
                 {label}
@@ -326,6 +402,36 @@ export default function MetasEquipePainel() {
             );
           })}
         </div>
+
+        {/* v25 Etapa 3: badge de fonte + seletor de mês para histórico via CSV */}
+        {(fonteAtiva === "trinks-import" || importsRanking.length > 0) && (
+          <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-card-border/50">
+            {fonteAtiva === "trinks-import" && (
+              <Badge className="text-[10px] bg-amber-500/15 text-amber-400 border-amber-500/30">
+                <AlertCircle className="w-2.5 h-2.5 mr-1" />
+                Dados via CSV importado{desempenho?.importInfo?.geradoEm ? ` · gerado em ${desempenho.importInfo.geradoEm}` : ""}
+              </Badge>
+            )}
+            {importsRanking.length > 0 && (
+              <div className="flex items-center gap-1.5 ml-auto">
+                <span className="text-[10px] text-muted-foreground">Mês:</span>
+                <select
+                  value={mesSelecionado}
+                  onChange={(e) => setMesSelecionado(e.target.value)}
+                  className="h-7 text-[11px] rounded border border-card-border bg-background px-2"
+                  data-testid="select-mes-historico"
+                >
+                  <option value="">Mês atual (automático)</option>
+                  {importsRanking.map(i => (
+                    <option key={i.chave} value={i.mes}>
+                      {i.mes} · R$ {i.totalValor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        )}
       </CardHeader>
 
       <CardContent className="p-0">

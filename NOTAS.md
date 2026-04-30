@@ -4,9 +4,14 @@
 
 ## Versão atual em produção
 
-- **Build**: `2026-04-29-trinks-otim-ace` (commit `0d18bec`)
+- **Build**: `2026-04-29-trinks-otim-acef` (commit `09ba432`)
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
+
+### Otimização tokens Trinks F [concluído]
+
+- **F** — Cron das 8h consolidado: o resumo geral (`calcularHojeCompleto + Ontem + Amanha`) roda primeiro e, ao final, encadeia `dispararIndividualParaTodos("matinal")` no MESMO cron. Antes: 2 crons disparavam às 8h00 simultaneamente disputando rate limit. Agora: cache já quente → matinal individual reaproveita agendamentos/transacoes via `trinksFetchAllRange` (zero fetches a mais por profissional).
+- B avaliado e considerado já coberto pela Etapa 3 (frontend usa endpoints `-import` para histórico via seletor; fallback CSV ativa quando API ao vivo retorna vazio). Pagamento mensal segue precisando das bases finas da Trinks (servicosLiquido, taxaCartao etc.) que o CSV de ranking não tem.
 
 ### Otimização tokens Trinks A+C+E [concluído]
 

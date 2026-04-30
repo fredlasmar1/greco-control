@@ -4,9 +4,21 @@
 
 ## Versão atual em produção
 
-- **Build**: `2026-04-29-precif-v24-etapa5` (commit `e25871f`)
+- **Build**: `2026-04-29-trinks-import-v25-etapa3` (commit `fe612c0`)
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
+
+### v25 — Importação Trinks (CSV) [concluído]
+
+- Etapa 1: parsers (financeiro/DRE/ranking) + endpoints upload/preview/confirm/list/delete
+- Etapa 2: aba `/importar-trinks` (drag-drop, preview, confirmação, lista, deletar)
+- Etapa 3: integração com Equipe e Dashboard
+  - Endpoint `GET /api/equipe/desempenho-import/:mes` (formato compatível com `/api/equipe/desempenho`)
+  - Endpoint `GET /api/dashboard/import/:mes` (resumo financeiro+DRE+ranking)
+  - Tela Equipe: fallback automático quando API ao vivo retorna 0; badge "Dados via CSV importado"; seletor de mês para histórico
+  - Dashboard: novo card `DashboardImportSummaryCard` (financeiro/DRE/top profs) aparece quando há import do mês atual
+  - Janelas dia/semana ficam desabilitadas quando fonte = CSV (ranking é mensal)
+  - Conserva intacta a integração original `calcularPeriodoPorProfissional` — quando Trinks API voltar, ela prevalece automaticamente
 
 ## Stack
 

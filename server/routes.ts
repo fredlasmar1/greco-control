@@ -1536,7 +1536,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-29-trinks-otim-ace",
+      build: "2026-04-29-trinks-otim-acef",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -6878,7 +6878,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   if (isTelegramConfigured()) {
     try {
       // Manhã: 08:00 ter-sab (dias 2-6 da semana)
-      // Mostra FECHAMENTO do dia anterior + PREVISÃO do dia atual
+      // Mostra FECHAMENTO do dia anterior + PREVISÃO do dia atual.
+      // Otimização F: após o resumo geral, dispara o matinal individual no MESMO cron.
+      // O cache de agendamentos/transacoes do dia (e do dia anterior) já está quente,
+      // então cada profissional reaproveita via trinksFetchAllRange (zero fetches Trinks adicionais).
       cron.schedule("0 8 * * 2-6", async () => {
         log("[cron] disparando resumo da manhã...", "telegram");
         try {
@@ -6892,6 +6895,13 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           log(`[cron] resumo manhã: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
         } catch (err: any) {
           log(`[cron] erro resumo manhã: ${err.message}`, "telegram");
+        }
+        // Em seguida, matinal individual (cache já quente — evita fetches duplicados)
+        try {
+          log("[cron] disparando resumo matinal individual (encadeado)...", "telegram");
+          await dispararIndividualParaTodos("matinal");
+        } catch (err: any) {
+          log(`[cron] erro matinal individual encadeado: ${err.message}`, "telegram");
         }
       }, { timezone: "America/Sao_Paulo" });
 
@@ -6945,11 +6955,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         }
       }
 
-      // Matinal individual: ter-sáb 08h00 (resumo do último dia útil + acumulado mês)
-      cron.schedule("0 8 * * 2-6", async () => {
-        log("[cron] disparando resumo matinal individual (Equipe)...", "telegram");
-        await dispararIndividualParaTodos("matinal");
-      }, { timezone: "America/Sao_Paulo" });
+      // Otimização F: matinal individual foi CONSOLIDADO no cron do resumo geral das 8h acima
+      // (evita 2 crons disparando ao mesmo tempo e disputando o rate limit Trinks).
 
       // Semanal individual: sábado 21h
       cron.schedule("0 21 * * 6", async () => {

@@ -413,22 +413,40 @@ interface AmanhaData {
   fromCache?: boolean;
 }
 
+// Otimização E: throttle module-level entre montagens do Dashboard.
+// Evita refazer fetches dos endpoints leves /trinks/hoje, /hoje-completo, /amanha
+// quando o usuário navega para outra aba e volta em poucos minutos.
+// O backend já cacheia esses endpoints, mas isso elimina até a ida ao backend.
+const DASH_FETCH_THROTTLE_MS = 3 * 60 * 1000; // 3 min, casa com TTL de cache do backend
+const dashFetchCache: Record<string, { payload: any; ts: number }> = {};
+
 export default function Dashboard() {
   const { isConnected, trinks, lastSync, isSyncing, syncData } =
     useTrinksStore();
   const hasTrinksData = isConnected && trinks !== null;
 
   // "Hoje" em tempo-quase-real (1 chamada leve à API, cacheada 3 min)
-  const [hoje, setHoje] = useState<HojeData | null>(null);
+  const [hoje, setHoje] = useState<HojeData | null>(
+    (dashFetchCache["hoje"]?.payload as HojeData) || null
+  );
   const [hojeLoading, setHojeLoading] = useState(false);
   const API_BASE = (globalThis as any).__API_BASE__ || "";
 
   const loadHoje = useCallback(async () => {
     if (!isConnected) return;
+    const cached = dashFetchCache["hoje"];
+    if (cached && Date.now() - cached.ts < DASH_FETCH_THROTTLE_MS) {
+      setHoje(cached.payload);
+      return;
+    }
     setHojeLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/trinks/hoje`);
-      if (res.ok) setHoje(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setHoje(data);
+        dashFetchCache["hoje"] = { payload: data, ts: Date.now() };
+      }
     } catch {}
     setHojeLoading(false);
   }, [isConnected, API_BASE]);
@@ -436,16 +454,27 @@ export default function Dashboard() {
   useEffect(() => { loadHoje(); }, [loadHoje]);
 
   // Hoje completo (previsto + fechado + restante)
-  const [hojeCompleto, setHojeCompleto] = useState<HojeCompletoData | null>(null);
+  const [hojeCompleto, setHojeCompleto] = useState<HojeCompletoData | null>(
+    (dashFetchCache["hoje-completo"]?.payload as HojeCompletoData) || null
+  );
   const [hojeCompletoLoading, setHojeCompletoLoading] = useState(false);
   const [hojeExpanded, setHojeExpanded] = useState<"none" | "agend" | "fech">("none");
 
   const loadHojeCompleto = useCallback(async () => {
     if (!isConnected) return;
+    const cached = dashFetchCache["hoje-completo"];
+    if (cached && Date.now() - cached.ts < DASH_FETCH_THROTTLE_MS) {
+      setHojeCompleto(cached.payload);
+      return;
+    }
     setHojeCompletoLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/trinks/hoje-completo`);
-      if (res.ok) setHojeCompleto(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setHojeCompleto(data);
+        dashFetchCache["hoje-completo"] = { payload: data, ts: Date.now() };
+      }
     } catch {}
     setHojeCompletoLoading(false);
   }, [isConnected, API_BASE]);
@@ -453,16 +482,27 @@ export default function Dashboard() {
   useEffect(() => { loadHojeCompleto(); }, [loadHojeCompleto]);
 
   // Previsão do próximo dia útil
-  const [amanha, setAmanha] = useState<AmanhaData | null>(null);
+  const [amanha, setAmanha] = useState<AmanhaData | null>(
+    (dashFetchCache["amanha"]?.payload as AmanhaData) || null
+  );
   const [amanhaLoading, setAmanhaLoading] = useState(false);
   const [amanhaExpanded, setAmanhaExpanded] = useState(false);
 
   const loadAmanha = useCallback(async () => {
     if (!isConnected) return;
+    const cached = dashFetchCache["amanha"];
+    if (cached && Date.now() - cached.ts < DASH_FETCH_THROTTLE_MS) {
+      setAmanha(cached.payload);
+      return;
+    }
     setAmanhaLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/trinks/amanha`);
-      if (res.ok) setAmanha(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setAmanha(data);
+        dashFetchCache["amanha"] = { payload: data, ts: Date.now() };
+      }
     } catch {}
     setAmanhaLoading(false);
   }, [isConnected, API_BASE]);

@@ -997,7 +997,20 @@ async function trinksFetchAll(
   // Cache the result — mas NUNCA cachear lista vazia (provavelmente erro silencioso da Trinks)
   // Sem essa guarda, um 429/timeout transient deixaria o sistema travado mostrando "0 produtos" até o TTL expirar.
   if (allItems.length > 0) {
-    const ttl = CACHE_TTLS[endpointPath] || 15 * 60 * 1000;
+    let ttl = CACHE_TTLS[endpointPath] || 15 * 60 * 1000;
+    // Otimização C: TTL estendido para janelas de meses fechados (dataFim < 1º dia do mês corrente em SP).
+    // Dados de meses passados são imutáveis na prática — 24h é seguro e reduz fetches em históricos.
+    const df = queryParams?.dataFim;
+    if (df && (endpointPath === "agendamentos" || endpointPath === "transacoes" || endpointPath === "lancamentos")) {
+      const fmtSP = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
+      });
+      const hojeSP = fmtSP.format(new Date()); // YYYY-MM-DD
+      const primeiroDoMesSP = `${hojeSP.slice(0, 7)}-01`;
+      if (df < primeiroDoMesSP) {
+        ttl = 24 * 60 * 60 * 1000; // 24h para meses fechados
+      }
+    }
     setCache(cacheKey, allItems, ttl);
     log(`Cache SET for ${endpointPath}: ${allItems.length} items (TTL: ${Math.round(ttl / 60000)}min)`, "trinks");
   } else {
@@ -1005,6 +1018,78 @@ async function trinksFetchAll(
   }
 
   return allItems;
+}
+
+// ─── Otimização A: reuso de janela mensal para dia/semana ───
+// Quando já existe cache de uma janela MAIOR (ex.: mês inteiro) que contém a janela pedida
+// (ex.: hoje, ou semana corrente), filtramos a lista em memória em vez de fazer um novo fetch
+// na Trinks. Aplicável apenas a endpoints com dataInicio/dataFim (agendamentos, transacoes).
+// Aditivo: não altera trinksFetchAll nem o cache existente.
+function trinksTryFromCachedRange(
+  endpointPath: string,
+  queryParams: Record<string, string>
+): any[] | null {
+  const di = queryParams?.dataInicio;
+  const df = queryParams?.dataFim;
+  if (!di || !df) return null;
+  if (endpointPath !== "agendamentos" && endpointPath !== "transacoes") return null;
+  // Campo da data dentro de cada item para filtragem local
+  const dataField = endpointPath === "agendamentos" ? "dataHoraInicio" : "dataHora";
+
+  // Procura uma entrada de cache do MESMO endpointPath cuja janela contenha [di, df).
+  // Cache key tem o formato `${endpointPath}_${JSON.stringify(queryParams)}`.
+  const prefix = `${endpointPath}_`;
+  for (const key of Object.keys(memoryCache)) {
+    if (!key.startsWith(prefix)) continue;
+    const entry = memoryCache[key];
+    if (!entry) continue;
+    if (Date.now() - entry.timestamp > entry.ttlMs) continue;
+    if (!Array.isArray(entry.data)) continue;
+    // Extrai os queryParams da chave
+    let qp: Record<string, string> = {};
+    try {
+      const jsonPart = key.slice(prefix.length);
+      qp = JSON.parse(jsonPart);
+    } catch { continue; }
+    // Os outros parâmetros (não-data) precisam coincidir.
+    const restCached = { ...qp }; delete restCached.dataInicio; delete restCached.dataFim;
+    const restPedido = { ...queryParams }; delete restPedido.dataInicio; delete restPedido.dataFim;
+    if (JSON.stringify(restCached) !== JSON.stringify(restPedido)) continue;
+    const cdi = qp.dataInicio; const cdf = qp.dataFim;
+    if (!cdi || !cdf) continue;
+    // Janela cacheada precisa CONTER a janela pedida.
+    // (Trinks /transacoes usa intervalo semi-aberto [dataInicio, dataFim+1); essa propriedade é
+    //  comparada como string YYYY-MM-DD, o que é correto para datas ISO.)
+    if (cdi <= di && cdf >= df) {
+      // Filtra os itens pela data dentro da janela [di, df) (se transacoes) ou [di, df] (agendamentos).
+      // Para uniformidade, filtramos por `slice(0,10)` >= di e <= df-1day no caso transacoes.
+      // Para evitar cálculo de offset, aplicamos a mesma regra usada no resto do código:
+      //   - agendamentos: dataField slice(0,10) BETWEEN di AND df (inclusivo)
+      //   - transacoes:   dataField slice(0,10) >= di AND < df
+      const filtered = entry.data.filter((item: any) => {
+        const dt = String(item?.[dataField] || item?.data || "").slice(0, 10);
+        if (!dt) return false;
+        if (endpointPath === "transacoes") return dt >= di && dt < df;
+        return dt >= di && dt <= df;
+      });
+      log(`Cache HIT (range) ${endpointPath} ${di}..${df} via ${cdi}..${cdf}: ${filtered.length}/${entry.data.length}`, "trinks");
+      return filtered;
+    }
+  }
+  return null;
+}
+
+// Wrapper: tenta servir de uma janela cacheada maior antes de chamar trinksFetchAll.
+// Mantém 100% de compatibilidade com a assinatura de trinksFetchAll para os usos relevantes.
+async function trinksFetchAllRange(
+  endpointPath: string,
+  queryParams: Record<string, string>,
+  options?: { skipEstabHeader?: boolean }
+) {
+  // Primeiro: cache exato (já feito por trinksFetchAll). Aqui tentamos só o reuso de janela.
+  const fromRange = trinksTryFromCachedRange(endpointPath, queryParams);
+  if (fromRange !== null) return fromRange;
+  return trinksFetchAll(endpointPath, queryParams, options);
 }
 
 // ─── Error handler wrapper ────────────────────────────────
@@ -1451,7 +1536,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-29-trinks-import-v25-etapa3",
+      build: "2026-04-29-trinks-otim-ace",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2649,11 +2734,12 @@ export async function registerRoutes(
       log(`[periodo ${dataInicio}..${dataFim}] erro profissionais: ${e?.message}`, "equipe");
       return [] as any[];
     });
-    const agendData = await trinksFetchAll("agendamentos", { dataInicio, dataFim }).catch((e: any) => {
+    // Otimização A: usa trinksFetchAllRange — reaproveita janela mensal cacheada para dia/semana
+    const agendData = await trinksFetchAllRange("agendamentos", { dataInicio, dataFim }).catch((e: any) => {
       log(`[periodo ${dataInicio}..${dataFim}] erro agendamentos: ${e?.message}`, "equipe");
       return [] as any[];
     });
-    const transData = await trinksFetchAll("transacoes", { dataInicio, dataFim: transFim }).catch((e: any) => {
+    const transData = await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim }).catch((e: any) => {
       log(`[periodo ${dataInicio}..${dataFim}] erro transacoes: ${e?.message}`, "equipe");
       return [] as any[];
     });
@@ -6560,12 +6646,14 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const diasUteisDecorridos = contarDiasUteis(`${mes}-01`, hoje);
 
       // Serial para evitar competir pelo rate limit do Trinks (40/min) com 9 fetches paralelos.
-      log(`[equipe/desempenho] calculando dia ${hoje}...`, "equipe");
-      const dia = await calcularPeriodoPorProfissional(hoje, hoje);
-      log(`[equipe/desempenho] calculando semana ${semIni}..${semFim}...`, "equipe");
-      const semana = await calcularPeriodoPorProfissional(semIni, semFim);
+      // Otimização A: mês PRIMEIRO — popula cache mensal de agendamentos/transacoes;
+      // semana e dia em seguida reaproveitam essa janela via trinksFetchAllRange (zero fetches reais).
       log(`[equipe/desempenho] calculando mês ${mesIni}..${mesFim}...`, "equipe");
       const mesData = await calcularPeriodoPorProfissional(mesIni, mesFim);
+      log(`[equipe/desempenho] calculando semana ${semIni}..${semFim}...`, "equipe");
+      const semana = await calcularPeriodoPorProfissional(semIni, semFim);
+      log(`[equipe/desempenho] calculando dia ${hoje}...`, "equipe");
+      const dia = await calcularPeriodoPorProfissional(hoje, hoje);
       const metas = await getAllMetas();
       log(`[equipe/desempenho] dia=${Object.keys(dia.porProfissional).length} sem=${Object.keys(semana.porProfissional).length} mes=${Object.keys(mesData.porProfissional).length} metas=${Object.keys(metas).length}`, "equipe");
 

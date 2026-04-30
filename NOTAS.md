@@ -4,9 +4,17 @@
 
 ## Versão atual em produção
 
-- **Build**: `2026-04-29-trinks-import-v25-etapa3` (commit `fe612c0`)
+- **Build**: `2026-04-29-trinks-otim-ace` (commit `0d18bec`)
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
+
+### Otimização tokens Trinks A+C+E [concluído]
+
+- **A** — `trinksFetchAllRange` (routes.ts · após `trinksFetchAll`): reuso de janela maior cacheada para janelas menores (mês → dia/semana). Aplicado em `agendamentos` e `transacoes` dentro de `calcularPeriodoPorProfissional`. `/api/equipe/desempenho` agora calcula mês PRIMEIRO para povoar o cache.
+- **C** — TTL estendido para 24h em `agendamentos`/`transacoes`/`lancamentos` quando `dataFim < 1º dia do mês corrente (SP)`. Mês corrente segue 30min. Aplicado dentro de `trinksFetchAll`.
+- **E** — Throttle module-level no `Dashboard.tsx`: `dashFetchCache` reusa payload de `/trinks/hoje`, `/hoje-completo` e `/amanha` por 3 min entre montagens.
+
+Validação após deploy: `/api/version` ok, `/api/equipe/desempenho` retorna estrutura íntegra, `/api/equipe/desempenho-import/2026-04` segue retornando 23 linhas / R$ 75.571,20.
 
 ### v25 — Importação Trinks (CSV) [concluído]
 

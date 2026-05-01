@@ -8,3 +8,4 @@ dist/
 
 .usuarios.json
 .service-costs.json
+.store-data.json

@@ -23,10 +23,12 @@ import {
   GitMerge,
   Wallet,
   FileUp,
+  Scale,
 } from "lucide-react";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/conselheiro", label: "Conselheiro", icon: Scale },
   { path: "/lancamentos", label: "Lançamentos", icon: Receipt },
   { path: "/equipe", label: "Equipe", icon: Users },
   { path: "/vendas-produtos", label: "Vendas Produtos", icon: TrendingUp },

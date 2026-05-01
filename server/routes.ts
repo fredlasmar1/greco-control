@@ -9,6 +9,7 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
 import { kvGet, kvSet, waitForDb, isDbReady } from "./db";
+import { buildSnapshot, buildSystemPrompt, buildMessages, type ConselheiroDataSources } from "./conselheiro";
 import * as trinksImport from "./trinksImport";
 import type {
   TrinksImportPayload,
@@ -7267,6 +7268,68 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   } else {
     log("[cron] TELEGRAM_BOT_TOKEN não configurado — schedulers desativados", "telegram");
   }
+
+  // ──────────────────────────────────────────────────────────────────
+  // CONSELHEIRO IA — consultor estratégico com Claude Opus
+  // ──────────────────────────────────────────────────────────────────
+  function getConselheiroSources(): ConselheiroDataSources {
+    return {
+      entries: (storeData.entries as any) || [],
+      barbers: (storeData.barbers as any) || [],
+      services: (storeData.services as any) || [],
+      financeEntries,
+      assinaturaClientes,
+      metasHistorico,
+      monthlyTarget: storeData.settings?.monthlyTarget,
+      shopName: storeData.settings?.shopName,
+    };
+  }
+
+  app.get("/api/conselheiro/dados", (_req: Request, res: Response) => {
+    try {
+      const snapshot = buildSnapshot(getConselheiroSources());
+      return res.json(snapshot);
+    } catch (err: any) {
+      log(`Conselheiro /dados erro: ${err.message}`, "conselheiro");
+      return res.status(500).json({ error: "Falha ao carregar dados da empresa" });
+    }
+  });
+
+  app.post("/api/conselheiro/chat", async (req: Request, res: Response) => {
+    try {
+      const { mensagem, historico = [], dados_empresa } = req.body || {};
+      if (!mensagem || typeof mensagem !== "string" || mensagem.trim().length < 2) {
+        return res.status(400).json({ error: "Mensagem obrigatória" });
+      }
+
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY não configurada" });
+
+      const sources = getConselheiroSources();
+      const snapshot = dados_empresa || buildSnapshot(sources);
+      const systemPrompt = buildSystemPrompt(snapshot, sources.shopName);
+      const messages = buildMessages(historico, mensagem.trim());
+
+      const anthropic = new Anthropic({ apiKey });
+      const response = await anthropic.messages.create({
+        model: "claude-opus-4-7",
+        max_tokens: 1500,
+        system: systemPrompt,
+        tools: [{ type: "web_search_20250305", name: "web_search" } as any],
+        messages: messages as any,
+      });
+
+      const resposta = response.content
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("\n");
+
+      return res.json({ resposta, uso: response.usage });
+    } catch (err: any) {
+      log(`Conselheiro /chat erro: ${err.message}`, "conselheiro");
+      return res.status(500).json({ error: "Falha ao processar mensagem" });
+    }
+  });
 
   return httpServer;
 }

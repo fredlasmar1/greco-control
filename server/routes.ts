@@ -7279,20 +7279,73 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   // ──────────────────────────────────────────────────────────────────
   // CONSELHEIRO IA — consultor estratégico com Claude Opus
   // ──────────────────────────────────────────────────────────────────
+
+  // Calcula o faturamento de um mês a partir das transações da Trinks.
+  // Usa trinksFetchAllRange (cache 24h em meses fechados, 30min no corrente).
+  async function calcularFaturamentoTrinksMes(mes: string): Promise<{
+    total: number; count: number; clientes: number;
+    pix: number; cartao: number; dinheiro: number; outros: number;
+  } | null> {
+    try {
+      const [yStr, mStr] = mes.split("-");
+      const y = parseInt(yStr, 10);
+      const m = parseInt(mStr, 10);
+      const ultimoDia = new Date(y, m, 0).getDate();
+      const dataInicio = `${mes}-01`;
+      const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+      const transacoes = await trinksFetchAllRange("transacoes", { dataInicio, dataFim });
+      if (!Array.isArray(transacoes) || transacoes.length === 0) return null;
+
+      let total = 0, pix = 0, cartao = 0, dinheiro = 0, outros = 0;
+      const clientes = new Set<any>();
+      for (const t of transacoes) {
+        const val = Number(t.totalPagar ?? t.valor ?? 0);
+        total += val;
+        const cid = t.cliente?.id ?? t.clienteId;
+        if (cid) clientes.add(cid);
+        const formas = t.formasPagamentos || t.formasPagamento || [];
+        if (Array.isArray(formas) && formas.length > 0) {
+          for (const fp of formas) {
+            const nome = String(fp.nome || fp.descricao || "").toLowerCase();
+            const v = Number(fp.valor || 0);
+            if (nome.includes("pix")) pix += v;
+            else if (/créd|cred|déb|deb|cart/.test(nome)) cartao += v;
+            else if (/dinhe|espécie|especie|à vista|a vista/.test(nome)) dinheiro += v;
+            else outros += v;
+          }
+        } else {
+          const nome = String(t.formaPagamento || t.metodoPagamento || "").toLowerCase();
+          if (nome.includes("pix")) pix += val;
+          else if (/cart/.test(nome)) cartao += val;
+          else if (/dinhe/.test(nome)) dinheiro += val;
+          else outros += val;
+        }
+      }
+      return { total, count: transacoes.length, clientes: clientes.size, pix, cartao, dinheiro, outros };
+    } catch (err: any) {
+      log(`Conselheiro: trinksFetchAllRange falhou para ${mes}: ${err.message}`, "conselheiro");
+      return null;
+    }
+  }
+
   async function getConselheiroSources(): Promise<ConselheiroDataSources> {
-    // Imports Trinks (CSV consolidado por mês) — fonte preferencial
     const trinksFinanceiroPorMes: Record<string, any> = {};
     const trinksDREPorMes: Record<string, any> = {};
+
+    // 1. Imports CSV (lê do kv_store — barato)
+    const csvFinanceiro: Record<string, any> = {};
+    const csvImportadoEm: Record<string, string> = {};
     try {
       const idx = await loadTrinksImportIndex();
       const promessas: Promise<void>[] = [];
       for (const [chave, summary] of Object.entries(idx)) {
         if (!summary || !summary.mes) continue;
         if (summary.tipo === "financeiro") {
+          csvImportadoEm[summary.mes] = summary.importadoEm || "";
           promessas.push(
             kvGet<any>(chave).then(p => {
               if (p) {
-                trinksFinanceiroPorMes[summary.mes] = {
+                csvFinanceiro[summary.mes] = {
                   totalValor: p.totalValor || 0,
                   totalLinhas: p.totalLinhas || 0,
                   resumoPorForma: p.resumoPorForma || {},
@@ -7320,54 +7373,83 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       log(`Conselheiro: erro carregando trinks_import: ${err.message}`, "conselheiro");
     }
 
-    // Mês corrente: agrega 3 fontes (cache do sync + cache do "hoje" + agendamentos finalizados)
-    // Tudo lido de cache em memória — sem chamadas externas
+    // 2. Trinks ao vivo (mês corrente + 3 anteriores) — usa cache 24h em meses fechados
+    const now = new Date();
+    const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const mesesParaTrinks: string[] = [];
+    for (let k = 0; k < 4; k++) {
+      const dt = new Date(now.getFullYear(), now.getMonth() - k, 1);
+      mesesParaTrinks.push(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`);
+    }
+    const trinksLive: Record<string, any> = {};
+    if (trinksConfig) {
+      const results = await Promise.all(
+        mesesParaTrinks.map(async (mes) => {
+          const r = await calcularFaturamentoTrinksMes(mes);
+          return { mes, r };
+        })
+      );
+      for (const { mes, r } of results) {
+        if (r) trinksLive[mes] = r;
+      }
+    }
+
+    // 3. Resolução "mais recente vence" para cada mês
+    //    - Se Trinks ao vivo tem dados → considera mais novo que CSV (Trinks é always-fresh)
+    //    - Senão, usa CSV
+    const todosMeses = new Set([...Object.keys(csvFinanceiro), ...Object.keys(trinksLive)]);
+    for (const mes of todosMeses) {
+      const tr = trinksLive[mes];
+      const csv = csvFinanceiro[mes];
+      if (tr && csv) {
+        // Ambos: usa o de MAIOR total (assumindo que Trinks reflete o estado real;
+        // se CSV é maior, provavelmente é porque Trinks ainda não consolidou o mês fechado)
+        const useTrinks = tr.total >= csv.totalValor;
+        trinksFinanceiroPorMes[mes] = useTrinks
+          ? { totalValor: tr.total, totalLinhas: tr.count, resumoPorForma: { Pix: tr.pix, Cartão: tr.cartao, Dinheiro: tr.dinheiro, Outros: tr.outros } }
+          : csv;
+      } else if (tr) {
+        trinksFinanceiroPorMes[mes] = {
+          totalValor: tr.total,
+          totalLinhas: tr.count,
+          resumoPorForma: { Pix: tr.pix, Cartão: tr.cartao, Dinheiro: tr.dinheiro, Outros: tr.outros },
+        };
+      } else if (csv) {
+        trinksFinanceiroPorMes[mes] = csv;
+      }
+    }
+
+    // 4. Mês corrente — preferir trinksLive[mesAtual], cair pra cache de "hoje" + sync
     let trinksMesCorrente: any | undefined;
-    try {
-      const now = new Date();
-      const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      let faturamento = 0;
-      let clientesCount = 0;
-      let agendamentosCount = 0;
-      let pix = 0, cartao = 0, dinheiro = 0, outros = 0;
-
-      // 1. Cache do "hoje" (/api/trinks/hoje) — total fechado do dia + breakdown por meio
-      const hojeStr = now.toISOString().slice(0, 10);
-      const hojeCache = getCached(`hoje_${hojeStr}`);
-      if (hojeCache && typeof hojeCache.total === 'number') {
-        faturamento += hojeCache.total;
-        clientesCount += hojeCache.count || 0;
-        const b = hojeCache.breakdown || {};
-        pix += b.pix || 0;
-        cartao += b.cartao || 0;
-        dinheiro += b.dinheiro || 0;
-        outros += b.outros || 0;
-      }
-
-      // 2. Cache do sync (full_sync.transacoes do mês corrente — geralmente latência alta na Trinks)
+    if (trinksLive[mesAtual]) {
+      const r = trinksLive[mesAtual];
+      trinksMesCorrente = {
+        faturamento: r.total,
+        clientes: r.clientes,
+        agendamentosCount: 0,
+        pix: r.pix, cartao: r.cartao, dinheiro: r.dinheiro, outros: r.outros,
+      };
       const sync = getCached("full_sync");
-      if (sync && Array.isArray(sync.transacoes)) {
-        const trans = sync.transacoes.filter((t: any) => {
-          const d = t.dataHoraInicio || t.dataHora || t.data || t.dataPagamento || "";
-          return typeof d === "string" && d.startsWith(mesAtual) && !d.startsWith(hojeStr);
-        });
-        faturamento += trans.reduce((s: number, t: any) => s + Number(t.totalPagar || t.valor || 0), 0);
-        const clientesUnicos = new Set(trans.map((t: any) => t.cliente?.id || t.clienteId).filter(Boolean));
-        clientesCount += clientesUnicos.size;
-      }
-
       if (sync && Array.isArray(sync.agendamentos)) {
-        agendamentosCount = sync.agendamentos.filter((a: any) => {
-          const d = a.dataHoraInicio || "";
-          return typeof d === "string" && d.startsWith(mesAtual);
-        }).length;
+        trinksMesCorrente.agendamentosCount = sync.agendamentos.filter((a: any) =>
+          typeof a.dataHoraInicio === "string" && a.dataHoraInicio.startsWith(mesAtual)
+        ).length;
       }
-
-      if (faturamento > 0 || agendamentosCount > 0) {
-        trinksMesCorrente = { faturamento, clientes: clientesCount, agendamentosCount, pix, cartao, dinheiro, outros };
-      }
-    } catch (err: any) {
-      log(`Conselheiro: erro montando mês corrente: ${err.message}`, "conselheiro");
+    } else {
+      // Fallback: cache de hoje (caso trinksFetchAllRange tenha falhado)
+      try {
+        const hojeStr = now.toISOString().slice(0, 10);
+        const hojeCache = getCached(`hoje_${hojeStr}`);
+        if (hojeCache && typeof hojeCache.total === "number") {
+          const b = hojeCache.breakdown || {};
+          trinksMesCorrente = {
+            faturamento: hojeCache.total,
+            clientes: hojeCache.count || 0,
+            agendamentosCount: 0,
+            pix: b.pix || 0, cartao: b.cartao || 0, dinheiro: b.dinheiro || 0, outros: b.outros || 0,
+          };
+        }
+      } catch {}
     }
 
     return {

@@ -15,6 +15,8 @@ import type {
   TrinksImportType,
   ImportSummary,
 } from "./trinksImport";
+import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
+import { resolverFonte, carregarTrinksDataDoCsv } from "./fonteResolver";
 import * as cron from "node-cron";
 import {
   enviarMensagem,
@@ -1536,7 +1538,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-05-01-dashboard-seletor-mes",
+      build: "2026-05-01-fonte-mais-recente",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -3410,6 +3412,17 @@ export async function registerRoutes(
         log(`Sync: skipping cache — unhealthy (ag=${ag}, tr=${tr}). Result still returned but not cached.`, "trinks");
       }
 
+      // Registra timestamp do sync Trinks por mês (resolvedor de fonte CSV vs Trinks)
+      // Só registra quando temos dados saudáveis — sync com 0/0 ou parcial não conta.
+      if (isHealthy && hasAny) {
+        try {
+          const mesSync = `${year}-${month}`;
+          await registrarSyncTrinks(mesSync, { agendamentos: ag, transacoes: tr });
+        } catch (e: any) {
+          log(`Sync: erro ao registrar meta (${e?.message}) — ignorando`, "trinks");
+        }
+      }
+
       return res.json(syncResult);
     } catch (err: any) {
       // On rate limit error, try to return cached data
@@ -3476,6 +3489,20 @@ export async function registerRoutes(
       };
 
       log(`[sync-mes/${mes}] complete: ag=${result.agendamentos.length} tr=${result.transacoes.length}`, "trinks");
+
+      // Registra meta do sync por mês (resolvedor CSV vs Trinks)
+      const ag2 = result.agendamentos.length;
+      const tr2 = result.transacoes.length;
+      const hasAny2 = ag2 > 0 || tr2 > 0;
+      const isHealthy2 = (ag2 > 0 && tr2 > 0) || (ag2 === 0 && tr2 === 0);
+      if (isHealthy2 && hasAny2) {
+        try {
+          await registrarSyncTrinks(mes, { agendamentos: ag2, transacoes: tr2 });
+        } catch (e: any) {
+          log(`[sync-mes/${mes}] erro ao registrar meta (${e?.message}) — ignorando`, "trinks");
+        }
+      }
+
       return res.json(result);
     } catch (err: any) {
       if (err?.status === 429) {
@@ -3485,6 +3512,163 @@ export async function registerRoutes(
         });
       }
       return handleTrinksError(err, res);
+    }
+  });
+
+  // ─── GET /api/mes/:mes/fonte — meta da fonte vencedora (leve) ──────────
+  // Apenas retorna { fonte, trinksAt, csvAt, motivo } para o frontend exibir badge
+  // sem precisar baixar todos os dados do mês.
+  app.get("/api/mes/:mes/fonte", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "").trim();
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ error: "Mês inválido. Use YYYY-MM." });
+      }
+      const meta = await resolverFonte(mes);
+      return res.json(meta);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // ─── GET /api/mes/:mes/dados — "mais recente vence" ───────────────────
+  // Retorna TrinksData da fonte vencedora (CSV ou Trinks) + meta. Substitui o
+  // fetch direto a /api/trinks/sync-mes/:mes no Dashboard quando o mês não é o
+  // corrente. Para o mês corrente o frontend pode continuar usando /sync mas
+  // este endpoint também funciona (usa sync-mes internamente).
+  app.get("/api/mes/:mes/dados", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "").trim();
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ error: "Mês inválido. Use YYYY-MM." });
+      }
+
+      const meta = await resolverFonte(mes);
+
+      // Caso 1: nenhuma fonte → tenta Trinks online (pode ser primeira vez), e
+      // se também falhar devolve estrutura vazia com fonte="nenhuma".
+      // Caso 2: CSV vence → monta TrinksData sintético do CSV financeiro.
+      // Caso 3: Trinks vence → reusa lógica do /api/trinks/sync-mes via fetch interno.
+
+      if (meta.fonte === "csv") {
+        const sintetico = await carregarTrinksDataDoCsv(mes);
+        if (sintetico) {
+          return res.json({
+            fonte: "csv",
+            trinksAt: meta.trinksAt,
+            csvAt: meta.csvAt,
+            motivo: meta.motivo,
+            dados: sintetico,
+          });
+        }
+        // Se não conseguir carregar o CSV (race condition), cai no Trinks abaixo.
+      }
+
+      // Trinks vence (ou CSV indisponível). Reaproveita a mesma lógica do
+      // sync-mes: se houver config Trinks, busca; se 429 ou sem config, devolve
+      // o que tiver de meta.
+      if (!trinksConfig) {
+        // Sem config Trinks e sem CSV: devolve estrutura vazia.
+        return res.json({
+          fonte: meta.fonte,
+          trinksAt: meta.trinksAt,
+          csvAt: meta.csvAt,
+          motivo: meta.motivo,
+          dados: {
+            estabelecimento: null,
+            profissionais: [],
+            servicos: [],
+            agendamentos: [],
+            transacoes: [],
+            clientes: [],
+            syncedAt: meta.trinksAt || new Date().toISOString(),
+            mes,
+          },
+        });
+      }
+
+      try {
+        const [yStr, mStr] = mes.split("-");
+        const y = parseInt(yStr, 10);
+        const m = parseInt(mStr, 10);
+        const ultimoDia = new Date(y, m, 0).getDate();
+        const dataInicio = `${mes}-01`;
+        const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+        const dateParams = { dataInicio, dataFim };
+
+        const profissionais = await trinksFetchAll("profissionais")
+          .catch((e: any) => { log(`profissionais error: ${e.message}`, "trinks"); return []; });
+        const servicos = await trinksFetchAll("servicos")
+          .catch((e: any) => { log(`servicos error: ${e.message}`, "trinks"); return []; });
+        const agendamentos = await trinksFetchAllRange("agendamentos", dateParams)
+          .catch((e: any) => { log(`agendamentos error: ${e.message}`, "trinks"); return []; });
+        const transacoes = await trinksFetchAllRange("transacoes", dateParams)
+          .catch((e: any) => { log(`transacoes error: ${e.message}`, "trinks"); return []; });
+        const clientes = await trinksFetchAll("clientes")
+          .catch((e: any) => { log(`clientes error: ${e.message}`, "trinks"); return []; });
+
+        const dados = {
+          estabelecimento: null,
+          profissionais: Array.isArray(profissionais) ? profissionais : [],
+          servicos: Array.isArray(servicos) ? servicos : [],
+          agendamentos: Array.isArray(agendamentos) ? agendamentos : [],
+          transacoes: Array.isArray(transacoes) ? transacoes : [],
+          clientes: Array.isArray(clientes) ? clientes : [],
+          syncedAt: new Date().toISOString(),
+          mes,
+          periodoIni: dataInicio,
+          periodoFim: dataFim,
+        };
+
+        // Se houve dados frescos, registra meta (atualiza trinksAt). Mas só
+        // se realmente buscou rede (trinksFetchAllRange usa cache TTL 24h em
+        // meses fechados, então registrar aqui pode ficar desatualizado em
+        // relação à última chamada de rede de fato. Aceitável: registrar quando
+        // o endpoint serviu dados saudáveis para esse mês).
+        const ag2 = dados.agendamentos.length;
+        const tr2 = dados.transacoes.length;
+        const isHealthy2 = (ag2 > 0 && tr2 > 0) || (ag2 === 0 && tr2 === 0);
+        if (isHealthy2 && (ag2 > 0 || tr2 > 0)) {
+          try {
+            await registrarSyncTrinks(mes, { agendamentos: ag2, transacoes: tr2 });
+          } catch (e: any) {
+            log(`[mes/${mes}/dados] erro ao registrar meta (${e?.message})`, "trinks");
+          }
+        }
+
+        // Atualiza meta para refletir o trinksAt recém-gravado
+        const metaAtualizada = await resolverFonte(mes);
+
+        return res.json({
+          fonte: metaAtualizada.fonte,
+          trinksAt: metaAtualizada.trinksAt,
+          csvAt: metaAtualizada.csvAt,
+          motivo: metaAtualizada.motivo,
+          dados,
+        });
+      } catch (err: any) {
+        // Trinks falhou — se temos CSV, devolve CSV mesmo que não seja o vencedor.
+        if (err?.status === 429 || err?.status >= 500) {
+          const sintetico = await carregarTrinksDataDoCsv(mes);
+          if (sintetico) {
+            return res.json({
+              fonte: "csv",
+              trinksAt: meta.trinksAt,
+              csvAt: meta.csvAt,
+              motivo: `${meta.motivo} (Trinks indisponível, usando CSV como fallback.)`,
+              dados: sintetico,
+              fallback: true,
+            });
+          }
+          return res.status(429).json({
+            error: "Limite Trinks excedido e nenhum CSV disponível. Tente em alguns minutos.",
+            rateLimited: true,
+          });
+        }
+        return handleTrinksError(err, res);
+      }
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Erro interno." });
     }
   });
 

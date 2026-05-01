@@ -71,6 +71,7 @@ import {
 } from "recharts";
 import { Link } from "wouter";
 import DashboardImportSummaryCard from "@/components/dashboard/DashboardImportSummaryCard";
+import { FonteBadge } from "@/components/dashboard/FonteBadge";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 // Helpers de mês em SP (timezone America/Sao_Paulo)
@@ -540,41 +541,60 @@ export default function Dashboard() {
   }, [selectedMes]);
   const isMesCorrente = selectedMes === mesCorrente;
 
-  // Quando o mês selecionado NÃO é o corrente, busca o pacote Trinks daquele mês
-  // pelo endpoint /api/trinks/sync-mes/:mes (mesmo formato de TrinksData).
+  // Quando o mês selecionado NÃO é o corrente, busca o pacote do mês pelo
+  // endpoint resolutor /api/mes/:mes/dados — "mais recente vence" entre CSV e
+  // Trinks (mesmo formato de TrinksData no campo `dados`).
   const [trinksMes, setTrinksMes] = useState<any>(null);
   const [trinksMesLoading, setTrinksMesLoading] = useState(false);
   const [trinksMesError, setTrinksMesError] = useState<string | null>(null);
-  // Fonte ativa: "atual" (store), "trinks-mes" (Trinks ao vivo do mês), "csv" (futuro — ver comentário)
-  const [fonteMes, setFonteMes] = useState<"atual" | "trinks-mes" | "csv">("atual");
+  // Fonte ativa: "atual" (store), "trinks" (Trinks ao vivo do mês), "csv" (CSV vence), "nenhuma".
+  const [fonteMes, setFonteMes] = useState<"atual" | "trinks" | "csv" | "nenhuma">("atual");
+  // Timestamps para o badge (em ISO).
+  const [fonteTrinksAt, setFonteTrinksAt] = useState<string | null>(null);
+  const [fonteCsvAt, setFonteCsvAt] = useState<string | null>(null);
+
+  // Também busca a meta da fonte para o mês corrente — alimenta o badge.
+  useEffect(() => {
+    let canceled = false;
+    if (!isMesCorrente) return; // o effect abaixo já cobre mês não-corrente
+    fetch(`${API_BASE}/api/mes/${selectedMes}/fonte`)
+      .then((r) => r.json())
+      .then((m) => {
+        if (canceled || !m) return;
+        setFonteMes((m.fonte === "csv" || m.fonte === "trinks" || m.fonte === "nenhuma") ? m.fonte : "atual");
+        setFonteTrinksAt(m.trinksAt || null);
+        setFonteCsvAt(m.csvAt || null);
+      })
+      .catch(() => {});
+    return () => { canceled = true; };
+  }, [selectedMes, isMesCorrente, API_BASE]);
 
   useEffect(() => {
     let canceled = false;
     if (isMesCorrente) {
       setTrinksMes(null);
       setTrinksMesError(null);
-      setFonteMes("atual");
-      return;
-    }
-    if (!isConnected) {
-      setTrinksMes(null);
-      setTrinksMesError("Trinks não configurado.");
-      setFonteMes("atual");
+      // fonteMes para mês corrente é atualizado pelo effect acima
       return;
     }
     setTrinksMesLoading(true);
     setTrinksMesError(null);
-    fetch(`${API_BASE}/api/trinks/sync-mes/${selectedMes}`)
+    fetch(`${API_BASE}/api/mes/${selectedMes}/dados`)
       .then(async (r) => {
         const j = await r.json().catch(() => null);
         if (canceled) return;
         if (!r.ok) {
           setTrinksMesError(j?.error || `Falha ao carregar ${selectedMes}.`);
           setTrinksMes(null);
-          setFonteMes("atual");
+          setFonteMes("nenhuma");
+          setFonteTrinksAt(null);
+          setFonteCsvAt(null);
         } else {
-          setTrinksMes(j);
-          setFonteMes("trinks-mes");
+          // O endpoint resolutor devolve { fonte, trinksAt, csvAt, motivo, dados }
+          setTrinksMes(j?.dados || null);
+          setFonteMes(j?.fonte === "csv" || j?.fonte === "trinks" || j?.fonte === "nenhuma" ? j.fonte : "atual");
+          setFonteTrinksAt(j?.trinksAt || null);
+          setFonteCsvAt(j?.csvAt || null);
         }
       })
       .catch((e) => {
@@ -584,7 +604,7 @@ export default function Dashboard() {
       })
       .finally(() => { if (!canceled) setTrinksMesLoading(false); });
     return () => { canceled = true; };
-  }, [selectedMes, isMesCorrente, isConnected, API_BASE]);
+  }, [selectedMes, isMesCorrente, API_BASE]);
 
   // Pacote efetivo de dados Trinks que alimenta os adapters (totals, ranking, etc.)
   const trinksEffective: any = isMesCorrente ? trinks : trinksMes;
@@ -733,9 +753,13 @@ export default function Dashboard() {
               {isMesCorrente ? "Mês atual · visão ao vivo" : (
                 trinksMesLoading ? "Carregando dados do mês…" :
                 trinksMesError ? `Erro: ${trinksMesError}` :
-                fonteMes === "trinks-mes" ? "Histórico via Trinks" : "Visão do mês selecionado"
+                fonteMes === "trinks" ? "Histórico via Trinks" :
+                fonteMes === "csv" ? "Histórico via CSV importado" :
+                fonteMes === "nenhuma" ? "Sem dados para este mês" :
+                "Visão do mês selecionado"
               )}
             </p>
+            <FonteBadge fonte={fonteMes} trinksAt={fonteTrinksAt} csvAt={fonteCsvAt} />
           </div>
           <Button
             variant="outline"

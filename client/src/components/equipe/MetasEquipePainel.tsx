@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { FonteBadge } from "@/components/dashboard/FonteBadge";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -155,6 +156,9 @@ export default function MetasEquipePainel() {
   const [importsRanking, setImportsRanking] = useState<ImportItem[]>([]);
   const [mesSelecionado, setMesSelecionado] = useState<string>(""); // "" = mês atual via API
   const [fonteAtiva, setFonteAtiva] = useState<"trinks-api" | "trinks-import" | null>(null);
+  // Timestamps da fonte vencedora — alimentam o badge.
+  const [fonteTrinksAt, setFonteTrinksAt] = useState<string | null>(null);
+  const [fonteCsvAt, setFonteCsvAt] = useState<string | null>(null);
 
   async function carregar(mesForcado?: string) {
     setLoading(true);
@@ -173,36 +177,80 @@ export default function MetasEquipePainel() {
       //  - senão tenta API ao vivo; se vier vazia E houver import do mês atual, faz fallback
       let d: DesempenhoApi | null = null;
       let fonteResolvida: "trinks-api" | "trinks-import" | null = null;
+      let trinksAtResolvida: string | null = null;
+      let csvAtResolvida: string | null = null;
+
+      // Mês alvo para consultar a fonte vencedora
+      const mesAlvo = mesForcado || new Date().toISOString().slice(0, 7);
+
+      // Consulta a fonte vencedora ("mais recente vence" CSV vs Trinks)
+      let fonteVencedora: "trinks" | "csv" | "nenhuma" = "nenhuma";
+      try {
+        const r = await fetch(`/api/mes/${mesAlvo}/fonte`);
+        if (r.ok) {
+          const j = await r.json();
+          if (j?.fonte === "csv" || j?.fonte === "trinks") {
+            fonteVencedora = j.fonte;
+          }
+          trinksAtResolvida = j?.trinksAt || null;
+          csvAtResolvida = j?.csvAt || null;
+        }
+      } catch {}
 
       if (mesForcado) {
-        try {
-          const r = await fetch(`/api/equipe/desempenho-import/${mesForcado}`);
-          if (r.ok) {
-            d = await r.json();
-            fonteResolvida = "trinks-import";
-          }
-        } catch {}
+        // Mês histórico forçado: respeita a fonte vencedora se houver, senão tenta CSV import.
+        if (fonteVencedora === "csv") {
+          try {
+            const r = await fetch(`/api/equipe/desempenho-import/${mesForcado}`);
+            if (r.ok) {
+              d = await r.json();
+              fonteResolvida = "trinks-import";
+            }
+          } catch {}
+        } else {
+          // "trinks" ou "nenhuma": tenta o import (fallback do antigo) pois /desempenho é sempre mês atual
+          try {
+            const r = await fetch(`/api/equipe/desempenho-import/${mesForcado}`);
+            if (r.ok) {
+              d = await r.json();
+              fonteResolvida = "trinks-import";
+            }
+          } catch {}
+        }
       } else {
-        try {
-          const r = await fetch("/api/equipe/desempenho");
-          if (r.ok) {
-            const j = await r.json();
-            if (j?.ok) {
-              const totalMov = (j?.linhas || []).reduce((s: number, l: any) => s + (l?.mes?.reais || 0), 0);
-              if (totalMov > 0) {
-                d = j;
-                fonteResolvida = "trinks-api";
+        // Mês atual: aplica "mais recente vence".
+        if (fonteVencedora === "csv") {
+          // CSV vence → vai direto para o import.
+          try {
+            const r = await fetch(`/api/equipe/desempenho-import/${mesAlvo}`);
+            if (r.ok) {
+              d = await r.json();
+              fonteResolvida = "trinks-import";
+            }
+          } catch {}
+        }
+        if (!d) {
+          // Trinks vence (ou indefinido): tenta API ao vivo primeiro.
+          try {
+            const r = await fetch("/api/equipe/desempenho");
+            if (r.ok) {
+              const j = await r.json();
+              if (j?.ok) {
+                const totalMov = (j?.linhas || []).reduce((s: number, l: any) => s + (l?.mes?.reais || 0), 0);
+                if (totalMov > 0) {
+                  d = j;
+                  fonteResolvida = "trinks-api";
+                }
               }
             }
-          }
-        } catch {}
-        // Fallback automático: API vazia + import do mês atual existe
+          } catch {}
+        }
+        // Fallback final: API vazia + import do mês atual existe → usa import.
         if (!d) {
-          const hojeISO = new Date().toISOString().slice(0, 7); // YYYY-MM
-          const temImport = imps.some(i => i.mes === hojeISO);
+          const temImport = imps.some(i => i.mes === mesAlvo);
           if (temImport) {
             try {
-              const r = await fetch(`/api/equipe/desempenho-import/${hojeISO}`);
+              const r = await fetch(`/api/equipe/desempenho-import/${mesAlvo}`);
               if (r.ok) {
                 d = await r.json();
                 fonteResolvida = "trinks-import";
@@ -213,6 +261,8 @@ export default function MetasEquipePainel() {
       }
 
       setFonteAtiva(fonteResolvida);
+      setFonteTrinksAt(trinksAtResolvida);
+      setFonteCsvAt(csvAtResolvida);
       setMetas(lista);
       setDesempenho(d?.ok ? d : null);
       setDrafts(prev => {
@@ -403,15 +453,18 @@ export default function MetasEquipePainel() {
           })}
         </div>
 
-        {/* v25 Etapa 3: badge de fonte + seletor de mês para histórico via CSV */}
-        {(fonteAtiva === "trinks-import" || importsRanking.length > 0) && (
+        {/* v25 Etapa 3 + Mais recente vence: badge da fonte vencedora + seletor de mês histórico */}
+        {(fonteAtiva || importsRanking.length > 0) && (
           <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-card-border/50">
-            {fonteAtiva === "trinks-import" && (
-              <Badge className="text-[10px] bg-amber-500/15 text-amber-400 border-amber-500/30">
-                <AlertCircle className="w-2.5 h-2.5 mr-1" />
-                Dados via CSV importado{desempenho?.importInfo?.geradoEm ? ` · gerado em ${desempenho.importInfo.geradoEm}` : ""}
-              </Badge>
-            )}
+            <FonteBadge
+              fonte={
+                fonteAtiva === "trinks-import" ? "csv" :
+                fonteAtiva === "trinks-api" ? "trinks" :
+                "nenhuma"
+              }
+              trinksAt={fonteTrinksAt}
+              csvAt={fonteCsvAt}
+            />
             {importsRanking.length > 0 && (
               <div className="flex items-center gap-1.5 ml-auto">
                 <span className="text-[10px] text-muted-foreground">Mês:</span>

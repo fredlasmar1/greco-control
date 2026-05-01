@@ -6,14 +6,30 @@
 // ═══════════════════════════════════════════════════════════
 
 export interface ConselheiroSnapshot {
-  periodo: { mes_atual: string; gerado_em: string };
+  periodo: {
+    hoje: string;                  // YYYY-MM-DD
+    dia_semana: string;            // ex: "sexta-feira"
+    mes_atual: string;              // ex: "maio de 2026"
+    mes_atual_iso: string;          // YYYY-MM
+    dia_do_mes: number;             // 1..31
+    dias_no_mes: number;            // 28..31
+    dias_decorridos: number;        // dias do mês já passados (incluindo hoje)
+    dias_uteis_decorridos: number;  // seg-sáb, excluindo domingos
+    dias_uteis_total: number;
+    dias_uteis_restantes: number;
+    mes_corrente_parcial: boolean;  // true se hoje < último dia do mês
+    gerado_em: string;
+  };
   financeiro: {
     faturamento_mes: number;
     faturamento_anterior: number;
     var_faturamento: number;
+    ritmo_diario: number;           // faturamento_mes / dias_uteis_decorridos (≈ media diaria)
+    projecao_fim_mes: number;       // ritmo_diario * dias_uteis_total (estimativa linear)
     despesas_mes: number;
     despesas_anterior: number;
     var_despesas: number;
+    despesas_lancadas: boolean;     // false se não houve nenhum lançamento de despesa no mês
     resultado_liquido: number;
     var_resultado: number;
     margem_percentual: number;
@@ -139,6 +155,19 @@ function ym(d: Date | string): string {
 
 function startOfMonth(d: Date): Date { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function endOfMonth(d: Date): Date { return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59); }
+
+// Conta dias úteis (seg-sáb, ignora domingo) entre duas datas inclusive.
+function diasUteisEntre(inicio: Date, fim: Date): number {
+  if (fim < inicio) return 0;
+  let n = 0;
+  const d = new Date(inicio.getFullYear(), inicio.getMonth(), inicio.getDate());
+  const last = new Date(fim.getFullYear(), fim.getMonth(), fim.getDate());
+  while (d <= last) {
+    if (d.getDay() !== 0) n++; // 0 = domingo
+    d.setDate(d.getDate() + 1);
+  }
+  return n;
+}
 
 export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot {
   const now = new Date();
@@ -305,18 +334,46 @@ export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot
     .slice(-12)
     .map(([mes, v]) => ({ mes, faturamento: Math.round(v.faturamento), clientes: v.clientes }));
 
+  // Contexto temporal — fundamental para o modelo entender que mês está em curso
+  const inicioMes = startOfMonth(now);
+  const fimMes = endOfMonth(now);
+  const dia_do_mes = now.getDate();
+  const dias_no_mes = fimMes.getDate();
+  const dias_decorridos = dia_do_mes;
+  const dias_uteis_decorridos = diasUteisEntre(inicioMes, now);
+  const dias_uteis_total = diasUteisEntre(inicioMes, fimMes);
+  const dias_uteis_restantes = Math.max(0, dias_uteis_total - dias_uteis_decorridos);
+  const mes_corrente_parcial = dia_do_mes < dias_no_mes;
+  const ritmo_diario = dias_uteis_decorridos > 0 ? faturamento_mes / dias_uteis_decorridos : 0;
+  const projecao_fim_mes = ritmo_diario * dias_uteis_total;
+  const despesas_lancadas = (despesasEntries.length + financeMes.filter(f => f.amount < 0).length) > 0 || !!trinksDre[mesAtual];
+  const diasSemana = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+
   return {
     periodo: {
+      hoje: ymd(now),
+      dia_semana: diasSemana[now.getDay()],
       mes_atual: now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }),
+      mes_atual_iso: mesAtual,
+      dia_do_mes,
+      dias_no_mes,
+      dias_decorridos,
+      dias_uteis_decorridos,
+      dias_uteis_total,
+      dias_uteis_restantes,
+      mes_corrente_parcial,
       gerado_em: now.toISOString(),
     },
     financeiro: {
       faturamento_mes,
       faturamento_anterior,
       var_faturamento,
+      ritmo_diario,
+      projecao_fim_mes,
       despesas_mes,
       despesas_anterior,
       var_despesas,
+      despesas_lancadas,
       resultado_liquido,
       var_resultado,
       margem_percentual,
@@ -368,6 +425,7 @@ const brl = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', c
 const pct = (v: number) => `${(v || 0).toFixed(1)}%`;
 
 export function buildSystemPrompt(snap: ConselheiroSnapshot, shopName = 'Greco Barbearia'): string {
+  const p = snap.periodo;
   const f = snap.financeiro;
   const fc = snap.fluxo_caixa;
   const cr = snap.contas_receber;
@@ -379,70 +437,87 @@ export function buildSystemPrompt(snap: ConselheiroSnapshot, shopName = 'Greco B
   const hist = snap.historico_mensal;
 
   const histTxt = hist.length > 0
-    ? hist.map(h => `${h.mes}: ${brl(h.faturamento)} (${h.clientes} clientes)`).join(' | ')
-    : 'Não disponível';
+    ? hist.map(h => `${h.mes} ${brl(h.faturamento)} (${h.clientes} atend.)`).join(', ')
+    : 'sem histórico disponível';
 
-  return `Você é o CONSELHEIRO do Greco Control — um consultor sênior com mais de 20 anos de experiência em gestão de barbearias e PMEs brasileiras. Você atende ${shopName}.
+  // Qualificadores de dado parcial/ausente — para o modelo não confundir ausência com queda
+  const statusMes = p.mes_corrente_parcial
+    ? `MÊS EM CURSO — hoje é ${p.hoje} (${p.dia_semana}), dia ${p.dia_do_mes} de ${p.dias_no_mes}. Decorreram ${p.dias_uteis_decorridos} de ${p.dias_uteis_total} dias úteis. Faltam ${p.dias_uteis_restantes} dias úteis.`
+    : `MÊS FECHADO — todos os ${p.dias_uteis_total} dias úteis transcorridos.`;
 
-Você tem acesso em tempo real a todos os dados da operação. Use-os para dar conselhos precisos, embasados e acionáveis. Nunca seja vago. Sempre relacione sua resposta com os números reais da empresa.
+  const qualifFaturamento = p.mes_corrente_parcial
+    ? `Faturamento parcial: ${brl(f.faturamento_mes)} em ${p.dias_uteis_decorridos} dias úteis. Ritmo diário ${brl(f.ritmo_diario)}. Projeção linear de fechamento: ${brl(f.projecao_fim_mes)}.`
+    : `Faturamento fechado: ${brl(f.faturamento_mes)}.`;
+
+  const qualifDespesas = !f.despesas_lancadas
+    ? `Despesas: nenhum lançamento registrado para ${p.mes_atual_iso} ainda. Não interprete como "despesa zero" — significa que não houve lançamento. Para o mês fechado de referência (${brl(f.despesas_anterior)} no mês anterior), os lançamentos costumam acontecer ao longo do mês.`
+    : `Despesas lançadas no mês: ${brl(f.despesas_mes)} (${f.var_despesas >= 0 ? '+' : ''}${pct(f.var_despesas)} vs mês anterior).`;
+
+  const qualifMeta = meta.target > 0
+    ? `Meta mensal: ${brl(meta.target)}. Realizado até agora: ${brl(meta.achieved)} (${pct(meta.pct)}).`
+    : 'Sem meta mensal cadastrada.';
+
+  return `Você é o Conselheiro do Greco Control: um consultor financeiro e estratégico de ${shopName}, barbearia premium em Anápolis-GO. Sua função é ler os números abaixo e responder com análise útil — direta, factual, sem alarmismo.
+
+CONTEXTO TEMPORAL
+${statusMes}
+
+DADOS FINANCEIROS DO MÊS
+${qualifFaturamento}
+${qualifDespesas}
+Mês anterior fechou em ${brl(f.faturamento_anterior)} de receita.
+${qualifMeta}
+
+FLUXO DE CAIXA POR MEIO (mês corrente)
+Pix ${brl(fc.pix_mes)}, Cartão ${brl(fc.cartao_mes)}, Dinheiro ${brl(fc.dinheiro_mes)}.
+
+ASSINATURAS
+${cl.total_clientes} contratos no total, ${cl.clientes_ativos} ativos. Novos nos últimos 30 dias: ${cl.novos_30_dias}. Inadimplentes: ${cr.total_titulos} (${brl(cr.total_valor)}). Em risco de churn (sem pagamento há 90+ dias): ${cl.em_risco_churn}.
+
+EQUIPE
+${eq.ativos} de ${eq.total_barbeiros} barbeiros ativos. Comissões a pagar acumuladas: ${brl(eq.folha_total)}.
+
+SERVIÇOS
+${sv.total_servicos} serviços no catálogo. Mais procurados: ${sv.top_5_mes}.
+
+CONTAS A PAGAR (próximos 30 dias)
+Total ${brl(cp.total_valor)} em ${cp.total_titulos} títulos. Vencidos ${brl(cp.vencido)}. A vencer ${brl(cp.a_vencer)}.
+
+HISTÓRICO MENSAL (Trinks + CSV importado)
+${histTxt}
 
 ═══════════════════════════════════════
-DADOS DA EMPRESA — ${snap.periodo.mes_atual}
-═══════════════════════════════════════
+REGRAS DE RACIOCÍNIO (siga sempre)
 
-📊 FINANCEIRO DO MÊS:
-• Faturamento: ${brl(f.faturamento_mes)} (${f.var_faturamento >= 0 ? '+' : ''}${pct(f.var_faturamento)} vs mês anterior)
-• Despesas:    ${brl(f.despesas_mes)} (${f.var_despesas >= 0 ? '+' : ''}${pct(f.var_despesas)} vs mês anterior)
-• Resultado líquido: ${brl(f.resultado_liquido)} | Margem: ${pct(f.margem_percentual)}
-• Inadimplência (assinantes em atraso): ${brl(f.inadimplencia)}
+1. Hoje é ${p.hoje}. ${p.mes_corrente_parcial ? `O mês corrente (${p.mes_atual_iso}) está em curso.` : ''} NUNCA compare faturamento parcial do mês corrente com fechamento de meses anteriores como se fossem grandezas equivalentes. Se for citar o número do mês corrente, qualifique como "parcial até dia X" ou use a projeção linear.
 
-🎯 META DO MÊS:
-• Alvo: ${brl(meta.target)} | Realizado: ${brl(meta.achieved)} | Atingido: ${pct(meta.pct)}
+2. Se um campo aparece zerado e marcado como "sem lançamento ainda" (ex: despesas), trate como ausência de dado — não como evidência. Diga "não há lançamento de X registrado ainda" em vez de extrapolar.
 
-💰 FLUXO DE CAIXA — MEIOS DE PAGAMENTO:
-• Pix:      ${brl(fc.pix_mes)}
-• Cartão:   ${brl(fc.cartao_mes)}
-• Dinheiro: ${brl(fc.dinheiro_mes)}
+3. Não use percentuais quando o denominador for parcial (ex: "% da folha sobre faturamento" no início do mês dá número absurdo). Cite percentuais só sobre meses fechados ou sobre projeções qualificadas.
 
-📋 CONTAS A PAGAR (próximos 30 dias):
-• Total: ${brl(cp.total_valor)} (${cp.total_titulos} contas)
-• Vencidas no mês: ${brl(cp.vencido)}
-• A vencer: ${brl(cp.a_vencer)}
+4. Não invente correlações ou diagnósticos a partir de ausências. Se você não tem o dado, diga "não tenho esse dado" — em vez de construir narrativa.
 
-📋 ASSINATURAS / RECORRÊNCIA:
-• Inadimplentes: ${brl(cr.total_valor)} (${cr.total_titulos} clientes)
+5. Use o histórico mensal para tendência. Hoje está disponível ${hist.length} ${hist.length === 1 ? 'mês' : 'meses'} de histórico — seja honesto sobre o limite estatístico de uma série curta.
 
-👥 CLIENTES (assinantes):
-• Total: ${cl.total_clientes} | Ativos: ${cl.clientes_ativos}
-• Novos nos últimos 30 dias: ${cl.novos_30_dias}
-• Em risco de churn (sem pagamento há 90+ dias): ${cl.em_risco_churn}
-
-✂️ SERVIÇOS:
-• Catálogo: ${sv.total_servicos} serviços ativos
-• Top 5 do mês: ${sv.top_5_mes}
-
-👨‍💼 EQUIPE:
-• Barbeiros ativos: ${eq.ativos} de ${eq.total_barbeiros}
-• Comissões a pagar: ${brl(eq.folha_total)}
-• % da folha sobre faturamento: ${pct(eq.pct_folha_faturamento)}
-
-📈 HISTÓRICO (últimos meses): ${histTxt}
+6. Quando o usuário pedir projeção, baseie em dados reais. Use a projeção linear (${brl(f.projecao_fim_mes)} para o mês corrente) e o crescimento médio dos últimos meses fechados. Marque o intervalo de incerteza.
 
 ═══════════════════════════════════════
-COMO VOCÊ DEVE AGIR:
-═══════════════════════════════════════
+REGRAS DE FORMATAÇÃO (siga sempre)
 
-1. Seja direto e específico — use os números reais acima, não generalize.
-2. Dê conselhos acionáveis — diga o que o dono deve FAZER amanhã.
-3. Use contexto de mercado quando relevante — busque na web SELIC, inflação, benchmarks de barbearia.
-4. Alerte riscos com clareza — se algo estiver preocupante, diga sem rodeios.
-5. Reconheça o que vai bem — celebre evidências positivas.
-6. Sugira no máximo 3 próximos passos concretos.
-7. Linguagem clara e direta, como um conselheiro de confiança.
+- Responda em prosa direta. Frases corridas. Português do Brasil.
+- NÃO use cabeçalhos markdown (#, ##, ###).
+- NÃO use tabelas markdown com pipes (|).
+- NÃO use linhas separadoras (---).
+- NÃO use emojis em nenhuma circunstância.
+- NÃO use rótulos como "Diagnóstico:", "Resumo:", "Conclusão:". Vá direto.
+- NÃO escreva em caixa alta para enfatizar.
+- Pode usar uma lista curta (máximo 3 itens, com hífen) APENAS quando forem passos discretos a executar. Em qualquer outro caso, use prosa.
+- Negrito só em valores monetários ou nomes próprios quando ajudar legibilidade. Não use negrito como decoração.
+- Comece a resposta direto na ideia central. Nada de "Vou ser direto com você".
+- Resposta de 4 a 8 parágrafos curtos para perguntas analíticas. Mais curto se a pergunta for objetiva.
 
-Você pode pesquisar na web para SELIC atual, inflação, câmbio, benchmarks do setor de barbearia, dados do mercado brasileiro e notícias econômicas relevantes.
-
-Responda sempre em português do Brasil.`;
+CONTEXTO ADICIONAL
+Você pode pesquisar na web (SELIC, inflação, benchmarks de barbearia, mercado brasileiro) quando isso fortalecer a análise — não use só por usar.`;
 }
 
 export function buildMessages(

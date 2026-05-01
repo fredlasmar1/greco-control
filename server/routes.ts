@@ -7320,27 +7320,54 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       log(`Conselheiro: erro carregando trinks_import: ${err.message}`, "conselheiro");
     }
 
-    // Mês corrente: usa o cache do /api/trinks/sync se já estiver populado (evita chamada externa)
+    // Mês corrente: agrega 3 fontes (cache do sync + cache do "hoje" + agendamentos finalizados)
+    // Tudo lido de cache em memória — sem chamadas externas
     let trinksMesCorrente: any | undefined;
     try {
+      const now = new Date();
+      const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      let faturamento = 0;
+      let clientesCount = 0;
+      let agendamentosCount = 0;
+      let pix = 0, cartao = 0, dinheiro = 0, outros = 0;
+
+      // 1. Cache do "hoje" (/api/trinks/hoje) — total fechado do dia + breakdown por meio
+      const hojeStr = now.toISOString().slice(0, 10);
+      const hojeCache = getCached(`hoje_${hojeStr}`);
+      if (hojeCache && typeof hojeCache.total === 'number') {
+        faturamento += hojeCache.total;
+        clientesCount += hojeCache.count || 0;
+        const b = hojeCache.breakdown || {};
+        pix += b.pix || 0;
+        cartao += b.cartao || 0;
+        dinheiro += b.dinheiro || 0;
+        outros += b.outros || 0;
+      }
+
+      // 2. Cache do sync (full_sync.transacoes do mês corrente — geralmente latência alta na Trinks)
       const sync = getCached("full_sync");
       if (sync && Array.isArray(sync.transacoes)) {
-        const now = new Date();
-        const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         const trans = sync.transacoes.filter((t: any) => {
-          const d = t.dataHora || t.data || t.dataPagamento || "";
-          return typeof d === "string" && d.startsWith(mesAtual);
+          const d = t.dataHoraInicio || t.dataHora || t.data || t.dataPagamento || "";
+          return typeof d === "string" && d.startsWith(mesAtual) && !d.startsWith(hojeStr);
         });
-        const faturamento = trans.reduce((s: number, t: any) => s + (Number(t.valor) || 0), 0);
+        faturamento += trans.reduce((s: number, t: any) => s + Number(t.totalPagar || t.valor || 0), 0);
         const clientesUnicos = new Set(trans.map((t: any) => t.cliente?.id || t.clienteId).filter(Boolean));
-        trinksMesCorrente = {
-          faturamento,
-          clientes: clientesUnicos.size,
-          agendamentosCount: Array.isArray(sync.agendamentos) ? sync.agendamentos.length : 0,
-        };
+        clientesCount += clientesUnicos.size;
+      }
+
+      if (sync && Array.isArray(sync.agendamentos)) {
+        agendamentosCount = sync.agendamentos.filter((a: any) => {
+          const d = a.dataHoraInicio || "";
+          return typeof d === "string" && d.startsWith(mesAtual);
+        }).length;
+      }
+
+      if (faturamento > 0 || agendamentosCount > 0) {
+        trinksMesCorrente = { faturamento, clientes: clientesCount, agendamentosCount, pix, cartao, dinheiro, outros };
       }
     } catch (err: any) {
-      log(`Conselheiro: erro lendo cache do sync: ${err.message}`, "conselheiro");
+      log(`Conselheiro: erro montando mês corrente: ${err.message}`, "conselheiro");
     }
 
     return {

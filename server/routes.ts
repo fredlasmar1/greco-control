@@ -1536,7 +1536,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-04-29-trinks-otim-acef",
+      build: "2026-05-01-dashboard-seletor-mes",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -3420,6 +3420,69 @@ export async function registerRoutes(
           return res.json({ ...diskCache, fromCache: true, rateLimited: true, 
             warning: "Limite de requisições atingido. Mostrando dados do último sync." });
         }
+      }
+      return handleTrinksError(err, res);
+    }
+  });
+
+  // ─── GET /api/trinks/sync-mes/:mes — sync para mês arbitrário ───
+  // Retorna o MESMO formato de /api/trinks/sync, mas para o mês pedido (YYYY-MM).
+  // Usado pelo Dashboard quando o usuário seleciona um mês ≠ corrente.
+  // Reaproveita o cache (com TTL 24h em meses fechados via otimização C).
+  app.get("/api/trinks/sync-mes/:mes", async (req: Request, res: Response) => {
+    try {
+      if (!trinksConfig) {
+        return res.status(400).json({ error: "Chave API da Trinks não configurada." });
+      }
+      const mes = String(req.params.mes || "").trim();
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ error: "Mês inválido. Use YYYY-MM." });
+      }
+      // Calcula primeiro e último dia do mês pedido
+      const [yStr, mStr] = mes.split("-");
+      const y = parseInt(yStr, 10);
+      const m = parseInt(mStr, 10);
+      const ultimoDia = new Date(y, m, 0).getDate(); // mês 1-12 → day 0 do mês seguinte = último do mês atual
+      const dataInicio = `${mes}-01`;
+      const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+
+      // Em meses fechados, o trinksFetchAll já aplica TTL 24h (otimização C).
+      // No corrente, segue 30min.
+      const dateParams = { dataInicio, dataFim };
+
+      log(`[sync-mes/${mes}] fetching profissionais/servicos/agendamentos/transacoes/clientes...`, "trinks");
+      const profissionais = await trinksFetchAll("profissionais")
+        .catch((e: any) => { log(`profissionais error: ${e.message}`, "trinks"); return []; });
+      const servicos = await trinksFetchAll("servicos")
+        .catch((e: any) => { log(`servicos error: ${e.message}`, "trinks"); return []; });
+      const agendamentos = await trinksFetchAllRange("agendamentos", dateParams)
+        .catch((e: any) => { log(`agendamentos error: ${e.message}`, "trinks"); return []; });
+      const transacoes = await trinksFetchAllRange("transacoes", dateParams)
+        .catch((e: any) => { log(`transacoes error: ${e.message}`, "trinks"); return []; });
+      const clientes = await trinksFetchAll("clientes")
+        .catch((e: any) => { log(`clientes error: ${e.message}`, "trinks"); return []; });
+
+      const result = {
+        estabelecimento: null,
+        profissionais: Array.isArray(profissionais) ? profissionais : [],
+        servicos: Array.isArray(servicos) ? servicos : [],
+        agendamentos: Array.isArray(agendamentos) ? agendamentos : [],
+        transacoes: Array.isArray(transacoes) ? transacoes : [],
+        clientes: Array.isArray(clientes) ? clientes : [],
+        syncedAt: new Date().toISOString(),
+        mes,
+        periodoIni: dataInicio,
+        periodoFim: dataFim,
+      };
+
+      log(`[sync-mes/${mes}] complete: ag=${result.agendamentos.length} tr=${result.transacoes.length}`, "trinks");
+      return res.json(result);
+    } catch (err: any) {
+      if (err?.status === 429) {
+        return res.status(429).json({
+          error: "Limite Trinks excedido. Tente novamente em alguns minutos.",
+          rateLimited: true,
+        });
       }
       return handleTrinksError(err, res);
     }

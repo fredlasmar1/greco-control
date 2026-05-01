@@ -71,6 +71,26 @@ import {
 } from "recharts";
 import { Link } from "wouter";
 import DashboardImportSummaryCard from "@/components/dashboard/DashboardImportSummaryCard";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+
+// Helpers de mês em SP (timezone America/Sao_Paulo)
+function mesAtualSP(): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit",
+  });
+  return fmt.format(new Date()).slice(0, 7); // YYYY-MM
+}
+function mesAdjacente(mes: string, delta: number): string {
+  const [y, m] = mes.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function labelMesPtBR(mes: string): string {
+  const [y, m] = mes.split("-").map(Number);
+  const d = new Date(y, m - 1, 1);
+  const txt = d.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  return txt.charAt(0).toUpperCase() + txt.slice(1);
+}
 
 interface KPICardProps {
   title: string;
@@ -509,6 +529,69 @@ export default function Dashboard() {
 
   useEffect(() => { loadAmanha(); }, [loadAmanha]);
 
+  // ─── Seletor de mês (Dashboard pode visualizar meses passados) ───
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [selectedMes, setSelectedMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesAtualSP();
+    return localStorage.getItem("dashboard.selectedMes") || mesAtualSP();
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dashboard.selectedMes", selectedMes); } catch {}
+  }, [selectedMes]);
+  const isMesCorrente = selectedMes === mesCorrente;
+
+  // Quando o mês selecionado NÃO é o corrente, busca o pacote Trinks daquele mês
+  // pelo endpoint /api/trinks/sync-mes/:mes (mesmo formato de TrinksData).
+  const [trinksMes, setTrinksMes] = useState<any>(null);
+  const [trinksMesLoading, setTrinksMesLoading] = useState(false);
+  const [trinksMesError, setTrinksMesError] = useState<string | null>(null);
+  // Fonte ativa: "atual" (store), "trinks-mes" (Trinks ao vivo do mês), "csv" (futuro — ver comentário)
+  const [fonteMes, setFonteMes] = useState<"atual" | "trinks-mes" | "csv">("atual");
+
+  useEffect(() => {
+    let canceled = false;
+    if (isMesCorrente) {
+      setTrinksMes(null);
+      setTrinksMesError(null);
+      setFonteMes("atual");
+      return;
+    }
+    if (!isConnected) {
+      setTrinksMes(null);
+      setTrinksMesError("Trinks não configurado.");
+      setFonteMes("atual");
+      return;
+    }
+    setTrinksMesLoading(true);
+    setTrinksMesError(null);
+    fetch(`${API_BASE}/api/trinks/sync-mes/${selectedMes}`)
+      .then(async (r) => {
+        const j = await r.json().catch(() => null);
+        if (canceled) return;
+        if (!r.ok) {
+          setTrinksMesError(j?.error || `Falha ao carregar ${selectedMes}.`);
+          setTrinksMes(null);
+          setFonteMes("atual");
+        } else {
+          setTrinksMes(j);
+          setFonteMes("trinks-mes");
+        }
+      })
+      .catch((e) => {
+        if (canceled) return;
+        setTrinksMesError(String(e?.message || e));
+        setTrinksMes(null);
+      })
+      .finally(() => { if (!canceled) setTrinksMesLoading(false); });
+    return () => { canceled = true; };
+  }, [selectedMes, isMesCorrente, isConnected, API_BASE]);
+
+  // Pacote efetivo de dados Trinks que alimenta os adapters (totals, ranking, etc.)
+  const trinksEffective: any = isMesCorrente ? trinks : trinksMes;
+  const hasTrinksDataEffective = isMesCorrente
+    ? hasTrinksData
+    : (trinksMes !== null && Array.isArray(trinksMes?.transacoes));
+
   // Period filter state
   const [periodFilter, setPeriodFilter] = useState("");
   const [customStart, setCustomStart] = useState("");
@@ -564,55 +647,55 @@ export default function Dashboard() {
 
   const periodRevenue = useMemo(() => {
     if (!periodStart || !periodEnd) return 0;
-    return hasTrinksData
-      ? getTrinksRevenueByRange(trinks!, periodStart, periodEnd)
+    return hasTrinksDataEffective
+      ? getTrinksRevenueByRange(trinksEffective, periodStart, periodEnd)
       : getRevenueByRange(periodStart, periodEnd);
-  }, [hasTrinksData, trinks, periodStart, periodEnd]);
+  }, [hasTrinksDataEffective, trinksEffective, periodStart, periodEnd]);
 
-  // Calculate data from either Trinks or demo
+  // Calculate data from either Trinks (mês selecionado) or demo
   const totals = useMemo(
-    () => (hasTrinksData ? getTrinksMonthTotals(trinks!) : getMonthTotals()),
-    [hasTrinksData, trinks]
+    () => (hasTrinksDataEffective ? getTrinksMonthTotals(trinksEffective) : getMonthTotals()),
+    [hasTrinksDataEffective, trinksEffective]
   );
 
   const revenueSummary = useMemo(
     () =>
-      hasTrinksData
-        ? getTrinksRevenueSummary(trinks!)
+      hasTrinksDataEffective
+        ? getTrinksRevenueSummary(trinksEffective)
         : getRevenueSummary(),
-    [hasTrinksData, trinks]
+    [hasTrinksDataEffective, trinksEffective]
   );
 
   const chartData = useMemo(
     () =>
-      hasTrinksData
-        ? getTrindsDailyRevenueChart(trinks!)
+      hasTrinksDataEffective
+        ? getTrindsDailyRevenueChart(trinksEffective)
         : getDailyRevenueChartData(),
-    [hasTrinksData, trinks]
+    [hasTrinksDataEffective, trinksEffective]
   );
 
   const barberData = useMemo(
     () =>
-      hasTrinksData ? getTrinksBarberRanking(trinks!) : getBarberRankingData(),
-    [hasTrinksData, trinks]
+      hasTrinksDataEffective ? getTrinksBarberRanking(trinksEffective) : getBarberRankingData(),
+    [hasTrinksDataEffective, trinksEffective]
   );
 
   const paymentData = useMemo(
     () =>
-      hasTrinksData
-        ? getTrinksPaymentMethodData(trinks!)
+      hasTrinksDataEffective
+        ? getTrinksPaymentMethodData(trinksEffective)
         : getPaymentMethodData(),
-    [hasTrinksData, trinks]
+    [hasTrinksDataEffective, trinksEffective]
   );
 
   const target = 150000;
   const progressPercent = (totals.totalRevenue / target) * 100;
-  const todayClients = hasTrinksData
+  const todayClients = hasTrinksDataEffective
     ? totals.todayClients
     : chartData[chartData.length - 1]?.clients || 0;
 
-  const monthLabel = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-  const monthLabelCapital = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+  // Label do mês: usa o selectedMes (não sempre o atual)
+  const monthLabelCapital = labelMesPtBR(selectedMes);
 
   const handleSync = () => {
     syncData(true);
@@ -633,58 +716,100 @@ export default function Dashboard() {
 
       {/* Header row */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">{monthLabelCapital}</h2>
-          <p className="text-sm text-muted-foreground">
-            Visão geral da barbearia
-          </p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-9 w-9"
+            onClick={() => setSelectedMes(mesAdjacente(selectedMes, -1))}
+            aria-label="Mês anterior"
+            data-testid="btn-mes-anterior"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <div className="min-w-[180px] text-center">
+            <h2 className="text-lg font-semibold leading-tight" data-testid="label-mes-selecionado">{monthLabelCapital}</h2>
+            <p className="text-[11px] text-muted-foreground">
+              {isMesCorrente ? "Mês atual · visão ao vivo" : (
+                trinksMesLoading ? "Carregando dados do mês…" :
+                trinksMesError ? `Erro: ${trinksMesError}` :
+                fonteMes === "trinks-mes" ? "Histórico via Trinks" : "Visão do mês selecionado"
+              )}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-9 w-9"
+            onClick={() => setSelectedMes(mesAdjacente(selectedMes, +1))}
+            disabled={selectedMes >= mesCorrente}
+            aria-label="Próximo mês"
+            data-testid="btn-mes-proximo"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+          {!isMesCorrente && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedMes(mesCorrente)}
+              data-testid="btn-mes-atual"
+            >
+              Voltar para mês atual
+            </Button>
+          )}
         </div>
         <FecharDiaDialog />
       </div>
 
-      {/* v25 Etapa 3: Resumo do mês via CSV importado (só aparece se houver import) */}
-      <DashboardImportSummaryCard />
+      {/* v25 Etapa 3: Resumo do mês via CSV importado (só aparece se houver import).
+          Passa o mês selecionado para refletir históricos quando o usuário navega no seletor. */}
+      <DashboardImportSummaryCard mes={selectedMes} />
 
       {/* Revenue Highlight */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="bg-card border-card-border relative overflow-hidden">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Calendar className="w-4 h-4 text-primary" />
-              </div>
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Hoje</span>
-              {hoje && hoje.count > 0 && (
-                <span className="text-[10px] text-muted-foreground ml-auto">{hoje.count} comanda{hoje.count !== 1 ? "s" : ""}</span>
-              )}
-            </div>
-            <p className="text-2xl sm:text-3xl font-bold text-foreground" data-testid="revenue-today">
-              {formatCurrency(hoje?.total ?? revenueSummary.dayRevenue)}
-            </p>
-            {hoje && hoje.total > 0 && (
-              <div className="flex flex-wrap gap-1 mt-2">
-                {hoje.breakdown.pix > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary">Pix {formatCurrency(hoje.breakdown.pix)}</span>}
-                {hoje.breakdown.cartao > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">Cartão {formatCurrency(hoje.breakdown.cartao)}</span>}
-                {hoje.breakdown.dinheiro > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">Dinheiro {formatCurrency(hoje.breakdown.dinheiro)}</span>}
-                {hoje.breakdown.outros > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Outros {formatCurrency(hoje.breakdown.outros)}</span>}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      <div className={`grid gap-4 ${isMesCorrente ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1"}`}>
+        {isMesCorrente && (
+          <>
+            <Card className="bg-card border-card-border relative overflow-hidden">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <Calendar className="w-4 h-4 text-primary" />
+                  </div>
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Hoje</span>
+                  {hoje && hoje.count > 0 && (
+                    <span className="text-[10px] text-muted-foreground ml-auto">{hoje.count} comanda{hoje.count !== 1 ? "s" : ""}</span>
+                  )}
+                </div>
+                <p className="text-2xl sm:text-3xl font-bold text-foreground" data-testid="revenue-today">
+                  {formatCurrency(hoje?.total ?? revenueSummary.dayRevenue)}
+                </p>
+                {hoje && hoje.total > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {hoje.breakdown.pix > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary">Pix {formatCurrency(hoje.breakdown.pix)}</span>}
+                    {hoje.breakdown.cartao > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">Cartão {formatCurrency(hoje.breakdown.cartao)}</span>}
+                    {hoje.breakdown.dinheiro > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">Dinheiro {formatCurrency(hoje.breakdown.dinheiro)}</span>}
+                    {hoje.breakdown.outros > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Outros {formatCurrency(hoje.breakdown.outros)}</span>}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-        <Card className="bg-card border-card-border relative overflow-hidden">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
-                <CalendarDays className="w-4 h-4 text-primary" />
-              </div>
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Esta Semana</span>
-            </div>
-            <p className="text-2xl sm:text-3xl font-bold text-foreground" data-testid="revenue-week">
-              {formatCurrency(revenueSummary.weekRevenue)}
-            </p>
-          </CardContent>
-        </Card>
+            <Card className="bg-card border-card-border relative overflow-hidden">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
+                    <CalendarDays className="w-4 h-4 text-primary" />
+                  </div>
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Esta Semana</span>
+                </div>
+                <p className="text-2xl sm:text-3xl font-bold text-foreground" data-testid="revenue-week">
+                  {formatCurrency(revenueSummary.weekRevenue)}
+                </p>
+              </CardContent>
+            </Card>
+          </>
+        )}
 
         <Card className="bg-card border-card-border relative overflow-hidden border-primary/30">
           <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
@@ -693,7 +818,9 @@ export default function Dashboard() {
               <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
                 <CalendarRange className="w-4 h-4 text-primary" />
               </div>
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Este Mês</span>
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                {isMesCorrente ? "Este Mês" : monthLabelCapital}
+              </span>
             </div>
             <p className="text-2xl sm:text-3xl font-bold text-primary" data-testid="revenue-month">
               {formatCurrency(revenueSummary.monthRevenue)}
@@ -702,8 +829,8 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Hoje (previsto + fechado em tempo real) */}
-      {isConnected && (
+      {/* Hoje (previsto + fechado em tempo real) — só no mês corrente */}
+      {isConnected && isMesCorrente && (
         <Card
           className={`bg-card border-card-border relative overflow-hidden ${
             hojeCompleto?.atingeMeta
@@ -1014,8 +1141,8 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* Previsão de Amanhã */}
-      {isConnected && (
+      {/* Previsão de Amanhã — só no mês corrente */}
+      {isConnected && isMesCorrente && (
         <Card
           className={`bg-card border-card-border relative overflow-hidden ${
             amanha?.atingeMeta

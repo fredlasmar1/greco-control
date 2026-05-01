@@ -4,9 +4,25 @@
 
 ## Versão atual em produção
 
-- **Build**: `2026-05-01-dashboard-seletor-mes` (commit `8d2205e`)
+- **Build**: `2026-05-01-fonte-mais-recente` (commit `cf1897e`)
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
+
+### Mais recente vence — CSV vs Trinks [concluído]
+
+Regra: para cada mês, comparamos o timestamp de upload do CSV com o de sync Trinks. O **mais recente vence** e é a fonte usada em todo o sistema (Dashboard + Equipe). Badge discreto indica a fonte ativa.
+
+- **Backend**:
+  - `server/trinksSyncMeta.ts` (NOVO) — helpers `getSyncMeta`, `setSyncMeta`, `registrarSyncTrinks`. Persiste em `kv_store` com chave `trinks_sync_meta:YYYY-MM`.
+  - `registrarSyncTrinks` integrado em `/api/trinks/sync` (mês corrente) e `/api/trinks/sync-mes/:mes` — grava timestamp só quando dados Trinks vêm saudáveis (ag>0 e tr>0).
+  - `server/fonteResolver.ts` (NOVO) — `resolverFonte(mes)` retorna `{ fonte, trinksAt, csvAt, motivo }` e converte CSV financeiro em "transações sintéticas" no mesmo formato dos adapters (`getTrindsDailyRevenueChart`, `getTrinksPaymentMethodData`).
+  - Novos endpoints: `GET /api/mes/:mes/fonte` (meta leve) e `GET /api/mes/:mes/dados` (TrinksData da fonte vencedora + meta + fallback Trinks→CSV em 429).
+- **Frontend**:
+  - `client/src/components/dashboard/FonteBadge.tsx` (NOVO) — badge reutilizável: ícone Database (Trinks verde) ou FileSpreadsheet (CSV âmbar) + "há Xmin/h/dias".
+  - `Dashboard.tsx` agora chama `/api/mes/:mes/dados` para mês não-corrente e `/api/mes/:mes/fonte` para o corrente. Renderiza `FonteBadge` no header de mês.
+  - `MetasEquipePainel.tsx` consulta `/api/mes/:mes/fonte` antes de decidir entre `/api/equipe/desempenho` (live) e `/api/equipe/desempenho-import/:mes` (CSV). Renderiza o mesmo `FonteBadge`.
+
+Validado em produção: Abril/2026 mostra `Fonte: CSV · há 1 dia`, faturamento R$ 80.486,20 reconstruído do CSV financeiro, navegação ok.
 
 ### Dashboard com seletor de mês [concluído]
 

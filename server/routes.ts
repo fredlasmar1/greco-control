@@ -7279,7 +7279,70 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   // ──────────────────────────────────────────────────────────────────
   // CONSELHEIRO IA — consultor estratégico com Claude Opus
   // ──────────────────────────────────────────────────────────────────
-  function getConselheiroSources(): ConselheiroDataSources {
+  async function getConselheiroSources(): Promise<ConselheiroDataSources> {
+    // Imports Trinks (CSV consolidado por mês) — fonte preferencial
+    const trinksFinanceiroPorMes: Record<string, any> = {};
+    const trinksDREPorMes: Record<string, any> = {};
+    try {
+      const idx = await loadTrinksImportIndex();
+      const promessas: Promise<void>[] = [];
+      for (const [chave, summary] of Object.entries(idx)) {
+        if (!summary || !summary.mes) continue;
+        if (summary.tipo === "financeiro") {
+          promessas.push(
+            kvGet<any>(chave).then(p => {
+              if (p) {
+                trinksFinanceiroPorMes[summary.mes] = {
+                  totalValor: p.totalValor || 0,
+                  totalLinhas: p.totalLinhas || 0,
+                  resumoPorForma: p.resumoPorForma || {},
+                  resumoPorDia: p.resumoPorDia || {},
+                };
+              }
+            }).catch(() => {})
+          );
+        } else if (summary.tipo === "dre") {
+          promessas.push(
+            kvGet<any>(chave).then(p => {
+              if (p) {
+                trinksDREPorMes[summary.mes] = {
+                  totalReceitas: p.totalReceitas || 0,
+                  totalDespesas: p.totalDespesas || 0,
+                  resultadoPeriodo: p.resultadoPeriodo || 0,
+                };
+              }
+            }).catch(() => {})
+          );
+        }
+      }
+      await Promise.all(promessas);
+    } catch (err: any) {
+      log(`Conselheiro: erro carregando trinks_import: ${err.message}`, "conselheiro");
+    }
+
+    // Mês corrente: usa o cache do /api/trinks/sync se já estiver populado (evita chamada externa)
+    let trinksMesCorrente: any | undefined;
+    try {
+      const sync = getCached("full_sync");
+      if (sync && Array.isArray(sync.transacoes)) {
+        const now = new Date();
+        const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const trans = sync.transacoes.filter((t: any) => {
+          const d = t.dataHora || t.data || t.dataPagamento || "";
+          return typeof d === "string" && d.startsWith(mesAtual);
+        });
+        const faturamento = trans.reduce((s: number, t: any) => s + (Number(t.valor) || 0), 0);
+        const clientesUnicos = new Set(trans.map((t: any) => t.cliente?.id || t.clienteId).filter(Boolean));
+        trinksMesCorrente = {
+          faturamento,
+          clientes: clientesUnicos.size,
+          agendamentosCount: Array.isArray(sync.agendamentos) ? sync.agendamentos.length : 0,
+        };
+      }
+    } catch (err: any) {
+      log(`Conselheiro: erro lendo cache do sync: ${err.message}`, "conselheiro");
+    }
+
     return {
       entries: (storeData.entries as any) || [],
       barbers: (storeData.barbers as any) || [],
@@ -7289,12 +7352,15 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       metasHistorico,
       monthlyTarget: storeData.settings?.monthlyTarget,
       shopName: storeData.settings?.shopName,
+      trinksFinanceiroPorMes,
+      trinksDREPorMes,
+      trinksMesCorrente,
     };
   }
 
-  app.get("/api/conselheiro/dados", (_req: Request, res: Response) => {
+  app.get("/api/conselheiro/dados", async (_req: Request, res: Response) => {
     try {
-      const snapshot = buildSnapshot(getConselheiroSources());
+      const snapshot = buildSnapshot(await getConselheiroSources());
       return res.json(snapshot);
     } catch (err: any) {
       log(`Conselheiro /dados erro: ${err.message}`, "conselheiro");
@@ -7312,7 +7378,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY não configurada" });
 
-      const sources = getConselheiroSources();
+      const sources = await getConselheiroSources();
       const snapshot = dados_empresa || buildSnapshot(sources);
       const systemPrompt = buildSystemPrompt(snapshot, sources.shopName);
       const messages = buildMessages(historico, mensagem.trim());

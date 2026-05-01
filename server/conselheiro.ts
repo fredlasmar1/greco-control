@@ -87,6 +87,29 @@ interface AssinaturaCliente {
 
 interface MetaHistorico { month: string; target: number; achieved: number }
 
+export interface TrinksFinanceiroMes {
+  totalValor: number;
+  totalLinhas: number;
+  resumoPorForma?: Record<string, number>;
+  resumoPorDia?: Record<string, number>;
+}
+
+export interface TrinksDREMes {
+  totalReceitas: number;
+  totalDespesas: number;
+  resultadoPeriodo: number;
+}
+
+export interface TrinksMesCorrente {
+  faturamento: number;       // soma de transações fechadas no mês corrente
+  clientes: number;          // clientes únicos atendidos
+  agendamentosCount: number; // total de agendamentos do mês (fechados ou não)
+  pix?: number;
+  cartao?: number;
+  dinheiro?: number;
+  outros?: number;
+}
+
 export interface ConselheiroDataSources {
   entries: DailyEntry[];
   barbers: Barber[];
@@ -96,6 +119,10 @@ export interface ConselheiroDataSources {
   metasHistorico: MetaHistorico[];
   monthlyTarget?: number;
   shopName?: string;
+  // Dados ricos do Trinks (preferenciais quando presentes)
+  trinksFinanceiroPorMes?: Record<string, TrinksFinanceiroMes>;
+  trinksDREPorMes?: Record<string, TrinksDREMes>;
+  trinksMesCorrente?: TrinksMesCorrente;
 }
 
 function ymd(d: Date): string {
@@ -132,10 +159,23 @@ export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot
   const despesasFinance = financeMes.filter(f => f.amount < 0).reduce((s, f) => s + Math.abs(f.amount), 0);
   const despesasFinanceAnt = financeMesAnt.filter(f => f.amount < 0).reduce((s, f) => s + Math.abs(f.amount), 0);
 
-  const faturamento_mes = receitasMes.reduce((s, e) => s + e.amount, 0);
-  const faturamento_anterior = receitasMesAnt.reduce((s, e) => s + e.amount, 0);
-  const despesas_mes = despesasEntries.reduce((s, e) => s + e.amount, 0) + despesasFinance;
-  const despesas_anterior = despesasEntriesAnt.reduce((s, e) => s + e.amount, 0) + despesasFinanceAnt;
+  // FATURAMENTO — prioridade: Trinks import > Trinks sync (mês corrente) > entries manuais
+  const trinksFin = data.trinksFinanceiroPorMes || {};
+  const trinksDre = data.trinksDREPorMes || {};
+  const trinksHoje = data.trinksMesCorrente;
+
+  const faturamento_mes_entries = receitasMes.reduce((s, e) => s + e.amount, 0);
+  const faturamento_mes = trinksFin[mesAtual]?.totalValor
+    ?? trinksHoje?.faturamento
+    ?? faturamento_mes_entries;
+  const faturamento_anterior = trinksFin[mesAnterior]?.totalValor
+    ?? receitasMesAnt.reduce((s, e) => s + e.amount, 0);
+
+  // DESPESAS — prioridade: DRE Trinks > entries+financeEntries
+  const despesas_mes_manual = despesasEntries.reduce((s, e) => s + e.amount, 0) + despesasFinance;
+  const despesas_anterior_manual = despesasEntriesAnt.reduce((s, e) => s + e.amount, 0) + despesasFinanceAnt;
+  const despesas_mes = trinksDre[mesAtual]?.totalDespesas ?? despesas_mes_manual;
+  const despesas_anterior = trinksDre[mesAnterior]?.totalDespesas ?? despesas_anterior_manual;
 
   const var_faturamento = faturamento_anterior > 0 ? ((faturamento_mes - faturamento_anterior) / faturamento_anterior) * 100 : 0;
   const var_despesas = despesas_anterior > 0 ? ((despesas_mes - despesas_anterior) / despesas_anterior) * 100 : 0;
@@ -174,10 +214,26 @@ export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot
     return s + (c.planValue || c.payments[c.payments.length - 1]?.valor || 0);
   }, 0);
 
-  // Fluxo de caixa por meio de pagamento
-  const pix_mes = receitasMes.reduce((s, e) => s + (e.pix || 0), 0);
-  const cartao_mes = receitasMes.reduce((s, e) => s + (e.cartao || 0), 0);
-  const dinheiro_mes = receitasMes.reduce((s, e) => s + (e.dinheiro || 0), 0);
+  // Fluxo de caixa por meio de pagamento — prefere Trinks (categoriza melhor)
+  const formaTrinks = trinksFin[mesAtual]?.resumoPorForma;
+  const sumByPattern = (rec: Record<string, number> | undefined, patterns: string[]): number => {
+    if (!rec) return 0;
+    let total = 0;
+    for (const [k, v] of Object.entries(rec)) {
+      const lk = k.toLowerCase();
+      if (patterns.some(p => lk.includes(p))) total += v;
+    }
+    return total;
+  };
+  const pix_mes = formaTrinks
+    ? sumByPattern(formaTrinks, ['pix'])
+    : trinksHoje?.pix ?? receitasMes.reduce((s, e) => s + (e.pix || 0), 0);
+  const cartao_mes = formaTrinks
+    ? sumByPattern(formaTrinks, ['cartão', 'cartao', 'crédito', 'credito', 'débito', 'debito'])
+    : trinksHoje?.cartao ?? receitasMes.reduce((s, e) => s + (e.cartao || 0), 0);
+  const dinheiro_mes = formaTrinks
+    ? sumByPattern(formaTrinks, ['dinheiro', 'à vista', 'a vista'])
+    : trinksHoje?.dinheiro ?? receitasMes.reduce((s, e) => s + (e.dinheiro || 0), 0);
 
   // Contas a pagar (do módulo Financeiro): despesas futuras (próximos 30 dias)
   const proximos30 = new Date(now); proximos30.setDate(now.getDate() + 30);
@@ -219,8 +275,9 @@ export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot
   const achieved = metaAtual?.achieved || faturamento_mes;
   const pctMeta = target > 0 ? (achieved / target) * 100 : 0;
 
-  // Histórico mensal (12 últimos meses) a partir das entries
+  // Histórico mensal (12 últimos meses) — Trinks tem prioridade, entries complementa
   const historicoMap = new Map<string, { faturamento: number; clientes: number }>();
+  // Base: entries manuais
   for (const e of entries) {
     if (e.type !== 'receita') continue;
     const m = ym(e.date);
@@ -228,6 +285,20 @@ export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot
     cur.faturamento += e.amount;
     cur.clientes += e.clients || 0;
     historicoMap.set(m, cur);
+  }
+  // Override: Trinks import (mais confiável). Se houver dado consolidado do Trinks, ele substitui.
+  for (const [mes, fin] of Object.entries(trinksFin)) {
+    historicoMap.set(mes, {
+      faturamento: fin.totalValor,
+      clientes: fin.totalLinhas, // qtd de pagamentos como aproximação de atendimentos
+    });
+  }
+  // Mês corrente parcial via Trinks sync (se ainda não tem import financeiro)
+  if (!trinksFin[mesAtual] && trinksHoje) {
+    historicoMap.set(mesAtual, {
+      faturamento: trinksHoje.faturamento,
+      clientes: trinksHoje.clientes,
+    });
   }
   const historico_mensal = Array.from(historicoMap.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))

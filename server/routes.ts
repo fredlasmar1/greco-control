@@ -279,17 +279,24 @@ function saveAssinaturaPlanos() {
 function getPaymentStatus(c: AssinaturaCliente): 'em_dia' | 'inadimplente' | 'cancelado' | 'expirado' {
   if (c.status === 'cancelled') return 'cancelado';
   if (c.status === 'expired') return 'expirado';
+  // Parse YYYY-MM-DD em timezone local (evita o off-by-one de TZ ao usar new Date())
+  const parseLocalDate = (s: string): Date => {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1);
+  };
   const now = new Date();
-  const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  // Verifica meses não pagos até o mês atual
-  const start = new Date(c.contractDate);
-  const end = new Date(c.contractEndDate);
+  const start = parseLocalDate(c.contractDate);
+  const end = parseLocalDate(c.contractEndDate);
   const current = now < end ? now : end;
-  const mesStart = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
   const pagoSet = new Set(c.payments.filter(p => p.pago).map(p => p.mes));
-  // Gera lista de meses do contrato até o mês atual
+  // O mês corrente só vira "devido" depois do paymentDay; antes disso, ainda está dentro do prazo.
+  const payDay = c.paymentDay || 1;
+  const ultimoDevido = current.getDate() >= payDay
+    ? new Date(current.getFullYear(), current.getMonth(), 1)
+    : new Date(current.getFullYear(), current.getMonth() - 1, 1);
+  // Itera mês a mês do início do contrato até o último mês cuja data de pagamento já passou
   const d = new Date(start.getFullYear(), start.getMonth(), 1);
-  while (d <= current) {
+  while (d <= ultimoDevido) {
     const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     if (!pagoSet.has(m)) return 'inadimplente';
     d.setMonth(d.getMonth() + 1);

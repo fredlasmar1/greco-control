@@ -80,6 +80,8 @@ interface AssinaturaCliente {
   status: 'active' | 'cancelled' | 'expired';
   contractDate: string;
   contractEndDate: string;
+  paymentDay?: number;
+  planValue?: number;
   payments: Array<{ mes: string; pago: boolean; valor: number }>;
 }
 
@@ -142,16 +144,26 @@ export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot
   const var_resultado = Math.abs(resultado_anterior) > 0 ? ((resultado_liquido - resultado_anterior) / Math.abs(resultado_anterior)) * 100 : 0;
   const margem_percentual = faturamento_mes > 0 ? (resultado_liquido / faturamento_mes) * 100 : 0;
 
-  // Inadimplência: assinantes com pagamento atrasado
+  // Inadimplência: assinantes com mês JÁ vencido sem pagamento
+  // (mês atual só conta como devido depois do paymentDay)
+  // Parse YYYY-MM-DD em timezone local para evitar off-by-one de UTC
+  const parseLocalDate = (s: string): Date => {
+    const [y, mo, d] = s.split('-').map(Number);
+    return new Date(y, (mo || 1) - 1, d || 1);
+  };
   const assinantes = data.assinaturaClientes || [];
   const inadimplentes = assinantes.filter(c => {
     if (c.status !== 'active') return false;
-    const start = new Date(c.contractDate);
-    const end = new Date(c.contractEndDate);
+    const start = parseLocalDate(c.contractDate);
+    const end = parseLocalDate(c.contractEndDate);
     const limite = now < end ? now : end;
+    const payDay = c.paymentDay || 1;
+    const ultimoDevido = limite.getDate() >= payDay
+      ? new Date(limite.getFullYear(), limite.getMonth(), 1)
+      : new Date(limite.getFullYear(), limite.getMonth() - 1, 1);
     const pagoSet = new Set(c.payments.filter(p => p.pago).map(p => p.mes));
     const d = new Date(start.getFullYear(), start.getMonth(), 1);
-    while (d <= limite) {
+    while (d <= ultimoDevido) {
       const m = ym(d);
       if (!pagoSet.has(m)) return true;
       d.setMonth(d.getMonth() + 1);
@@ -159,8 +171,7 @@ export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot
     return false;
   });
   const inadimplencia = inadimplentes.reduce((s, c) => {
-    const planoValor = c.payments[c.payments.length - 1]?.valor || 0;
-    return s + planoValor;
+    return s + (c.planValue || c.payments[c.payments.length - 1]?.valor || 0);
   }, 0);
 
   // Fluxo de caixa por meio de pagamento

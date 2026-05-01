@@ -4,9 +4,24 @@
 
 ## Versão atual em produção
 
-- **Build**: `2026-04-29-trinks-otim-acef` (commit `09ba432`)
+- **Build**: `2026-05-01-dashboard-seletor-mes` (commit `8d2205e`)
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
+
+### Dashboard com seletor de mês [concluído]
+
+- **Backend**: novo endpoint `GET /api/trinks/sync-mes/:mes` (routes.ts · após `/api/trinks/sync`) que retorna o mesmo formato de TrinksData para um mês arbitrário (YYYY-MM). Usa `trinksFetchAllRange` (otimização A) e herda TTL 24h em meses fechados (otimização C).
+- **Frontend (Dashboard.tsx)**:
+  - State `selectedMes` persistido em `localStorage` com chave `dashboard.selectedMes`.
+  - Header com botões `‹ [Mês Ano] ›` + botão "Voltar para mês atual" quando mês ≠ corrente.
+  - Próximo mês desabilitado quando já é o corrente (não navega para futuro).
+  - Quando `selectedMes ≠ mesCorrente`, fetch assíncrono de `/api/trinks/sync-mes/:mes` e o resultado alimenta `trinksEffective` que substitui `trinks` nos adapters `getTrinks*`.
+  - Cards diários (`Hoje · tempo real`, `Previsão de Amanhã`) escondidos em mês passado.
+  - Cards "Hoje" e "Esta Semana" do trio inicial escondidos em mês passado; resta o "Mês" centralizado.
+  - `DashboardImportSummaryCard` recebe `mes={selectedMes}` para refletir o mês escolhido.
+- Helpers: `mesAtualSP()`, `mesAdjacente(mes, delta)`, `labelMesPtBR(mes)` no topo de Dashboard.tsx.
+
+Validado em produção: navegação de Maio/2026 → Abril/2026 funcional, cards diários escondem corretamente, card mensal mostra R$ 82.713,60 (CSV+Trinks), botão de retorno funciona.
 
 ### Otimização tokens Trinks F [concluído]
 

@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
+import { MonthSelector } from "@/components/MonthSelector";
+import { mesAtualSP } from "@/lib/mesUtils";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Aba PAGAMENTO (v20)
@@ -83,8 +85,15 @@ const fmtBRL = (n: number) =>
 
 export default function Pagamento() {
   const { toast } = useToast();
-  const hojeMes = new Date().toISOString().slice(0, 7);
-  const [mes, setMes] = useState(hojeMes);
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [mes, setMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("pagamento.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("pagamento.selectedMes", mes); } catch {}
+  }, [mes]);
+  const isMesCorrente = mes === mesCorrente;
   const [data, setData] = useState<RespApi | null>(null);
   const [status, setStatus] = useState<StatusConcil | null>(null);
   const [loading, setLoading] = useState(false);
@@ -221,22 +230,23 @@ export default function Pagamento() {
       {/* Header com seletor de mês */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            Aba Pagamento
-            <Badge variant="outline" className="text-xs">v20.2</Badge>
-          </CardTitle>
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              Aba Pagamento
+              <Badge variant="outline" className="text-xs">v20.2</Badge>
+            </CardTitle>
+            <MonthSelector
+              selectedMes={mes}
+              onChange={setMes}
+              mesCorrente={mesCorrente}
+              isMesCorrente={isMesCorrente}
+              loading={loading}
+              extraInfo={isMesCorrente ? "Mês atual · cálculo ao vivo" : "Cálculo do mês selecionado"}
+            />
+          </div>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Mês de referência</label>
-              <Input
-                type="month"
-                value={mes}
-                onChange={e => setMes(e.target.value)}
-                className="w-40"
-              />
-            </div>
             <Button variant="outline" size="sm" onClick={carregar} disabled={loading}>
               {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
               Recarregar

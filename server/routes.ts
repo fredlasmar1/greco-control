@@ -981,7 +981,9 @@ async function trinksFetchAll(
 
   const allItems: any[] = [];
   let page = 1;
-  const maxPages = 20;
+  // Aumentado de 20 para 40 — abril/2026 tem 917+ transações e estava sendo truncado em 1000.
+  // 40 páginas × 50 itens = 2000 itens máximo, suficiente para meses com alto volume.
+  const maxPages = 40;
 
   while (page <= maxPages) {
     const data = await trinksFetch(endpointPath, { ...queryParams, page: String(page) }, options);
@@ -6193,6 +6195,17 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         dataFim,
         linhas,
         totais,
+        // Faturamento bruto do período (todas as transações da Trinks no intervalo)
+        // — útil pra comparar com o cálculo de comissões e detectar discrepâncias.
+        faturamento: {
+          totalReais: periodo.totais?.reais || 0,
+          totalAtendimentos: periodo.totais?.count || 0,
+          servicosBruto: periodo.totais?.servicosBruto || 0,
+          servicosLiquido: periodo.totais?.servicosLiquido || 0,
+          produtosBruto: periodo.totais?.produtosBruto || 0,
+          produtosLiquido: periodo.totais?.produtosLiquido || 0,
+          planoReais: periodo.totais?.planoReais || 0,
+        },
         fetchedAt: new Date().toISOString(),
       });
     } catch (err: any) {

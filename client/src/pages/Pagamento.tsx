@@ -71,6 +71,15 @@ type RespApi = {
   dataFim: string;
   linhas: Linha[];
   totais: { totalBruto: number; totalVale: number; totalAjuste: number; totalConsumoInterno: number; totalTaxaCartao: number; totalSaldo: number };
+  faturamento?: {
+    totalReais: number;
+    totalAtendimentos: number;
+    servicosBruto: number;
+    servicosLiquido: number;
+    produtosBruto: number;
+    produtosLiquido: number;
+    planoReais: number;
+  };
 };
 
 type StatusConcil = {
@@ -305,14 +314,34 @@ export default function Pagamento() {
             )}
           </div>
           {data && (
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
-              <Stat label="Total bruto" valor={data.totais.totalBruto} />
-              <Stat label="Total vale" valor={data.totais.totalVale} muted />
-              <Stat label="Total consumo" valor={data.totais.totalConsumoInterno || 0} muted />
-              <Stat label="Total ajuste" valor={data.totais.totalAjuste} muted />
-              <Stat label="Taxa cartão (info)" valor={data.totais.totalTaxaCartao || 0} muted />
-              <Stat label="Total a pagar" valor={data.totais.totalSaldo} bold />
-            </div>
+            <>
+              {data.faturamento && (
+                <div className="mt-3 mb-2 p-3 rounded-md border border-emerald-500/20 bg-emerald-500/5">
+                  <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Faturamento bruto do período (Trinks)</div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 text-sm">
+                    <Stat label="Total faturado" valor={data.faturamento.totalReais} bold />
+                    <div className="rounded border p-2 opacity-80">
+                      <div className="text-xs text-muted-foreground">Atendimentos</div>
+                      <div className="tabular-nums text-sm font-medium">{data.faturamento.totalAtendimentos}</div>
+                    </div>
+                    <Stat label="Serviços (bruto)" valor={data.faturamento.servicosBruto} muted />
+                    <Stat label="Produtos (bruto)" valor={data.faturamento.produtosBruto} muted />
+                    <Stat label="Plano" valor={data.faturamento.planoReais} muted />
+                  </div>
+                  <div className="mt-2 text-[11px] text-muted-foreground">
+                    Bases para o cálculo de comissão abaixo. Soma = receita total registrada na Trinks no intervalo {data.dataInicio} a {data.dataFim}.
+                  </div>
+                </div>
+              )}
+              <div className="mt-3 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
+                <Stat label="Total bruto (folha)" valor={data.totais.totalBruto} />
+                <Stat label="Total vale" valor={data.totais.totalVale} muted />
+                <Stat label="Total consumo" valor={data.totais.totalConsumoInterno || 0} muted />
+                <Stat label="Total ajuste" valor={data.totais.totalAjuste} muted />
+                <Stat label="Taxa cartão (info)" valor={data.totais.totalTaxaCartao || 0} muted />
+                <Stat label="Total a pagar" valor={data.totais.totalSaldo} bold />
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

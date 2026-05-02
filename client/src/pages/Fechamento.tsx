@@ -1,23 +1,38 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { useTrinksStore } from "@/lib/trinksStore";
 import { formatCurrency, getRevenueByDayOfWeek } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowUp, ArrowDown, Users, DollarSign, TrendingUp, Minus } from "lucide-react";
+import { ArrowUp, ArrowDown, Users, DollarSign, TrendingUp, Minus, Loader2 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { MonthSelector } from "@/components/MonthSelector";
+import { useTrinksMonth } from "@/hooks/useTrinksMonth";
+import { mesAtualSP } from "@/lib/mesUtils";
 
 export default function Fechamento() {
   const { weeklySummaries: demoSummaries } = useStore();
-  const { isConnected, trinks } = useTrinksStore();
-  const hasTrinksData = isConnected && trinks !== null;
+
+  // Mês selecionado (persiste em localStorage; default = mês corrente)
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [selectedMes, setSelectedMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("fechamento.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("fechamento.selectedMes", selectedMes); } catch {}
+  }, [selectedMes]);
+
+  const {
+    trinks, hasTrinksData, loading, error,
+    fonte, trinksAt, csvAt, isMesCorrente,
+  } = useTrinksMonth(selectedMes);
 
   // Derive weekly summaries from Trinks data when available
   const weeklySummaries = useMemo(() => {
-    if (!hasTrinksData) return demoSummaries;
+    if (!hasTrinksData || !trinks) return isMesCorrente ? demoSummaries : [];
 
-    const transacoes = trinks!.transacoes || [];
-    const agendamentos = trinks!.agendamentos || [];
+    const transacoes = trinks.transacoes || [];
+    const agendamentos = trinks.agendamentos || [];
 
     // Group by week (ISO week starting Monday)
     const weekMap: Record<string, { revenue: number; clients: number; startDate: string; endDate: string }> = {};
@@ -72,13 +87,13 @@ export default function Fechamento() {
           notes: '',
         };
       });
-  }, [hasTrinksData, trinks, demoSummaries]);
+  }, [hasTrinksData, trinks, demoSummaries, isMesCorrente]);
 
   // Day of week data from Trinks
   const dayOfWeekData = useMemo(() => {
-    if (!hasTrinksData) return getRevenueByDayOfWeek();
+    if (!hasTrinksData || !trinks) return isMesCorrente ? getRevenueByDayOfWeek() : [];
 
-    const transacoes = trinks!.transacoes || [];
+    const transacoes = trinks.transacoes || [];
     const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     const dayTotals = [0, 0, 0, 0, 0, 0, 0];
 
@@ -91,7 +106,7 @@ export default function Fechamento() {
     });
 
     return dayNames.map((name, i) => ({ name, total: dayTotals[i] }));
-  }, [hasTrinksData, trinks]);
+  }, [hasTrinksData, trinks, isMesCorrente]);
 
   const [notes, setNotes] = useState(weeklySummaries[weeklySummaries.length - 1]?.notes || '');
 
@@ -116,10 +131,41 @@ export default function Fechamento() {
 
   return (
     <div className="space-y-6 max-w-[1400px]">
-      <div>
-        <h2 className="text-lg font-semibold">Fechamento Semanal</h2>
-        <p className="text-sm text-muted-foreground">Resumo e comparativo semanal</p>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Fechamento</h2>
+          <p className="text-sm text-muted-foreground">Resumo e comparativo semanal do mês selecionado</p>
+        </div>
+        <MonthSelector
+          selectedMes={selectedMes}
+          onChange={setSelectedMes}
+          mesCorrente={mesCorrente}
+          isMesCorrente={isMesCorrente}
+          loading={loading}
+          error={error}
+          fonte={fonte}
+          trinksAt={trinksAt}
+          csvAt={csvAt}
+        />
       </div>
+
+      {loading && !hasTrinksData && (
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-8 flex items-center justify-center gap-3 text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-sm">Carregando fechamento de {selectedMes}...</span>
+          </CardContent>
+        </Card>
+      )}
+
+      {!loading && !hasTrinksData && !isMesCorrente && (
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-8 text-center text-sm text-muted-foreground">
+            Sem dados disponíveis para {selectedMes}.
+            {error && <div className="mt-2 text-red-400">{error}</div>}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Weekly summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

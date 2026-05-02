@@ -6115,16 +6115,23 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       // Se o mês ainda está em curso, limita até hoje (não calcula no futuro).
       const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
 
-      // Force refresh: invalida caches do mês antes de recalcular.
-      // Custo: faz refetch completo de transações e agendamentos (pode bater rate limit
-      // do Trinks). Cliente deve usar com parcimônia, idealmente uma vez antes de fechar.
-      if (req.query.force === "true") {
-        const transFim = ymdAddDays(dataFim, 1);
-        invalidateCache(`equipe-periodo:${dataInicio}:`);
-        invalidateCache(`transacoes_{"dataInicio":"${dataInicio}","dataFim":"${transFim}"}`);
-        invalidateCache(`transacoes_{"dataInicio":"${dataInicio}","dataFim":"${dataFimReal}"}`);
-        invalidateCache(`agendamentos_{"dataInicio":"${dataInicio}","dataFim":"${dataFimReal}"}`);
-        log(`[pagamento/${mes}] force=true — caches do mês invalidados`, "pagamento");
+      // Force refresh: faz backup do cache, invalida e re-coleta.
+      // Se o refetch vier zerado (rate limit Trinks), restaura backup e retorna 503.
+      const force = req.query.force === "true";
+      const transFim = ymdAddDays(dataFim, 1);
+      const cacheKeysParaForce = [
+        `equipe-periodo:${dataInicio}:${dataFim}`,
+        `transacoes_{"dataInicio":"${dataInicio}","dataFim":"${transFim}"}`,
+        `agendamentos_{"dataInicio":"${dataInicio}","dataFim":"${dataFimReal}"}`,
+      ];
+      const backups: Record<string, any> = {};
+      if (force) {
+        for (const k of cacheKeysParaForce) {
+          const v = getCached(k);
+          if (v !== null) backups[k] = v;
+        }
+        cacheKeysParaForce.forEach(k => invalidateCache(k));
+        log(`[pagamento/${mes}] force=true — backup feito, caches invalidados`, "pagamento");
       }
 
       const [periodo, metas, pagamentosMes] = await Promise.all([
@@ -6132,6 +6139,28 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         getAllMetas(),
         getPagamentosDoMes(mes),
       ]);
+
+      // Detecção de refetch falho: se force=true E o periodo veio vazio mas o backup tinha dados,
+      // restaura o backup e retorna 503 (provável rate limit).
+      if (force && Object.keys(backups).length > 0) {
+        const backupPeriodo = backups[`equipe-periodo:${dataInicio}:${dataFim}`];
+        const periodoTotalNovo = periodo.totais?.reais || 0;
+        const periodoTotalOld = backupPeriodo?.totais?.reais || 0;
+        const venouMuitoMenor = periodoTotalOld > 0 && periodoTotalNovo < periodoTotalOld * 0.1;
+        if (venouMuitoMenor) {
+          // Restaura o cache antigo (com TTLs originais)
+          for (const [k, v] of Object.entries(backups)) {
+            const ttl = k.startsWith("equipe-periodo") ? 3 * 60 * 1000 : 24 * 60 * 60 * 1000;
+            setCache(k, v, ttl);
+          }
+          log(`[pagamento/${mes}] force=true falhou (rate limit?). Cache restaurado: ${periodoTotalOld} > ${periodoTotalNovo}`, "pagamento");
+          return res.status(503).json({
+            ok: false,
+            error: "Atualização falhou — Trinks indisponível ou rate limited. Cache anterior preservado, tente novamente em 1 minuto.",
+            rateLimited: true,
+          });
+        }
+      }
 
       const ids = new Set<string>();
       Object.keys(periodo.porProfissional).forEach(id => ids.add(id));
@@ -7636,24 +7665,22 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
 
   app.get("/api/conselheiro/dados", async (req: Request, res: Response) => {
     try {
-      // ?force=true invalida caches do mês corrente e dos últimos 3 meses (escopo
-      // que o Conselheiro consulta direto via trinksFetchAllRange).
+      // ?force=true só invalida o cache do mês CORRENTE (mais barato e seguro).
+      // Para refresh de meses passados, usar /api/pagamento/:mes?force=true individualmente,
+      // que tem proteção de backup/restore contra rate limit.
       if (req.query.force === "true") {
         const now = new Date();
-        for (let k = 0; k < 4; k++) {
-          const dt = new Date(now.getFullYear(), now.getMonth() - k, 1);
-          const ano = dt.getFullYear();
-          const mes = String(dt.getMonth() + 1).padStart(2, "0");
-          const ultimoDia = new Date(ano, dt.getMonth() + 1, 0).getDate();
-          const dataInicio = `${ano}-${mes}-01`;
-          const dataFimReal = `${ano}-${mes}-${String(ultimoDia).padStart(2, "0")}`;
-          const transFim = ymdAddDays(dataFimReal, 1);
-          invalidateCache(`equipe-periodo:${dataInicio}:`);
-          invalidateCache(`transacoes_{"dataInicio":"${dataInicio}","dataFim":"${transFim}"}`);
-          invalidateCache(`agendamentos_{"dataInicio":"${dataInicio}","dataFim":"${dataFimReal}"}`);
-        }
+        const ano = now.getFullYear();
+        const mes = String(now.getMonth() + 1).padStart(2, "0");
+        const ultimoDia = new Date(ano, now.getMonth() + 1, 0).getDate();
+        const dataInicio = `${ano}-${mes}-01`;
+        const dataFimReal = `${ano}-${mes}-${String(ultimoDia).padStart(2, "0")}`;
+        const transFim = ymdAddDays(dataFimReal, 1);
+        invalidateCache(`equipe-periodo:${dataInicio}:`);
+        invalidateCache(`transacoes_{"dataInicio":"${dataInicio}","dataFim":"${transFim}"}`);
+        invalidateCache(`agendamentos_{"dataInicio":"${dataInicio}","dataFim":"${dataFimReal}"}`);
         invalidateCache("full_sync");
-        log(`Conselheiro: force=true — caches dos últimos 4 meses invalidados`, "conselheiro");
+        log(`Conselheiro: force=true — cache do mês corrente invalidado`, "conselheiro");
       }
       const snapshot = buildSnapshot(await getConselheiroSources());
       return res.json(snapshot);

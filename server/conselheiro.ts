@@ -575,9 +575,9 @@ ${snap.hoje.comandas > 0
   : 'Nenhuma comanda fechada ainda hoje.'
 }
 
-PIPELINE (agendamentos confirmados ainda por vir)
-${snap.pipeline.semana.qtd > 0 || snap.pipeline.mes.qtd > 0
-  ? `Resto da semana: ${snap.pipeline.semana.qtd} agendamentos (${brl(snap.pipeline.semana.valor)} estimados). Resto do mês: ${snap.pipeline.mes.qtd} agendamentos (${brl(snap.pipeline.mes.valor)} estimados).`
+PIPELINE (agendamentos confirmados ainda por vir, do hoje em diante)
+${snap.pipeline.mes.qtd > 0
+  ? `Total no resto do mês: ${snap.pipeline.mes.qtd} agendamentos (${brl(snap.pipeline.mes.valor)} estimados). Desse total, ${snap.pipeline.semana.qtd} são até o fim desta semana (${brl(snap.pipeline.semana.valor)}). Atenção: 'semana' está contida em 'mês', não some os dois.`
   : 'Sem agendamentos futuros visíveis no cache.'
 }
 

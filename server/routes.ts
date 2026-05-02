@@ -7455,6 +7455,16 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     // Pipeline de agendamentos futuros + caixa de hoje (lê do cache do sync e do hoje_)
     let pipeline: any | undefined;
     let hojeResumo: any | undefined;
+    // Mapa servicoId -> preço (usado tanto no pipeline quanto no top serviços)
+    const precoPorServicoId = new Map<number, number>();
+    try {
+      const sync0 = getCached("full_sync");
+      if (sync0 && Array.isArray(sync0.servicos)) {
+        for (const s of sync0.servicos) {
+          if (s?.id) precoPorServicoId.set(Number(s.id), Number(s.preco || 0));
+        }
+      }
+    } catch {}
     try {
       const now = new Date();
       const hojeStr = now.toISOString().slice(0, 10);
@@ -7502,7 +7512,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           if (!dt || dt < hojeStr || !dt.startsWith(mesAtual)) continue;
           const status = String(a.status?.nome || "").toLowerCase();
           if (status === "cancelado" || status === "finalizado" || status === "realizado") continue;
-          const valor = Number(a.servico?.preco || a.valor || 0);
+          const svcId = Number(a.servico?.id || 0);
+          const valor = precoPorServicoId.get(svcId) ?? Number(a.servico?.preco || a.valor || 0);
           qtdMes += 1;
           valorMes += valor;
           if (dt < fimSemanaStr) {
@@ -7532,7 +7543,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           if (dt !== mesAtual) continue;
           const nome = String(a.servico?.nome || "").trim();
           if (!nome) continue;
-          const preco = Number(a.servico?.preco || a.valor || 0);
+          const svcId = Number(a.servico?.id || 0);
+          const preco = precoPorServicoId.get(svcId) ?? Number(a.servico?.preco || a.valor || 0);
           const cur = counter.get(nome) || { nome, quantidade: 0, receita: 0 };
           cur.quantidade += 1;
           cur.receita += preco;

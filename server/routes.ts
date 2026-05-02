@@ -7452,6 +7452,144 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       } catch {}
     }
 
+    // Pipeline de agendamentos futuros + caixa de hoje (lê do cache do sync e do hoje_)
+    let pipeline: any | undefined;
+    let hojeResumo: any | undefined;
+    try {
+      const now = new Date();
+      const hojeStr = now.toISOString().slice(0, 10);
+
+      // Caixa fechado de hoje (cache de /api/trinks/hoje)
+      const hojeCache = getCached(`hoje_${hojeStr}`);
+      if (hojeCache && typeof hojeCache.total === "number") {
+        const b = hojeCache.breakdown || {};
+        // Ritmo: faturamento de hoje vs média diária do mês até ontem
+        // Não fazemos divisão se ainda não tem média (primeiro dia do mês).
+        let ritmoVsMedia = 0;
+        const finPorMes = trinksFinanceiroPorMes[mesAtual];
+        if (finPorMes && finPorMes.totalValor > 0 && now.getDate() > 1) {
+          const totalAteOntem = finPorMes.totalValor - hojeCache.total;
+          const diasAteOntem = now.getDate() - 1;
+          if (totalAteOntem > 0 && diasAteOntem > 0) {
+            const mediaDiaria = totalAteOntem / diasAteOntem;
+            if (mediaDiaria > 0) ritmoVsMedia = (hojeCache.total - mediaDiaria) / mediaDiaria;
+          }
+        }
+        hojeResumo = {
+          faturamento: hojeCache.total,
+          comandas: hojeCache.count || 0,
+          pix: b.pix || 0,
+          cartao: b.cartao || 0,
+          dinheiro: b.dinheiro || 0,
+          outros: b.outros || 0,
+          ritmo_vs_media: ritmoVsMedia,
+        };
+      }
+
+      // Pipeline: agendamentos a partir de hoje no cache do sync
+      const sync = getCached("full_sync");
+      if (sync && Array.isArray(sync.agendamentos)) {
+        // Limite da semana corrente: domingo da próxima semana
+        const dow = now.getDay(); // 0..6
+        const fimSemana = new Date(now);
+        fimSemana.setDate(now.getDate() + (7 - dow));
+        const fimSemanaStr = fimSemana.toISOString().slice(0, 10);
+
+        let qtdSemana = 0, valorSemana = 0;
+        let qtdMes = 0, valorMes = 0;
+        for (const a of sync.agendamentos) {
+          const dt = String(a.dataHoraInicio || "").slice(0, 10);
+          if (!dt || dt < hojeStr || !dt.startsWith(mesAtual)) continue;
+          const status = String(a.status?.nome || "").toLowerCase();
+          if (status === "cancelado" || status === "finalizado" || status === "realizado") continue;
+          const valor = Number(a.servico?.preco || a.valor || 0);
+          qtdMes += 1;
+          valorMes += valor;
+          if (dt < fimSemanaStr) {
+            qtdSemana += 1;
+            valorSemana += valor;
+          }
+        }
+        pipeline = {
+          semana: { qtd: qtdSemana, valor: valorSemana },
+          mes: { qtd: qtdMes, valor: valorMes },
+        };
+      }
+    } catch (err: any) {
+      log(`Conselheiro: erro montando pipeline/hoje: ${err.message}`, "conselheiro");
+    }
+
+    // Top serviços do mês corrente — vêm dos agendamentos finalizados (cache do sync)
+    let topServicosMes: any[] = [];
+    try {
+      const sync = getCached("full_sync");
+      if (sync && Array.isArray(sync.agendamentos)) {
+        const counter = new Map<string, { nome: string; quantidade: number; receita: number }>();
+        for (const a of sync.agendamentos) {
+          const status = String(a.status?.nome || "").toLowerCase();
+          if (status !== "finalizado" && status !== "realizado" && status !== "concluído" && status !== "concluido") continue;
+          const dt = String(a.dataHoraInicio || "").slice(0, 7);
+          if (dt !== mesAtual) continue;
+          const nome = String(a.servico?.nome || "").trim();
+          if (!nome) continue;
+          const preco = Number(a.servico?.preco || a.valor || 0);
+          const cur = counter.get(nome) || { nome, quantidade: 0, receita: 0 };
+          cur.quantidade += 1;
+          cur.receita += preco;
+          counter.set(nome, cur);
+        }
+        topServicosMes = Array.from(counter.values())
+          .sort((a, b) => b.quantidade - a.quantidade)
+          .slice(0, 5)
+          .map(s => ({ ...s, preco_medio: s.quantidade > 0 ? s.receita / s.quantidade : 0 }));
+      }
+    } catch (err: any) {
+      log(`Conselheiro: erro montando top serviços: ${err.message}`, "conselheiro");
+    }
+
+    // Ranking de barbeiros + folha real do mês corrente — reusa o cálculo da Pagamento
+    let rankingBarbeirosMes: any[] = [];
+    let folhaReal: any | undefined;
+    try {
+      const dataInicio = `${mesAtual}-01`;
+      const [yy, mm] = mesAtual.split("-").map(Number);
+      const ultimoDia = new Date(yy, mm, 0).getDate();
+      const dataFimReal = `${mesAtual}-${String(ultimoDia).padStart(2, "0")}`;
+      const hojeYmd = new Date().toISOString().slice(0, 10);
+      const dataFim = hojeYmd < dataFimReal ? hojeYmd : dataFimReal;
+
+      const [periodo, metas, pagamentosMes] = await Promise.all([
+        calcularPeriodoPorProfissional(dataInicio, dataFim),
+        getAllMetas(),
+        getPagamentosDoMes(mesAtual),
+      ]);
+
+      rankingBarbeirosMes = Object.values(periodo.porProfissional)
+        .map((p: any) => ({
+          profissionalId: p.profissionalId,
+          nome: p.nome,
+          faturamento: Number(p.total?.reais || 0),
+          atendimentos: Number(p.total?.count || 0),
+        }))
+        .filter(r => r.faturamento > 0 || r.atendimentos > 0);
+
+      // Folha real: soma totalBruto + saldoAReceber agregando todos os profissionais com movimento
+      const idsParaFolha = new Set<string>();
+      Object.keys(periodo.porProfissional).forEach(id => idsParaFolha.add(id));
+      Object.keys(metas).forEach(id => idsParaFolha.add(id));
+      const linhas = await Promise.all(
+        Array.from(idsParaFolha).map(id => calcularLinhaPagamento(mesAtual, id, periodo.porProfissional[id], metas[id], pagamentosMes[id]))
+      );
+      const linhasComMovimento = linhas.filter(l => l.calculos.totalBruto > 0 || l.bases.servicosLiquido > 0);
+      folhaReal = {
+        totalBruto: linhasComMovimento.reduce((s, l) => s + l.calculos.totalBruto, 0),
+        totalSaldoAPagar: linhasComMovimento.reduce((s, l) => s + l.pagamento.saldoAReceber, 0),
+        qtdProfissionaisComMovimento: linhasComMovimento.length,
+      };
+    } catch (err: any) {
+      log(`Conselheiro: erro montando ranking/folha: ${err.message}`, "conselheiro");
+    }
+
     return {
       entries: (storeData.entries as any) || [],
       barbers: (storeData.barbers as any) || [],
@@ -7464,6 +7602,11 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       trinksFinanceiroPorMes,
       trinksDREPorMes,
       trinksMesCorrente,
+      rankingBarbeirosMes,
+      topServicosMes,
+      folhaReal,
+      pipeline,
+      hoje: hojeResumo,
     };
   }
 

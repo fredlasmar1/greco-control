@@ -47,9 +47,42 @@ export interface ConselheiroSnapshot {
   contas_receber: { total_titulos: number; total_valor: number; vencido: number; a_vencer: number };
   contas_pagar: { total_titulos: number; total_valor: number; vencido: number; a_vencer: number };
   clientes: { total_clientes: number; clientes_ativos: number; novos_30_dias: number; em_risco_churn: number };
-  servicos: { total_servicos: number; top_5_mes: string };
-  equipe: { total_barbeiros: number; ativos: number; folha_total: number; pct_folha_faturamento: number };
+  servicos: {
+    total_servicos: number;
+    top_5_mes: string;
+    /** Top 5 serviços do mês corrente com volume e receita (vindo do Trinks). */
+    top_5_real: Array<{ nome: string; quantidade: number; receita: number; preco_medio: number }>;
+  };
+  equipe: {
+    total_barbeiros: number;
+    ativos: number;
+    folha_total: number;
+    pct_folha_faturamento: number;
+    /** Top 5 barbeiros do mês corrente (ordenados por faturamento). */
+    top_mes: Array<{
+      nome: string;
+      faturamento: number;
+      atendimentos: number;
+      ticket_medio: number;
+      pct_do_total: number;
+    }>;
+  };
   meta_mensal: { target: number; achieved: number; pct: number };
+  /** Agendamentos confirmados ainda por vir (pipeline). */
+  pipeline: {
+    semana: { qtd: number; valor: number };
+    mes: { qtd: number; valor: number };
+  };
+  /** Caixa fechado de hoje + comparação com média do mês. */
+  hoje: {
+    faturamento: number;
+    comandas: number;
+    pix: number;
+    cartao: number;
+    dinheiro: number;
+    outros: number;
+    ritmo_vs_media: number;
+  };
   historico_mensal: Array<{ mes: string; faturamento: number; clientes: number }>;
 }
 
@@ -126,6 +159,20 @@ export interface TrinksMesCorrente {
   outros?: number;
 }
 
+export interface RankingBarbeiroMes {
+  profissionalId: string;
+  nome: string;
+  faturamento: number;
+  atendimentos: number;
+}
+
+export interface TopServicoMes {
+  nome: string;
+  quantidade: number;
+  receita: number;
+  preco_medio: number;
+}
+
 export interface ConselheiroDataSources {
   entries: DailyEntry[];
   barbers: Barber[];
@@ -139,6 +186,32 @@ export interface ConselheiroDataSources {
   trinksFinanceiroPorMes?: Record<string, TrinksFinanceiroMes>;
   trinksDREPorMes?: Record<string, TrinksDREMes>;
   trinksMesCorrente?: TrinksMesCorrente;
+  /** Ranking de barbeiros do mês corrente (do endpoint de pagamento). */
+  rankingBarbeirosMes?: RankingBarbeiroMes[];
+  /** Top serviços do mês corrente (vindos de agendamentos finalizados do Trinks). */
+  topServicosMes?: TopServicoMes[];
+  /** Folha real do mês corrente (do endpoint de pagamento — comissões + bônus + ajustes). */
+  folhaReal?: {
+    totalBruto: number;
+    totalSaldoAPagar: number;
+    qtdProfissionaisComMovimento: number;
+  };
+  /** Agendamentos futuros (pipeline) do mês corrente — a partir de hoje. */
+  pipeline?: {
+    semana: { qtd: number; valor: number };
+    mes: { qtd: number; valor: number };
+  };
+  /** Resumo do dia atual (caixa fechado + ritmo). */
+  hoje?: {
+    faturamento: number;
+    comandas: number;
+    pix: number;
+    cartao: number;
+    dinheiro: number;
+    outros: number;
+    /** ritmo do dia comparado à média diária do mês (-1 a +1, ex: 0.2 = 20% acima). */
+    ritmo_vs_media: number;
+  };
 }
 
 function ymd(d: Date): string {
@@ -285,18 +358,39 @@ export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot
     return new Date(lastPayment.mes + '-01') < noventaDiasAtras;
   }).length;
 
-  // Top 5 serviços por popularidade
-  const top5 = (data.services || [])
-    .slice()
-    .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
-    .slice(0, 5)
-    .map(s => s.name)
-    .join(', ');
+  // Top 5 serviços — preferir dados reais do Trinks; fallback para popularidade do mock
+  const top5Real = (data.topServicosMes || []).slice(0, 5);
+  const top5 = top5Real.length > 0
+    ? top5Real.map(s => `${s.nome} (${s.quantidade})`).join(', ')
+    : (data.services || [])
+        .slice()
+        .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+        .slice(0, 5)
+        .map(s => s.name)
+        .join(', ');
 
   // Equipe
   const barbeirosAtivos = (data.barbers || []).filter(b => b.active !== false);
-  const folhaTotal = barbeirosAtivos.reduce((s, b) => s + ((b.revenue || 0) * ((b.commission || 0) / 100)), 0);
+  // Folha — preferir o cálculo real (comissões + bônus + ajustes do endpoint de Pagamento);
+  // só cair no estimado mock se não houver dado real.
+  const folhaEstimadaMock = barbeirosAtivos.reduce((s, b) => s + ((b.revenue || 0) * ((b.commission || 0) / 100)), 0);
+  const folhaTotal = data.folhaReal?.totalBruto ?? folhaEstimadaMock;
   const pct_folha_faturamento = faturamento_mes > 0 ? (folhaTotal / faturamento_mes) * 100 : 0;
+
+  // Top 5 barbeiros do mês (ranking real do Trinks via endpoint de pagamento)
+  const ranking = data.rankingBarbeirosMes || [];
+  const totalRanking = ranking.reduce((s, r) => s + r.faturamento, 0);
+  const top_mes = ranking
+    .slice()
+    .sort((a, b) => b.faturamento - a.faturamento)
+    .slice(0, 5)
+    .map(r => ({
+      nome: r.nome,
+      faturamento: r.faturamento,
+      atendimentos: r.atendimentos,
+      ticket_medio: r.atendimentos > 0 ? r.faturamento / r.atendimentos : 0,
+      pct_do_total: totalRanking > 0 ? (r.faturamento / totalRanking) * 100 : 0,
+    }));
 
   // Meta do mês
   const metaAtual = (data.metasHistorico || []).find(m => m.month === mesAtual);
@@ -409,14 +503,18 @@ export function buildSnapshot(data: ConselheiroDataSources): ConselheiroSnapshot
     servicos: {
       total_servicos: (data.services || []).length,
       top_5_mes: top5 || 'Não disponível',
+      top_5_real: top5Real,
     },
     equipe: {
       total_barbeiros: (data.barbers || []).length,
       ativos: barbeirosAtivos.length,
       folha_total: folhaTotal,
       pct_folha_faturamento,
+      top_mes,
     },
     meta_mensal: { target, achieved, pct: pctMeta },
+    pipeline: data.pipeline || { semana: { qtd: 0, valor: 0 }, mes: { qtd: 0, valor: 0 } },
+    hoje: data.hoje || { faturamento: 0, comandas: 0, pix: 0, cartao: 0, dinheiro: 0, outros: 0, ritmo_vs_media: 0 },
     historico_mensal,
   };
 }
@@ -471,14 +569,38 @@ ${qualifMeta}
 FLUXO DE CAIXA POR MEIO (mês corrente)
 Pix ${brl(fc.pix_mes)}, Cartão ${brl(fc.cartao_mes)}, Dinheiro ${brl(fc.dinheiro_mes)}.
 
+HOJE (${p.hoje}, ${p.dia_semana})
+${snap.hoje.comandas > 0
+  ? `${snap.hoje.comandas} comandas fechadas até agora somando ${brl(snap.hoje.faturamento)} (Pix ${brl(snap.hoje.pix)}, Cartão ${brl(snap.hoje.cartao)}, Dinheiro ${brl(snap.hoje.dinheiro)}). Ritmo do dia ${snap.hoje.ritmo_vs_media >= 0 ? '+' : ''}${pct(snap.hoje.ritmo_vs_media * 100)} vs média diária do mês.`
+  : 'Nenhuma comanda fechada ainda hoje.'
+}
+
+PIPELINE (agendamentos confirmados ainda por vir)
+${snap.pipeline.semana.qtd > 0 || snap.pipeline.mes.qtd > 0
+  ? `Resto da semana: ${snap.pipeline.semana.qtd} agendamentos (${brl(snap.pipeline.semana.valor)} estimados). Resto do mês: ${snap.pipeline.mes.qtd} agendamentos (${brl(snap.pipeline.mes.valor)} estimados).`
+  : 'Sem agendamentos futuros visíveis no cache.'
+}
+
 ASSINATURAS
 ${cl.total_clientes} contratos no total, ${cl.clientes_ativos} ativos. Novos nos últimos 30 dias: ${cl.novos_30_dias}. Inadimplentes: ${cr.total_titulos} (${brl(cr.total_valor)}). Em risco de churn (sem pagamento há 90+ dias): ${cl.em_risco_churn}.
 
 EQUIPE
-${eq.ativos} de ${eq.total_barbeiros} barbeiros ativos. Comissões a pagar acumuladas: ${brl(eq.folha_total)}.
+${eq.ativos} de ${eq.total_barbeiros} barbeiros ativos. Comissões + bônus a pagar: ${brl(eq.folha_total)} (${pct(eq.pct_folha_faturamento)} do faturamento do mês).${
+  eq.top_mes && eq.top_mes.length > 0
+    ? `\nTop do mês (faturamento real do Trinks): ${eq.top_mes.map(b =>
+        `${b.nome} ${brl(b.faturamento)} (${b.atendimentos} atend., ticket ${brl(b.ticket_medio)}, ${pct(b.pct_do_total)} do total)`
+      ).join('; ')}.`
+    : ''
+}
 
 SERVIÇOS
-${sv.total_servicos} serviços no catálogo. Mais procurados: ${sv.top_5_mes}.
+${sv.total_servicos} serviços no catálogo.${
+  sv.top_5_real && sv.top_5_real.length > 0
+    ? ` Top 5 do mês (Trinks ao vivo): ${sv.top_5_real.map(s =>
+        `${s.nome} ${s.quantidade}× (${brl(s.receita)}, ticket ${brl(s.preco_medio)})`
+      ).join('; ')}.`
+    : ` Mais procurados (cadastro): ${sv.top_5_mes}.`
+}
 
 CONTAS A PAGAR (próximos 30 dias)
 Total ${brl(cp.total_valor)} em ${cp.total_titulos} títulos. Vencidos ${brl(cp.vencido)}. A vencer ${brl(cp.a_vencer)}.

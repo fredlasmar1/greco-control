@@ -1,6 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { useTrinksStore } from "@/lib/trinksStore";
+import { MonthSelector } from "@/components/MonthSelector";
+import { useTrinksMonth } from "@/hooks/useTrinksMonth";
+import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 import { formatCurrency } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -150,15 +152,28 @@ function AddExpenseDialog() {
 
 export default function Lancamentos() {
   const { entries: demoEntries } = useStore();
-  const { isConnected, trinks } = useTrinksStore();
-  const hasTrinksData = isConnected && trinks !== null;
+
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [selectedMes, setSelectedMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("lancamentos.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("lancamentos.selectedMes", selectedMes); } catch {}
+  }, [selectedMes]);
+
+  const {
+    trinks, hasTrinksData, loading, error,
+    fonte, trinksAt, csvAt, isMesCorrente,
+  } = useTrinksMonth(selectedMes);
+
   const [filter, setFilter] = useState<'todos' | 'receita' | 'despesa'>('todos');
 
   // Derive entries from Trinks data when available
   const entries = useMemo((): DailyEntry[] => {
-    if (!hasTrinksData) return demoEntries;
+    if (!hasTrinksData || !trinks) return isMesCorrente ? demoEntries : [];
 
-    const transacoes = trinks!.transacoes || [];
+    const transacoes = trinks.transacoes || [];
     const dailyMap: Record<string, { revenue: number; clients: number; pix: number; cartao: number; dinheiro: number }> = {};
 
     transacoes.forEach((t: any) => {
@@ -194,7 +209,7 @@ export default function Lancamentos() {
         cartao: data.cartao,
         dinheiro: data.dinheiro,
       }));
-  }, [hasTrinksData, trinks, demoEntries]);
+  }, [hasTrinksData, trinks, demoEntries, isMesCorrente]);
 
   const filtered = useMemo(() => {
     let list = [...entries];
@@ -205,13 +220,12 @@ export default function Lancamentos() {
   const totalReceita = entries.filter(e => e.type === 'receita').reduce((s, e) => s + e.amount, 0);
   const totalDespesa = entries.filter(e => e.type === 'despesa').reduce((s, e) => s + e.amount, 0);
 
-  const monthLabel = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-  const monthLabelCapital = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+  const monthLabelCapital = labelMesPtBR(selectedMes);
 
   return (
     <div className="space-y-6 max-w-[1400px]">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold">Lançamentos</h2>
           <p className="text-sm text-muted-foreground">
@@ -219,7 +233,18 @@ export default function Lancamentos() {
             {hasTrinksData && <span className="text-primary ml-1">• Dados Trinks</span>}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-3 flex-wrap">
+          <MonthSelector
+            selectedMes={selectedMes}
+            onChange={setSelectedMes}
+            mesCorrente={mesCorrente}
+            isMesCorrente={isMesCorrente}
+            loading={loading}
+            error={error}
+            fonte={fonte}
+            trinksAt={trinksAt}
+            csvAt={csvAt}
+          />
           <AddExpenseDialog />
           <FecharDiaDialog />
         </div>

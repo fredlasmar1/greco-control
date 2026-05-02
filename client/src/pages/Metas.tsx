@@ -1,6 +1,9 @@
 import { useMemo, useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
-import { useTrinksStore, getTrinksMonthTotals, mapTrinksProfissionais } from "@/lib/trinksStore";
+import { getTrinksMonthTotals, mapTrinksProfissionais } from "@/lib/trinksStore";
+import { MonthSelector } from "@/components/MonthSelector";
+import { useTrinksMonth } from "@/hooks/useTrinksMonth";
+import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 import { formatCurrency, formatPercent, getMonthTotals, barbers as demoBarbers } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -19,36 +22,38 @@ const API_BASE = (globalThis as any).__API_BASE__ || "";
 
 export default function Metas() {
   const { settings } = useStore();
-  const { isConnected, trinks } = useTrinksStore();
-  const hasTrinksData = isConnected && trinks !== null;
 
-  const totals = useMemo(
-    () => hasTrinksData ? getTrinksMonthTotals(trinks!) : getMonthTotals(),
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [selectedMes, setSelectedMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("metas.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("metas.selectedMes", selectedMes); } catch {}
+  }, [selectedMes]);
+
+  const {
+    trinks, hasTrinksData, loading, error,
+    fonte, trinksAt, csvAt, isMesCorrente,
+  } = useTrinksMonth(selectedMes);
+
+  const totalsAtual = useMemo(
+    () => hasTrinksData && trinks ? getTrinksMonthTotals(trinks) : getMonthTotals(),
     [hasTrinksData, trinks]
   );
 
   const target = settings.monthlyTarget;
-  const achieved = totals.totalRevenue;
-  const percentage = target > 0 ? (achieved / target) * 100 : 0;
-  const remaining = Math.max(0, target - achieved);
+
+  // Para mês corrente, achieved vem do cálculo ao vivo. Para mês passado, vem do histórico.
+  // (carregado mais abaixo via /api/metas)
 
   const now = new Date();
-  const currentMonth = now.toISOString().slice(0, 7);
+  const currentMonth = mesCorrente; // auto-save sempre usa o mês corrente
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const dayOfMonth = now.getDate();
   const remainingDays = daysInMonth - dayOfMonth;
 
-  const dailyPace = remainingDays > 0 ? remaining / remainingDays : 0;
-  const currentDailyAvg = dayOfMonth > 0 ? achieved / dayOfMonth : 0;
-  const projection = currentDailyAvg * daysInMonth;
-  const onTrack = projection >= target;
-
-  const monthLabel = now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-  const monthLabelCapital = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
-
-  // Circle progress
-  const circumference = 2 * Math.PI * 80;
-  const strokeDashoffset = circumference - (Math.min(percentage, 100) / 100) * circumference;
+  const monthLabelCapital = labelMesPtBR(selectedMes);
 
   // ─── Historical metas from API ─────────────────────────
   const [historico, setHistorico] = useState<MetaHistorico[]>([]);
@@ -62,8 +67,32 @@ export default function Metas() {
       .catch(() => {});
   }, []);
 
-  // Auto-save current month's target + achieved
+  // Achieved: para mês corrente vem do cálculo ao vivo; para meses passados, do histórico salvo
+  // (ou do faturamento Trinks daquele mês quando o resolutor retornou dados frescos).
+  const achieved = useMemo(() => {
+    if (isMesCorrente) return totalsAtual.totalRevenue;
+    if (hasTrinksData && trinks) {
+      const t = getTrinksMonthTotals(trinks);
+      if (t.totalRevenue > 0) return t.totalRevenue;
+    }
+    const histEntry = historico.find(m => m.month === selectedMes);
+    return histEntry?.achieved || 0;
+  }, [isMesCorrente, totalsAtual, hasTrinksData, trinks, historico, selectedMes]);
+
+  const percentage = target > 0 ? (achieved / target) * 100 : 0;
+  const remaining = Math.max(0, target - achieved);
+  const dailyPace = remainingDays > 0 ? remaining / remainingDays : 0;
+  const currentDailyAvg = dayOfMonth > 0 ? achieved / dayOfMonth : 0;
+  const projection = currentDailyAvg * daysInMonth;
+  const onTrack = projection >= target;
+
+  // Circle progress
+  const circumference = 2 * Math.PI * 80;
+  const strokeDashoffset = circumference - (Math.min(percentage, 100) / 100) * circumference;
+
+  // Auto-save SOMENTE do mês corrente (navegar pra mês passado não deve sobrescrever)
   useEffect(() => {
+    if (!isMesCorrente) return;
     if (target > 0 && achieved >= 0) {
       fetch(`${API_BASE}/api/metas`, {
         method: "POST",
@@ -71,7 +100,7 @@ export default function Metas() {
         body: JSON.stringify({ month: currentMonth, target, achieved }),
       }).catch(() => {});
     }
-  }, [target, achieved, currentMonth]);
+  }, [target, achieved, currentMonth, isMesCorrente]);
 
   // Merge historical with current month for display
   const displayHistorico = useMemo(() => {
@@ -232,9 +261,22 @@ export default function Metas() {
 
   return (
     <div className="space-y-6 max-w-[1400px]">
-      <div>
-        <h2 className="text-lg font-semibold">Metas</h2>
-        <p className="text-sm text-muted-foreground">Acompanhamento da meta mensal de faturamento</p>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold">Metas</h2>
+          <p className="text-sm text-muted-foreground">Acompanhamento da meta mensal de faturamento</p>
+        </div>
+        <MonthSelector
+          selectedMes={selectedMes}
+          onChange={setSelectedMes}
+          mesCorrente={mesCorrente}
+          isMesCorrente={isMesCorrente}
+          loading={loading}
+          error={error}
+          fonte={fonte}
+          trinksAt={trinksAt}
+          csvAt={csvAt}
+        />
       </div>
 
       {/* Main goal visualization */}

@@ -1,6 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { useTrinksStore, mapTrinksServicos } from "@/lib/trinksStore";
+import { mapTrinksServicos } from "@/lib/trinksStore";
+import { MonthSelector } from "@/components/MonthSelector";
+import { useTrinksMonth } from "@/hooks/useTrinksMonth";
+import { mesAtualSP } from "@/lib/mesUtils";
 import { formatCurrency, formatPercent } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -125,12 +128,24 @@ function AddServiceDialog() {
 
 export default function Servicos() {
   const { services: demoServices } = useStore();
-  const { isConnected, trinks } = useTrinksStore();
-  const hasTrinksData = isConnected && trinks !== null;
+
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [selectedMes, setSelectedMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("servicos.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("servicos.selectedMes", selectedMes); } catch {}
+  }, [selectedMes]);
+
+  const {
+    trinks, hasTrinksData, loading, error,
+    fonte, trinksAt, csvAt, isMesCorrente,
+  } = useTrinksMonth(selectedMes);
 
   const services = useMemo(() => {
-    if (hasTrinksData) {
-      const mapped = mapTrinksServicos(trinks!);
+    if (hasTrinksData && trinks) {
+      const mapped = mapTrinksServicos(trinks);
       return mapped.length > 0 ? mapped : demoServices;
     }
     return demoServices;
@@ -142,7 +157,7 @@ export default function Servicos() {
 
   return (
     <div className="space-y-6 max-w-[1400px]">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold">Serviços</h2>
           <p className="text-sm text-muted-foreground">
@@ -152,7 +167,20 @@ export default function Servicos() {
             )}
           </p>
         </div>
-        <AddServiceDialog />
+        <div className="flex items-center gap-3 flex-wrap">
+          <MonthSelector
+            selectedMes={selectedMes}
+            onChange={setSelectedMes}
+            mesCorrente={mesCorrente}
+            isMesCorrente={isMesCorrente}
+            loading={loading}
+            error={error}
+            fonte={fonte}
+            trinksAt={trinksAt}
+            csvAt={csvAt}
+          />
+          <AddServiceDialog />
+        </div>
       </div>
 
       {!hasTrinksData && (

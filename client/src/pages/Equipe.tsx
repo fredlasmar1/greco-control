@@ -1,6 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { useTrinksStore } from "@/lib/trinksStore";
+import { MonthSelector } from "@/components/MonthSelector";
+import { useTrinksMonth } from "@/hooks/useTrinksMonth";
+import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 import { formatCurrency, formatPercent } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -240,8 +242,20 @@ function ExpandedDetails({ barber }: { barber: ComputedBarber }) {
 // ─── Main component ──────────────────────────────────────
 export default function Equipe() {
   const { barbers: demoBarbers } = useStore();
-  const { isConnected, trinks } = useTrinksStore();
-  const hasTrinksData = isConnected && trinks !== null;
+
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [selectedMes, setSelectedMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("equipe.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("equipe.selectedMes", selectedMes); } catch {}
+  }, [selectedMes]);
+
+  const {
+    trinks, hasTrinksData, loading, error,
+    fonte, trinksAt, csvAt, isMesCorrente,
+  } = useTrinksMonth(selectedMes);
 
   // Per-barber expansion state (by id)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -250,11 +264,11 @@ export default function Equipe() {
 
   // ─── Compute barbers from Trinks or demo ──────────────
   const computedBarbers = useMemo((): ComputedBarber[] => {
-    if (!hasTrinksData) return demoBarbers as ComputedBarber[];
+    if (!hasTrinksData || !trinks) return isMesCorrente ? (demoBarbers as ComputedBarber[]) : [];
 
-    const profissionais = trinks!.profissionais || [];
-    const transacoes = trinks!.transacoes || [];
-    const agendamentos = trinks!.agendamentos || [];
+    const profissionais = trinks.profissionais || [];
+    const transacoes = trinks.transacoes || [];
+    const agendamentos = trinks.agendamentos || [];
 
     // Trinks uses DIFFERENT prof IDs in transacoes vs profissionais list.
     // transacoes use idProfissionalQueRealizouServico (different ID space).
@@ -341,7 +355,7 @@ export default function Equipe() {
         } as ComputedBarber;
       })
       .sort((a: ComputedBarber, b: ComputedBarber) => b.revenue - a.revenue);
-  }, [hasTrinksData, trinks, demoBarbers]);
+  }, [hasTrinksData, trinks, demoBarbers, isMesCorrente]);
 
   // ─── Summary KPIs ─────────────────────────────────────
   const totalRevenue = computedBarbers.reduce((s, b) => s + b.revenue, 0);
@@ -358,18 +372,13 @@ export default function Equipe() {
     revenue: b.revenue,
   }));
 
-  // ─── Current month label ──────────────────────────────
-  const monthLabel = new Date().toLocaleDateString("pt-BR", {
-    month: "long",
-    year: "numeric",
-  });
-  const monthLabelCapital =
-    monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+  // ─── Selected month label ──────────────────────────────
+  const monthLabelCapital = labelMesPtBR(selectedMes);
 
   return (
     <div className="space-y-6 max-w-[1400px]">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold">Ranking de Equipe</h2>
           <p className="text-sm text-muted-foreground">
@@ -380,7 +389,20 @@ export default function Equipe() {
             )}
           </p>
         </div>
-        <AddBarberDialog />
+        <div className="flex items-center gap-3 flex-wrap">
+          <MonthSelector
+            selectedMes={selectedMes}
+            onChange={setSelectedMes}
+            mesCorrente={mesCorrente}
+            isMesCorrente={isMesCorrente}
+            loading={loading}
+            error={error}
+            fonte={fonte}
+            trinksAt={trinksAt}
+            csvAt={csvAt}
+          />
+          <AddBarberDialog />
+        </div>
       </div>
 
       {/* ── Configuração financeira global (taxa cartão) ── */}

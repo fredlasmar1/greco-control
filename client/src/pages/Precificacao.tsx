@@ -1,8 +1,10 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { useTrinksStore } from "@/lib/trinksStore";
 import { formatCurrency, formatPercent } from "@/lib/demoData";
+import { MonthSelector } from "@/components/MonthSelector";
+import { useTrinksMonth } from "@/hooks/useTrinksMonth";
+import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -423,14 +425,23 @@ function CostDetailDialog({
 export default function Precificacao() {
   const { toast } = useToast();
   const qClient = useQueryClient();
-  const { isConnected, trinks } = useTrinksStore();
-  const hasTrinksData = isConnected && trinks !== null;
 
-  // Mes corrente YYYY-MM (sempre America/Sao_Paulo via tz do servidor; aqui usamos o mes local)
-  const mesAtual = useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  }, []);
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [selectedMes, setSelectedMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("precificacao.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("precificacao.selectedMes", selectedMes); } catch {}
+  }, [selectedMes]);
+
+  const {
+    trinks, hasTrinksData, loading, error,
+    fonte, trinksAt, csvAt, isMesCorrente,
+  } = useTrinksMonth(selectedMes);
+
+  // Alias para os queries que usavam 'mesAtual' (agora reflete o mês selecionado)
+  const mesAtual = selectedMes;
 
   const [editingService, setEditingService] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -505,9 +516,9 @@ export default function Precificacao() {
 
   // Build services list from Trinks
   const services = useMemo(() => {
-    if (!hasTrinksData) return [];
-    const servicos = trinks!.servicos || [];
-    const agendamentos = trinks!.agendamentos || [];
+    if (!hasTrinksData || !trinks) return [];
+    const servicos = trinks.servicos || [];
+    const agendamentos = trinks.agendamentos || [];
 
     const usageCount: Record<number, number> = {};
     agendamentos.forEach((a: any) => {
@@ -651,13 +662,12 @@ export default function Precificacao() {
     );
   }
 
-  const monthLabel = new Date().toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
-  const monthLabelCapital = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+  const monthLabelCapital = labelMesPtBR(selectedMes);
 
   return (
     <div className="space-y-6 max-w-[1400px]">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold">Precificação</h2>
           <p className="text-sm text-muted-foreground">
@@ -666,6 +676,17 @@ export default function Precificacao() {
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          <MonthSelector
+            selectedMes={selectedMes}
+            onChange={setSelectedMes}
+            mesCorrente={mesCorrente}
+            isMesCorrente={isMesCorrente}
+            loading={loading}
+            error={error}
+            fonte={fonte}
+            trinksAt={trinksAt}
+            csvAt={csvAt}
+          />
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Percent className="w-4 h-4" />
             <span>Comissão por categoria: <strong className="text-primary">VIP/Express 50%</strong> • <strong className="text-primary">demais 40%</strong></span>

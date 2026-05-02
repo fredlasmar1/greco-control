@@ -9,8 +9,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { useTrinksStore, getTrinksMonthTotals } from "@/lib/trinksStore";
+import { getTrinksMonthTotals } from "@/lib/trinksStore";
 import { formatCurrency, getMonthTotals } from "@/lib/demoData";
+import { MonthSelector } from "@/components/MonthSelector";
+import { useTrinksMonth } from "@/hooks/useTrinksMonth";
+import { mesAtualSP } from "@/lib/mesUtils";
 import {
   Building2, CreditCard, Coins, Upload, AlertTriangle, CheckCircle2,
   TrendingDown, Plus, Trash2, ArrowRight, Pencil, Zap, Tag,
@@ -246,12 +249,23 @@ const MEIO_LABELS: Record<Meio, string> = {
 // ─── Page ───────────────────────────────────────────────────
 export default function Consolidacao() {
   const { toast } = useToast();
-  const { trinks, isConnected } = useTrinksStore();
-  const hasTrinksData = isConnected && trinks !== null;
+
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [selectedMes, setSelectedMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("consolidacao.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("consolidacao.selectedMes", selectedMes); } catch {}
+  }, [selectedMes]);
+
+  const {
+    trinks, hasTrinksData, loading, error,
+    fonte, trinksAt, csvAt, isMesCorrente,
+  } = useTrinksMonth(selectedMes);
 
   const [contas, setContas] = useState<Conta[]>([]);
   const [transacoes, setTransacoes] = useState<TransacaoBanco[]>([]);
-  const [selectedMes, setSelectedMes] = useState(() => new Date().toISOString().slice(0, 7));
 
   const loadData = async () => {
     try {
@@ -285,9 +299,9 @@ export default function Consolidacao() {
   };
 
   const trinksTotals = useMemo(() => {
-    if (hasTrinksData) return getTrinksMonthTotals(trinks!);
-    return getMonthTotals();
-  }, [hasTrinksData, trinks]);
+    if (hasTrinksData && trinks) return getTrinksMonthTotals(trinks);
+    return isMesCorrente ? getMonthTotals() : { totalRevenue: 0, totalExpenses: 0, netProfit: 0, totalClients: 0, avgTicket: 0, totalPix: 0, totalCartao: 0, totalDinheiro: 0, daysOpen: 0, occupationRate: 0 };
+  }, [hasTrinksData, trinks, isMesCorrente]);
 
   // IDs de contas de trânsito (ex: InfinityPay) e nomes pra detectar por descrição
   const idsTransito = useMemo(() => new Set(contas.filter(c => c.transito).map(c => c.id)), [contas]);
@@ -404,14 +418,24 @@ export default function Consolidacao() {
   return (
     <div className="space-y-5 max-w-[1400px] pb-8">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3 border-b border-border pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap border-b border-border pb-4">
         <div>
           <h1 className="text-xl font-bold">Consolidação Bancária</h1>
           <p className="text-sm text-muted-foreground">
             Compare o fechamento do Trinks com seus extratos bancários
           </p>
         </div>
-        <Input type="month" value={selectedMes} onChange={e => setSelectedMes(e.target.value)} className="h-9 w-40" />
+        <MonthSelector
+          selectedMes={selectedMes}
+          onChange={setSelectedMes}
+          mesCorrente={mesCorrente}
+          isMesCorrente={isMesCorrente}
+          loading={loading}
+          error={error}
+          fonte={fonte}
+          trinksAt={trinksAt}
+          csvAt={csvAt}
+        />
       </div>
 
       {/* KPIs */}

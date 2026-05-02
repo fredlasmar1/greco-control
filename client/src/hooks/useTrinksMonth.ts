@@ -9,7 +9,7 @@
  * lógica de fetch/state.
  */
 import { useEffect, useState, useMemo } from "react";
-import { useTrinksStore } from "@/lib/trinksStore";
+import { useTrinksStore, type TrinksData } from "@/lib/trinksStore";
 import { mesAtualSP } from "@/lib/mesUtils";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
@@ -18,7 +18,7 @@ export type FonteUI = "atual" | "trinks" | "csv" | "nenhuma";
 
 export interface UseTrinksMonthResult {
   /** Pacote efetivo de dados Trinks (transacoes, agendamentos, etc.) — pode ser null. */
-  trinks: any | null;
+  trinks: TrinksData | null;
   /** True quando há transações ou agendamentos disponíveis. */
   hasTrinksData: boolean;
   /** True enquanto busca dados do mês (apenas para meses não-corrente). */
@@ -40,7 +40,7 @@ export function useTrinksMonth(selectedMes: string): UseTrinksMonthResult {
   const mesCorrente = useMemo(() => mesAtualSP(), []);
   const isMesCorrente = selectedMes === mesCorrente;
 
-  const [trinksMes, setTrinksMes] = useState<any | null>(null);
+  const [trinksMes, setTrinksMes] = useState<TrinksData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fonte, setFonte] = useState<FonteUI>("atual");

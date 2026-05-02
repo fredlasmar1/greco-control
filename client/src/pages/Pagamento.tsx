@@ -103,12 +103,16 @@ export default function Pagamento() {
   });
   const [salvando, setSalvando] = useState(false);
   const [acaoLinha, setAcaoLinha] = useState<string | null>(null);
+  const [atualizandoTrinks, setAtualizandoTrinks] = useState(false);
+  const [ultimoForceAt, setUltimoForceAt] = useState<number>(0);
 
-  const carregar = async () => {
-    setLoading(true);
+  const carregar = async (force = false) => {
+    if (force) setAtualizandoTrinks(true);
+    else setLoading(true);
     try {
+      const url = force ? `/api/pagamento/${mes}?force=true` : `/api/pagamento/${mes}`;
       const [r1, r2] = await Promise.all([
-        authFetch(`/api/pagamento/${mes}`),
+        authFetch(url),
         authFetch(`/api/conciliacao/status?mes=${mes}`).catch(() => null),
       ]);
       const j1: RespApi = await r1.json();
@@ -117,12 +121,21 @@ export default function Pagamento() {
       if (r2) {
         try { setStatus(await r2.json()); } catch { setStatus(null); }
       }
+      if (force) {
+        setUltimoForceAt(Date.now());
+        toast({ title: "Dados atualizados", description: "Cache do Trinks renovado para este mês." });
+      }
     } catch (err: any) {
       toast({ title: "Erro", description: err.message, variant: "destructive" });
     } finally {
       setLoading(false);
+      setAtualizandoTrinks(false);
     }
   };
+
+  // Cooldown de 5 minutos entre force refresh para não estourar rate limit do Trinks
+  const podeAtualizarTrinks = Date.now() - ultimoForceAt > 5 * 60 * 1000;
+  const segundosRestantes = podeAtualizarTrinks ? 0 : Math.ceil((5 * 60 * 1000 - (Date.now() - ultimoForceAt)) / 1000);
 
   useEffect(() => {
     carregar();
@@ -247,9 +260,32 @@ export default function Pagamento() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-3">
-            <Button variant="outline" size="sm" onClick={carregar} disabled={loading}>
+            <Button variant="outline" size="sm" onClick={() => carregar(false)} disabled={loading || atualizandoTrinks}>
               {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
               Recarregar
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => carregar(true)}
+              disabled={atualizandoTrinks || loading || !podeAtualizarTrinks}
+              title={
+                !podeAtualizarTrinks
+                  ? `Aguarde ${segundosRestantes}s antes de atualizar novamente (cooldown para não estourar rate limit do Trinks)`
+                  : "Invalida o cache e busca dados frescos do Trinks. Pode demorar até 1 minuto."
+              }
+              data-testid="btn-atualizar-trinks"
+            >
+              {atualizandoTrinks
+                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                : <RefreshCw className="w-4 h-4 mr-2" />
+              }
+              {atualizandoTrinks
+                ? "Atualizando Trinks..."
+                : !podeAtualizarTrinks
+                  ? `Atualizar Trinks (${segundosRestantes}s)`
+                  : "Atualizar dados Trinks"
+              }
             </Button>
             {/* Gate de conciliação */}
             {status && (

@@ -6115,6 +6115,18 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       // Se o mês ainda está em curso, limita até hoje (não calcula no futuro).
       const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
 
+      // Force refresh: invalida caches do mês antes de recalcular.
+      // Custo: faz refetch completo de transações e agendamentos (pode bater rate limit
+      // do Trinks). Cliente deve usar com parcimônia, idealmente uma vez antes de fechar.
+      if (req.query.force === "true") {
+        const transFim = ymdAddDays(dataFim, 1);
+        invalidateCache(`equipe-periodo:${dataInicio}:`);
+        invalidateCache(`transacoes_{"dataInicio":"${dataInicio}","dataFim":"${transFim}"}`);
+        invalidateCache(`transacoes_{"dataInicio":"${dataInicio}","dataFim":"${dataFimReal}"}`);
+        invalidateCache(`agendamentos_{"dataInicio":"${dataInicio}","dataFim":"${dataFimReal}"}`);
+        log(`[pagamento/${mes}] force=true — caches do mês invalidados`, "pagamento");
+      }
+
       const [periodo, metas, pagamentosMes] = await Promise.all([
         calcularPeriodoPorProfissional(dataInicio, dataFim),
         getAllMetas(),
@@ -7622,8 +7634,27 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     };
   }
 
-  app.get("/api/conselheiro/dados", async (_req: Request, res: Response) => {
+  app.get("/api/conselheiro/dados", async (req: Request, res: Response) => {
     try {
+      // ?force=true invalida caches do mês corrente e dos últimos 3 meses (escopo
+      // que o Conselheiro consulta direto via trinksFetchAllRange).
+      if (req.query.force === "true") {
+        const now = new Date();
+        for (let k = 0; k < 4; k++) {
+          const dt = new Date(now.getFullYear(), now.getMonth() - k, 1);
+          const ano = dt.getFullYear();
+          const mes = String(dt.getMonth() + 1).padStart(2, "0");
+          const ultimoDia = new Date(ano, dt.getMonth() + 1, 0).getDate();
+          const dataInicio = `${ano}-${mes}-01`;
+          const dataFimReal = `${ano}-${mes}-${String(ultimoDia).padStart(2, "0")}`;
+          const transFim = ymdAddDays(dataFimReal, 1);
+          invalidateCache(`equipe-periodo:${dataInicio}:`);
+          invalidateCache(`transacoes_{"dataInicio":"${dataInicio}","dataFim":"${transFim}"}`);
+          invalidateCache(`agendamentos_{"dataInicio":"${dataInicio}","dataFim":"${dataFimReal}"}`);
+        }
+        invalidateCache("full_sync");
+        log(`Conselheiro: force=true — caches dos últimos 4 meses invalidados`, "conselheiro");
+      }
       const snapshot = buildSnapshot(await getConselheiroSources());
       return res.json(snapshot);
     } catch (err: any) {

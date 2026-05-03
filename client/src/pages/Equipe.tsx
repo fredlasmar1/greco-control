@@ -47,6 +47,8 @@ import MetasEquipePainel from "@/components/equipe/MetasEquipePainel";
 import ProdutosSemComissaoCard from "@/components/equipe/ProdutosSemComissaoCard";
 import ConfigFinanceiraCard from "@/components/equipe/ConfigFinanceiraCard";
 
+const API_BASE = (globalThis as any).__API_BASE__ || "";
+
 // ─── Extended barber type for computed fields ────────────
 interface ComputedBarber extends Barber {
   apelido?: string;
@@ -262,100 +264,55 @@ export default function Equipe() {
   const toggleExpand = (id: string) =>
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  // ─── Compute barbers from Trinks or demo ──────────────
+  // ─── Fetch dados oficiais do mês (mesma fonte do Pagamento) ─────────
+  // Substitui o cálculo frontend antigo (que zerava revenue porque
+  // agendamento.valor é vazio na resposta da Trinks).
+  const [equipeData, setEquipeData] = useState<any | null>(null);
+  const [equipeLoading, setEquipeLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setEquipeLoading(true);
+    fetch(`${API_BASE}/api/equipe/mes/${selectedMes}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled && d.ok) setEquipeData(d); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setEquipeLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedMes]);
+
   const computedBarbers = useMemo((): ComputedBarber[] => {
-    if (!hasTrinksData || !trinks) return isMesCorrente ? (demoBarbers as ComputedBarber[]) : [];
+    // Se não temos dados do endpoint, fallback pra demo (mês corrente) ou vazio
+    if (!equipeData) {
+      if (isMesCorrente && (!hasTrinksData || !trinks)) return demoBarbers as ComputedBarber[];
+      return [];
+    }
+    const profissionais = trinks?.profissionais || [];
+    const profMap = new Map<string, any>(profissionais.map((p: any) => [String(p.id), p]));
 
-    const profissionais = trinks.profissionais || [];
-    const transacoes = trinks.transacoes || [];
-    const agendamentos = trinks.agendamentos || [];
-
-    // Trinks uses DIFFERENT prof IDs in transacoes vs profissionais list.
-    // transacoes use idProfissionalQueRealizouServico (different ID space).
-    // agendamentos use profissional.id which MATCHES the profissionais list.
-    // So we use agendamentos (finalizados) as the primary data source for per-barber stats.
-
-    const validStatuses = ["finalizado"];
-
-    return profissionais
-      .map((prof: any) => {
-        const profId = prof.id;
-
-        let revenue = 0;
-        let paymentBreakdown: Record<string, number> = {};
-        let serviceCount: Record<string, number> = {};
-
-        // Filter agendamentos for this professional with valid status
-        const profAgendamentos = agendamentos.filter((a: any) => {
-          if (a.profissional?.id !== profId) return false;
-          const statusName = (a.status?.nome || "").toLowerCase();
-          return validStatuses.includes(statusName);
-        });
-
-        const clients = profAgendamentos.length;
-
-        // Revenue and services from agendamentos
-        profAgendamentos.forEach((a: any) => {
-          revenue += Number(a.valor || 0);
-
-          // Service count (singular "servico" in Trinks agendamentos)
-          if (a.servico?.nome) {
-            serviceCount[a.servico.nome] = (serviceCount[a.servico.nome] || 0) + 1;
-          }
-        });
-
-        // Payment breakdown: match agendamento clients to transacoes by cliente.id
-        // to get payment method data
-        const profClientIds = new Set(
-          profAgendamentos.map((a: any) => a.cliente?.id).filter(Boolean)
-        );
-        transacoes.forEach((t: any) => {
-          if (!profClientIds.has(t.cliente?.id)) return;
-          (t.formasPagamentos || []).forEach((fp: any) => {
-            const method = (fp.nome || "Outros").toUpperCase();
-            const shortMethod = method.includes("PIX")
-              ? "Pix"
-              : method.includes("CRÉD") || method.includes("CRED")
-              ? "Cartão Crédito"
-              : method.includes("DÉB") || method.includes("DEB")
-              ? "Cartão Débito"
-              : method.includes("DINH")
-              ? "Dinheiro"
-              : fp.nome || "Outros";
-            paymentBreakdown[shortMethod] =
-              (paymentBreakdown[shortMethod] || 0) +
-              Number(fp.valor || 0);
-          });
-        });
-
-        const topServices = Object.entries(serviceCount)
-          .sort(([, a], [, b]) => b - a)
-          .slice(0, 5)
-          .map(([name, count]) => ({ name, count }));
-
-        const names = (prof.nome || "").split(" ");
-        const initials =
-          names.length >= 2
-            ? `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase()
-            : (prof.nome || "XX").slice(0, 2).toUpperCase();
-
-        return {
-          id: String(profId),
-          name: prof.nome || prof.apelido || "Profissional",
-          apelido: prof.apelido || names[0] || "",
-          initials,
-          revenue,
-          clients,
-          avgTicket: clients > 0 ? revenue / clients : 0,
-          commission: 40,
-          active: true,
-          occupationRate: 0,
-          paymentBreakdown,
-          topServices,
-        } as ComputedBarber;
-      })
-      .sort((a: ComputedBarber, b: ComputedBarber) => b.revenue - a.revenue);
-  }, [hasTrinksData, trinks, demoBarbers, isMesCorrente]);
+    return (equipeData.profissionais || []).map((p: any): ComputedBarber => {
+      const profCadastro = profMap.get(String(p.id));
+      const apelido = profCadastro?.apelido || "";
+      const names = (p.nome || "").split(" ");
+      const initials =
+        names.length >= 2
+          ? `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase()
+          : (p.nome || "XX").slice(0, 2).toUpperCase();
+      return {
+        id: String(p.id),
+        name: p.nome || apelido || "Profissional",
+        apelido: apelido || names[0] || "",
+        initials,
+        revenue: p.faturamento.total,
+        clients: p.atendimentos.total,
+        avgTicket: p.ticketMedio,
+        commission: 40,
+        active: true,
+        occupationRate: 0,
+        paymentBreakdown: {}, // payment breakdown não vem do endpoint atual; expansion mostra zeros
+        topServices: [],
+      } as ComputedBarber;
+    });
+  }, [equipeData, hasTrinksData, trinks, demoBarbers, isMesCorrente]);
 
   // ─── Summary KPIs ─────────────────────────────────────
   const totalRevenue = computedBarbers.reduce((s, b) => s + b.revenue, 0);

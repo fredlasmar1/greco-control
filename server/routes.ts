@@ -6946,6 +6946,78 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   });
 
   // ─── EQUIPE: desempenho consolidado dia/semana/mês ────────────────
+  // GET /api/equipe/mes/:mes — ranking de equipe pra um mês específico
+  // Reusa calcularPeriodoPorProfissional (mesma fonte usada por Pagamento — garante
+  // que os números batem entre as abas Equipe e Pagamento).
+  app.get("/api/equipe/mes/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      const [y, m] = mes.split("-").map(Number);
+      const dataInicio = `${mes}-01`;
+      const ultimoDia = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
+      const dataFimReal = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+      const hoje = ymdHoje();
+      const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
+
+      const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
+
+      const profsRanked = Object.values(periodo.porProfissional)
+        .map(p => ({
+          id: p.profissionalId,
+          nome: p.nome,
+          faturamento: {
+            total: p.total.reais,
+            servicos: p.servicos.reais,
+            servicosBruto: p.servicos.bruto,
+            servicosLiquido: p.servicos.liquido,
+            plano: p.plano.reais,
+            produtos: p.produtos.reais,
+            produtosBruto: p.produtos.bruto,
+            produtosLiquido: p.produtos.liquido,
+            avulso: p.avulso.reais,
+          },
+          atendimentos: {
+            total: p.total.count,
+            servicos: p.servicos.count,
+            plano: p.plano.count,
+            produtos: p.produtos.count,
+            avulso: p.avulso.count,
+          },
+          ticketMedio: p.total.count > 0 ? p.total.reais / p.total.count : 0,
+          taxaCartao: p.taxaCartao,
+        }))
+        .filter(p => p.faturamento.total > 0 || p.atendimentos.total > 0)
+        .sort((a, b) => b.faturamento.total - a.faturamento.total);
+
+      return res.json({
+        ok: true,
+        mes,
+        dataInicio,
+        dataFim,
+        totais: {
+          faturamento: periodo.totais?.reais || 0,
+          atendimentos: periodo.totais?.count || 0,
+          ticketMedio: (periodo.totais?.count || 0) > 0
+            ? (periodo.totais?.reais || 0) / (periodo.totais!.count)
+            : 0,
+          profissionaisAtivos: profsRanked.length,
+          servicosBruto: periodo.totais?.servicosBruto || 0,
+          servicosLiquido: periodo.totais?.servicosLiquido || 0,
+          produtosBruto: periodo.totais?.produtosBruto || 0,
+          produtosLiquido: periodo.totais?.produtosLiquido || 0,
+          planoReais: periodo.totais?.planoReais || 0,
+        },
+        profissionais: profsRanked,
+        config: periodo.config,
+        fetchedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      log(`/api/equipe/mes/${req.params.mes} erro: ${err.message}`, "equipe");
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   app.get("/api/equipe/desempenho", async (_req: Request, res: Response) => {
     try {
       const cacheKey = "equipe-desempenho-completo";

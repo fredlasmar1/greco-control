@@ -3480,7 +3480,10 @@ export async function registerRoutes(
         .catch((e: any) => { log(`servicos error: ${e.message}`, "trinks"); return []; });
       const agendamentos = await trinksFetchAllRange("agendamentos", dateParams)
         .catch((e: any) => { log(`agendamentos error: ${e.message}`, "trinks"); return []; });
-      const transacoes = await trinksFetchAllRange("transacoes", dateParams)
+      // Trinks /v1/transacoes usa intervalo semi-aberto [dataInicio, dataFim) — sem +1
+      // o último dia do mês é perdido (em abril/26 sumiam ~107 transações = R\$ 4-5 mil).
+      const transFim = ymdAddDays(dataFim, 1);
+      const transacoes = await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim })
         .catch((e: any) => { log(`transacoes error: ${e.message}`, "trinks"); return []; });
       const clientes = await trinksFetchAll("clientes")
         .catch((e: any) => { log(`clientes error: ${e.message}`, "trinks"); return []; });
@@ -3604,6 +3607,7 @@ export async function registerRoutes(
         const ultimoDia = new Date(y, m, 0).getDate();
         const dataInicio = `${mes}-01`;
         const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+        const transFim = ymdAddDays(dataFim, 1);
         const dateParams = { dataInicio, dataFim };
 
         const profissionais = await trinksFetchAll("profissionais")
@@ -3612,7 +3616,8 @@ export async function registerRoutes(
           .catch((e: any) => { log(`servicos error: ${e.message}`, "trinks"); return []; });
         const agendamentos = await trinksFetchAllRange("agendamentos", dateParams)
           .catch((e: any) => { log(`agendamentos error: ${e.message}`, "trinks"); return []; });
-        const transacoes = await trinksFetchAllRange("transacoes", dateParams)
+        // Transações: intervalo semi-aberto [dataInicio, dataFim+1) para incluir o último dia
+        const transacoes = await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim })
           .catch((e: any) => { log(`transacoes error: ${e.message}`, "trinks"); return []; });
         const clientes = await trinksFetchAll("clientes")
           .catch((e: any) => { log(`clientes error: ${e.message}`, "trinks"); return []; });
@@ -7347,7 +7352,9 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const ultimoDia = new Date(y, m, 0).getDate();
       const dataInicio = `${mes}-01`;
       const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
-      const transacoes = await trinksFetchAllRange("transacoes", { dataInicio, dataFim });
+      // Trinks /v1/transacoes usa [dataInicio, dataFim) — sem +1 perde o último dia
+      const transFim = ymdAddDays(dataFim, 1);
+      const transacoes = await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim });
       if (!Array.isArray(transacoes) || transacoes.length === 0) return null;
 
       let total = 0, pix = 0, cartao = 0, dinheiro = 0, outros = 0;

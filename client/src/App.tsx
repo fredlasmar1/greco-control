@@ -34,6 +34,13 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import MeuPainel from "@/pages/MeuPainel";
 import NotFound from "@/pages/not-found";
 
+// Redirect helper para rotas antigas (ex: /consolidacao → /lancamentos)
+function RedirectTo({ to }: { to: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation(to); }, [to, setLocation]);
+  return null;
+}
+
 function AdminRoutes() {
   const loadSavedConfig = useTrinksStore((s) => s.loadSavedConfig);
   const loadStoreFromServer = useStore((s) => s.loadFromServer);
@@ -58,7 +65,8 @@ function AdminRoutes() {
           <Route path="/precificacao" component={Precificacao} />
           <Route path="/financeiro" component={Financeiro} />
           <Route path="/estoque" component={Estoque} />
-          <Route path="/consolidacao" component={Consolidacao} />
+          {/* /consolidacao foi unificada em /lancamentos (aba interna 'Conciliação') */}
+          <Route path="/consolidacao">{() => <RedirectTo to="/lancamentos" />}</Route>
           <Route path="/conciliacao" component={Conciliacao} />
           <Route path="/pagamento" component={Pagamento} />
           <Route path="/assinaturas" component={Assinaturas} />

@@ -36,7 +36,6 @@ const navItems = [
   { path: "/precificacao", label: "Precificação", icon: Calculator },
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
   { path: "/estoque", label: "Estoque", icon: Package },
-  { path: "/consolidacao", label: "Consolidação", icon: Banknote },
   { path: "/conciliacao", label: "Conciliação", icon: GitMerge },
   { path: "/pagamento", label: "Pagamento", icon: Wallet },
   { path: "/assinaturas", label: "Assinaturas", icon: Crown },

@@ -247,7 +247,13 @@ const MEIO_LABELS: Record<Meio, string> = {
 };
 
 // ─── Page ───────────────────────────────────────────────────
-export default function Consolidacao() {
+interface ConsolidacaoProps {
+  /** Quando true, omite o header próprio (título e MonthSelector) — útil quando
+   *  embutido como sub-aba dentro de outra página (ex: Lançamentos). */
+  embedded?: boolean;
+}
+
+export default function Consolidacao({ embedded = false }: ConsolidacaoProps = {}) {
   const { toast } = useToast();
 
   const mesCorrente = useMemo(() => mesAtualSP(), []);
@@ -416,8 +422,9 @@ export default function Consolidacao() {
   }, [trinksTotals, totaisPorMeio]);
 
   return (
-    <div className="space-y-5 max-w-[1400px] pb-8">
-      {/* Header */}
+    <div className={embedded ? "space-y-5" : "space-y-5 max-w-[1400px] pb-8"}>
+      {/* Header — oculto quando embutido (parent já tem header) */}
+      {!embedded && (
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap border-b border-border pb-4">
         <div>
           <h1 className="text-xl font-bold">Consolidação Bancária</h1>
@@ -437,6 +444,7 @@ export default function Consolidacao() {
           csvAt={csvAt}
         />
       </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

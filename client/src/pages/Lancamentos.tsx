@@ -3,6 +3,8 @@ import { useStore } from "@/lib/store";
 import { MonthSelector } from "@/components/MonthSelector";
 import { useTrinksMonth } from "@/hooks/useTrinksMonth";
 import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import Consolidacao from "@/pages/Consolidacao";
 import { formatCurrency } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -250,6 +252,13 @@ export default function Lancamentos() {
         </div>
       </div>
 
+      <Tabs defaultValue="diario" className="w-full">
+        <TabsList className="mb-4">
+          <TabsTrigger value="diario" data-testid="tab-diario">Diário</TabsTrigger>
+          <TabsTrigger value="conciliacao" data-testid="tab-conciliacao">Conciliação Bancária</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="diario" className="space-y-6 mt-0">
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-card border-card-border">
@@ -344,6 +353,12 @@ export default function Lancamentos() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="conciliacao" className="mt-0">
+          <Consolidacao embedded />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

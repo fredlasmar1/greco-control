@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
+import { MonthSelector } from "@/components/MonthSelector";
+import { mesAtualSP } from "@/lib/mesUtils";
 
 // ──────────────────────────────────────────────────────────────────────
 // Aba VENDAS DE PRODUTOS (v21) — substitui Raio-X
@@ -90,14 +92,16 @@ type ProdutoCusto = {
 const fmtBRL = (v: number) =>
   v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function mesAtualYM(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
 export default function VendasProdutos() {
   const { toast } = useToast();
-  const [mes, setMes] = useState<string>(mesAtualYM());
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [mes, setMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("vendas-produtos.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("vendas-produtos.selectedMes", mes); } catch {}
+  }, [mes]);
   const [data, setData] = useState<RespVendas | null>(null);
   const [loading, setLoading] = useState(false);
   const [showCustos, setShowCustos] = useState(false);
@@ -134,24 +138,24 @@ export default function VendasProdutos() {
     <div className="max-w-7xl mx-auto space-y-4 pb-8" data-testid="vendas-produtos-page">
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <TrendingUp className="h-5 w-5" />
-            Vendas de Produtos
-            <Badge variant="outline" className="text-xs">v22</Badge>
-          </CardTitle>
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <TrendingUp className="h-5 w-5" />
+              Vendas de Produtos
+              <Badge variant="outline" className="text-xs">v22</Badge>
+            </CardTitle>
+            <MonthSelector
+              selectedMes={mes}
+              onChange={setMes}
+              mesCorrente={mesCorrente}
+              isMesCorrente={mes === mesCorrente}
+              loading={loading}
+              extraInfo="Produtos vendidos no mês selecionado"
+            />
+          </div>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Mês</label>
-              <Input
-                type="month"
-                value={mes}
-                onChange={e => setMes(e.target.value)}
-                className="w-40"
-                data-testid="filtro-mes"
-              />
-            </div>
             <Button onClick={carregar} disabled={loading} variant="outline" size="sm">
               {loading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
               Atualizar

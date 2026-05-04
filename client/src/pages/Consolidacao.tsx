@@ -1211,7 +1211,7 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
 
         <p className="text-xs text-muted-foreground mb-3">{totalTx} transações em {formatMonth(mes)}</p>
         <input ref={fileInput} type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" onChange={handleFile} className="hidden" />
-        <input ref={aiFileInput} type="file" accept=".csv,.txt,.pdf" onChange={handleFileAI} className="hidden" />
+        <input ref={aiFileInput} type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" onChange={handleFileAI} className="hidden" />
         <div className="space-y-1.5">
           <div className="flex gap-2">
             <Button

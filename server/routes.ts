@@ -11,6 +11,7 @@ import multer from "multer";
 import { kvGet, kvSet, waitForDb, isDbReady } from "./db";
 import { buildSnapshot, buildSystemPrompt, buildMessages, type ConselheiroDataSources } from "./conselheiro";
 import * as trinksImport from "./trinksImport";
+import * as XLSX from "xlsx";
 import type {
   TrinksImportPayload,
   TrinksImportType,
@@ -4131,21 +4132,34 @@ Regras CRÍTICAS:
           { type: "text", text: prompt },
         ];
       } else if (isExcel || isCsv) {
-        // Lê como texto
+        // Lê como texto. Excel é convertido pra CSV via lib xlsx antes de mandar à IA.
         let textContent = "";
+        let label = "CSV";
         if (isExcel) {
-          // Precisa de lib pra ler xlsx no backend. Workaround: enviar base64 pro Claude
-          // Mas Claude não aceita xlsx nativamente. Vamos avisar.
-          return res.status(400).json({
-            error: "Para Excel, use o upload normal. Se quiser IA, converta pra PDF ou CSV primeiro."
-          });
+          try {
+            const wb = XLSX.read(req.file.buffer, { type: "buffer", cellDates: true });
+            // Junta todas as planilhas (a maioria de extratos tem só uma, mas alguns têm várias)
+            const partes: string[] = [];
+            for (const nomeSheet of wb.SheetNames) {
+              const sheet = wb.Sheets[nomeSheet];
+              const csv = XLSX.utils.sheet_to_csv(sheet, { FS: ";", blankrows: false });
+              if (csv && csv.trim().length > 0) {
+                partes.push(wb.SheetNames.length > 1 ? `# Planilha: ${nomeSheet}\n${csv}` : csv);
+              }
+            }
+            textContent = partes.join("\n\n");
+            label = "EXCEL CONVERTIDO PARA CSV";
+            log(`IA upload: convertido xlsx (${wb.SheetNames.length} planilha${wb.SheetNames.length > 1 ? "s" : ""}, ${textContent.length} chars)`, "consolidacao");
+          } catch (e: any) {
+            return res.status(400).json({ error: `Falha ao ler Excel: ${e.message}` });
+          }
         } else {
           textContent = req.file.buffer.toString("utf-8");
         }
         content = [
           {
             type: "text",
-            text: `${prompt}\n\n--- CONTEÚDO DO CSV ---\n${textContent.slice(0, 100000)}`,
+            text: `${prompt}\n\n--- CONTEÚDO DO ${label} ---\n${textContent.slice(0, 100000)}`,
           },
         ];
       } else {

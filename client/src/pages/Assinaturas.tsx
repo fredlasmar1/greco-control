@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -190,6 +190,107 @@ export default function Assinaturas() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Vencimento de contratos — atenção pra renovação */}
+      {(() => {
+        const hoje = Date.now();
+        const ativos = clientes.filter(c => c.status === "active" && c.contractEndDate);
+        const proximos = ativos
+          .map(c => ({
+            ...c,
+            diasParaVencer: Math.ceil((new Date(c.contractEndDate).getTime() - hoje) / 86400000),
+          }))
+          .filter(c => c.diasParaVencer >= 0 && c.diasParaVencer <= 60)
+          .sort((a, b) => a.diasParaVencer - b.diasParaVencer);
+        const vencidos = ativos
+          .map(c => ({
+            ...c,
+            diasParaVencer: Math.ceil((new Date(c.contractEndDate).getTime() - hoje) / 86400000),
+          }))
+          .filter(c => c.diasParaVencer < 0)
+          .sort((a, b) => a.diasParaVencer - b.diasParaVencer);
+        if (proximos.length === 0 && vencidos.length === 0) return null;
+        const totalReceitaProx30 = proximos
+          .filter(c => c.diasParaVencer <= 30)
+          .reduce((s, c) => s + (c.planValue || 0), 0);
+        return (
+          <Card className="border-amber-500/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-400" />
+                  Vencimento de contratos
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                  {vencidos.length > 0 && (
+                    <span className="text-red-400">
+                      <strong>{vencidos.length}</strong> vencido{vencidos.length !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                  <span className="text-amber-400">
+                    <strong>{proximos.filter(c => c.diasParaVencer <= 30).length}</strong> em 30 dias
+                    {totalReceitaProx30 > 0 && ` • ${formatCurrency(totalReceitaProx30)}/mês em risco`}
+                  </span>
+                  <span className="text-muted-foreground">
+                    <strong>{proximos.filter(c => c.diasParaVencer > 30 && c.diasParaVencer <= 60).length}</strong> em 31-60 dias
+                  </span>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs text-muted-foreground">
+                      <th className="text-left py-2 px-2 font-medium">Cliente</th>
+                      <th className="text-left py-2 px-2 font-medium hidden md:table-cell">Plano</th>
+                      <th className="text-right py-2 px-2 font-medium">Valor</th>
+                      <th className="text-right py-2 px-2 font-medium">Vence em</th>
+                      <th className="text-right py-2 px-2 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...vencidos, ...proximos].slice(0, 20).map(c => {
+                      const expirado = c.diasParaVencer < 0;
+                      const urgente = !expirado && c.diasParaVencer <= 7;
+                      const proximo = !expirado && !urgente && c.diasParaVencer <= 30;
+                      return (
+                        <tr
+                          key={c.id}
+                          className="border-b border-border/50 hover:bg-muted/30 cursor-pointer"
+                          onClick={() => setDetailId(c.id)}
+                          data-testid={`vencimento-${c.id}`}
+                        >
+                          <td className="py-2 px-2 font-medium">{c.name}</td>
+                          <td className="py-2 px-2 text-muted-foreground hidden md:table-cell text-xs">{c.plan}</td>
+                          <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(c.planValue || 0)}</td>
+                          <td className="py-2 px-2 text-right text-xs">
+                            {expirado ? `há ${Math.abs(c.diasParaVencer)} dias` : `${c.diasParaVencer} dias`}
+                          </td>
+                          <td className="py-2 px-2 text-right">
+                            {expirado ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-red-400">vencido</span>
+                            ) : urgente ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-red-400">urgente</span>
+                            ) : proximo ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400">renovar</span>
+                            ) : (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded border border-muted bg-muted/30 text-muted-foreground">próximo</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-2">
+                Clique em uma linha para abrir o cliente. Mostra contratos vencidos + os que vencem nos próximos 60 dias (top 20).
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Filtros + busca */}
       <div className="flex items-center justify-between flex-wrap gap-3">

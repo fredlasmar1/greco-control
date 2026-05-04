@@ -2316,6 +2316,13 @@ export async function registerRoutes(
       else if (diasDesdeUltimaVenda >= 30) nivel = "critico";
       else if (diasDesdeUltimaVenda >= 14) nivel = "atencao";
 
+      // Giro: produtos com estoque parado pesando capital
+      // - parado: tem saldo mas não vende há 60+ dias (ou nunca vendeu nos 30d capturados)
+      // - giroLento: tem saldo, vende pouco (≤2 unidades em 30d), mas não está parado
+      const temSaldo = saldo > 0;
+      const parado = temSaldo && (ultimaVenda === null || diasDesdeUltimaVenda >= 60);
+      const giroLento = temSaldo && !parado && qtd30d <= 2;
+
       return {
         id: p.id,
         nome: p.nome || p.descricao || "",
@@ -2331,6 +2338,8 @@ export async function registerRoutes(
         valorVenda, // efetivo
         valorEstoque,
         nivel,
+        giroLento,
+        parado,
         vendidos30d: qtd30d,
         faturamento30d: mov?.valor30d ?? 0,
         ultimaVenda,
@@ -2340,6 +2349,10 @@ export async function registerRoutes(
 
     const emAlerta = lista.filter(p => p.nivel !== "ok");
     const criticos = lista.filter(p => p.nivel === "critico");
+    const giroLento = lista.filter(p => p.giroLento);
+    const parados = lista.filter(p => p.parado);
+    const valorEmGiroLento = giroLento.reduce((s, p) => s + (p.valorEstoque || 0), 0);
+    const valorParado = parados.reduce((s, p) => s + (p.valorEstoque || 0), 0);
 
     // Converte ranking Set → número
     const rankingVendedores = Array.from(rankingMap.values())
@@ -2364,6 +2377,10 @@ export async function registerRoutes(
       totalProdutos: lista.length,
       produtosEmAlerta: emAlerta.length,
       produtosCriticos: criticos.length,
+      produtosGiroLento: giroLento.length,
+      produtosParados: parados.length,
+      valorEmGiroLento,
+      valorParado,
       valorTotalEstoque: 0,
       movimentacoesHojeCount: movHoje.length,
       saidasHoje: movHoje.length,

@@ -24,6 +24,8 @@ interface Produto {
   valorVenda: number;
   valorEstoque: number;
   nivel: "ok" | "atencao" | "critico" | "ruptura";
+  giroLento?: boolean;
+  parado?: boolean;
   vendidos30d: number;
   faturamento30d: number;
   ultimaVenda: string | null;
@@ -77,6 +79,10 @@ interface Resumo {
   totalProdutos: number;
   produtosEmAlerta: number;
   produtosCriticos: number;
+  produtosGiroLento?: number;
+  produtosParados?: number;
+  valorEmGiroLento?: number;
+  valorParado?: number;
   valorTotalEstoque: number;
   movimentacoesHojeCount: number;
   saidasHoje: number;
@@ -281,6 +287,83 @@ export default function Estoque() {
               </CardContent>
             </Card>
           )}
+
+          {/* Giro lento — produtos que pesam capital sem girar */}
+          {(() => {
+            const giroLento = resumo.produtos.filter(p => p.giroLento);
+            const parados = resumo.produtos.filter(p => p.parado);
+            if (giroLento.length === 0 && parados.length === 0) return null;
+            return (
+              <Card className="border-amber-500/30">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <TrendingDown className="w-4 h-4 text-amber-400" />
+                      Giro lento (capital parado)
+                    </div>
+                    <div className="flex items-center gap-3 text-xs">
+                      {parados.length > 0 && (
+                        <span className="text-red-400">
+                          <strong>{parados.length}</strong> parado{parados.length !== 1 ? "s" : ""}
+                          {(resumo.valorParado || 0) > 0 && ` • ${formatCurrency(resumo.valorParado || 0)}`}
+                        </span>
+                      )}
+                      {giroLento.length > 0 && (
+                        <span className="text-amber-400">
+                          <strong>{giroLento.length}</strong> giro lento
+                          {(resumo.valorEmGiroLento || 0) > 0 && ` • ${formatCurrency(resumo.valorEmGiroLento || 0)}`}
+                        </span>
+                      )}
+                    </div>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-xs text-muted-foreground">
+                          <th className="text-left py-2 px-2 font-medium">Produto</th>
+                          <th className="text-right py-2 px-2 font-medium">Saldo</th>
+                          <th className="text-right py-2 px-2 font-medium hidden sm:table-cell">Vend. 30d</th>
+                          <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Última venda</th>
+                          <th className="text-right py-2 px-2 font-medium">R$ parado</th>
+                          <th className="text-right py-2 px-2 font-medium">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...parados, ...giroLento]
+                          .sort((a, b) => (b.valorEstoque || 0) - (a.valorEstoque || 0))
+                          .slice(0, 15)
+                          .map(p => (
+                            <tr key={p.id} className="border-b border-border/50 hover:bg-muted/30">
+                              <td className="py-2 px-2 font-medium">{p.nome}</td>
+                              <td className="py-2 px-2 text-right tabular-nums">{p.saldo}</td>
+                              <td className="py-2 px-2 text-right tabular-nums text-muted-foreground hidden sm:table-cell">{p.vendidos30d}</td>
+                              <td className="py-2 px-2 text-right text-muted-foreground hidden md:table-cell text-xs">
+                                {formatarDiasUltimaVenda(p.diasDesdeUltimaVenda)}
+                              </td>
+                              <td className="py-2 px-2 text-right tabular-nums font-medium">{formatCurrency(p.valorEstoque)}</td>
+                              <td className="py-2 px-2 text-right">
+                                {p.parado ? (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-red-400">parado</span>
+                                ) : (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400">giro lento</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-2">
+                    <strong>Parado</strong>: tem saldo mas sem venda há 60+ dias.
+                    {" "}<strong>Giro lento</strong>: tem saldo, vende ≤ 2 unidades em 30 dias.
+                    {" "}Ordenado por valor parado decrescente (top 15).
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           {/* Ranking de vendedores de produtos */}
           {resumo.rankingVendedores && resumo.rankingVendedores.length > 0 && (

@@ -61,7 +61,8 @@ function AdminRoutes() {
           <Route path="/" component={Dashboard} />
           <Route path="/lancamentos" component={Lancamentos} />
           <Route path="/equipe" component={Equipe} />
-          <Route path="/servicos" component={Servicos} />
+          {/* /servicos foi unificada em /precificacao (aba interna 'Catálogo') */}
+          <Route path="/servicos">{() => <RedirectTo to="/precificacao" />}</Route>
           <Route path="/precificacao" component={Precificacao} />
           <Route path="/financeiro" component={Financeiro} />
           <Route path="/estoque" component={Estoque} />

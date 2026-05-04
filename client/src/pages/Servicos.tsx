@@ -126,7 +126,13 @@ function AddServiceDialog() {
   );
 }
 
-export default function Servicos() {
+interface ServicosProps {
+  /** Quando true, omite o header próprio (h2, parágrafo e MonthSelector) — usado
+   *  quando embutido como sub-aba dentro de outra página (ex: Precificação). */
+  embedded?: boolean;
+}
+
+export default function Servicos({ embedded = false }: ServicosProps = {}) {
   const { services: demoServices } = useStore();
 
   const mesCorrente = useMemo(() => mesAtualSP(), []);
@@ -156,7 +162,8 @@ export default function Servicos() {
     .map((s) => ({ name: s.name, quantidade: s.popularity }));
 
   return (
-    <div className="space-y-6 max-w-[1400px]">
+    <div className={embedded ? "space-y-6" : "space-y-6 max-w-[1400px]"}>
+      {!embedded && (
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold">Serviços</h2>
@@ -182,6 +189,7 @@ export default function Servicos() {
           <AddServiceDialog />
         </div>
       </div>
+      )}
 
       {!hasTrinksData && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-500">

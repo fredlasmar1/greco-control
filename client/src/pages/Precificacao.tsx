@@ -5,6 +5,9 @@ import { formatCurrency, formatPercent } from "@/lib/demoData";
 import { MonthSelector } from "@/components/MonthSelector";
 import { useTrinksMonth } from "@/hooks/useTrinksMonth";
 import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import Servicos from "@/pages/Servicos";
+import CustosProdutosPanel from "@/components/precificacao/CustosProdutosPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -669,9 +672,9 @@ export default function Precificacao() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold">Precificação</h2>
+          <h2 className="text-lg font-semibold">Serviços &amp; Precificação</h2>
           <p className="text-sm text-muted-foreground">
-            Ficha técnica, custos e margens — {monthLabelCapital}
+            Catálogo, ficha técnica e custos — {monthLabelCapital}
             <span className="text-primary ml-1">• Dados Trinks</span>
           </p>
         </div>
@@ -712,6 +715,22 @@ export default function Precificacao() {
         </div>
       </div>
 
+      <Tabs defaultValue="ficha-servicos" className="w-full">
+        <TabsList className="mb-4">
+          <TabsTrigger value="catalogo" data-testid="tab-catalogo">Catálogo</TabsTrigger>
+          <TabsTrigger value="ficha-servicos" data-testid="tab-ficha-servicos">Ficha de Serviços</TabsTrigger>
+          <TabsTrigger value="custos-produtos" data-testid="tab-custos-produtos">Custos de Produtos</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="catalogo" className="mt-0">
+          <Servicos embedded />
+        </TabsContent>
+
+        <TabsContent value="custos-produtos" className="mt-0">
+          <CustosProdutosPanel />
+        </TabsContent>
+
+        <TabsContent value="ficha-servicos" className="space-y-6 mt-0">
       {/* v24: Painel Operacional — parâmetros para custo fixo/min */}
       <Card className="bg-card border-card-border">
         <CardHeader className="pb-2">
@@ -1072,6 +1091,8 @@ export default function Precificacao() {
           <p className="mt-1"><strong>Modo simulação</strong> (toggle no topo): comissão = <strong>(preço − ficha) × %</strong> em vez de preço × %. Útil para travar o custo do produto antes da comissão. Não altera dados — só recalcula visualmente.</p>
         </div>
       </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

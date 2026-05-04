@@ -1,7 +1,10 @@
+import { useEffect, useState } from "react";
 import { useLocation, Link } from "wouter";
 import grecoLogo from "../../logo-greco.png";
 import { useStore } from "@/lib/store";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
+
+const API_BASE = (globalThis as any).__API_BASE__ || "";
 import {
   LayoutDashboard,
   Receipt,
@@ -60,6 +63,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { sidebarOpen, setSidebarOpen } = useStore();
 
+  // Badge global de duplicados pendentes (alerta na sidebar)
+  const [duplicadosCount, setDuplicadosCount] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/clientes/duplicados`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setDuplicadosCount(d.totalGruposDuplicados ?? null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="flex min-h-screen bg-background">
       {/* Mobile overlay */}
@@ -117,7 +131,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 >
                   <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-primary" : ""}`} />
                   <span>{label}</span>
-                  {isActive && (
+                  {path === "/duplicados" && duplicadosCount !== null && duplicadosCount > 0 && (
+                    <span
+                      className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 tabular-nums"
+                      title={`${duplicadosCount} grupo${duplicadosCount !== 1 ? "s" : ""} de clientes duplicados`}
+                      data-testid="badge-duplicados"
+                    >
+                      {duplicadosCount}
+                    </span>
+                  )}
+                  {isActive && !(path === "/duplicados" && duplicadosCount && duplicadosCount > 0) && (
                     <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />
                   )}
                 </div>

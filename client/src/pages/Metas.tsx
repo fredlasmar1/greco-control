@@ -1,27 +1,76 @@
-import { useMemo, useEffect, useState } from "react";
+/**
+ * Aba Metas — visualização simples e direta.
+ *
+ * Para o mês corrente: usa /api/equipe/desempenho (que tem dia/semana/mês
+ * + linhas por profissional já com meta cadastrada). Para mês passado:
+ * usa /api/equipe/mes/:mes (só mensal). Persistência de metas via:
+ *   - /api/metas (meta da empresa)
+ *   - /api/metas/diaria (meta diária)
+ *   - /api/metas/barbeiros/:mes (metas por profissional)
+ */
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
-import { getTrinksMonthTotals, mapTrinksProfissionais } from "@/lib/trinksStore";
-import { MonthSelector } from "@/components/MonthSelector";
-import { useTrinksMonth } from "@/hooks/useTrinksMonth";
-import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
-import { formatCurrency, formatPercent, getMonthTotals, barbers as demoBarbers } from "@/lib/demoData";
+import { formatCurrency } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Target, TrendingUp, Calendar, AlertTriangle, CheckCircle, Users, Pencil, X, RotateCcw, Loader2, CalendarPlus, Save } from "lucide-react";
+import { Loader2, Target, TrendingUp, Calendar, Pencil, Save, X, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-interface MetaHistorico {
-  month: string;
-  target: number;
-  achieved: number;
-}
+import { MonthSelector } from "@/components/MonthSelector";
+import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
+interface DesempenhoLinha {
+  profissionalId: string;
+  nome: string;
+  meta: { metaReais: number; metaAtendimentos: number };
+  dia?: { reais: number; count: number };
+  semana?: { reais: number; count: number };
+  mes?: { reais: number; count: number };
+}
+
+interface DesempenhoResp {
+  ok: boolean;
+  referencia: { mes: string; semana: { dataInicio: string; dataFim: string }; dia: string };
+  totais: {
+    dia: { reais: number; count: number };
+    semana: { reais: number; count: number };
+    mes: { reais: number; count: number };
+  };
+  linhas: DesempenhoLinha[];
+}
+
+interface EquipeMesResp {
+  ok: boolean;
+  totais: { faturamento: number; atendimentos: number; ticketMedio: number };
+  profissionais: Array<{
+    id: string;
+    nome: string;
+    faturamento: { total: number };
+    atendimentos: { total: number };
+  }>;
+}
+
+function StatusBadge({ pct }: { pct: number }) {
+  if (pct >= 100) return <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 tabular-nums">{pct.toFixed(0)}% ✓</span>;
+  if (pct >= 70) return <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400 tabular-nums">{pct.toFixed(0)}%</span>;
+  return <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-red-400 tabular-nums">{pct.toFixed(0)}%</span>;
+}
+
+function ProgressBar({ pct }: { pct: number }) {
+  const fill = Math.min(100, Math.max(0, pct));
+  const color = pct >= 100 ? "bg-emerald-500" : pct >= 70 ? "bg-amber-500" : "bg-red-500";
+  return (
+    <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+      <div className={`h-full ${color} transition-all duration-300`} style={{ width: `${fill}%` }} />
+    </div>
+  );
+}
+
 export default function Metas() {
-  const { settings } = useStore();
+  const { settings, updateSettings } = useStore();
+  const { toast } = useToast();
 
   const mesCorrente = useMemo(() => mesAtualSP(), []);
   const [selectedMes, setSelectedMes] = useState<string>(() => {
@@ -31,561 +80,338 @@ export default function Metas() {
   useEffect(() => {
     try { localStorage.setItem("metas.selectedMes", selectedMes); } catch {}
   }, [selectedMes]);
+  const isMesCorrente = selectedMes === mesCorrente;
 
-  const {
-    trinks, hasTrinksData, loading, error,
-    fonte, trinksAt, csvAt, isMesCorrente,
-  } = useTrinksMonth(selectedMes);
-
-  const totalsAtual = useMemo(
-    () => hasTrinksData && trinks ? getTrinksMonthTotals(trinks) : getMonthTotals(),
-    [hasTrinksData, trinks]
-  );
-
-  const target = settings.monthlyTarget;
-
-  // Para mês corrente, achieved vem do cálculo ao vivo. Para mês passado, vem do histórico.
-  // (carregado mais abaixo via /api/metas)
-
-  const now = new Date();
-  const currentMonth = mesCorrente; // auto-save sempre usa o mês corrente
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const dayOfMonth = now.getDate();
-  const remainingDays = daysInMonth - dayOfMonth;
-
-  const monthLabelCapital = labelMesPtBR(selectedMes);
-
-  // ─── Historical metas from API ─────────────────────────
-  const [historico, setHistorico] = useState<MetaHistorico[]>([]);
-
+  // ─── Meta da empresa (settings.monthlyTarget) ─────────────
+  const [target, setTarget] = useState(settings.monthlyTarget || 100000);
+  const [editTarget, setEditTarget] = useState(false);
+  const [targetInput, setTargetInput] = useState(String(target));
   useEffect(() => {
-    fetch(`${API_BASE}/api/metas`)
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) setHistorico(data);
-      })
-      .catch(() => {});
-  }, []);
+    setTarget(settings.monthlyTarget || 100000);
+    setTargetInput(String(settings.monthlyTarget || 100000));
+  }, [settings.monthlyTarget]);
+  const salvarTarget = () => {
+    const novo = parseFloat(targetInput.replace(",", ".")) || 0;
+    updateSettings({ monthlyTarget: novo });
+    setTarget(novo);
+    setEditTarget(false);
+    toast({ title: "Meta da empresa atualizada" });
+  };
 
-  // Achieved: para mês corrente vem do cálculo ao vivo; para meses passados, do histórico salvo
-  // (ou do faturamento Trinks daquele mês quando o resolutor retornou dados frescos).
-  const achieved = useMemo(() => {
-    if (isMesCorrente) return totalsAtual.totalRevenue;
-    if (hasTrinksData && trinks) {
-      const t = getTrinksMonthTotals(trinks);
-      if (t.totalRevenue > 0) return t.totalRevenue;
-    }
-    const histEntry = historico.find(m => m.month === selectedMes);
-    return histEntry?.achieved || 0;
-  }, [isMesCorrente, totalsAtual, hasTrinksData, trinks, historico, selectedMes]);
-
-  const percentage = target > 0 ? (achieved / target) * 100 : 0;
-  const remaining = Math.max(0, target - achieved);
-  const dailyPace = remainingDays > 0 ? remaining / remainingDays : 0;
-  const currentDailyAvg = dayOfMonth > 0 ? achieved / dayOfMonth : 0;
-  const projection = currentDailyAvg * daysInMonth;
-  const onTrack = projection >= target;
-
-  // Circle progress
-  const circumference = 2 * Math.PI * 80;
-  const strokeDashoffset = circumference - (Math.min(percentage, 100) / 100) * circumference;
-
-  // Auto-save SOMENTE do mês corrente (navegar pra mês passado não deve sobrescrever)
-  useEffect(() => {
-    if (!isMesCorrente) return;
-    if (target > 0 && achieved >= 0) {
-      fetch(`${API_BASE}/api/metas`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month: currentMonth, target, achieved }),
-      }).catch(() => {});
-    }
-  }, [target, achieved, currentMonth, isMesCorrente]);
-
-  // Merge historical with current month for display
-  const displayHistorico = useMemo(() => {
-    const all = [...historico];
-    const currentIdx = all.findIndex(m => m.month === currentMonth);
-    if (currentIdx >= 0) {
-      all[currentIdx] = { month: currentMonth, target, achieved };
-    } else {
-      all.push({ month: currentMonth, target, achieved });
-    }
-    return all.sort((a, b) => a.month.localeCompare(b.month));
-  }, [historico, currentMonth, target, achieved]);
-
-  // ─── Meta Diária (manual) ───────────────────────────
-  const [metaDiaria, setMetaDiaria] = useState<number>(5000);
-  const [metaDiariaInput, setMetaDiariaInput] = useState<string>("");
-  const [metaDiariaSaving, setMetaDiariaSaving] = useState(false);
-
+  // ─── Meta diária ─────────────────────────────────────────
+  const [metaDiaria, setMetaDiaria] = useState(0);
+  const [editDiaria, setEditDiaria] = useState(false);
+  const [diariaInput, setDiariaInput] = useState("");
+  const [savingDiaria, setSavingDiaria] = useState(false);
   useEffect(() => {
     fetch(`${API_BASE}/api/metas/diaria`)
       .then(r => r.json())
-      .then(data => {
-        if (data && typeof data.valor === "number") {
-          setMetaDiaria(data.valor);
-          setMetaDiariaInput(String(Math.round(data.valor)));
+      .then(d => {
+        if (typeof d.valor === "number") {
+          setMetaDiaria(d.valor);
+          setDiariaInput(String(Math.round(d.valor)));
         }
       })
       .catch(() => {});
   }, []);
+  const salvarDiaria = async () => {
+    const valor = parseFloat(diariaInput.replace(",", ".")) || 0;
+    setSavingDiaria(true);
+    try {
+      await fetch(`${API_BASE}/api/metas/diaria`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ valor }),
+      });
+      setMetaDiaria(valor);
+      setEditDiaria(false);
+      toast({ title: "Meta diária atualizada" });
+    } catch {
+      toast({ title: "Erro ao salvar meta diária", variant: "destructive" });
+    } finally {
+      setSavingDiaria(false);
+    }
+  };
 
-  // ─── Custom barber metas from server ────────────────────
-  const { toast } = useToast();
-  const [customMetas, setCustomMetas] = useState<Record<string, number>>({});
-  const [editingBarber, setEditingBarber] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [saving, setSaving] = useState(false);
-
+  // ─── Realizado: mês corrente usa /api/equipe/desempenho; passado usa /api/equipe/mes ──
+  const [desempenho, setDesempenho] = useState<DesempenhoResp | null>(null);
+  const [equipeMes, setEquipeMes] = useState<EquipeMesResp | null>(null);
+  const [loadingDados, setLoadingDados] = useState(false);
   useEffect(() => {
-    fetch(`${API_BASE}/api/metas/barbeiros/${currentMonth}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data && typeof data === "object") setCustomMetas(data);
-      })
-      .catch(() => {});
-  }, [currentMonth]);
-
-  function startEdit(barberId: string, currentMeta: number) {
-    setEditingBarber(barberId);
-    setEditValue(Math.round(currentMeta).toString());
-  }
-
-  function cancelEdit() {
-    setEditingBarber(null);
-    setEditValue("");
-  }
-
-  async function saveBarberMeta(barberId: string) {
-    const val = Number(editValue);
-    if (!val || val <= 0) {
-      toast({ title: "Valor inválido", description: "Digite um valor maior que zero.", variant: "destructive" });
-      return;
-    }
-    setSaving(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/metas/barbeiros`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month: currentMonth, barberId, meta: val }),
-      });
-      if (!res.ok) throw new Error(`Erro ${res.status}`);
-      const data = await res.json();
-      if (data.metas) setCustomMetas(data.metas);
-      toast({ title: "Meta salva!", description: `Meta atualizada para ${formatCurrency(val)}` });
-      setEditingBarber(null);
-      setEditValue("");
-    } catch (err: any) {
-      console.error("[Metas] Erro ao salvar:", err);
-      toast({ title: "Erro ao salvar", description: "Não foi possível salvar a meta. Tente novamente.", variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function saveMetaDiaria() {
-    const val = Number(metaDiariaInput);
-    if (!Number.isFinite(val) || val < 0) {
-      toast({ title: "Valor inválido", description: "Digite um valor válido.", variant: "destructive" });
-      return;
-    }
-    setMetaDiariaSaving(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/metas/diaria`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ valor: val }),
-      });
-      if (!res.ok) throw new Error(`Erro ${res.status}`);
-      const data = await res.json();
-      setMetaDiaria(data.valor);
-      toast({ title: "Meta diária salva!", description: `Agora: ${formatCurrency(data.valor)}/dia` });
-    } catch {
-      toast({ title: "Erro", description: "Não foi possível salvar.", variant: "destructive" });
-    } finally {
-      setMetaDiariaSaving(false);
-    }
-  }
-
-  async function resetBarberMeta(barberId: string) {
-    try {
-      const res = await fetch(`${API_BASE}/api/metas/barbeiros`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month: currentMonth, barberId }),
-      });
-      if (!res.ok) throw new Error(`Erro ${res.status}`);
-      setCustomMetas(prev => {
-        const next = { ...prev };
-        delete next[barberId];
-        return next;
-      });
-      toast({ title: "Meta resetada", description: "Voltou para proporcional à comissão." });
-    } catch {
-      toast({ title: "Erro", description: "Não foi possível resetar a meta.", variant: "destructive" });
-    }
-  }
-
-  function handleEditKeyDown(e: React.KeyboardEvent, barberId: string) {
-    if (e.key === "Enter") saveBarberMeta(barberId);
-    if (e.key === "Escape") cancelEdit();
-  }
-
-  // ─── Barbers with proportional goals ───────────────────
-  const barbersData = useMemo(() => {
-    let list: { id: string; name: string; initials: string; revenue: number; commission: number }[];
-    if (hasTrinksData) {
-      const mapped = mapTrinksProfissionais(trinks!);
-      list = mapped.filter(b => b.active).map(b => ({
-        id: b.id, name: b.name, initials: b.initials,
-        revenue: b.revenue, commission: b.commission || 40,
-      }));
-      if (list.length === 0) list = demoBarbers.map(b => ({
-        id: b.id, name: b.name, initials: b.initials || b.name.slice(0, 2).toUpperCase(),
-        revenue: b.revenue, commission: b.commission || 40,
-      }));
+    let cancelled = false;
+    setLoadingDados(true);
+    if (isMesCorrente) {
+      fetch(`${API_BASE}/api/equipe/desempenho`)
+        .then(r => r.json())
+        .then(d => { if (!cancelled) setDesempenho(d); })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoadingDados(false); });
     } else {
-      list = demoBarbers.map(b => ({
-        id: b.id, name: b.name, initials: b.initials || b.name.slice(0, 2).toUpperCase(),
-        revenue: b.revenue, commission: b.commission || 40,
-      }));
+      fetch(`${API_BASE}/api/equipe/mes/${selectedMes}`)
+        .then(r => r.json())
+        .then(d => { if (!cancelled) setEquipeMes(d); })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoadingDados(false); });
     }
-    const totalComm = list.reduce((s, b) => s + b.commission, 0) || 1;
-    return list.map(b => ({
-      ...b,
-      meta: customMetas[b.id] != null ? customMetas[b.id] : (b.commission / totalComm) * target,
-      isCustom: customMetas[b.id] != null,
-    }));
-  }, [hasTrinksData, trinks, target, customMetas]);
+    return () => { cancelled = true; };
+  }, [selectedMes, isMesCorrente]);
+
+  // ─── Metas por barbeiro ─────────────────────────────────
+  const [metasBarbeiros, setMetasBarbeiros] = useState<Record<string, number>>({});
+  const [editingBarberId, setEditingBarberId] = useState<string | null>(null);
+  const [editBarberValue, setEditBarberValue] = useState("");
+  const [savingBarber, setSavingBarber] = useState(false);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/metas/barbeiros/${selectedMes}`)
+      .then(r => r.json())
+      .then(d => setMetasBarbeiros(d || {}))
+      .catch(() => {});
+  }, [selectedMes]);
+
+  const salvarMetaBarbeiro = async (id: string) => {
+    const valor = parseFloat(editBarberValue.replace(",", ".")) || 0;
+    setSavingBarber(true);
+    try {
+      await fetch(`${API_BASE}/api/metas/barbeiros`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: selectedMes, barberId: id, meta: valor }),
+      });
+      setMetasBarbeiros(prev => ({ ...prev, [id]: valor }));
+      setEditingBarberId(null);
+      toast({ title: "Meta atualizada" });
+    } catch {
+      toast({ title: "Erro ao salvar", variant: "destructive" });
+    } finally {
+      setSavingBarber(false);
+    }
+  };
+
+  // ─── Cálculos derivados ──────────────────────────────────
+  const realizadoMes = isMesCorrente
+    ? (desempenho?.totais.mes.reais || 0)
+    : (equipeMes?.totais.faturamento || 0);
+  const realizadoHoje = isMesCorrente ? (desempenho?.totais.dia.reais || 0) : 0;
+  const realizadoSemana = isMesCorrente ? (desempenho?.totais.semana.reais || 0) : 0;
+
+  const pctMes = target > 0 ? (realizadoMes / target) * 100 : 0;
+  const pctHoje = metaDiaria > 0 ? (realizadoHoje / metaDiaria) * 100 : 0;
+  const metaSemanal = metaDiaria * 6;
+  const pctSemana = metaSemanal > 0 ? (realizadoSemana / metaSemanal) * 100 : 0;
+
+  // Linhas de barbeiros (com meta + realizado)
+  const linhasBarbeiros = useMemo(() => {
+    const fonte = isMesCorrente
+      ? (desempenho?.linhas || []).map(l => ({
+          id: l.profissionalId,
+          nome: l.nome,
+          meta: l.meta?.metaReais || metasBarbeiros[l.profissionalId] || 0,
+          realizado: l.mes?.reais || 0,
+        }))
+      : (equipeMes?.profissionais || []).map(p => ({
+          id: p.id,
+          nome: p.nome,
+          meta: metasBarbeiros[p.id] || 0,
+          realizado: p.faturamento.total,
+        }));
+    return fonte
+      .filter(l => l.meta > 0 || l.realizado > 0)
+      .sort((a, b) => b.realizado - a.realizado);
+  }, [desempenho, equipeMes, metasBarbeiros, isMesCorrente]);
+
+  const totalMetaBarbeiros = linhasBarbeiros.reduce((s, l) => s + l.meta, 0);
+  const totalRealizadoBarbeiros = linhasBarbeiros.reduce((s, l) => s + l.realizado, 0);
 
   return (
-    <div className="space-y-6 max-w-[1400px]">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap">
+    <div className="space-y-5 max-w-[1400px]">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Metas</h2>
-          <p className="text-sm text-muted-foreground">Acompanhamento da meta mensal de faturamento</p>
+          <h2 className="text-lg font-semibold">Metas — {labelMesPtBR(selectedMes)}</h2>
+          <p className="text-sm text-muted-foreground">Acompanhamento da equipe vs meta cadastrada</p>
         </div>
         <MonthSelector
           selectedMes={selectedMes}
           onChange={setSelectedMes}
           mesCorrente={mesCorrente}
           isMesCorrente={isMesCorrente}
-          loading={loading}
-          error={error}
-          fonte={fonte}
-          trinksAt={trinksAt}
-          csvAt={csvAt}
+          loading={loadingDados}
         />
       </div>
 
-      {/* Main goal visualization */}
-      <Card className="bg-card border-card-border">
-        <CardContent className="p-6">
-          <div className="flex flex-col lg:flex-row items-center gap-8">
-            <div className="relative flex-shrink-0">
-              <svg width="200" height="200" viewBox="0 0 200 200">
-                <circle cx="100" cy="100" r="80" fill="none" stroke="#222" strokeWidth="12" />
-                <circle
-                  cx="100" cy="100" r="80" fill="none"
-                  stroke="#1E3A5F" strokeWidth="12" strokeLinecap="round"
-                  strokeDasharray={circumference} strokeDashoffset={strokeDashoffset}
-                  transform="rotate(-90 100 100)" className="transition-all duration-1000"
-                />
-                <text x="100" y="90" textAnchor="middle" fill="#e5e5e5" fontSize="28" fontWeight="700" fontFamily="Inter">
-                  {percentage.toFixed(1)}%
-                </text>
-                <text x="100" y="115" textAnchor="middle" fill="#888" fontSize="11" fontFamily="Inter">
-                  da meta
-                </text>
-              </svg>
-            </div>
-            <div className="flex-1 space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  Meta de {monthLabelCapital}
-                  {hasTrinksData && <span className="text-primary ml-1">• Dados Trinks</span>}
-                </p>
-                <p className="text-2xl font-bold">{formatCurrency(target)}</p>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">Realizado</p>
-                  <p className="text-lg font-bold text-primary">{formatCurrency(achieved)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Faltam</p>
-                  <p className="text-lg font-bold text-orange-400">{formatCurrency(remaining)}</p>
-                </div>
-              </div>
-              <Progress value={percentage} className="h-3 [&>div]:bg-primary" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Pace indicators */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="bg-card border-card-border">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Target className="w-4 h-4 text-orange-400" />
-              <p className="text-xs text-muted-foreground font-medium">Ritmo Necessário</p>
-            </div>
-            <p className="text-xl font-bold">{formatCurrency(dailyPace)}<span className="text-sm font-normal text-muted-foreground">/dia</span></p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Para atingir a meta nos próximos {remainingDays} dias
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-card-border">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-4 h-4 text-primary" />
-              <p className="text-xs text-muted-foreground font-medium">Projeção</p>
-            </div>
-            <p className={`text-xl font-bold ${onTrack ? 'text-green-500' : 'text-orange-400'}`}>
-              {formatCurrency(projection)}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              No ritmo atual ({formatCurrency(currentDailyAvg)}/dia)
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-card-border">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              {onTrack ? (
-                <CheckCircle className="w-4 h-4 text-green-500" />
-              ) : (
-                <AlertTriangle className="w-4 h-4 text-orange-400" />
-              )}
-              <p className="text-xs text-muted-foreground font-medium">Status</p>
-            </div>
-            <p className={`text-lg font-bold ${onTrack ? 'text-green-500' : 'text-orange-400'}`}>
-              {onTrack ? 'No Caminho' : 'Atenção'}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {onTrack
-                ? 'Projeção acima da meta!'
-                : currentDailyAvg > 0
-                  ? `Precisa aumentar ${formatPercent(((dailyPace / currentDailyAvg) - 1) * 100)} o ritmo`
-                  : 'Sem dados suficientes'
-              }
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Meta Diária (manual) */}
-      <Card className="bg-card border-card-border">
+      {/* Meta da Empresa */}
+      <Card>
         <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <CalendarPlus className="w-4 h-4 text-primary" />
-            <CardTitle className="text-sm font-medium">Meta Diária</CardTitle>
-            <span className="text-xs text-muted-foreground">(usada na previsão do Dashboard)</span>
-          </div>
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Target className="w-4 h-4 text-primary" />
+            Meta da Empresa
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="flex-1 min-w-[220px]">
-              <p className="text-xs text-muted-foreground mb-1">Valor por dia de funcionamento</p>
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1 max-w-[220px]">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="100"
-                    value={metaDiariaInput}
-                    onChange={(e) => setMetaDiariaInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") saveMetaDiaria(); }}
-                    className="pl-10 h-9"
-                    data-testid="input-meta-diaria"
-                  />
+          <div className="flex items-baseline gap-3 mb-2 flex-wrap">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs text-muted-foreground">Meta:</span>
+              {editTarget ? (
+                <div className="flex items-center gap-1">
+                  <Input type="number" value={targetInput} onChange={e => setTargetInput(e.target.value)} className="w-32 h-7 text-sm" />
+                  <Button size="sm" variant="ghost" onClick={salvarTarget} className="h-7 px-2"><Save className="w-3 h-3" /></Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setEditTarget(false); setTargetInput(String(target)); }} className="h-7 px-2"><X className="w-3 h-3" /></Button>
                 </div>
-                <Button
-                  size="sm"
-                  className="bg-primary hover:bg-primary/80 text-white h-9"
-                  onClick={saveMetaDiaria}
-                  disabled={metaDiariaSaving}
-                  data-testid="btn-save-meta-diaria"
-                >
-                  {metaDiariaSaving ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <>
-                      <Save className="w-3.5 h-3.5 mr-1" /> Salvar
-                    </>
-                  )}
-                </Button>
+              ) : (
+                <>
+                  <span className="text-xl font-bold tabular-nums">{formatCurrency(target)}</span>
+                  <Button size="sm" variant="ghost" onClick={() => setEditTarget(true)} className="h-6 px-1.5"><Pencil className="w-3 h-3" /></Button>
+                </>
+              )}
+            </div>
+            <span className="text-muted-foreground">→</span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs text-muted-foreground">Realizado:</span>
+              <span className={`text-xl font-bold tabular-nums ${pctMes >= 100 ? "text-emerald-500" : pctMes >= 70 ? "text-amber-500" : "text-red-500"}`}>{formatCurrency(realizadoMes)}</span>
+              <StatusBadge pct={pctMes} />
+            </div>
+          </div>
+          <ProgressBar pct={pctMes} />
+          <div className="flex items-center justify-between mt-2 text-[11px] text-muted-foreground">
+            <span>{isMesCorrente ? "Em curso" : "Mês fechado"}</span>
+            {pctMes < 100 && (
+              <span>Falta {formatCurrency(Math.max(0, target - realizadoMes))}</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Meta Diária + Semanal (só mês corrente) */}
+      {isMesCorrente && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-primary" />
+                Meta Diária
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-baseline gap-2 mb-2 flex-wrap">
+                <span className="text-xs text-muted-foreground">Meta:</span>
+                {editDiaria ? (
+                  <div className="flex items-center gap-1">
+                    <Input type="number" value={diariaInput} onChange={e => setDiariaInput(e.target.value)} className="w-28 h-7 text-sm" />
+                    <Button size="sm" variant="ghost" onClick={salvarDiaria} disabled={savingDiaria} className="h-7 px-2">
+                      {savingDiaria ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setEditDiaria(false); setDiariaInput(String(Math.round(metaDiaria))); }} className="h-7 px-2"><X className="w-3 h-3" /></Button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-base font-semibold tabular-nums">{formatCurrency(metaDiaria)}</span>
+                    <Button size="sm" variant="ghost" onClick={() => setEditDiaria(true)} className="h-6 px-1.5"><Pencil className="w-3 h-3" /></Button>
+                  </>
+                )}
               </div>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              <p>Meta atual: <span className="font-semibold text-foreground">{formatCurrency(metaDiaria)}</span>/dia</p>
-              <p className="mt-0.5">Estimativa mensal (22 dias úteis): <span className="font-medium">{formatCurrency(metaDiaria * 22)}</span></p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-xs text-muted-foreground">Hoje:</span>
+                <span className="text-base font-semibold tabular-nums">{formatCurrency(realizadoHoje)}</span>
+                {metaDiaria > 0 && <StatusBadge pct={pctHoje} />}
+              </div>
+              {metaDiaria > 0 && <ProgressBar pct={pctHoje} />}
+            </CardContent>
+          </Card>
 
-      {/* Per-barber goals */}
-      <Card className="bg-card border-card-border">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-primary" />
+                Meta Semanal
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-xs text-muted-foreground">Meta (diária × 6):</span>
+                <span className="text-base font-semibold tabular-nums">{formatCurrency(metaSemanal)}</span>
+              </div>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-xs text-muted-foreground">Esta semana:</span>
+                <span className="text-base font-semibold tabular-nums">{formatCurrency(realizadoSemana)}</span>
+                {metaSemanal > 0 && <StatusBadge pct={pctSemana} />}
+              </div>
+              {metaSemanal > 0 && <ProgressBar pct={pctSemana} />}
+              <p className="text-[11px] text-muted-foreground mt-2">Calculada automaticamente a partir da meta diária (6 dias úteis seg-sáb).</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Meta por Barbeiro */}
+      <Card>
         <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-primary" />
-            <CardTitle className="text-sm font-medium">Metas por Barbeiro</CardTitle>
-            <span className="text-xs text-muted-foreground">(proporcional à comissão)</span>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left p-3 text-xs text-muted-foreground font-medium">Barbeiro</th>
-                  <th className="text-right p-3 text-xs text-muted-foreground font-medium">Comissão</th>
-                  <th className="text-right p-3 text-xs text-muted-foreground font-medium">Meta</th>
-                  <th className="text-right p-3 text-xs text-muted-foreground font-medium">Realizado</th>
-                  <th className="text-right p-3 text-xs text-muted-foreground font-medium">%</th>
-                  <th className="text-center p-3 text-xs text-muted-foreground font-medium">Status</th>
-                  <th className="text-center p-3 text-xs text-muted-foreground font-medium">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {barbersData.map(b => {
-                  const bPct = b.meta > 0 ? (b.revenue / b.meta) * 100 : 0;
-                  const expectedPct = (dayOfMonth / daysInMonth) * 100;
-                  const bOnTrack = bPct >= expectedPct * 0.9;
-                  const isEditing = editingBarber === b.id;
-                  return (
-                    <tr key={b.id} className="border-b border-border/50 hover:bg-muted/30">
-                      <td className="p-3 font-medium">
-                        {b.name.split(" ").slice(0, 2).join(" ")}
-                        {b.isCustom && <span className="text-[10px] text-primary ml-1">custom</span>}
-                      </td>
-                      <td className="p-3 text-right text-muted-foreground">{b.commission}%</td>
-                      <td className="p-3 text-right">
-                        {isEditing ? (
-                          <div className="flex items-center justify-end gap-2 flex-wrap">
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs text-muted-foreground">R$</span>
-                              <Input
-                                type="number"
-                                inputMode="numeric"
-                                value={editValue}
-                                onChange={e => setEditValue(e.target.value)}
-                                onKeyDown={e => handleEditKeyDown(e, b.id)}
-                                className="h-9 w-28 text-sm text-right"
-                                autoFocus
-                              />
-                            </div>
-                            <div className="flex gap-1">
-                              <Button size="sm" className="h-9 px-3 bg-green-600 hover:bg-green-700 text-white text-xs" onClick={() => saveBarberMeta(b.id)} disabled={saving}>
-                                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Salvar"}
-                              </Button>
-                              <Button size="sm" variant="outline" className="h-9 px-2 text-xs" onClick={cancelEdit}>
-                                <X className="w-3.5 h-3.5" />
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
-                          formatCurrency(b.meta)
-                        )}
-                      </td>
-                      <td className="p-3 text-right font-medium">{formatCurrency(b.revenue)}</td>
-                      <td className="p-3 text-right">
-                        <span className={bOnTrack ? 'text-green-500' : 'text-orange-400'}>{formatPercent(bPct)}</span>
-                      </td>
-                      <td className="p-3 text-center">
-                        {bOnTrack ? (
-                          <CheckCircle className="w-4 h-4 text-green-500 inline" />
-                        ) : (
-                          <AlertTriangle className="w-4 h-4 text-orange-400 inline" />
-                        )}
-                      </td>
-                      <td className="p-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          {!isEditing && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
-                              onClick={() => startEdit(b.id, b.meta)}
-                              title="Editar meta"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                          {b.isCustom && !isEditing && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-orange-400"
-                              onClick={() => resetBarberMeta(b.id)}
-                              title="Voltar para proporcional"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Historical */}
-      {displayHistorico.length > 0 && (
-        <Card className="bg-card border-card-border">
-          <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-primary" />
-              <CardTitle className="text-sm font-medium">Histórico de Metas</CardTitle>
+              <Users className="w-4 h-4 text-primary" />
+              Meta por Barbeiro
             </div>
-          </CardHeader>
-          <CardContent className="p-0">
+            <span className="text-xs text-muted-foreground tabular-nums">
+              Total: {formatCurrency(totalRealizadoBarbeiros)} / {formatCurrency(totalMetaBarbeiros)}
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {linhasBarbeiros.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              {loadingDados ? "Carregando..." : "Nenhum dado para este mês."}
+            </div>
+          ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left p-3 text-xs text-muted-foreground font-medium">Mês</th>
-                    <th className="text-right p-3 text-xs text-muted-foreground font-medium">Meta</th>
-                    <th className="text-right p-3 text-xs text-muted-foreground font-medium">Realizado</th>
-                    <th className="text-right p-3 text-xs text-muted-foreground font-medium">%</th>
-                    <th className="text-center p-3 text-xs text-muted-foreground font-medium">Status</th>
+                  <tr className="border-b border-border text-xs text-muted-foreground">
+                    <th className="text-left py-2 px-2 font-medium">Barbeiro</th>
+                    <th className="text-right py-2 px-2 font-medium">Meta</th>
+                    <th className="text-right py-2 px-2 font-medium">Realizado</th>
+                    <th className="text-right py-2 px-2 font-medium hidden sm:table-cell w-32">Progresso</th>
+                    <th className="text-right py-2 px-2 font-medium">%</th>
+                    <th className="w-16"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {displayHistorico.map(goal => {
-                    const pct = goal.target > 0 ? (goal.achieved / goal.target) * 100 : 0;
-                    const hit = pct >= 100;
-                    const isCurrent = goal.month === currentMonth;
-                    const mLabel = new Date(goal.month + '-15').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                  {linhasBarbeiros.map(l => {
+                    const pct = l.meta > 0 ? (l.realizado / l.meta) * 100 : 0;
+                    const editing = editingBarberId === l.id;
                     return (
-                      <tr key={goal.month} className="border-b border-border/50 hover:bg-muted/30">
-                        <td className="p-3 font-medium capitalize">
-                          {mLabel}
-                          {isCurrent && <span className="text-xs text-primary ml-2">• atual</span>}
-                        </td>
-                        <td className="p-3 text-right">{formatCurrency(goal.target)}</td>
-                        <td className="p-3 text-right font-medium">{formatCurrency(goal.achieved)}</td>
-                        <td className="p-3 text-right">
-                          <span className={hit ? 'text-green-500' : 'text-orange-400'}>{formatPercent(pct)}</span>
-                        </td>
-                        <td className="p-3 text-center">
-                          {hit ? (
-                            <CheckCircle className="w-4 h-4 text-green-500 inline" />
-                          ) : isCurrent ? (
-                            <span className="text-xs text-muted-foreground">Em andamento</span>
+                      <tr key={l.id} className="border-b border-border/50 hover:bg-muted/30">
+                        <td className="py-2 px-2 font-medium">{l.nome}</td>
+                        <td className="py-2 px-2 text-right tabular-nums">
+                          {editing ? (
+                            <Input
+                              type="number"
+                              value={editBarberValue}
+                              onChange={e => setEditBarberValue(e.target.value)}
+                              className="w-24 h-7 text-right text-sm ml-auto"
+                              autoFocus
+                            />
                           ) : (
-                            <AlertTriangle className="w-4 h-4 text-orange-400 inline" />
+                            formatCurrency(l.meta)
+                          )}
+                        </td>
+                        <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(l.realizado)}</td>
+                        <td className="py-2 px-2 hidden sm:table-cell">
+                          {l.meta > 0 && <ProgressBar pct={pct} />}
+                        </td>
+                        <td className="py-2 px-2 text-right">
+                          {l.meta > 0 ? <StatusBadge pct={pct} /> : <span className="text-[10px] text-muted-foreground">sem meta</span>}
+                        </td>
+                        <td className="py-2 px-2 text-right">
+                          {editing ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <Button size="sm" variant="ghost" onClick={() => salvarMetaBarbeiro(l.id)} disabled={savingBarber} className="h-6 px-1.5">
+                                {savingBarber ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setEditingBarberId(null)} className="h-6 px-1.5"><X className="w-3 h-3" /></Button>
+                            </div>
+                          ) : (
+                            <Button size="sm" variant="ghost" onClick={() => { setEditingBarberId(l.id); setEditBarberValue(String(l.meta)); }} className="h-6 px-1.5">
+                              <Pencil className="w-3 h-3" />
+                            </Button>
                           )}
                         </td>
                       </tr>
@@ -594,9 +420,9 @@ export default function Metas() {
                 </tbody>
               </table>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

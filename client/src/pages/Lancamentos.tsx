@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { CalendarCheck, Plus, Filter, ArrowUpCircle, ArrowDownCircle } from "lucide-react";
+import { CalendarCheck, Plus, Filter, ArrowUpCircle, ArrowDownCircle, Upload } from "lucide-react";
 import type { DailyEntry } from "@shared/schema";
 
 function FecharDiaDialog() {
@@ -170,6 +170,7 @@ export default function Lancamentos() {
   } = useTrinksMonth(selectedMes);
 
   const [filter, setFilter] = useState<'todos' | 'receita' | 'despesa'>('todos');
+  const [activeTab, setActiveTab] = useState<'diario' | 'conciliacao'>('diario');
 
   // Derive entries from Trinks data when available
   const entries = useMemo((): DailyEntry[] => {
@@ -247,12 +248,22 @@ export default function Lancamentos() {
             trinksAt={trinksAt}
             csvAt={csvAt}
           />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setActiveTab("conciliacao")}
+            title="Subir CSV/Excel/PDF do extrato bancário para conciliar com Trinks"
+            data-testid="btn-importar-extrato-shortcut"
+          >
+            <Upload className="w-4 h-4 mr-1.5" />
+            Importar extrato bancário
+          </Button>
           <AddExpenseDialog />
           <FecharDiaDialog />
         </div>
       </div>
 
-      <Tabs defaultValue="diario" className="w-full">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "diario" | "conciliacao")} className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="diario" data-testid="tab-diario">Diário</TabsTrigger>
           <TabsTrigger value="conciliacao" data-testid="tab-conciliacao">Conciliação Bancária</TabsTrigger>

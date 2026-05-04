@@ -1,7 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { formatCurrency } from "@/lib/demoData";
+import DREView from "@/components/financeiro/DREView";
+import { mesAtualSP } from "@/lib/mesUtils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -348,7 +350,17 @@ export default function Financeiro() {
   const qClient = useQueryClient();
 
   // ─── Active view ───────────────────────────────────────────
-  const [activeView, setActiveView] = useState<"extrato" | "lancamentos">("extrato");
+  const [activeView, setActiveView] = useState<"dre" | "extrato" | "lancamentos">("dre");
+
+  // Mês selecionado (compartilhado entre DRE e demais views)
+  const mesCorrente = useMemo(() => mesAtualSP(), []);
+  const [selectedMes, setSelectedMes] = useState<string>(() => {
+    if (typeof window === "undefined") return mesCorrente;
+    return localStorage.getItem("financeiro.selectedMes") || mesCorrente;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("financeiro.selectedMes", selectedMes); } catch {}
+  }, [selectedMes]);
 
   // ─── Query ─────────────────────────────────────────────────
   const { data: entries = [], isLoading } = useQuery<FinanceEntry[]>({
@@ -602,7 +614,19 @@ export default function Financeiro() {
             Extrato bancário, fechamento e análise financeira
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            variant={activeView === "dre" ? "default" : "outline"}
+            size="sm"
+            className={activeView === "dre"
+              ? "bg-primary hover:bg-primary/80 text-white h-8 text-xs"
+              : "h-8 text-xs border-border"}
+            onClick={() => setActiveView("dre")}
+            data-testid="btn-view-dre"
+          >
+            <Scale className="w-3.5 h-3.5 mr-1.5" />
+            DRE
+          </Button>
           <Button
             variant={activeView === "extrato" ? "default" : "outline"}
             size="sm"
@@ -625,10 +649,17 @@ export default function Financeiro() {
             data-testid="btn-view-lancamentos"
           >
             <Receipt className="w-3.5 h-3.5 mr-1.5" />
-            Lançamentos
+            Cadastrar despesas
           </Button>
         </div>
       </div>
+
+      {/* ═══════════════════════════════════════════════════════════ */}
+      {/* ═══ VIEW: DRE — Demonstração de Resultado (default) ════ */}
+      {/* ═══════════════════════════════════════════════════════════ */}
+      {activeView === "dre" && (
+        <DREView selectedMes={selectedMes} onChangeMes={setSelectedMes} />
+      )}
 
       {/* ═══════════════════════════════════════════════════════════ */}
       {/* ═══ VIEW: FECHAMENTO (EXTRATO BANCÁRIO) ═══════════════ */}

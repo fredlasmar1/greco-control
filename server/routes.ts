@@ -44,6 +44,7 @@ import {
 } from "./configFinanceira";
 import {
   getComissaoPctDoServico,
+  setComissaoConfig,
   getCategoriaServico,
   getMargemDesejadaDefault,
   calcularMargemServico,
@@ -575,7 +576,22 @@ function saveStore() {
   try {
     fs.writeFileSync(STORE_FILE, JSON.stringify(storeData, null, 2), "utf-8");
   } catch { log("Store: could not save", "store"); }
+  // Atualiza config de comissão por categoria sempre que settings mudam
+  syncComissaoConfig();
 }
+
+function syncComissaoConfig() {
+  const s = storeData.settings;
+  if (!s) { setComissaoConfig(null); return; }
+  setComissaoConfig({
+    profissionaisVip: s.profissionaisVip,
+    profissionaisExpress: s.profissionaisExpress,
+    comissaoVipExpressPct: s.comissaoVipExpressPct,
+    comissaoPadraoPct: s.comissaoPadraoPct,
+  });
+}
+// Sincroniza no boot inicial (caso storeData já tenha sido carregado do disco)
+syncComissaoConfig();
 
 // Cria admin padrão se não existir nenhum usuário
 if (usuarios.length === 0) {
@@ -1153,7 +1169,7 @@ export async function registerRoutes(
       if (Array.isArray(dbTransacoes)) transacoesBanco = dbTransacoes;
       if (dbRegras && typeof dbRegras === "object") regrasGastos = dbRegras;
       if (Array.isArray(dbDuplicados)) resolvedDuplicateIds = dbDuplicados;
-      if (dbStore && typeof dbStore === "object") storeData = dbStore;
+      if (dbStore && typeof dbStore === "object") { storeData = dbStore; syncComissaoConfig(); }
       if (Array.isArray(dbAssinaturaClientes)) assinaturaClientes = dbAssinaturaClientes;
       if (Array.isArray(dbAssinaturaPlanos) && dbAssinaturaPlanos.length > 0) assinaturaPlanos = dbAssinaturaPlanos;
 

@@ -66,6 +66,13 @@ export interface Settings {
   defaultCommission: number;
   monthlyTarget: number;
   chairs: number;
+  // Configuração de categorização de profissionais (afeta DRE e cálculo de comissão).
+  // Listas com NOMES (maiúsculas, primeiro nome ou nome completo) — case-insensitive.
+  profissionaisEstetica?: string[];   // entram em "Serviços de estética" no DRE
+  profissionaisVip?: string[];         // ganham comissão VIP (default 50%)
+  profissionaisExpress?: string[];     // ganham comissão Express (default 50%)
+  comissaoVipExpressPct?: number;      // default 50
+  comissaoPadraoPct?: number;          // default 40
 }
 
 // Zod schemas for form validation

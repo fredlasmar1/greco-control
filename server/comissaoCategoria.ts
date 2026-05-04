@@ -31,29 +31,63 @@ export function ehServicoVipExpress(nomeServico: string): boolean {
   return /\bvip\b/.test(n) || /\bexpress\b/.test(n);
 }
 
-// Profissionais que SEMPRE atendem VIP ou Express (categorias exclusivas).
-// Usado como fallback quando o servico nao identifica claramente.
-const PROFISSIONAIS_VIP = new Set(["andre"]);
-const PROFISSIONAIS_EXPRESS = new Set(["leonardo", "cesar", "césar"].map(norm));
+// Profissionais que SEMPRE atendem VIP ou Express (defaults).
+// Podem ser sobrescritos via config (Configurações → Profissionais e Categorias).
+const PROFISSIONAIS_VIP_DEFAULT = ["andre"];
+const PROFISSIONAIS_EXPRESS_DEFAULT = ["leonardo", "cesar", "césar"];
+
+// Config opcional injetada de storeData.settings em runtime.
+// Se não setada, usa os defaults acima.
+export interface ComissaoConfig {
+  profissionaisVip?: string[];
+  profissionaisExpress?: string[];
+  comissaoVipExpressPct?: number; // 0..100
+  comissaoPadraoPct?: number;     // 0..100
+}
+
+let runtimeConfig: ComissaoConfig | null = null;
+
+export function setComissaoConfig(config: ComissaoConfig | null) {
+  runtimeConfig = config;
+}
+
+function getVipList(): Set<string> {
+  const lista = runtimeConfig?.profissionaisVip ?? PROFISSIONAIS_VIP_DEFAULT;
+  return new Set(lista.map(norm).filter(Boolean));
+}
+function getExpressList(): Set<string> {
+  const lista = runtimeConfig?.profissionaisExpress ?? PROFISSIONAIS_EXPRESS_DEFAULT;
+  return new Set(lista.map(norm).filter(Boolean));
+}
+function getPctVipExpress(): number {
+  const p = runtimeConfig?.comissaoVipExpressPct;
+  return typeof p === "number" && p > 0 ? p / 100 : COMISSAO_VIP_EXPRESS;
+}
+function getPctPadrao(): number {
+  const p = runtimeConfig?.comissaoPadraoPct;
+  return typeof p === "number" && p > 0 ? p / 100 : COMISSAO_PADRAO;
+}
 
 export function ehProfissionalVipExpress(nomeProfissional: string): boolean {
   const n = norm(nomeProfissional);
   if (!n) return false;
   // Match por primeiro nome ou nome inteiro contendo o termo
-  for (const p of PROFISSIONAIS_VIP) if (n === p || n.startsWith(p + " ")) return true;
-  for (const p of PROFISSIONAIS_EXPRESS) if (n === p || n.startsWith(p + " ")) return true;
+  const vips = Array.from(getVipList());
+  for (const p of vips) if (n === p || n.startsWith(p + " ") || n.includes(" " + p)) return true;
+  const expresses = Array.from(getExpressList());
+  for (const p of expresses) if (n === p || n.startsWith(p + " ") || n.includes(" " + p)) return true;
   return false;
 }
 
 // Decide a comissao % baseado no servico (prioridade) ou no profissional (fallback).
-// Retorna 0.50 para VIP/Express, 0.40 para o resto.
+// Retorna fração (ex: 0.50 para 50%).
 export function getComissaoPctDoServico(
   nomeServico?: string | null,
   nomeProfissional?: string | null,
 ): number {
-  if (nomeServico && ehServicoVipExpress(nomeServico)) return COMISSAO_VIP_EXPRESS;
-  if (nomeProfissional && ehProfissionalVipExpress(nomeProfissional)) return COMISSAO_VIP_EXPRESS;
-  return COMISSAO_PADRAO;
+  if (nomeServico && ehServicoVipExpress(nomeServico)) return getPctVipExpress();
+  if (nomeProfissional && ehProfissionalVipExpress(nomeProfissional)) return getPctVipExpress();
+  return getPctPadrao();
 }
 
 // Categoria textual (para logs/debug).

@@ -135,8 +135,40 @@ export default function Configuracoes() {
     }
   };
 
-  const update = (field: string, value: string | number) => {
+  const update = (field: string, value: string | number | string[]) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  // Helpers para categorias de profissional (estética / VIP / Express / padrão).
+  // Listas guardadas em form como arrays de nomes (case-insensitive).
+  const profissionaisTrinks = trinks?.profissionais || [];
+  const norm = (s: string) => (s || "").trim().toLowerCase();
+  const inList = (lista: string[] | undefined, nome: string) =>
+    (lista || []).some((n) => norm(n) === norm(nome));
+  const toggleNaLista = (chave: "profissionaisEstetica" | "profissionaisVip" | "profissionaisExpress", nome: string) => {
+    setForm((prev) => {
+      const atual = prev[chave] || [];
+      const existe = atual.some((n) => norm(n) === norm(nome));
+      return { ...prev, [chave]: existe ? atual.filter((n) => norm(n) !== norm(nome)) : [...atual, nome] };
+    });
+  };
+  const setCategoriaProf = (nome: string, cat: "padrao" | "vip" | "express") => {
+    setForm((prev) => {
+      const removeFrom = (arr?: string[]) => (arr || []).filter((n) => norm(n) !== norm(nome));
+      const next: any = {
+        ...prev,
+        profissionaisVip: removeFrom(prev.profissionaisVip),
+        profissionaisExpress: removeFrom(prev.profissionaisExpress),
+      };
+      if (cat === "vip") next.profissionaisVip = [...next.profissionaisVip, nome];
+      else if (cat === "express") next.profissionaisExpress = [...next.profissionaisExpress, nome];
+      return next;
+    });
+  };
+  const getCategoriaProf = (nome: string): "padrao" | "vip" | "express" => {
+    if (inList(form.profissionaisVip, nome)) return "vip";
+    if (inList(form.profissionaisExpress, nome)) return "express";
+    return "padrao";
   };
 
   return (
@@ -488,6 +520,103 @@ export default function Configuracoes() {
                 />
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Profissionais e Categorias */}
+        <Card className="bg-card border-card-border">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Percent className="w-4 h-4 text-primary" />
+              Profissionais e Categorias de Comissão
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label className="text-xs">Comissão VIP / Express (%)</Label>
+                <Input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  max="100"
+                  value={form.comissaoVipExpressPct ?? 50}
+                  onChange={(e) => update("comissaoVipExpressPct", Number(e.target.value))}
+                  data-testid="input-comissao-vip"
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Comissão Padrão (%)</Label>
+                <Input
+                  type="number"
+                  step="0.5"
+                  min="0"
+                  max="100"
+                  value={form.comissaoPadraoPct ?? 40}
+                  onChange={(e) => update("comissaoPadraoPct", Number(e.target.value))}
+                  data-testid="input-comissao-padrao"
+                />
+              </div>
+            </div>
+
+            {profissionaisTrinks.length === 0 ? (
+              <div className="text-xs text-muted-foreground py-3 text-center bg-muted/30 rounded-md">
+                Conecte a Trinks acima para listar os profissionais.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs text-muted-foreground">
+                      <th className="text-left py-2 px-2 font-medium">Profissional</th>
+                      <th className="text-center py-2 px-2 font-medium" title="Entra em 'Serviços de estética' no DRE (separado de barbeiros)">Estética</th>
+                      <th className="text-center py-2 px-2 font-medium">Padrão</th>
+                      <th className="text-center py-2 px-2 font-medium">VIP</th>
+                      <th className="text-center py-2 px-2 font-medium">Express</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {profissionaisTrinks.map((p: any) => {
+                      const nome = p.nome || p.apelido || "";
+                      if (!nome) return null;
+                      const cat = getCategoriaProf(nome);
+                      const isEstetica = inList(form.profissionaisEstetica, nome);
+                      return (
+                        <tr key={p.id} className="border-b border-border/50">
+                          <td className="py-2 px-2 font-medium">{nome}</td>
+                          <td className="py-2 px-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isEstetica}
+                              onChange={() => toggleNaLista("profissionaisEstetica", nome)}
+                              className="w-4 h-4 cursor-pointer"
+                              data-testid={`estetica-${p.id}`}
+                            />
+                          </td>
+                          {(["padrao", "vip", "express"] as const).map((c) => (
+                            <td key={c} className="py-2 px-2 text-center">
+                              <input
+                                type="radio"
+                                name={`cat-${p.id}`}
+                                checked={cat === c}
+                                onChange={() => setCategoriaProf(nome, c)}
+                                className="w-4 h-4 cursor-pointer"
+                                data-testid={`cat-${p.id}-${c}`}
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  <strong>Estética</strong>: faturamento aparece separado de "barbeiros" no DRE.
+                  {" "}<strong>VIP/Express</strong>: profissional ganha % VIP/Express na comissão (ou se o serviço tiver "VIP"/"Express" no nome).
+                  {" "}As mudanças só passam a valer após clicar em <strong>Salvar Configurações</strong>.
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
 

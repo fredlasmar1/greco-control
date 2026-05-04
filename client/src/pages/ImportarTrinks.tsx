@@ -313,6 +313,86 @@ export default function ImportarTrinks() {
         </CardContent>
       </Card>
 
+      {/* Cobertura mensal: matriz de quais tipos estão importados por mês */}
+      {items.length > 0 && (() => {
+        const TIPOS = ["financeiro", "dre", "ranking"] as const;
+        // Conjunto de mes-tipo já importados
+        const present = new Set(items.map(i => `${i.mes}|${i.tipo}`));
+        // Lista os últimos 6 meses (mês atual recuando)
+        const hoje = new Date();
+        const meses: string[] = [];
+        for (let k = 0; k < 6; k++) {
+          const d = new Date(hoje.getFullYear(), hoje.getMonth() - k, 1);
+          meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+        }
+        const mesAtual = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
+        const incompletos = meses.filter(m => m !== mesAtual && TIPOS.some(t => !present.has(`${m}|${t}`)));
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  Cobertura mensal
+                </div>
+                <span className="text-xs text-muted-foreground font-normal">
+                  Últimos 6 meses · <strong>{incompletos.length}</strong> incompleto{incompletos.length !== 1 ? "s" : ""}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs text-muted-foreground">
+                      <th className="text-left py-2 px-2 font-medium">Mês</th>
+                      <th className="text-center py-2 px-2 font-medium">Financeiro</th>
+                      <th className="text-center py-2 px-2 font-medium">DRE</th>
+                      <th className="text-center py-2 px-2 font-medium">Ranking</th>
+                      <th className="text-right py-2 px-2 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {meses.map(mes => {
+                      const isAtual = mes === mesAtual;
+                      const tipos = TIPOS.map(t => present.has(`${mes}|${t}`));
+                      const completos = tipos.filter(Boolean).length;
+                      const status = isAtual
+                        ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-muted bg-muted/30 text-muted-foreground">em curso</span>
+                        : completos === 3
+                          ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400">completo</span>
+                          : completos === 0
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-red-400">vazio</span>
+                            : <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400">parcial ({completos}/3)</span>;
+                      return (
+                        <tr key={mes} className="border-b border-border/50">
+                          <td className="py-2 px-2 font-medium">{mesLabel(mes)}</td>
+                          {tipos.map((ok, i) => (
+                            <td key={i} className="py-2 px-2 text-center">
+                              {ok
+                                ? <span className="text-emerald-400 text-base" title="Importado">✓</span>
+                                : <span className="text-muted-foreground text-base" title="Faltando">—</span>
+                              }
+                            </td>
+                          ))}
+                          <td className="py-2 px-2 text-right">{status}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {incompletos.length > 0 && (
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  Meses incompletos: <strong>{incompletos.map(mesLabel).join(", ")}</strong>.
+                  {" "}Exporte os relatórios faltantes do painel Trinks e suba acima.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       {/* Lista de importações já feitas */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">

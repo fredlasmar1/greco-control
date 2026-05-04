@@ -200,7 +200,7 @@ export default function Assinaturas() {
             ...c,
             diasParaVencer: Math.ceil((new Date(c.contractEndDate).getTime() - hoje) / 86400000),
           }))
-          .filter(c => c.diasParaVencer >= 0 && c.diasParaVencer <= 60)
+          .filter(c => c.diasParaVencer >= 0 && c.diasParaVencer <= 90)
           .sort((a, b) => a.diasParaVencer - b.diasParaVencer);
         const vencidos = ativos
           .map(c => ({
@@ -232,7 +232,7 @@ export default function Assinaturas() {
                     {totalReceitaProx30 > 0 && ` • ${formatCurrency(totalReceitaProx30)}/mês em risco`}
                   </span>
                   <span className="text-muted-foreground">
-                    <strong>{proximos.filter(c => c.diasParaVencer > 30 && c.diasParaVencer <= 60).length}</strong> em 31-60 dias
+                    <strong>{proximos.filter(c => c.diasParaVencer > 30 && c.diasParaVencer <= 90).length}</strong> em 31-90 dias
                   </span>
                 </div>
               </CardTitle>
@@ -285,7 +285,7 @@ export default function Assinaturas() {
                 </table>
               </div>
               <div className="text-[11px] text-muted-foreground mt-2">
-                Clique em uma linha para abrir o cliente. Mostra contratos vencidos + os que vencem nos próximos 60 dias (top 20).
+                Clique em uma linha para abrir o cliente. Mostra contratos vencidos + os que vencem nos próximos 90 dias (top 20).
               </div>
             </CardContent>
           </Card>

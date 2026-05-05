@@ -173,7 +173,18 @@ export default function Lancamentos() {
   const [activeTab, setActiveTab] = useState<'diario' | 'conciliacao'>('diario');
 
   // ─── Saídas do extrato bancário (entram como despesas no Diário) ──
-  const [bankTx, setBankTx] = useState<Array<{ id: string; date: string; description: string; amount: number; incluidoNoFluxo?: boolean }>>([]);
+  const [bankTx, setBankTx] = useState<Array<{ id: string; date: string; description: string; amount: number; categoria?: string; incluidoNoFluxo?: boolean }>>([]);
+  // ─── Comissões + bônus do mês (vem de /api/pagamento) ──
+  const [comissoesBonus, setComissoesBonus] = useState<number>(0);
+  useEffect(() => {
+    let cancelled = false;
+    const API_BASE = (globalThis as any).__API_BASE__ || "";
+    fetch(`${API_BASE}/api/pagamento/${selectedMes}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled && d?.totais) setComissoesBonus(d.totais.totalBruto || 0); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [selectedMes]);
   const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -282,6 +293,41 @@ export default function Lancamentos() {
     .filter(t => t.amount < 0 && t.incluidoNoFluxo === false)
     .reduce((s, t) => s + Math.abs(t.amount), 0);
 
+  // ─── Agregação por categoria (cards de DESPESAS detalhadas) ──
+  const CATEGORIA_LABELS: Record<string, string> = {
+    sistema: "Sistema",
+    funcionario: "Funcionário",
+    aluguel: "Aluguel",
+    agua_luz: "Água/Luz",
+    produtos: "Produtos",
+    imposto: "Imposto",
+    transferencia_interna: "Transf. Interna (excluída)",
+    esporadica: "Esporádica",
+    outros: "Outros",
+  };
+  const ORDEM_CATEGORIAS = [
+    "aluguel", "funcionario", "agua_luz", "sistema",
+    "produtos", "imposto", "esporadica", "outros",
+  ];
+  const despesasPorCategoria = useMemo(() => {
+    const total: Record<string, number> = {};
+    let semCategoria = 0;
+    let transferenciaInterna = 0;
+    for (const t of bankTx) {
+      if (t.amount >= 0) continue;
+      if (t.incluidoNoFluxo === false) continue;
+      const valor = Math.abs(t.amount);
+      const cat = t.categoria;
+      if (!cat) { semCategoria += valor; continue; }
+      if (cat === "transferencia_interna") { transferenciaInterna += valor; continue; }
+      total[cat] = (total[cat] || 0) + valor;
+    }
+    return { total, semCategoria, transferenciaInterna };
+  }, [bankTx]);
+
+  const totalDespesasComCategoria = Object.values(despesasPorCategoria.total).reduce((s, v) => s + v, 0)
+    + despesasPorCategoria.semCategoria;
+
   const monthLabelCapital = labelMesPtBR(selectedMes);
 
   return (
@@ -387,6 +433,83 @@ export default function Lancamentos() {
               <p className={`text-lg font-bold ${totalReceita - totalDespesa >= 0 ? 'text-green-500' : 'text-red-500'}`} data-testid="saldo">
                 {formatCurrency(totalReceita - totalDespesa)}
               </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Quebra detalhada por categoria */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* RECEITAS */}
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Receitas</span>
+              <span className="text-base font-bold text-green-500 tabular-nums">{formatCurrency(totalReceita)}</span>
+            </div>
+            <div className="space-y-1.5 text-sm">
+              <div className="flex items-center justify-between py-1 border-b border-border/40">
+                <span className="text-muted-foreground">Faturamento Trinks</span>
+                <span className="tabular-nums">{formatCurrency(totalReceita)}</span>
+              </div>
+              {totalReceita === 0 && (
+                <p className="text-xs text-muted-foreground italic py-2">Nenhuma receita no mês selecionado.</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* DESPESAS */}
+        <Card className="bg-card border-card-border">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Despesas</span>
+              <span className="text-base font-bold text-red-500 tabular-nums">
+                {formatCurrency(totalDespesa + comissoesBonus)}
+              </span>
+            </div>
+            <div className="space-y-1.5 text-sm">
+              {/* Comissões + bônus (referência) */}
+              {comissoesBonus > 0 && (
+                <div className="flex items-center justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">
+                    Comissões + Bônus
+                    <span className="text-[10px] ml-1 text-amber-400">(do Pagamento)</span>
+                  </span>
+                  <span className="tabular-nums">{formatCurrency(comissoesBonus)}</span>
+                </div>
+              )}
+              {/* Categorias do extrato */}
+              {ORDEM_CATEGORIAS.map(cat => {
+                const valor = despesasPorCategoria.total[cat] || 0;
+                if (valor === 0) return null;
+                return (
+                  <div key={cat} className="flex items-center justify-between py-1 border-b border-border/40">
+                    <span className="text-muted-foreground">{CATEGORIA_LABELS[cat] || cat}</span>
+                    <span className="tabular-nums">{formatCurrency(valor)}</span>
+                  </div>
+                );
+              })}
+              {/* Sem categoria */}
+              {despesasPorCategoria.semCategoria > 0 && (
+                <div className="flex items-center justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">
+                    Sem categoria
+                    <span className="text-[10px] ml-1 text-amber-400">classifique na Conciliação</span>
+                  </span>
+                  <span className="tabular-nums">{formatCurrency(despesasPorCategoria.semCategoria)}</span>
+                </div>
+              )}
+              {/* Transferência interna (informativo, não soma) */}
+              {despesasPorCategoria.transferenciaInterna > 0 && (
+                <div className="flex items-center justify-between py-1 text-xs">
+                  <span className="text-muted-foreground italic">Transf. interna (excluída do total)</span>
+                  <span className="tabular-nums text-muted-foreground italic">{formatCurrency(despesasPorCategoria.transferenciaInterna)}</span>
+                </div>
+              )}
+              {totalDespesa === 0 && comissoesBonus === 0 && (
+                <p className="text-xs text-muted-foreground italic py-2">Nenhuma despesa no mês.</p>
+              )}
             </div>
           </CardContent>
         </Card>

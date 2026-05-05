@@ -1213,7 +1213,7 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
         <input ref={fileInput} type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" onChange={handleFile} className="hidden" />
         <input ref={aiFileInput} type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" onChange={handleFileAI} className="hidden" />
         <div className="space-y-1.5">
-          <div className="flex gap-2">
+          <div className="flex gap-2" data-testid="conciliacao-import-card">
             <Button
               size="sm"
               variant="outline"
@@ -1221,6 +1221,7 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
               onClick={() => fileInput.current?.click()}
               disabled={uploading || uploadingAI}
               title="Aceita CSV, Excel (.xlsx) ou PDF"
+              data-testid="btn-import"
             >
               <Upload className="w-3.5 h-3.5 mr-1.5" />
               {uploading ? "Importando..." : "Importar extrato"}

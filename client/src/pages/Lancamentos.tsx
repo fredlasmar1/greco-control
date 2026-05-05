@@ -249,9 +249,20 @@ export default function Lancamentos() {
             csvAt={csvAt}
           />
           <Button
+            type="button"
             variant="outline"
             size="sm"
-            onClick={() => setActiveTab("conciliacao")}
+            onClick={() => {
+              setActiveTab("conciliacao");
+              // Aguarda o React renderizar a tab e rola até o botão de import
+              setTimeout(() => {
+                const el = document.querySelector('[data-testid="conciliacao-import-card"]')
+                  || document.querySelector('[data-testid="btn-import"]');
+                if (el && "scrollIntoView" in el) {
+                  (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
+                }
+              }, 200);
+            }}
             title="Subir CSV/Excel/PDF do extrato bancário para conciliar com Trinks"
             data-testid="btn-importar-extrato-shortcut"
           >

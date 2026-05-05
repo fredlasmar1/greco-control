@@ -217,6 +217,40 @@ interface TransacaoBanco {
   tipo?: TipoTransacao;
   categoria?: CategoriaGasto; // só faz sentido pra valores negativos (gastos)
   importedAt: string;
+  /** Quando false, a transação fica visível mas não conta no fluxo de caixa
+   *  e nem no DRE. Permite ao usuário "ignorar" lançamentos sem deletá-los. */
+  incluidoNoFluxo?: boolean;
+}
+
+/** Chave de deduplicação: contaId + date + amount + descrição normalizada (sem
+ *  pontuação/espaços extras, lowercase). Duas transações com mesma chave são
+ *  consideradas duplicatas. */
+function chaveDedupTransacao(t: TransacaoBanco): string {
+  const desc = (t.description || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[^a-z0-9 ]/g, "")
+    .trim();
+  return `${t.contaId}|${t.date}|${t.amount.toFixed(2)}|${desc}`;
+}
+
+/** Remove duplicatas mantendo a transação mais antiga (primeiro insert vence).
+ *  Retorna { removidas, restantes }. Não chama saveTransacoesBanco — caller decide. */
+function dedupTransacoesBancoInPlace(): { removidas: number; restantes: number } {
+  const vistas = new Set<string>();
+  const ordenadas = [...transacoesBanco].sort((a, b) =>
+    (a.importedAt || "").localeCompare(b.importedAt || "")
+  );
+  const filtradas: TransacaoBanco[] = [];
+  for (const t of ordenadas) {
+    const k = chaveDedupTransacao(t);
+    if (vistas.has(k)) continue;
+    vistas.add(k);
+    filtradas.push(t);
+  }
+  const removidas = transacoesBanco.length - filtradas.length;
+  transacoesBanco = filtradas;
+  return { removidas, restantes: filtradas.length };
 }
 
 // Regras de auto-categorização: { palavra-chave (lower) → categoria }
@@ -4209,6 +4243,11 @@ Regras CRÍTICAS:
       }).filter(t => t.date && !isNaN(t.amount) && t.amount !== 0);
 
       transacoesBanco.push(...novas);
+      // Idempotência: dedup elimina duplicatas se o mesmo extrato foi reuploadado.
+      // Resolve também o bug do replaceMonth (que dependia do parâmetro `mes`).
+      const antesDedup = transacoesBanco.length;
+      dedupTransacoesBancoInPlace();
+      const removidasDedup = antesDedup - transacoesBanco.length;
       saveTransacoesBanco();
       const contagemPorMes: Record<string, number> = {};
       for (const t of novas) {
@@ -4217,7 +4256,12 @@ Regras CRÍTICAS:
       }
       const mesPredominante = Object.entries(contagemPorMes)
         .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-      return res.json({ ok: true, inserted: novas.length, mesPredominante });
+      return res.json({
+        ok: true,
+        inserted: novas.length - removidasDedup,
+        duplicatasIgnoradas: removidasDedup,
+        mesPredominante,
+      });
     } catch (err: any) {
       log(`IA upload error: ${err.message}`, "consolidacao");
       return res.status(500).json({ error: err.message || "Erro processando arquivo com IA" });
@@ -4369,6 +4413,9 @@ Regras CRÍTICAS:
     }).filter((t: TransacaoBanco) => t.date && !isNaN(t.amount));
 
     transacoesBanco.push(...novas);
+    const antesDedup = transacoesBanco.length;
+    dedupTransacoesBancoInPlace();
+    const removidasDedup = antesDedup - transacoesBanco.length;
     saveTransacoesBanco();
     const contagemPorMes: Record<string, number> = {};
     for (const t of novas) {
@@ -4377,7 +4424,12 @@ Regras CRÍTICAS:
     }
     const mesPredominante = Object.entries(contagemPorMes)
       .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-    return res.json({ ok: true, inserted: novas.length, mesPredominante });
+    return res.json({
+      ok: true,
+      inserted: novas.length - removidasDedup,
+      duplicatasIgnoradas: removidasDedup,
+      mesPredominante,
+    });
   });
 
   // PUT /api/consolidacao/transacoes/:id — atualiza valor/tipo/descrição de uma transação
@@ -4453,6 +4505,38 @@ Regras CRÍTICAS:
     const chave = decodeURIComponent(req.params.chave);
     delete regrasGastos[chave];
     saveRegrasGastos();
+    return res.json({ ok: true });
+  });
+
+  // POST /api/consolidacao/dedup — remove duplicatas (mesma chave) mantendo a mais antiga
+  app.post("/api/consolidacao/dedup", (_req: Request, res: Response) => {
+    const before = transacoesBanco.length;
+    const { removidas, restantes } = dedupTransacoesBancoInPlace();
+    if (removidas > 0) saveTransacoesBanco();
+    log(`[consolidacao/dedup] removidas=${removidas} antes=${before} depois=${restantes}`, "consolidacao");
+    return res.json({ ok: true, removidas, restantes });
+  });
+
+  // PATCH /api/consolidacao/transacoes/:id/fluxo — toggle inclusão no fluxo
+  app.patch("/api/consolidacao/transacoes/:id/fluxo", (req: Request, res: Response) => {
+    const id = String(req.params.id || "");
+    const { incluido } = req.body;
+    const tx = transacoesBanco.find(t => t.id === id);
+    if (!tx) return res.status(404).json({ ok: false, error: "Transação não encontrada" });
+    tx.incluidoNoFluxo = incluido !== false; // default true
+    saveTransacoesBanco();
+    return res.json({ ok: true, transacao: tx });
+  });
+
+  // DELETE /api/consolidacao/transacoes/:id — apaga uma transação específica
+  app.delete("/api/consolidacao/transacoes/:id", (req: Request, res: Response) => {
+    const id = String(req.params.id || "");
+    const before = transacoesBanco.length;
+    transacoesBanco = transacoesBanco.filter(t => t.id !== id);
+    if (transacoesBanco.length === before) {
+      return res.status(404).json({ ok: false, error: "Transação não encontrada" });
+    }
+    saveTransacoesBanco();
     return res.json({ ok: true });
   });
 

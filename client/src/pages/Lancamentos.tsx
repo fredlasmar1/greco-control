@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { CalendarCheck, Plus, Filter, ArrowUpCircle, ArrowDownCircle, Upload } from "lucide-react";
+import { CalendarCheck, Plus, Filter, ArrowUpCircle, ArrowDownCircle, Upload, Eye, EyeOff, Trash2, Sparkles } from "lucide-react";
 import type { DailyEntry } from "@shared/schema";
 
 function FecharDiaDialog() {
@@ -172,6 +172,44 @@ export default function Lancamentos() {
   const [filter, setFilter] = useState<'todos' | 'receita' | 'despesa'>('todos');
   const [activeTab, setActiveTab] = useState<'diario' | 'conciliacao'>('diario');
 
+  // ─── Saídas do extrato bancário (entram como despesas no Diário) ──
+  const [bankTx, setBankTx] = useState<Array<{ id: string; date: string; description: string; amount: number; incluidoNoFluxo?: boolean }>>([]);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const API_BASE = (globalThis as any).__API_BASE__ || "";
+    fetch(`${API_BASE}/api/consolidacao/transacoes?mes=${selectedMes}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setBankTx(Array.isArray(d) ? d : []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [selectedMes, reloadKey]);
+
+  const reloadBank = () => setReloadKey(k => k + 1);
+  const toggleFluxoTx = async (id: string, incluido: boolean) => {
+    const API_BASE = (globalThis as any).__API_BASE__ || "";
+    await fetch(`${API_BASE}/api/consolidacao/transacoes/${id}/fluxo`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ incluido }),
+    });
+    reloadBank();
+  };
+  const deleteTx = async (id: string) => {
+    if (!confirm("Apagar este lançamento bancário? Esta ação não pode ser desfeita.")) return;
+    const API_BASE = (globalThis as any).__API_BASE__ || "";
+    await fetch(`${API_BASE}/api/consolidacao/transacoes/${id}`, { method: "DELETE" });
+    reloadBank();
+  };
+  const dedupAll = async () => {
+    if (!confirm("Limpar duplicatas? Mantém a transação mais antiga de cada par.")) return;
+    const API_BASE = (globalThis as any).__API_BASE__ || "";
+    const r = await fetch(`${API_BASE}/api/consolidacao/dedup`, { method: "POST" });
+    const d = await r.json();
+    alert(`${d.removidas} duplicatas removidas. Restaram ${d.restantes}.`);
+    reloadBank();
+  };
+
   // Derive entries from Trinks data when available
   const entries = useMemo((): DailyEntry[] => {
     if (!hasTrinksData || !trinks) return isMesCorrente ? demoEntries : [];
@@ -214,14 +252,35 @@ export default function Lancamentos() {
       }));
   }, [hasTrinksData, trinks, demoEntries, isMesCorrente]);
 
-  const filtered = useMemo(() => {
-    let list = [...entries];
+  // Saídas do extrato como linhas de despesa no Diário (com flag de inclusão no fluxo)
+  type LinhaExtrato = DailyEntry & { _extrato?: true; _incluido?: boolean };
+  const filtered = useMemo((): LinhaExtrato[] => {
+    let list: LinhaExtrato[] = [...entries];
+    for (const t of bankTx) {
+      if (t.amount >= 0) continue; // entradas do extrato não duplicam Trinks; só saídas viram despesa
+      list.push({
+        id: t.id,
+        date: t.date,
+        type: 'despesa',
+        description: t.description || "Saída bancária",
+        amount: Math.abs(t.amount),
+        _extrato: true,
+        _incluido: t.incluidoNoFluxo !== false,
+      });
+    }
     if (filter !== 'todos') list = list.filter(e => e.type === filter);
-    return list.sort((a, b) => b.date.localeCompare(a.date));
-  }, [entries, filter]);
+    return list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }, [entries, bankTx, filter]);
 
   const totalReceita = entries.filter(e => e.type === 'receita').reduce((s, e) => s + e.amount, 0);
-  const totalDespesa = entries.filter(e => e.type === 'despesa').reduce((s, e) => s + e.amount, 0);
+  const totalDespesaManual = entries.filter(e => e.type === 'despesa').reduce((s, e) => s + e.amount, 0);
+  const totalDespesaBanco = bankTx
+    .filter(t => t.amount < 0 && t.incluidoNoFluxo !== false)
+    .reduce((s, t) => s + Math.abs(t.amount), 0);
+  const totalDespesa = totalDespesaManual + totalDespesaBanco;
+  const totalDespesaIgnorada = bankTx
+    .filter(t => t.amount < 0 && t.incluidoNoFluxo === false)
+    .reduce((s, t) => s + Math.abs(t.amount), 0);
 
   const monthLabelCapital = labelMesPtBR(selectedMes);
 
@@ -269,6 +328,19 @@ export default function Lancamentos() {
             <Upload className="w-4 h-4 mr-1.5" />
             Importar extrato bancário
           </Button>
+          {bankTx.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={dedupAll}
+              title="Remove transações bancárias duplicadas (mesma data + valor + descrição)"
+              data-testid="btn-dedup"
+            >
+              <Sparkles className="w-4 h-4 mr-1.5" />
+              Limpar duplicatas
+            </Button>
+          )}
           <AddExpenseDialog />
           <FecharDiaDialog />
         </div>
@@ -298,6 +370,12 @@ export default function Lancamentos() {
             <div>
               <p className="text-xs text-muted-foreground">Total Despesas</p>
               <p className="text-lg font-bold text-red-500" data-testid="total-despesa">{formatCurrency(totalDespesa)}</p>
+              {totalDespesaBanco > 0 && (
+                <p className="text-[10px] text-muted-foreground">
+                  Inclui {formatCurrency(totalDespesaBanco)} do extrato
+                  {totalDespesaIgnorada > 0 && ` · ${formatCurrency(totalDespesaIgnorada)} ignorado`}
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -342,11 +420,19 @@ export default function Lancamentos() {
                   <th className="text-left p-3 text-xs text-muted-foreground font-medium">Descrição</th>
                   <th className="text-left p-3 text-xs text-muted-foreground font-medium hidden sm:table-cell">Categoria</th>
                   <th className="text-right p-3 text-xs text-muted-foreground font-medium">Valor</th>
+                  <th className="text-right p-3 text-xs text-muted-foreground font-medium w-32">Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((entry) => (
-                  <tr key={entry.id} className="border-b border-border/50 hover:bg-muted/30" data-testid={`entry-${entry.id}`}>
+                {filtered.map((entry) => {
+                  const isExtrato = (entry as any)._extrato === true;
+                  const incluido = (entry as any)._incluido !== false;
+                  return (
+                  <tr
+                    key={entry.id}
+                    className={`border-b border-border/50 hover:bg-muted/30 ${isExtrato && !incluido ? "opacity-50" : ""}`}
+                    data-testid={`entry-${entry.id}`}
+                  >
                     <td className="p-3 text-xs text-muted-foreground whitespace-nowrap">
                       {new Date(entry.date + 'T12:00:00').toLocaleDateString('pt-BR')}
                     </td>
@@ -357,6 +443,11 @@ export default function Lancamentos() {
                       >
                         {entry.type === 'receita' ? 'Receita' : 'Despesa'}
                       </Badge>
+                      {isExtrato && (
+                        <Badge variant="outline" className="text-[9px] ml-1 bg-amber-500/10 text-amber-400 border-amber-500/30">
+                          Extrato
+                        </Badge>
+                      )}
                     </td>
                     <td className="p-3 text-sm">
                       {entry.description}
@@ -368,8 +459,39 @@ export default function Lancamentos() {
                     <td className={`p-3 text-right font-medium ${entry.type === 'receita' ? 'text-green-500' : 'text-red-500'}`}>
                       {entry.type === 'despesa' ? '-' : ''}{formatCurrency(entry.amount)}
                     </td>
+                    <td className="p-3 text-right">
+                      {isExtrato ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2"
+                            onClick={() => toggleFluxoTx(entry.id, !incluido)}
+                            title={incluido ? "Ignorar no fluxo (não conta no DRE)" : "Incluir no fluxo de novo"}
+                          >
+                            {incluido
+                              ? <Eye className="w-3.5 h-3.5 text-emerald-400" />
+                              : <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-red-400 hover:text-red-500 hover:bg-red-500/10"
+                            onClick={() => deleteTx(entry.id)}
+                            title="Apagar definitivamente"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">—</span>
+                      )}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

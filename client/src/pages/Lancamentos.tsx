@@ -328,6 +328,18 @@ export default function Lancamentos() {
   const totalDespesasComCategoria = Object.values(despesasPorCategoria.total).reduce((s, v) => s + v, 0)
     + despesasPorCategoria.semCategoria;
 
+  // ─── Comparativo Trinks vs Banco ────────────────────────────
+  const entradasTrinks = totalReceita; // faturamento Trinks do mês
+  const entradasBanco = bankTx
+    .filter(t => t.amount > 0)
+    .reduce((s, t) => s + t.amount, 0);
+  const saidasTrinks = comissoesBonus; // obrigações geradas (comissões a pagar)
+  const saidasBanco = bankTx
+    .filter(t => t.amount < 0 && t.incluidoNoFluxo !== false && t.categoria !== "transferencia_interna")
+    .reduce((s, t) => s + Math.abs(t.amount), 0);
+  const difEntradas = entradasTrinks - entradasBanco; // >0: vendeu mas não recebeu ainda
+  const difSaidas = saidasTrinks - saidasBanco;       // >0: gerou obrigação mas não pagou ainda
+
   const monthLabelCapital = labelMesPtBR(selectedMes);
 
   return (
@@ -514,6 +526,83 @@ export default function Lancamentos() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Comparativo Trinks vs Banco */}
+      <Card className="bg-card border-card-border">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <span className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
+              Trinks × Banco — Conciliação
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              Diferenças positivas = Trinks &gt; Banco
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs text-muted-foreground">
+                  <th className="text-left py-2 px-2 font-medium"></th>
+                  <th className="text-right py-2 px-2 font-medium">Trinks</th>
+                  <th className="text-right py-2 px-2 font-medium">Banco</th>
+                  <th className="text-right py-2 px-2 font-medium">Diferença</th>
+                  <th className="text-left py-2 px-2 font-medium hidden sm:table-cell">Significado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-border/40">
+                  <td className="py-2 px-2 font-medium text-green-500">Entradas</td>
+                  <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(entradasTrinks)}</td>
+                  <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(entradasBanco)}</td>
+                  <td className={`py-2 px-2 text-right tabular-nums font-medium ${Math.abs(difEntradas) < 100 ? "text-emerald-400" : difEntradas > 0 ? "text-amber-400" : "text-blue-400"}`}>
+                    {difEntradas >= 0 ? "+" : ""}{formatCurrency(difEntradas)}
+                  </td>
+                  <td className="py-2 px-2 text-xs text-muted-foreground hidden sm:table-cell">
+                    {Math.abs(difEntradas) < 100
+                      ? "Conciliados"
+                      : difEntradas > 0
+                        ? "Vendido sem cair na conta ainda (pendente)"
+                        : "Recebimento bancário sem origem Trinks identificada"}
+                  </td>
+                </tr>
+                <tr className="border-b border-border/40">
+                  <td className="py-2 px-2 font-medium text-red-500">Saídas</td>
+                  <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(saidasTrinks)}</td>
+                  <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(saidasBanco)}</td>
+                  <td className={`py-2 px-2 text-right tabular-nums font-medium ${Math.abs(difSaidas) < 100 ? "text-emerald-400" : difSaidas > 0 ? "text-amber-400" : "text-blue-400"}`}>
+                    {difSaidas >= 0 ? "+" : ""}{formatCurrency(difSaidas)}
+                  </td>
+                  <td className="py-2 px-2 text-xs text-muted-foreground hidden sm:table-cell">
+                    {Math.abs(difSaidas) < 100
+                      ? "Comissões pagas"
+                      : difSaidas > 0
+                        ? "Comissão a pagar ainda (obrigação aberta)"
+                        : "Banco saiu mais do que comissões (outras despesas)"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 px-2 font-bold">Resultado</td>
+                  <td className="py-2 px-2 text-right tabular-nums font-bold">
+                    {formatCurrency(entradasTrinks - saidasTrinks)}
+                  </td>
+                  <td className="py-2 px-2 text-right tabular-nums font-bold">
+                    {formatCurrency(entradasBanco - saidasBanco)}
+                  </td>
+                  <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">—</td>
+                  <td className="py-2 px-2 text-xs text-muted-foreground hidden sm:table-cell">
+                    Trinks = potencial · Banco = caixa real
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-2">
+            <strong>Trinks</strong> = vendas registradas (entrada) e comissões geradas a pagar (saída).
+            {" "}<strong>Banco</strong> = entradas reais no extrato e saídas reais (excluindo transf. internas e ignoradas).
+            {" "}A diferença mostra o gap entre o que foi vendido/devido e o que foi efetivamente movimentado na conta.
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Filter */}
       <div className="flex gap-2">

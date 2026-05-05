@@ -235,7 +235,15 @@ function chaveDedupTransacao(t: TransacaoBanco): string {
 }
 
 /** Remove duplicatas mantendo a transação mais antiga (primeiro insert vence).
- *  Retorna { removidas, restantes }. Não chama saveTransacoesBanco — caller decide. */
+ *
+ *  IMPORTANTE: aplica APENAS em saídas (amount < 0). Entradas bancárias
+ *  com mesma data/valor/descrição (ex: 4 transferências de R$ 5.000 da
+ *  InfinityPay em dias próximos com a mesma descrição) são frequentemente
+ *  legítimas — não duplicatas. Saídas duplicadas geralmente vêm de upload
+ *  duplo do mesmo extrato.
+ *
+ *  Retorna { removidas, restantes }. Não chama saveTransacoesBanco — caller decide.
+ */
 function dedupTransacoesBancoInPlace(): { removidas: number; restantes: number } {
   const vistas = new Set<string>();
   const ordenadas = [...transacoesBanco].sort((a, b) =>
@@ -243,6 +251,8 @@ function dedupTransacoesBancoInPlace(): { removidas: number; restantes: number }
   );
   const filtradas: TransacaoBanco[] = [];
   for (const t of ordenadas) {
+    // Entradas: nunca dedupar (preserva sempre).
+    if (t.amount >= 0) { filtradas.push(t); continue; }
     const k = chaveDedupTransacao(t);
     if (vistas.has(k)) continue;
     vistas.add(k);
@@ -4243,11 +4253,6 @@ Regras CRÍTICAS:
       }).filter(t => t.date && !isNaN(t.amount) && t.amount !== 0);
 
       transacoesBanco.push(...novas);
-      // Idempotência: dedup elimina duplicatas se o mesmo extrato foi reuploadado.
-      // Resolve também o bug do replaceMonth (que dependia do parâmetro `mes`).
-      const antesDedup = transacoesBanco.length;
-      dedupTransacoesBancoInPlace();
-      const removidasDedup = antesDedup - transacoesBanco.length;
       saveTransacoesBanco();
       const contagemPorMes: Record<string, number> = {};
       for (const t of novas) {
@@ -4256,12 +4261,7 @@ Regras CRÍTICAS:
       }
       const mesPredominante = Object.entries(contagemPorMes)
         .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-      return res.json({
-        ok: true,
-        inserted: novas.length - removidasDedup,
-        duplicatasIgnoradas: removidasDedup,
-        mesPredominante,
-      });
+      return res.json({ ok: true, inserted: novas.length, mesPredominante });
     } catch (err: any) {
       log(`IA upload error: ${err.message}`, "consolidacao");
       return res.status(500).json({ error: err.message || "Erro processando arquivo com IA" });
@@ -4413,9 +4413,6 @@ Regras CRÍTICAS:
     }).filter((t: TransacaoBanco) => t.date && !isNaN(t.amount));
 
     transacoesBanco.push(...novas);
-    const antesDedup = transacoesBanco.length;
-    dedupTransacoesBancoInPlace();
-    const removidasDedup = antesDedup - transacoesBanco.length;
     saveTransacoesBanco();
     const contagemPorMes: Record<string, number> = {};
     for (const t of novas) {
@@ -4424,12 +4421,7 @@ Regras CRÍTICAS:
     }
     const mesPredominante = Object.entries(contagemPorMes)
       .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-    return res.json({
-      ok: true,
-      inserted: novas.length - removidasDedup,
-      duplicatasIgnoradas: removidasDedup,
-      mesPredominante,
-    });
+    return res.json({ ok: true, inserted: novas.length, mesPredominante });
   });
 
   // PUT /api/consolidacao/transacoes/:id — atualiza valor/tipo/descrição de uma transação

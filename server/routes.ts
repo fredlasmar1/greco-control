@@ -4210,7 +4210,14 @@ Regras CRÍTICAS:
 
       transacoesBanco.push(...novas);
       saveTransacoesBanco();
-      return res.json({ ok: true, inserted: novas.length });
+      const contagemPorMes: Record<string, number> = {};
+      for (const t of novas) {
+        const m = (t.date || "").slice(0, 7);
+        if (m) contagemPorMes[m] = (contagemPorMes[m] || 0) + 1;
+      }
+      const mesPredominante = Object.entries(contagemPorMes)
+        .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      return res.json({ ok: true, inserted: novas.length, mesPredominante });
     } catch (err: any) {
       log(`IA upload error: ${err.message}`, "consolidacao");
       return res.status(500).json({ error: err.message || "Erro processando arquivo com IA" });
@@ -4309,7 +4316,15 @@ Regras CRÍTICAS:
 
       transacoesBanco.push(...novas);
       saveTransacoesBanco();
-      return res.json({ ok: true, inserted: novas.length });
+      // Detecta o mês predominante das transações inseridas (pra UX no frontend)
+      const contagemPorMes: Record<string, number> = {};
+      for (const t of novas) {
+        const m = (t.date || "").slice(0, 7);
+        if (m) contagemPorMes[m] = (contagemPorMes[m] || 0) + 1;
+      }
+      const mesPredominante = Object.entries(contagemPorMes)
+        .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      return res.json({ ok: true, inserted: novas.length, mesPredominante });
     } catch (err: any) {
       log(`PDF upload error: ${err.message}`, "consolidacao");
       return res.status(500).json({ error: err.message || "Erro processando PDF" });
@@ -4355,7 +4370,14 @@ Regras CRÍTICAS:
 
     transacoesBanco.push(...novas);
     saveTransacoesBanco();
-    return res.json({ ok: true, inserted: novas.length });
+    const contagemPorMes: Record<string, number> = {};
+    for (const t of novas) {
+      const m = (t.date || "").slice(0, 7);
+      if (m) contagemPorMes[m] = (contagemPorMes[m] || 0) + 1;
+    }
+    const mesPredominante = Object.entries(contagemPorMes)
+      .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    return res.json({ ok: true, inserted: novas.length, mesPredominante });
   });
 
   // PUT /api/consolidacao/transacoes/:id — atualiza valor/tipo/descrição de uma transação

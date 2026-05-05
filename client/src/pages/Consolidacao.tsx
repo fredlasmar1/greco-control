@@ -574,6 +574,7 @@ export default function Consolidacao({ embedded = false }: ConsolidacaoProps = {
                 totalTx={transacoes.filter(t => t.contaId === c.id).length}
                 onReload={loadData}
                 mes={selectedMes}
+                onChangeMes={setSelectedMes}
                 todasContas={contas}
               />
             ))}
@@ -990,7 +991,7 @@ function ContaDialog({ onSaved, conta, trigger, todasContas = [] }: { onSaved: (
 }
 
 // ─── Card de conta ──────────────────────────────────────────
-function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta: Conta; totalTx: number; onReload: () => void; mes: string; todasContas?: Conta[] }) {
+function ContaCard({ conta, totalTx, onReload, mes, onChangeMes, todasContas = [] }: { conta: Conta; totalTx: number; onReload: () => void; mes: string; onChangeMes?: (m: string) => void; todasContas?: Conta[] }) {
   const { toast } = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   const aiFileInput = useRef<HTMLInputElement>(null);
@@ -1015,7 +1016,16 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
         throw new Error(err.error || "Falha no processamento com IA");
       }
       const data = await res.json();
-      toast({ title: "IA processou!", description: `${data.inserted} transações extraídas.` });
+      // Se as transações inseridas são de outro mês, trocar o seletor automaticamente
+      if (data.mesPredominante && data.mesPredominante !== mes && onChangeMes) {
+        onChangeMes(data.mesPredominante);
+        toast({
+          title: `${data.inserted} transações importadas`,
+          description: `Mês ajustado para ${data.mesPredominante} (extrato é desse mês).`,
+        });
+      } else {
+        toast({ title: "IA processou!", description: `${data.inserted} transações extraídas.` });
+      }
       onReload();
     } catch (err: any) {
       toast({ title: "Erro no processamento IA", description: err.message, variant: "destructive" });
@@ -1049,10 +1059,18 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
           throw new Error(err.error || "Falha ao processar PDF");
         }
         const data = await res.json();
-        toast({
-          title: "PDF processado!",
-          description: `${data.inserted} transações extraídas via IA.`,
-        });
+        if (data.mesPredominante && data.mesPredominante !== mes && onChangeMes) {
+          onChangeMes(data.mesPredominante);
+          toast({
+            title: `${data.inserted} transações importadas`,
+            description: `Mês ajustado para ${data.mesPredominante} (extrato é desse mês).`,
+          });
+        } else {
+          toast({
+            title: "PDF processado!",
+            description: `${data.inserted} transações extraídas via IA.`,
+          });
+        }
         onReload();
         return;
       }
@@ -1129,10 +1147,18 @@ function ContaCard({ conta, totalTx, onReload, mes, todasContas = [] }: { conta:
       if (!res.ok) throw new Error("upload falhou");
       const data = await res.json();
       const antecipacoes = transacoes.filter(t => t.tipo === "antecipacao").length;
-      toast({
-        title: "Importado!",
-        description: `${data.inserted} transações${antecipacoes > 0 ? ` (${antecipacoes} antecipações detectadas)` : ""}.`,
-      });
+      if (data.mesPredominante && data.mesPredominante !== mes && onChangeMes) {
+        onChangeMes(data.mesPredominante);
+        toast({
+          title: `${data.inserted} transações importadas`,
+          description: `Mês ajustado para ${data.mesPredominante}${antecipacoes > 0 ? ` · ${antecipacoes} antecipações` : ""}.`,
+        });
+      } else {
+        toast({
+          title: "Importado!",
+          description: `${data.inserted} transações${antecipacoes > 0 ? ` (${antecipacoes} antecipações detectadas)` : ""}.`,
+        });
+      }
       onReload();
     } catch (err: any) {
       toast({ title: "Erro no upload", description: err.message, variant: "destructive" });

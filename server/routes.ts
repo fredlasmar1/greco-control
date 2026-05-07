@@ -38,6 +38,19 @@ import {
   type MetaProfissional,
 } from "./metasProfissional";
 import {
+  listCategorias as listExpenseCategorias,
+  listRegras as listExpenseRegras,
+  upsertCategoria as upsertExpenseCategoria,
+  deleteCategoria as deleteExpenseCategoria,
+  upsertRegra as upsertExpenseRegra,
+  deleteRegra as deleteExpenseRegra,
+  classificarDescricao,
+  bumpRegrasAplicadas,
+  type ExpenseCategoria,
+  type ExpenseRegra,
+  type ExpenseTipo,
+} from "./expenseCategorias";
+import {
   getConfig as getConfigFin,
   setConfig as setConfigFin,
   fracaoCartao,
@@ -108,6 +121,9 @@ interface FinanceEntry {
   recurrent: boolean;
   notes?: string;
   createdAt: string;
+  // v27: categorização nova (substitui category/subcategory quando preenchida)
+  categoriaId?: string;
+  subcategoriaNova?: string;
 }
 
 // Diretório de dados persistente. No Railway, configurar um Volume montado em /data.
@@ -215,11 +231,17 @@ interface TransacaoBanco {
   description: string;
   amount: number; // positivo = entrada
   tipo?: TipoTransacao;
-  categoria?: CategoriaGasto; // só faz sentido pra valores negativos (gastos)
+  categoria?: CategoriaGasto; // legado: enum hard-coded — só pra retrocompat
   importedAt: string;
   /** Quando false, a transação fica visível mas não conta no fluxo de caixa
    *  e nem no DRE. Permite ao usuário "ignorar" lançamentos sem deletá-los. */
   incluidoNoFluxo?: boolean;
+  // v27: categorização nova baseada em ExpenseCategoria (id editável pelo usuário)
+  categoriaId?: string;
+  subcategoria?: string;
+  // Quando preenchido, indica que a categoria foi atribuída por uma regra automática.
+  // null/undefined = atribuição manual ou ainda sem categoria.
+  regraIdAplicada?: string;
 }
 
 /** Chave de deduplicação: contaId + date + amount + descrição normalizada (sem
@@ -564,6 +586,7 @@ function autoCategorizarGasto(description: string): CategoriaGasto | undefined {
   const d = (description || "").toLowerCase();
 
   // Primeiro: regras aprendidas pelo usuário (match parcial)
+  // (helper antiga — categorias hard-coded; mantido pra retrocompat)
   for (const [palavra, categoria] of Object.entries(regrasGastos)) {
     if (d.includes(palavra.toLowerCase())) return categoria;
   }
@@ -577,6 +600,30 @@ function autoCategorizarGasto(description: string): CategoriaGasto | undefined {
   if (/transf.*entre.*contas|transf\s*propria|para\s*minha\s*conta/.test(d)) return "transferencia_interna";
 
   return undefined;
+}
+
+/** Aplica regras do sistema novo (ExpenseCategoria) a um batch de transações
+ *  recém-criadas. Muta as transações em-place. Não persiste — caller chama
+ *  saveTransacoesBanco() depois. Persiste apenas o contador `vezesAplicada`
+ *  das regras. Robusto a erros: falha silenciosa não trava a importação. */
+async function classificarBatchNovo(novas: TransacaoBanco[]): Promise<void> {
+  try {
+    const regras = await listExpenseRegras();
+    const counts = new Map<string, number>();
+    for (const t of novas) {
+      if (t.amount >= 0) continue;
+      if (t.categoriaId) continue; // já veio classificada
+      const m = classificarDescricao(t.description, regras);
+      if (!m) continue;
+      t.categoriaId = m.categoriaId;
+      t.subcategoria = m.subcategoria;
+      t.regraIdAplicada = m.regraId;
+      counts.set(m.regraId, (counts.get(m.regraId) || 0) + 1);
+    }
+    if (counts.size > 0) await bumpRegrasAplicadas(counts);
+  } catch (err: any) {
+    log(`classificarBatchNovo erro: ${err.message}`, "expense");
+  }
 }
 
 const CATEGORIAS_VALIDAS: CategoriaGasto[] = [
@@ -4336,6 +4383,7 @@ Regras CRÍTICAS:
         };
       }).filter(t => t.date && !isNaN(t.amount) && t.amount !== 0);
 
+      await classificarBatchNovo(novas);
       transacoesBanco.push(...novas);
       saveTransacoesBanco();
       const contagemPorMes: Record<string, number> = {};
@@ -4442,6 +4490,7 @@ Regras CRÍTICAS:
         };
       }).filter(t => t.date && !isNaN(t.amount) && t.amount !== 0);
 
+      await classificarBatchNovo(novas);
       transacoesBanco.push(...novas);
       saveTransacoesBanco();
       // Detecta o mês predominante das transações inseridas (pra UX no frontend)
@@ -4460,7 +4509,7 @@ Regras CRÍTICAS:
   });
 
   // POST /api/consolidacao/transacoes — bulk insert (do upload CSV)
-  app.post("/api/consolidacao/transacoes", (req: Request, res: Response) => {
+  app.post("/api/consolidacao/transacoes", async (req: Request, res: Response) => {
     const { contaId, transacoes, replaceMonth } = req.body;
     if (!contaId || !Array.isArray(transacoes)) {
       return res.status(400).json({ error: "contaId e transacoes[] são obrigatórios" });
@@ -4496,6 +4545,7 @@ Regras CRÍTICAS:
       };
     }).filter((t: TransacaoBanco) => t.date && !isNaN(t.amount));
 
+    await classificarBatchNovo(novas);
     transacoesBanco.push(...novas);
     saveTransacoesBanco();
     const contagemPorMes: Record<string, number> = {};
@@ -5245,6 +5295,293 @@ Regras CRÍTICAS:
     saveFinanceEntries();
     log(`Financeiro: deleted entry ${id}`, "financeiro");
     return res.json({ ok: true });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // EXPENSE CATEGORIAS & REGRAS (v27)
+  // Categorias editáveis pelo usuário + regras de auto-classificação que
+  // se aplicam a TransacaoBanco (extrato) e FinanceEntry (manual).
+  // ════════════════════════════════════════════════════════════════════════
+
+  // GET /api/expense-categorias
+  app.get("/api/expense-categorias", async (_req: Request, res: Response) => {
+    try {
+      const cats = await listExpenseCategorias();
+      return res.json({ ok: true, categorias: cats });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/expense-categorias  (cria ou atualiza)
+  app.post("/api/expense-categorias", async (req: Request, res: Response) => {
+    try {
+      const b = req.body || {};
+      if (!b.nome || !b.tipo) return res.status(400).json({ ok: false, error: "nome e tipo são obrigatórios" });
+      const tipos: ExpenseTipo[] = ['fixo','variavel','recorrente','cartao','comissao','bonus','imposto','insumo','investimento','outros'];
+      if (!tipos.includes(b.tipo)) return res.status(400).json({ ok: false, error: "tipo inválido" });
+      const novo = await upsertExpenseCategoria({
+        id: b.id,
+        nome: String(b.nome).trim(),
+        tipo: b.tipo,
+        cor: b.cor || "#64748b",
+        ativa: b.ativa !== false,
+        ordem: Number(b.ordem) || 50,
+      });
+      return res.json({ ok: true, categoria: novo });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // DELETE /api/expense-categorias/:id
+  app.delete("/api/expense-categorias/:id", async (req: Request, res: Response) => {
+    try {
+      const r = await deleteExpenseCategoria(String(req.params.id));
+      if (!r.ok) return res.status(409).json({ ok: false, error: `Categoria em uso por ${r.usadaEm} regra(s). Remova as regras antes.` });
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/expense-regras
+  app.get("/api/expense-regras", async (_req: Request, res: Response) => {
+    try {
+      const regras = await listExpenseRegras();
+      return res.json({ ok: true, regras });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/expense-regras  (cria ou atualiza)
+  app.post("/api/expense-regras", async (req: Request, res: Response) => {
+    try {
+      const b = req.body || {};
+      if (!b.pattern || !b.categoriaId) return res.status(400).json({ ok: false, error: "pattern e categoriaId obrigatórios" });
+      const novo = await upsertExpenseRegra({
+        id: b.id,
+        pattern: String(b.pattern).toLowerCase().trim(),
+        categoriaId: String(b.categoriaId),
+        subcategoria: b.subcategoria ? String(b.subcategoria).trim() : undefined,
+        ativa: b.ativa !== false,
+      });
+      return res.json({ ok: true, regra: novo });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // DELETE /api/expense-regras/:id
+  app.delete("/api/expense-regras/:id", async (req: Request, res: Response) => {
+    try {
+      await deleteExpenseRegra(String(req.params.id));
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/expenses/classificar-tudo
+  // Aplica regras a TODAS as despesas (saídas bancárias + lançamentos manuais).
+  // Por padrão NÃO sobrescreve atribuições manuais — passa { force: true } pra forçar.
+  app.post("/api/expenses/classificar-tudo", async (req: Request, res: Response) => {
+    try {
+      const force = !!(req.body || {}).force;
+      const regras = await listExpenseRegras();
+      const counts = new Map<string, number>();
+      let bankAtualizadas = 0;
+      let bankPuladas = 0;
+      let manualAtualizadas = 0;
+      let manualPuladas = 0;
+
+      // Bancárias (saídas apenas — entradas não precisam de categoria)
+      for (const t of transacoesBanco) {
+        if (t.amount >= 0) continue;
+        const jaTinha = !!t.categoriaId;
+        const eraManual = jaTinha && !t.regraIdAplicada;
+        if (jaTinha && !force && eraManual) { bankPuladas++; continue; }
+        const m = classificarDescricao(t.description, regras);
+        if (!m) continue;
+        if (jaTinha && t.categoriaId === m.categoriaId && t.regraIdAplicada === m.regraId) continue;
+        t.categoriaId = m.categoriaId;
+        t.subcategoria = m.subcategoria;
+        t.regraIdAplicada = m.regraId;
+        bankAtualizadas++;
+        counts.set(m.regraId, (counts.get(m.regraId) || 0) + 1);
+      }
+      if (bankAtualizadas > 0) saveTransacoesBanco();
+
+      // Manuais (despesas apenas)
+      for (const e of financeEntries) {
+        if (e.amount >= 0) continue;
+        const jaTinha = !!e.categoriaId;
+        if (jaTinha && !force) { manualPuladas++; continue; }
+        const m = classificarDescricao(e.description, regras);
+        if (!m) continue;
+        e.categoriaId = m.categoriaId;
+        e.subcategoriaNova = m.subcategoria;
+        manualAtualizadas++;
+        counts.set(m.regraId, (counts.get(m.regraId) || 0) + 1);
+      }
+      if (manualAtualizadas > 0) saveFinanceEntries();
+
+      await bumpRegrasAplicadas(counts);
+
+      log(`expenses/classificar-tudo: bank=${bankAtualizadas}/+${bankPuladas} skip; manual=${manualAtualizadas}/+${manualPuladas} skip`, "expense");
+      return res.json({
+        ok: true,
+        bank: { atualizadas: bankAtualizadas, puladas: bankPuladas },
+        manual: { atualizadas: manualAtualizadas, puladas: manualPuladas },
+        regrasUsadas: counts.size,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // PUT /api/expenses/:fonte/:id/categoria
+  // Atribuição manual de categoria a uma despesa específica.
+  // fonte = "bank" | "manual"
+  app.put("/api/expenses/:fonte/:id/categoria", async (req: Request, res: Response) => {
+    try {
+      const { fonte, id } = req.params;
+      const b = req.body || {};
+      const categoriaId: string | null = b.categoriaId ? String(b.categoriaId) : null;
+      const subcategoria: string | undefined = b.subcategoria ? String(b.subcategoria).trim() : undefined;
+
+      if (categoriaId !== null) {
+        const cats = await listExpenseCategorias();
+        if (!cats.find(c => c.id === categoriaId)) {
+          return res.status(400).json({ ok: false, error: "categoriaId não existe" });
+        }
+      }
+
+      if (fonte === "bank") {
+        const t = transacoesBanco.find(x => x.id === id);
+        if (!t) return res.status(404).json({ ok: false, error: "transação não encontrada" });
+        t.categoriaId = categoriaId || undefined;
+        t.subcategoria = subcategoria;
+        t.regraIdAplicada = undefined; // atribuição manual desliga origem-regra
+        saveTransacoesBanco();
+        return res.json({ ok: true, transacao: t });
+      }
+      if (fonte === "manual") {
+        const e = financeEntries.find(x => x.id === id);
+        if (!e) return res.status(404).json({ ok: false, error: "lançamento não encontrado" });
+        e.categoriaId = categoriaId || undefined;
+        e.subcategoriaNova = subcategoria;
+        saveFinanceEntries();
+        return res.json({ ok: true, entry: e });
+      }
+      return res.status(400).json({ ok: false, error: "fonte inválida (bank|manual)" });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/expenses/sumario/:mes  → totais por categoria + tipo, agrupando bank+manual
+  app.get("/api/expenses/sumario/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes); // YYYY-MM
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido" });
+
+      const cats = await listExpenseCategorias();
+      const byId = new Map(cats.map(c => [c.id, c]));
+
+      type Bucket = {
+        categoriaId: string | null;
+        categoriaNome: string;
+        tipo: ExpenseTipo | "sem_categoria";
+        cor: string;
+        total: number;
+        qtd: number;
+        subcategorias: Record<string, { total: number; qtd: number }>;
+      };
+      const buckets = new Map<string, Bucket>();
+      function getBucket(catId: string | null): Bucket {
+        const k = catId || "_sem";
+        if (buckets.has(k)) return buckets.get(k)!;
+        const c = catId ? byId.get(catId) : null;
+        const b: Bucket = {
+          categoriaId: catId,
+          categoriaNome: c ? c.nome : "Sem categoria",
+          tipo: c ? c.tipo : "sem_categoria",
+          cor: c ? c.cor : "#475569",
+          total: 0, qtd: 0, subcategorias: {},
+        };
+        buckets.set(k, b);
+        return b;
+      }
+      function addSubcat(b: Bucket, sub: string | undefined, value: number) {
+        const key = (sub || "—").trim() || "—";
+        if (!b.subcategorias[key]) b.subcategorias[key] = { total: 0, qtd: 0 };
+        b.subcategorias[key].total += value;
+        b.subcategorias[key].qtd += 1;
+      }
+
+      // Saídas bancárias do mês — incluidoNoFluxo !== false
+      for (const t of transacoesBanco) {
+        if (t.amount >= 0) continue;
+        if (t.incluidoNoFluxo === false) continue;
+        if (!t.date.startsWith(mes)) continue;
+        const v = Math.abs(t.amount);
+        const b = getBucket(t.categoriaId || null);
+        b.total += v; b.qtd += 1;
+        addSubcat(b, t.subcategoria, v);
+      }
+      // Manuais do mês — só despesas
+      for (const e of financeEntries) {
+        if (e.amount >= 0) continue;
+        if (!e.date.startsWith(mes)) continue;
+        const v = Math.abs(e.amount);
+        const b = getBucket(e.categoriaId || null);
+        b.total += v; b.qtd += 1;
+        addSubcat(b, e.subcategoriaNova || e.subcategory, v);
+      }
+
+      const lista = Array.from(buckets.values()).sort((a, b) => b.total - a.total);
+      const totalGeral = lista.reduce((s, b) => s + b.total, 0);
+
+      // Totais por TIPO contábil — base pra DRE/precificação.
+      const porTipo: Record<string, { total: number; qtd: number }> = {};
+      for (const b of lista) {
+        const k = String(b.tipo);
+        if (!porTipo[k]) porTipo[k] = { total: 0, qtd: 0 };
+        porTipo[k].total += b.total;
+        porTipo[k].qtd += b.qtd;
+      }
+
+      return res.json({ ok: true, mes, totalGeral, porTipo, categorias: lista });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/expenses/sem-categoria/:mes — saídas (bank+manual) ainda sem classificação
+  app.get("/api/expenses/sem-categoria/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes);
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido" });
+      const itens: any[] = [];
+      for (const t of transacoesBanco) {
+        if (t.amount >= 0 || t.incluidoNoFluxo === false) continue;
+        if (!t.date.startsWith(mes)) continue;
+        if (t.categoriaId) continue;
+        itens.push({ fonte: "bank", id: t.id, date: t.date, description: t.description, amount: t.amount });
+      }
+      for (const e of financeEntries) {
+        if (e.amount >= 0) continue;
+        if (!e.date.startsWith(mes)) continue;
+        if (e.categoriaId) continue;
+        itens.push({ fonte: "manual", id: e.id, date: e.date, description: e.description, amount: e.amount });
+      }
+      itens.sort((a, b) => (a.date < b.date ? 1 : -1));
+      return res.json({ ok: true, mes, total: itens.length, itens });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
   });
 
   // ─── POST /api/financeiro/analyze — AI analysis with Anthropic

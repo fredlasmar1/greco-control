@@ -22,6 +22,7 @@ import type { DailyEntry } from "@shared/schema";
 import SumarioDespesas from "@/components/lancamentos/SumarioDespesas";
 import CategoriasRegrasPanel from "@/components/lancamentos/CategoriasRegrasPanel";
 import ConciliacaoMultibanco from "@/components/lancamentos/ConciliacaoMultibanco";
+import ExtratoDetalhado from "@/components/lancamentos/ExtratoDetalhado";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
@@ -248,14 +249,10 @@ export default function Lancamentos() {
 
   // ── Extrato bancário (entradas + saídas) ──
   const [bankTx, setBankTx] = useState<Array<{ id: string; date: string; description: string; amount: number; categoria?: string; tipo?: string; incluidoNoFluxo?: boolean; categoriaId?: string; subcategoria?: string }>>([]);
-  const [expCategorias, setExpCategorias] = useState<Array<{ id: string; nome: string; tipo: string; cor: string }>>([]);
   // refreshKey força re-fetch das categorias e do sumário quando o usuário muda algo
   const [refreshKey, setRefreshKey] = useState(0);
   // Total de despesas vem via callback do SumarioDespesas
   const [totalDespesasDin, setTotalDespesasDin] = useState(0);
-  useEffect(() => {
-    fetch("/api/expense-categorias").then(r => r.json()).then(d => setExpCategorias(d?.categorias || [])).catch(() => {});
-  }, [refreshKey]);
   useEffect(() => {
     let cancelled = false;
     fetch(`${API_BASE}/api/consolidacao/transacoes?mes=${selectedMes}`)
@@ -319,36 +316,13 @@ export default function Lancamentos() {
   const difCartao = vendas.mes.cartao - banco.entradas.cartao;
   const tolerancia = 100;
 
-  // ── Ações nas saídas do extrato ──
-  const toggleFluxoTx = async (id: string, incluido: boolean) => {
-    await fetch(`${API_BASE}/api/consolidacao/transacoes/${id}/fluxo`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ incluido }),
-    });
-    reload();
-  };
-  const deleteTx = async (id: string) => {
-    if (!confirm("Apagar esta transação? Não pode ser desfeito.")) return;
-    await fetch(`${API_BASE}/api/consolidacao/transacoes/${id}`, { method: "DELETE" });
-    reload();
-  };
+  // Limpar duplicatas (botão no header)
   const dedupSaidas = async () => {
     if (!confirm("Limpar duplicatas de SAÍDAS (entradas são preservadas)?")) return;
     const r = await fetch(`${API_BASE}/api/consolidacao/dedup`, { method: "POST" });
     const d = await r.json();
     alert(`${d.removidas} duplicatas de saída removidas.`);
     reload();
-  };
-  const setCategoriaTx = async (id: string, categoriaId: string | null) => {
-    await fetch(`${API_BASE}/api/expenses/bank/${id}/categoria`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categoriaId }),
-    });
-    // Atualiza otimisticamente bankTx + força recarregar sumário
-    setBankTx(prev => prev.map(t => t.id === id ? { ...t, categoriaId: categoriaId || undefined } : t));
-    setRefreshKey(k => k + 1);
   };
 
   // ── Render ──
@@ -399,6 +373,7 @@ export default function Lancamentos() {
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="visao" data-testid="tab-visao">Visão do Mês</TabsTrigger>
+          <TabsTrigger value="extrato" data-testid="tab-extrato">Extrato detalhado</TabsTrigger>
           <TabsTrigger value="conciliacao" data-testid="tab-conciliacao">Conciliação Bancária</TabsTrigger>
           <TabsTrigger value="categorias" data-testid="tab-categorias">Categorias & Regras</TabsTrigger>
         </TabsList>
@@ -519,81 +494,28 @@ export default function Lancamentos() {
             </CardContent>
           </Card>
 
-          {/* ─── SEÇÃO 5: SAÍDAS DO EXTRATO (com ações) ─── */}
+          {/* CTA pra abrir Extrato detalhado quando há saídas */}
           {bankTx.filter(t => t.amount < 0).length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-muted-foreground" />
-                  Saídas do extrato — gerencie inclusão / categorização
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-xs text-muted-foreground">
-                        <th className="text-left py-2 px-2 font-medium">Data</th>
-                        <th className="text-left py-2 px-2 font-medium">Descrição</th>
-                        <th className="text-left py-2 px-2 font-medium hidden md:table-cell">Categoria</th>
-                        <th className="text-right py-2 px-2 font-medium">Valor</th>
-                        <th className="text-right py-2 px-2 font-medium w-24">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bankTx.filter(t => t.amount < 0).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30).map(t => {
-                        const incluido = t.incluidoNoFluxo !== false;
-                        return (
-                          <tr key={t.id} className={`border-b border-border/40 hover:bg-muted/30 ${!incluido ? "opacity-50" : ""}`}>
-                            <td className="py-2 px-2 text-xs whitespace-nowrap">{new Date(t.date + "T12:00:00").toLocaleDateString("pt-BR")}</td>
-                            <td className="py-2 px-2 text-xs">{t.description}</td>
-                            <td className="py-2 px-2 text-xs hidden md:table-cell">
-                              <Select
-                                value={t.categoriaId || "__sem"}
-                                onValueChange={(v) => setCategoriaTx(t.id, v === "__sem" ? null : v)}
-                              >
-                                <SelectTrigger className="h-7 text-[10px] w-[170px]">
-                                  <SelectValue placeholder="Sem categoria" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="__sem"><span className="text-muted-foreground">— Sem categoria —</span></SelectItem>
-                                  {expCategorias.map(c => (
-                                    <SelectItem key={c.id} value={c.id}>
-                                      <span className="flex items-center gap-1.5">
-                                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.cor }} />
-                                        {c.nome}
-                                      </span>
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </td>
-                            <td className="py-2 px-2 text-right tabular-nums text-red-400">-{formatCurrency(Math.abs(t.amount))}</td>
-                            <td className="py-2 px-2 text-right">
-                              <div className="flex items-center justify-end gap-1">
-                                <Button type="button" size="sm" variant="ghost" className="h-7 px-2" onClick={() => toggleFluxoTx(t.id, !incluido)} title={incluido ? "Ignorar no fluxo" : "Incluir de novo"}>
-                                  {incluido ? <Eye className="w-3.5 h-3.5 text-emerald-400" /> : <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />}
-                                </Button>
-                                <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-red-400 hover:text-red-500 hover:bg-red-500/10" onClick={() => deleteTx(t.id)} title="Apagar">
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                {bankTx.filter(t => t.amount < 0).length > 30 && (
-                  <p className="text-[11px] text-muted-foreground mt-2 text-center">
-                    Mostrando 30 mais recentes de {bankTx.filter(t => t.amount < 0).length}. Para gerenciar todas, use a tab Conciliação.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+            <div className="rounded-md border border-card-border/40 bg-background/30 p-3 flex items-center justify-between gap-2">
+              <div className="text-xs">
+                <p className="font-medium">Categorize linha-a-linha</p>
+                <p className="text-muted-foreground text-[10px]">
+                  Filtre por banco, marque transferências internas manualmente, e edite categoria de cada lançamento.
+                </p>
+              </div>
+              <Button type="button" size="sm" onClick={() => setActiveTab("extrato" as any)}>
+                Abrir Extrato detalhado
+              </Button>
+            </div>
           )}
 
+        </TabsContent>
+
+        <TabsContent value="extrato" className="mt-0">
+          <ExtratoDetalhado
+            mes={selectedMes}
+            onChanged={() => { setReloadKey(k => k + 1); setRefreshKey(k => k + 1); }}
+          />
         </TabsContent>
 
         <TabsContent value="conciliacao" className="mt-0">

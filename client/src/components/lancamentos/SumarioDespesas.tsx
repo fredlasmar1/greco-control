@@ -5,7 +5,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Wallet, ChevronRight, ChevronDown, Sparkles, AlertCircle, RefreshCw } from "lucide-react";
+import { Wallet, ChevronRight, ChevronDown, Sparkles, AlertCircle, RefreshCw, Search } from "lucide-react";
+import DialogCategoriaDetalhe from "./DialogCategoriaDetalhe";
 
 type TipoContabil =
   | "fixo" | "variavel" | "recorrente" | "cartao"
@@ -72,6 +73,8 @@ export default function SumarioDespesas({ mes, comissoesCalc = 0, bonusCalc = 0,
   const [error, setError] = useState<string | null>(null);
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [classificando, setClassificando] = useState(false);
+  // Drill-down: dialog com transações da categoria clicada
+  const [drillCat, setDrillCat] = useState<{ id: string | null; nome: string; cor?: string } | null>(null);
 
   async function carregar() {
     setLoading(true);
@@ -230,14 +233,20 @@ export default function SumarioDespesas({ mes, comissoesCalc = 0, bonusCalc = 0,
                       const subs = Object.entries(c.subcategorias || {}).filter(([, v]) => v.total > 0);
                       return (
                         <div key={c.categoriaId || "_sem"} className="text-xs py-1">
-                          <div className="flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={() => setDrillCat({ id: c.categoriaId || "_sem", nome: c.categoriaNome, cor: c.cor })}
+                            className="w-full flex items-center justify-between hover:bg-muted/40 rounded px-1 -mx-1 py-0.5 transition-colors group"
+                            title="Clique pra ver as transações"
+                          >
                             <span className="flex items-center gap-1.5">
                               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.cor }} />
-                              {c.categoriaNome}
+                              <span className="group-hover:underline">{c.categoriaNome}</span>
                               <span className="text-[10px] text-muted-foreground">({c.qtd})</span>
+                              <Search className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100" />
                             </span>
                             <span className="tabular-nums">R$ {fmtBRL(c.total)}</span>
-                          </div>
+                          </button>
                           {subs.length > 0 && subs[0][0] !== "—" && (
                             <div className="ml-4 mt-0.5 space-y-0.5">
                               {subs.map(([sub, v]) => (
@@ -263,6 +272,16 @@ export default function SumarioDespesas({ mes, comissoesCalc = 0, bonusCalc = 0,
           <span className="tabular-nums text-red-400">R$ {fmtBRL(totalDespesas)}</span>
         </div>
       </CardContent>
+
+      <DialogCategoriaDetalhe
+        open={!!drillCat}
+        onClose={() => setDrillCat(null)}
+        mes={mes}
+        categoriaId={drillCat?.id ?? null}
+        categoriaNome={drillCat?.nome || ""}
+        categoriaCor={drillCat?.cor}
+        onChanged={() => carregar()}
+      />
     </Card>
   );
 }

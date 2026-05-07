@@ -5829,6 +5829,49 @@ Regras CRÍTICAS:
     }
   });
 
+  // GET /api/expenses/categoria/:catId/:mes — drill-down: todas as despesas de uma
+  // categoria no mês (bank + manual), com nome da conta enriquecido.
+  app.get("/api/expenses/categoria/:catId/:mes", async (req: Request, res: Response) => {
+    try {
+      const { catId, mes } = req.params;
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido" });
+      const contasMap = new Map(contasConsolidacao.map(c => [c.id, c]));
+      // Trata "_sem" como filtro de "sem categoria"
+      const filtraSem = catId === "_sem";
+
+      const bank = transacoesBanco
+        .filter(t => t.amount < 0
+          && t.incluidoNoFluxo !== false
+          && t.date.startsWith(mes)
+          && (filtraSem ? !t.categoriaId : t.categoriaId === catId))
+        .map(t => ({
+          fonte: "bank" as const,
+          id: t.id, date: t.date, description: t.description, amount: t.amount,
+          contaId: t.contaId, contaNome: contasMap.get(t.contaId)?.nome.trim() || "?",
+          subcategoria: t.subcategoria,
+          regraIdAplicada: t.regraIdAplicada,
+        }));
+
+      const manual = financeEntries
+        .filter(e => e.amount < 0
+          && e.date.startsWith(mes)
+          && (filtraSem ? !e.categoriaId : e.categoriaId === catId))
+        .map(e => ({
+          fonte: "manual" as const,
+          id: e.id, date: e.date, description: e.description, amount: e.amount,
+          contaId: null, contaNome: "Manual",
+          subcategoria: e.subcategoriaNova || e.subcategory,
+          regraIdAplicada: undefined as string | undefined,
+        }));
+
+      const itens = [...bank, ...manual].sort((a, b) => (a.date < b.date ? 1 : -1));
+      const total = itens.reduce((s, i) => s + Math.abs(i.amount), 0);
+      return res.json({ ok: true, mes, categoriaId: catId, total, qtd: itens.length, itens });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // GET /api/expenses/sem-categoria/:mes — saídas (bank+manual) ainda sem classificação
   app.get("/api/expenses/sem-categoria/:mes", async (req: Request, res: Response) => {
     try {

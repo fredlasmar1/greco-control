@@ -20,6 +20,9 @@ export interface MetaProfissional {
   pctBonusExcedente?: number; // 0..100
   // Salário fixo mensal somado ao saldo (default 0).
   salarioFixo?: number;       // R$ por mês
+  // Modo de comissão deste profissional. 'global' (default) usa o setting da empresa.
+  // 'bruto' = comissão sobre preço cheio. 'liquido' = comissão sobre (preço − insumos).
+  modoComissao?: 'bruto' | 'liquido' | 'global';
 }
 
 const KV_KEY = "metas_profissional";

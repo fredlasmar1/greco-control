@@ -35,11 +35,16 @@ type Linha = {
     produtosLiquidoComissionavel: number;
     produtosLiquidoTotal: number;
     planoReais: number;
+    custoInsumos?: number;
+    baseComissaoServicos?: number;
+    taxaCartaoEstimada?: number;
   };
   percentuais: {
     pctServico: number; pctProduto: number; pctPlano: number; pctBonusExcedente: number;
     metaReais: number; salarioFixo: number;
   };
+  modoComissao?: 'bruto' | 'liquido';
+  modoFonte?: 'profissional' | 'global';
   calculos: {
     comissaoServicos: number;
     comissaoProdutos: number;
@@ -385,14 +390,26 @@ export default function Pagamento() {
                     return (
                       <tr key={l.profissionalId} className={`border-b ${fechado ? "bg-muted/20" : ""}`}>
                         <td className="py-2 pr-3">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             {fechado && <Lock className="w-3 h-3 text-muted-foreground" />}
                             <span className="font-medium">{l.nome}</span>
+                            {l.modoComissao === 'liquido' && (
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] h-5 border-amber-500/40 text-amber-400 bg-amber-500/10"
+                                title={l.modoFonte === 'profissional' ? "Modo override deste profissional" : "Modo padrão da empresa"}
+                              >
+                                Líquido{l.modoFonte === 'profissional' ? '*' : ''}
+                              </Badge>
+                            )}
                           </div>
                           <div className="text-xs text-muted-foreground">
                             Meta R$ {fmtBRL(l.percentuais.metaReais)} · {l.percentuais.pctServico}%/{l.percentuais.pctProduto}%/{l.percentuais.pctPlano}%
                             {l.percentuais.pctBonusExcedente > 0 ? ` · Bônus ${l.percentuais.pctBonusExcedente}%` : ""}
                             {l.percentuais.salarioFixo > 0 ? ` · Fixo R$ ${fmtBRL(l.percentuais.salarioFixo)}` : ""}
+                            {l.modoComissao === 'liquido' && l.bases.custoInsumos != null && l.bases.custoInsumos > 0 && (
+                              <span className="text-amber-400"> · Insumos R$ {fmtBRL(l.bases.custoInsumos)} descontados</span>
+                            )}
                           </div>
                         </td>
                         <td className="py-2 px-2 text-right tabular-nums">

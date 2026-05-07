@@ -2862,6 +2862,7 @@ export async function registerRoutes(
       servicos:  { reais: number; count: number; bruto: number; liquido: number };
       produtos:  { reais: number; count: number; bruto: number; liquido: number; liquidoComissionavel: number; brutoComissionavel: number };
       taxaCartao: number; // taxa de cartão agregada (já abatida do líquido)
+      custoInsumos: number; // soma da ficha técnica dos serviços feitos pelo profissional
       total:     { reais: number; count: number };
     }>;
     totais: { reais: number; count: number; avulsoReais: number; avulsoCount: number; planoReais: number; planoCount: number; servicosReais: number; servicosCount: number; servicosBruto: number; servicosLiquido: number; produtosReais: number; produtosCount: number; produtosBruto: number; produtosLiquido: number; produtosLiquidoComissionavel: number; produtosBrutoComissionavel: number };
@@ -2974,7 +2975,9 @@ export async function registerRoutes(
       avulso:    { reais: number; count: number };
       plano:     { reais: number; count: number };
       servicos:  { reais: number; count: number; bruto: number; liquido: number };
-      produtos:  { reais: number; count: number; bruto: number; liquido: number };
+      produtos:  { reais: number; count: number; bruto: number; liquido: number; liquidoComissionavel: number; brutoComissionavel: number };
+      taxaCartao: number;
+      custoInsumos: number;
       total:     { reais: number; count: number };
     }> = {};
     const ensureProf = (idPrim: string, nome: string, idOriginal: string) => {
@@ -2985,6 +2988,7 @@ export async function registerRoutes(
         servicos:  { reais: 0, count: 0, bruto: 0, liquido: 0 },
         produtos:  { reais: 0, count: 0, bruto: 0, liquido: 0, liquidoComissionavel: 0, brutoComissionavel: 0 },
         taxaCartao: 0,
+        custoInsumos: 0,
         total:     { reais: 0, count: 0 },
       };
       if (idOriginal && !porProf[idPrim].idsConhecidos.includes(idOriginal)) porProf[idPrim].idsConhecidos.push(idOriginal);
@@ -3147,6 +3151,31 @@ export async function registerRoutes(
       const p = ensureProf(r.idPrimario, r.nome, profId);
       p.plano.reais += valor;
       p.plano.count += 1;
+    });
+
+    // Custo de insumos por profissional: soma a ficha técnica dos serviços
+    // executados (agendamentos finalizados). Usado se o modo de comissão for
+    // 'liquido' (profissional não recebe comissão sobre o custo do material).
+    const custoFichaPorServicoId = new Map<string, number>();
+    for (const sc of serviceCosts) {
+      const total = (sc.items || []).reduce(
+        (s, it) => s + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0),
+        0
+      );
+      custoFichaPorServicoId.set(String(sc.serviceId), total);
+    }
+    agendLista.forEach((a: any) => {
+      const status = (typeof a.status === "string" ? a.status : (a.status?.nome || "")).toLowerCase();
+      if (!status.includes("finaliz")) return;
+      const profIdRaw = String(a.profissionalId || a.profissional?.id || "");
+      if (!profIdRaw) return;
+      const r = resolveProf(profIdRaw);
+      if (!r) return;
+      const p = porProf[r.idPrimario];
+      if (!p) return;
+      const svcId = String(a.servico?.id || a.servicoId || "");
+      const custoUnit = svcId ? (custoFichaPorServicoId.get(svcId) || 0) : 0;
+      if (custoUnit > 0) p.custoInsumos += custoUnit;
     });
 
     // Totais consolidados por profissional
@@ -6247,6 +6276,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const produtosLiquidoComissionavel = profMes?.produtos?.liquidoComissionavel || 0;
     const planoReais = profMes?.plano?.reais || 0;
     const taxaCartaoEstimada = profMes?.taxaCartao || 0; // informativo (já abatido no líquido)
+    const custoInsumos = profMes?.custoInsumos || 0;
     const pctServico = Number(meta?.pctServico || 0);
     const pctProduto = Number(meta?.pctProduto || 0);
     const pctPlano = Number(meta?.pctPlano || 0);
@@ -6254,7 +6284,20 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const metaReais = Number(meta?.metaReais || 0);
     const salarioFixo = Number(meta?.salarioFixo || 0);
 
-    const comissaoServicos = (servicosLiquido * pctServico) / 100;
+    // Modo de comissão: 'bruto' = sobre serviços líquido (atual)
+    //                   'liquido' = sobre serviços líquido − custo de insumos
+    // Hierarquia: meta.modoComissao (override por prof) → settings.modoComissaoDefault → 'bruto'
+    const modoSetting = (storeData.settings?.modoComissaoDefault === 'liquido') ? 'liquido' : 'bruto';
+    const modoMeta = meta?.modoComissao;
+    const modoAplicado: 'bruto' | 'liquido' =
+      modoMeta === 'bruto' || modoMeta === 'liquido' ? modoMeta : modoSetting;
+    // Base de comissão de serviços. No modo líquido, descontamos os insumos que
+    // o profissional consumiu (a barbearia 'cobra' o material antes da comissão).
+    const baseComissaoServicos = modoAplicado === 'liquido'
+      ? Math.max(0, servicosLiquido - custoInsumos)
+      : servicosLiquido;
+
+    const comissaoServicos = (baseComissaoServicos * pctServico) / 100;
     const comissaoProdutos = (produtosLiquidoComissionavel * pctProduto) / 100;
     const comissaoPlano = (planoReais * pctPlano) / 100;
     const excedente = Math.max(0, servicosLiquido - metaReais);
@@ -6276,12 +6319,17 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         produtosLiquidoTotal: profMes?.produtos?.liquido || 0,
         planoReais,
         taxaCartaoEstimada,
+        custoInsumos,
+        baseComissaoServicos, // serviçosLiquido (modo bruto) OU serviçosLiquido − insumos (modo líquido)
       },
       // Percentuais aplicados
       percentuais: {
         pctServico, pctProduto, pctPlano, pctBonusExcedente,
         metaReais, salarioFixo,
       },
+      // Modo aplicado nesta linha (pra UI mostrar)
+      modoComissao: modoAplicado,
+      modoFonte: modoMeta === 'bruto' || modoMeta === 'liquido' ? 'profissional' : 'global' as 'profissional' | 'global',
       // Componentes calculados
       calculos: {
         comissaoServicos,

@@ -559,6 +559,47 @@ export default function Configuracoes() {
               </div>
             </div>
 
+            <div className="rounded-md border border-border p-3 bg-muted/20">
+              <Label className="text-xs font-medium">Modo de cálculo da comissão (padrão)</Label>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                Como o sistema calcula a comissão por serviço — pode ser sobrescrito por profissional na aba Equipe.
+              </p>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 cursor-pointer p-2 rounded border border-border hover:bg-muted/30">
+                  <input
+                    type="radio"
+                    name="modoComissaoDefault"
+                    checked={(form.modoComissaoDefault ?? 'bruto') === 'bruto'}
+                    onChange={() => update("modoComissaoDefault", 'bruto')}
+                    className="mt-1"
+                    data-testid="modo-bruto"
+                  />
+                  <div>
+                    <div className="text-sm font-medium">Comissão sobre o BRUTO (modelo tradicional)</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Comissão = Preço × %. Profissional não paga insumos. Ex: corte R$ 60 com comissão 50% → profissional ganha R$ 30, barbearia paga insumo do bolso.
+                    </div>
+                  </div>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer p-2 rounded border border-border hover:bg-muted/30">
+                  <input
+                    type="radio"
+                    name="modoComissaoDefault"
+                    checked={form.modoComissaoDefault === 'liquido'}
+                    onChange={() => update("modoComissaoDefault", 'liquido')}
+                    className="mt-1"
+                    data-testid="modo-liquido"
+                  />
+                  <div>
+                    <div className="text-sm font-medium">Comissão sobre o LÍQUIDO (após insumos)</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Comissão = (Preço − Insumos) × %. Profissional ajuda a pagar o material proporcionalmente. Ex: selagem R$ 200 com R$ 50 de insumo e comissão 50% → profissional ganha R$ 75, barbearia recebe R$ 75 de margem bruta.
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
             {profissionaisTrinks.length === 0 ? (
               <div className="text-xs text-muted-foreground py-3 text-center bg-muted/30 rounded-md">
                 Conecte a Trinks acima para listar os profissionais.

@@ -73,6 +73,11 @@ export interface Settings {
   profissionaisExpress?: string[];     // ganham comissão Express (default 50%)
   comissaoVipExpressPct?: number;      // default 50
   comissaoPadraoPct?: number;          // default 40
+  // Modo padrão de cálculo da comissão (pode ser sobrescrito por profissional).
+  // 'bruto'   = comissão sobre o preço cheio do serviço (modelo tradicional)
+  // 'liquido' = comissão sobre (preço − custo de insumos da ficha técnica),
+  //             ou seja, profissional ajuda a pagar os insumos proporcionalmente.
+  modoComissaoDefault?: 'bruto' | 'liquido'; // default 'bruto'
 }
 
 // Zod schemas for form validation

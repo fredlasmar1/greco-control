@@ -784,6 +784,15 @@ const MIN_DELAY_BETWEEN_REQUESTS_MS = 1200; // ~50 req/min max pace
 
 let lastRequestTime = 0;
 
+// Mutex serializa waitForRateLimit. Sem isso, várias requisições paralelas
+// passam pelo check ao mesmo tempo, ignoram o MIN_DELAY e estouram o rate
+// limit do Trinks em rajadas curtas (causa do 429 em deploy fresco).
+let rateLimitMutex: Promise<void> = Promise.resolve();
+
+// Indica que a Trinks ainda está em backoff por causa de 429 recente.
+// Bloqueia novas chamadas durante o cooldown sem precisar tentar e falhar.
+let trinksBackoffUntil = 0;
+
 // Load monthly counter from cache file
 function loadMonthlyCounter() {
   const now = new Date();
@@ -823,33 +832,52 @@ function saveMonthlyCounter() {
 loadMonthlyCounter();
 
 async function waitForRateLimit(): Promise<void> {
-  const now = Date.now();
-  
-  // Reset minute counter if window expired
-  if (now - rateLimiter.minuteStart > 60000) {
-    rateLimiter.requestsThisMinute = 0;
-    rateLimiter.minuteStart = now;
-  }
-  
-  // Check monthly limit
-  if (rateLimiter.requestsThisMonth >= MAX_REQUESTS_PER_MONTH) {
-    throw { status: 429, message: `Limite mensal de requisições atingido (${rateLimiter.requestsThisMonth}/${MAX_REQUESTS_PER_MONTH}). O limite reseta no 1º dia do próximo mês.` };
-  }
-  
-  // If we're near the per-minute limit, wait until next minute window
-  if (rateLimiter.requestsThisMinute >= MAX_REQUESTS_PER_MINUTE) {
-    const waitTime = 60000 - (now - rateLimiter.minuteStart) + 500;
-    log(`Rate limit: waiting ${Math.round(waitTime / 1000)}s for next minute window (${rateLimiter.requestsThisMinute} reqs this minute)`, "trinks");
-    await new Promise(r => setTimeout(r, waitTime));
-    rateLimiter.requestsThisMinute = 0;
-    rateLimiter.minuteStart = Date.now();
-  }
-  
-  // Enforce minimum delay between requests
-  const timeSinceLastRequest = Date.now() - lastRequestTime;
-  if (timeSinceLastRequest < MIN_DELAY_BETWEEN_REQUESTS_MS) {
-    const delay = MIN_DELAY_BETWEEN_REQUESTS_MS - timeSinceLastRequest;
-    await new Promise(r => setTimeout(r, delay));
+  // Serializa via mutex: cada chamada espera a anterior terminar.
+  // Sem isso, múltiplas requisições paralelas verificam rateLimiter ao mesmo
+  // tempo, todas passam e disparam em rajada (causa do 429 em deploy fresco).
+  const previous = rateLimitMutex;
+  let release: () => void;
+  rateLimitMutex = new Promise<void>(r => { release = r; });
+  await previous;
+
+  try {
+    // Se a Trinks está em backoff (429 recente), espera até o cooldown acabar
+    if (trinksBackoffUntil > Date.now()) {
+      const wait = trinksBackoffUntil - Date.now();
+      log(`Trinks em backoff: aguardando ${Math.round(wait / 1000)}s antes de tentar`, "trinks");
+      await new Promise(r => setTimeout(r, wait));
+    }
+
+    const now = Date.now();
+
+    // Reset minute counter if window expired
+    if (now - rateLimiter.minuteStart > 60000) {
+      rateLimiter.requestsThisMinute = 0;
+      rateLimiter.minuteStart = now;
+    }
+
+    // Check monthly limit
+    if (rateLimiter.requestsThisMonth >= MAX_REQUESTS_PER_MONTH) {
+      throw { status: 429, message: `Limite mensal de requisições atingido (${rateLimiter.requestsThisMonth}/${MAX_REQUESTS_PER_MONTH}). O limite reseta no 1º dia do próximo mês.` };
+    }
+
+    // If we're near the per-minute limit, wait until next minute window
+    if (rateLimiter.requestsThisMinute >= MAX_REQUESTS_PER_MINUTE) {
+      const waitTime = 60000 - (now - rateLimiter.minuteStart) + 500;
+      log(`Rate limit: waiting ${Math.round(waitTime / 1000)}s for next minute window (${rateLimiter.requestsThisMinute} reqs this minute)`, "trinks");
+      await new Promise(r => setTimeout(r, waitTime));
+      rateLimiter.requestsThisMinute = 0;
+      rateLimiter.minuteStart = Date.now();
+    }
+
+    // Enforce minimum delay between requests
+    const timeSinceLastRequest = Date.now() - lastRequestTime;
+    if (timeSinceLastRequest < MIN_DELAY_BETWEEN_REQUESTS_MS) {
+      const delay = MIN_DELAY_BETWEEN_REQUESTS_MS - timeSinceLastRequest;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  } finally {
+    release!();
   }
 }
 
@@ -930,9 +958,13 @@ function loadSyncCacheFromDisk(): any | null {
       const parsed = JSON.parse(raw);
       if (parsed.lastSync && parsed.lastSync.data && parsed.lastSync.timestamp) {
         const age = Date.now() - parsed.lastSync.timestamp;
-        // Accept disk cache up to 2 hours old
-        if (age < 2 * 60 * 60 * 1000) {
-          log(`Loaded sync cache from disk (age: ${Math.round(age / 60000)}min)`, "trinks");
+        // Aceita cache de até 24h: deploy fresco ou restart não dispara
+        // a tempestade de chamadas iniciais (causa do 429 no boot).
+        // O usuário ainda pode forçar refresh em qualquer aba se quiser dado live.
+        if (age < 24 * 60 * 60 * 1000) {
+          const ageH = Math.floor(age / 3600000);
+          const ageM = Math.round((age % 3600000) / 60000);
+          log(`Loaded sync cache from disk (age: ${ageH}h${ageM}min)`, "trinks");
           return parsed.lastSync.data;
         }
       }
@@ -959,7 +991,7 @@ function saveSyncCacheToDisk(data: any) {
   }
 }
 
-// ─── Helper: make Trinks API call ─────────────────────────
+// ─── Helper: make Trinks API call (com retry em 429) ─────────────
 // IMPORTANT: Trinks API uses estabelecimentoId as an HTTP HEADER, not a query param.
 async function trinksFetch(
   path: string,
@@ -970,49 +1002,72 @@ async function trinksFetch(
     throw { status: 400, message: "Chave API da Trinks não configurada. Vá em Configurações para conectar." };
   }
 
-  // Enforce rate limit before making request
-  await waitForRateLimit();
+  // Backoff exponencial em 429: 5s, 10s, 20s + jitter 1-5s.
+  // Total máximo de tentativas: 4. Se todas falharem, propaga 429.
+  const MAX_RETRIES = 3;
+  const BASE_DELAYS_MS = [5000, 10000, 20000];
 
-  const url = new URL(`/v1/${path}`, TRINKS_BASE);
-  if (queryParams) {
-    Object.entries(queryParams).forEach(([k, v]) => {
-      if (v) url.searchParams.set(k, v);
-    });
-  }
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    await waitForRateLimit();
 
-  const headers: Record<string, string> = {
-    "X-Api-Key": trinksConfig.apiKey,
-    "Accept": "application/json",
-  };
+    const url = new URL(`/v1/${path}`, TRINKS_BASE);
+    if (queryParams) {
+      Object.entries(queryParams).forEach(([k, v]) => {
+        if (v) url.searchParams.set(k, v);
+      });
+    }
 
-  if (!options?.skipEstabHeader && trinksConfig.establishmentId) {
-    headers["estabelecimentoId"] = trinksConfig.establishmentId;
-  }
+    const headers: Record<string, string> = {
+      "X-Api-Key": trinksConfig.apiKey,
+      "Accept": "application/json",
+    };
 
-  log(`API call #${rateLimiter.totalRequestsSession + 1} (${rateLimiter.requestsThisMinute + 1}/min, ${rateLimiter.requestsThisMonth + 1}/month): ${path}`, "trinks");
+    if (!options?.skipEstabHeader && trinksConfig.establishmentId) {
+      headers["estabelecimentoId"] = trinksConfig.establishmentId;
+    }
 
-  const res = await fetch(url.toString(), { headers });
-  recordRequest();
+    log(`API call #${rateLimiter.totalRequestsSession + 1} (${rateLimiter.requestsThisMinute + 1}/min, ${rateLimiter.requestsThisMonth + 1}/month): ${path}${attempt > 0 ? ` [retry ${attempt}]` : ""}`, "trinks");
 
-  if (!res.ok) {
+    const res = await fetch(url.toString(), { headers });
+    recordRequest();
+
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+
     const body = await res.text().catch(() => "");
     log(`Trinks error ${res.status}: ${body}`, "trinks");
+
     if (res.status === 401) {
       throw { status: 401, message: "Chave API inválida. Verifique suas credenciais." };
-    }
-    if (res.status === 429) {
-      // Record the 429 — API told us we're over limit
-      log(`RATE LIMITED by Trinks API. Minute: ${rateLimiter.requestsThisMinute}, Month: ${rateLimiter.requestsThisMonth}`, "trinks");
-      throw { status: 429, message: "Limite de requisições da Trinks excedido. O CRM usará dados do cache. Tente sincronizar novamente em alguns minutos." };
     }
     if (res.status === 403) {
       throw { status: 403, message: "Sem permissão para acessar este recurso." };
     }
+
+    // 429: retry com backoff exponencial + jitter
+    if (res.status === 429 && attempt < MAX_RETRIES) {
+      const baseDelay = BASE_DELAYS_MS[attempt];
+      const jitter = 1000 + Math.floor(Math.random() * 4000); // 1000–5000ms
+      const totalDelay = baseDelay + jitter;
+      // Marca backoff global pra outras requisições paralelas também esperarem
+      trinksBackoffUntil = Math.max(trinksBackoffUntil, Date.now() + totalDelay);
+      log(`429 em ${path}. Backoff ${Math.round(totalDelay / 1000)}s antes de retry ${attempt + 1}/${MAX_RETRIES}`, "trinks");
+      await new Promise(r => setTimeout(r, totalDelay));
+      continue;
+    }
+
+    if (res.status === 429) {
+      log(`RATE LIMITED by Trinks API após ${MAX_RETRIES} retries. Minute: ${rateLimiter.requestsThisMinute}, Month: ${rateLimiter.requestsThisMonth}`, "trinks");
+      throw { status: 429, message: "Limite de requisições da Trinks excedido após várias tentativas. O CRM usará dados do cache." };
+    }
+
     throw { status: res.status, message: body || `Erro ${res.status} da API Trinks.` };
   }
 
-  const data = await res.json();
-  return data;
+  // Inalcançável: o loop sempre retorna ou lança
+  throw { status: 500, message: "trinksFetch: caminho inalcançável" };
 }
 
 // Helper: soma dias a uma string YYYY-MM-DD (TZ-safe via UTC noon).

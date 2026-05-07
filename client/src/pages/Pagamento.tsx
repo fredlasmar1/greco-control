@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
 import { MonthSelector } from "@/components/MonthSelector";
 import { mesAtualSP } from "@/lib/mesUtils";
+import FechamentoMes from "@/components/pagamento/FechamentoMes";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Aba PAGAMENTO (v20)
@@ -544,6 +545,10 @@ export default function Pagamento() {
           )}
         </CardContent>
       </Card>
+
+      {/* Bloco de Fechamento do Mês — visão consolidada de receita, transferências,
+          cobranças bancárias e resultado, com botões de "Justificar" cobrança a cobrança. */}
+      <FechamentoMes mes={mes} />
 
       {/* Edição da nota (linha em modo edit) */}
       {editandoId && (

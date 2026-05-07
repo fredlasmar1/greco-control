@@ -248,6 +248,11 @@ interface TransacaoBanco {
   transferenciaParId?: string;
   // Confiança do match automático: 1.0 = exato, < 1.0 = aproximado (data/valor com tolerância)
   transferenciaConfianca?: number;
+  // v29: justificativa livre digitada pelo usuário no fechamento do mês
+  // (ex: "juros de cheque especial — Itaú entrou negativo dia 06"). Persiste
+  // entre meses e aparece como tooltip/badge nas próximas análises.
+  justificativa?: string;
+  justificadoEm?: string; // ISO timestamp
 }
 
 /** Chave de deduplicação: contaId + date + amount + descrição normalizada (sem
@@ -4897,6 +4902,199 @@ Regras CRÍTICAS:
           saidasBrutas: totalSaidasBrutas,
           saidasLiquidas: totalSaidasLiquidas,
           transferenciasInternas: totalTransferenciasInternas,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FECHAMENTO MÊS (v29) — visão consolidada usada pelo bloco "Fechamento"
+  // dentro da aba Pagamento. Junta: receita Trinks por meio, entradas líquidas
+  // por banco, transferências internas, cobranças bancárias automáticas
+  // (juros, IOF, tarifa, antecipação, fatura cartão), e gap de caixa físico.
+  // ════════════════════════════════════════════════════════════════════════
+
+  // PUT /api/expenses/bank/:id/justificativa — salva nota de auditoria
+  app.put("/api/expenses/bank/:id/justificativa", (req: Request, res: Response) => {
+    try {
+      const t = transacoesBanco.find(x => x.id === String(req.params.id));
+      if (!t) return res.status(404).json({ ok: false, error: "transação não encontrada" });
+      const txt = String((req.body || {}).justificativa || "").trim();
+      if (!txt) {
+        t.justificativa = undefined;
+        t.justificadoEm = undefined;
+      } else {
+        t.justificativa = txt.slice(0, 500);
+        t.justificadoEm = new Date().toISOString();
+      }
+      saveTransacoesBanco();
+      return res.json({ ok: true, transacao: t });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/fechamento-mes/:mes — consolidado pra aba Pagamento
+  app.get("/api/fechamento-mes/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes);
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido" });
+
+      const contasMap = new Map(contasConsolidacao.map(c => [c.id, c]));
+      const txMes = transacoesBanco.filter(t => t.date.startsWith(mes) && t.incluidoNoFluxo !== false);
+
+      // ── 1) Trinks: breakdown por meio (puxa via API, com cache)
+      let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, outros: 0, qtd: 0 };
+      try {
+        const dataIni = `${mes}-01`;
+        const [ano, m] = mes.split("-").map(Number);
+        const ultimoDia = new Date(ano, m, 0).getDate();
+        const dataFim = `${mes}-${String(ultimoDia + 1).padStart(2, "0")}`; // semi-aberto
+        const transApi: any = await trinksFetchAll("transacoes", { dataInicio: dataIni, dataFim });
+        const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
+        for (const t of arr) {
+          const raw = t.dataHora || t.dataReferencia || t.data || "";
+          const date = typeof raw === "string" ? raw.split("T")[0] : "";
+          if (!date.startsWith(mes)) continue;
+          trinks.total += Number(t.totalPagar || 0);
+          trinks.qtd += 1;
+          for (const fp of (t.formasPagamentos || t.formasPagamento || [])) {
+            const nome = String(fp.nome || "").toLowerCase();
+            const v = Number(fp.valor || 0);
+            if (nome.includes("pix")) trinks.pix += v;
+            else if (nome.includes("créd") || nome.includes("cred") || nome.includes("déb") || nome.includes("deb") || nome.includes("cart")) trinks.cartao += v;
+            else if (nome.includes("dinhe") || nome.includes("espéc") || nome.includes("espec")) trinks.dinheiro += v;
+            else trinks.outros += v;
+          }
+        }
+      } catch (err: any) {
+        log(`fechamento/trinks erro: ${err.message}`, "fechamento");
+      }
+
+      // ── 2) Entradas líquidas por banco (sem dupla contagem de transferência interna)
+      type BancoResumo = {
+        id: string; nome: string; transito: boolean;
+        entradasBrutas: number; entradasLiquidas: number; entradasQtd: number;
+        saidasBrutas: number; saidasLiquidas: number; saidasQtd: number;
+        transferOut: number; transferIn: number;
+      };
+      const bancos = new Map<string, BancoResumo>();
+      for (const c of contasConsolidacao) {
+        bancos.set(c.id, { id: c.id, nome: c.nome.trim(), transito: !!c.transito,
+          entradasBrutas: 0, entradasLiquidas: 0, entradasQtd: 0,
+          saidasBrutas: 0, saidasLiquidas: 0, saidasQtd: 0,
+          transferOut: 0, transferIn: 0 });
+      }
+      for (const t of txMes) {
+        const r = bancos.get(t.contaId);
+        if (!r) continue;
+        if (t.amount > 0) {
+          r.entradasBrutas += t.amount; r.entradasQtd++;
+          if (t.transferenciaParId) r.transferIn += t.amount;
+        } else {
+          const v = Math.abs(t.amount);
+          r.saidasBrutas += v; r.saidasQtd++;
+          if (t.transferenciaParId) r.transferOut += v;
+        }
+      }
+      for (const r of bancos.values()) {
+        r.entradasLiquidas = r.entradasBrutas - r.transferIn;
+        r.saidasLiquidas = r.saidasBrutas - r.transferOut;
+      }
+
+      // ── 3) Detector de cobranças bancárias automáticas (saídas)
+      const PADROES_COBRANCA = [
+        { tipo: "juros_limite",  rx: /JUROS\s*(LIMITE|EXCESSO|SALDO|UTILIZ|ROTATIV|REMUNER)|JURO/i, rotulo: "Juros (cheque especial / limite)" },
+        { tipo: "darf",          rx: /\bDARF\b|REC\s*FED|REC\.FED|DA\s*REC/i,                         rotulo: "DARF / Imposto Federal" },
+        { tipo: "iof",           rx: /\bIOF\b/i,                                                       rotulo: "IOF" },
+        { tipo: "tarifa_pix",    rx: /TARIFA\s*PIX|TAR\s*PIX|TARIFA\s*AVULSA|TAR\s*PIXQR/i,            rotulo: "Tarifa PIX" },
+        { tipo: "tarifa_pacote", rx: /PACOTE\s*SERV|MENSALID|CESTA|TARIFA\s*MANUTEN/i,                 rotulo: "Pacote / Mensalidade banco" },
+        { tipo: "tarifa_outra",  rx: /^TARIFA\b|\bTAR\b/i,                                             rotulo: "Tarifa avulsa" },
+        { tipo: "fatura_cartao", rx: /PAGAM.*CART[ÃA]O\s*CRED|CARTAO\s*MASTER|FATURA\s*CART/i,         rotulo: "Pagamento de fatura (cartão da empresa)" },
+        { tipo: "antecipacao",   rx: /ANTECIPA[ÇC][ÃA]O/i,                                             rotulo: "Antecipação de cartão" },
+      ];
+      type Cobranca = {
+        tipo: string; rotulo: string;
+        id: string; date: string; description: string; amount: number;
+        contaId: string; contaNome: string;
+        categoriaId?: string; justificativa?: string;
+      };
+      const cobrancas: Cobranca[] = [];
+      for (const t of txMes) {
+        if (t.amount >= 0) continue;
+        const desc = String(t.description || "");
+        for (const p of PADROES_COBRANCA) {
+          if (p.rx.test(desc)) {
+            cobrancas.push({
+              tipo: p.tipo, rotulo: p.rotulo,
+              id: t.id, date: t.date, description: desc, amount: t.amount,
+              contaId: t.contaId, contaNome: contasMap.get(t.contaId)?.nome.trim() || "?",
+              categoriaId: t.categoriaId, justificativa: t.justificativa,
+            });
+            break;
+          }
+        }
+      }
+      cobrancas.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+
+      // Agrega por tipo
+      const cobrancaPorTipo: Record<string, { rotulo: string; total: number; qtd: number; itens: Cobranca[] }> = {};
+      for (const c of cobrancas) {
+        if (!cobrancaPorTipo[c.tipo]) cobrancaPorTipo[c.tipo] = { rotulo: c.rotulo, total: 0, qtd: 0, itens: [] };
+        cobrancaPorTipo[c.tipo].total += Math.abs(c.amount);
+        cobrancaPorTipo[c.tipo].qtd += 1;
+        cobrancaPorTipo[c.tipo].itens.push(c);
+      }
+
+      // ── 4) Pares de transferência detectados (resumo)
+      const paresIdsVistos = new Set<string>();
+      const pares: Array<{ outId: string; inId: string; valor: number; data: string; confianca: number; outConta: string; inConta: string }> = [];
+      for (const t of txMes) {
+        if (!t.transferenciaParId) continue;
+        const par = transacoesBanco.find(x => x.id === t.transferenciaParId);
+        if (!par) continue;
+        const out = t.amount < 0 ? t : par;
+        const inn = t.amount > 0 ? t : par;
+        const key = [out.id, inn.id].sort().join("|");
+        if (paresIdsVistos.has(key)) continue;
+        paresIdsVistos.add(key);
+        pares.push({
+          outId: out.id, inId: inn.id, valor: Math.abs(out.amount), data: out.date,
+          confianca: t.transferenciaConfianca || 0,
+          outConta: contasMap.get(out.contaId)?.nome.trim() || "?",
+          inConta: contasMap.get(inn.contaId)?.nome.trim() || "?",
+        });
+      }
+
+      // ── 5) Totalizações
+      const totalEntradasLiq = Array.from(bancos.values()).reduce((s, r) => s + r.entradasLiquidas, 0);
+      const totalSaidasLiq   = Array.from(bancos.values()).reduce((s, r) => s + r.saidasLiquidas, 0);
+      const totalCobrancas   = cobrancas.reduce((s, c) => s + Math.abs(c.amount), 0);
+      const fluxoMes         = totalEntradasLiq - totalSaidasLiq;
+      const gapTrinksBanco   = trinks.total - totalEntradasLiq;
+      const gapDinheiro      = trinks.dinheiro - (() => {
+        // Soma só os depósitos em ATM
+        return txMes.filter(t => t.amount > 0 && /DEP\s*DIN|DEPOSITO/i.test(t.description)).reduce((s, t) => s + t.amount, 0);
+      })();
+
+      return res.json({
+        ok: true,
+        mes,
+        trinks,
+        bancos: Array.from(bancos.values()).sort((a, b) => {
+          if (a.transito !== b.transito) return a.transito ? 1 : -1;
+          return b.entradasBrutas - a.entradasBrutas;
+        }),
+        pares,
+        cobrancas: { porTipo: cobrancaPorTipo, total: totalCobrancas, qtd: cobrancas.length },
+        totais: {
+          entradasLiquidas: totalEntradasLiq,
+          saidasLiquidas: totalSaidasLiq,
+          fluxoMes,
+          gapTrinksBanco,
+          gapDinheiroFisico: gapDinheiro,
         },
       });
     } catch (err: any) {

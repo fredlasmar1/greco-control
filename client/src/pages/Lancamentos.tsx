@@ -16,9 +16,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Badge } from "@/components/ui/badge";
 import {
   CalendarCheck, Plus, Upload, Eye, EyeOff, Trash2, Sparkles, CheckCircle2, AlertCircle,
-  TrendingUp, Wallet, Calendar, FileText,
+  TrendingUp, Wallet, Calendar, FileText, Tag,
 } from "lucide-react";
 import type { DailyEntry } from "@shared/schema";
+import SumarioDespesas from "@/components/lancamentos/SumarioDespesas";
+import CategoriasRegrasPanel from "@/components/lancamentos/CategoriasRegrasPanel";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
@@ -244,7 +246,15 @@ export default function Lancamentos() {
   }, [trinks, isMesCorrente]);
 
   // ── Extrato bancário (entradas + saídas) ──
-  const [bankTx, setBankTx] = useState<Array<{ id: string; date: string; description: string; amount: number; categoria?: string; tipo?: string; incluidoNoFluxo?: boolean }>>([]);
+  const [bankTx, setBankTx] = useState<Array<{ id: string; date: string; description: string; amount: number; categoria?: string; tipo?: string; incluidoNoFluxo?: boolean; categoriaId?: string; subcategoria?: string }>>([]);
+  const [expCategorias, setExpCategorias] = useState<Array<{ id: string; nome: string; tipo: string; cor: string }>>([]);
+  // refreshKey força re-fetch das categorias e do sumário quando o usuário muda algo
+  const [refreshKey, setRefreshKey] = useState(0);
+  // Total de despesas vem via callback do SumarioDespesas
+  const [totalDespesasDin, setTotalDespesasDin] = useState(0);
+  useEffect(() => {
+    fetch("/api/expense-categorias").then(r => r.json()).then(d => setExpCategorias(d?.categorias || [])).catch(() => {});
+  }, [refreshKey]);
   useEffect(() => {
     let cancelled = false;
     fetch(`${API_BASE}/api/consolidacao/transacoes?mes=${selectedMes}`)
@@ -298,47 +308,8 @@ export default function Lancamentos() {
       .catch(() => {});
   }, [selectedMes]);
 
-  // ── Despesas manuais (financeEntries do mês) ──
-  const [despManuais, setDespManuais] = useState<Array<{ id: string; date: string; description: string; amount: number; category: string; subcategory: string }>>([]);
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${API_BASE}/api/financeiro`)
-      .then(r => r.json())
-      .then(d => {
-        if (cancelled) return;
-        const lista = Array.isArray(d) ? d : [];
-        setDespManuais(lista.filter((e: any) => (e.date || "").slice(0, 7) === selectedMes && e.amount < 0));
-      })
-      .catch(() => {});
-  }, [selectedMes, reloadKey]);
-
-  const despesasManuaisAgrup = useMemo(() => {
-    const out = { fixa: 0, variavel: 0, imposto: 0, outros: 0, parcelamento: 0, investimento: 0 };
-    for (const e of despManuais) {
-      const v = Math.abs(e.amount || 0);
-      const c = (e.category || "").toLowerCase();
-      if (c === "fixo") out.fixa += v;
-      else if (c === "variavel") out.variavel += v;
-      else if (c === "parcelamento") out.parcelamento += v;
-      else if (c === "investimento") out.investimento += v;
-      else out.outros += v;
-    }
-    return out;
-  }, [despManuais]);
-
-  // ── Totalizações finais ──
-  const totalDespesasFixas = banco.saidas.fixa + despesasManuaisAgrup.fixa;
-  const totalDespesasVariaveis = banco.saidas.variavel + despesasManuaisAgrup.variavel;
-  const totalImpostosJuros = banco.saidas.imposto + despesasManuaisAgrup.imposto;
-  const totalParcelamento = despesasManuaisAgrup.parcelamento;
-  const totalInvestimentos = despesasManuaisAgrup.investimento;
-  const totalOutros = banco.saidas.outros + despesasManuaisAgrup.outros;
-  const totalSemCategoria = banco.saidas.semCategoria;
-  const totalDespesas =
-    totalDespesasFixas + totalDespesasVariaveis + totalImpostosJuros +
-    totalParcelamento + totalInvestimentos + totalOutros + totalSemCategoria +
-    comissoes.total + comissoes.taxaCartao;
-
+  // Total de despesas vem do SumarioDespesas via callback `onChange`.
+  const totalDespesas = totalDespesasDin;
   const resultado = vendas.mes.total - totalDespesas;
   const margemPct = vendas.mes.total > 0 ? (resultado / vendas.mes.total) * 100 : 0;
 
@@ -367,6 +338,16 @@ export default function Lancamentos() {
     const d = await r.json();
     alert(`${d.removidas} duplicatas de saída removidas.`);
     reload();
+  };
+  const setCategoriaTx = async (id: string, categoriaId: string | null) => {
+    await fetch(`${API_BASE}/api/expenses/bank/${id}/categoria`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categoriaId }),
+    });
+    // Atualiza otimisticamente bankTx + força recarregar sumário
+    setBankTx(prev => prev.map(t => t.id === id ? { ...t, categoriaId: categoriaId || undefined } : t));
+    setRefreshKey(k => k + 1);
   };
 
   // ── Render ──
@@ -418,6 +399,7 @@ export default function Lancamentos() {
         <TabsList className="mb-4">
           <TabsTrigger value="visao" data-testid="tab-visao">Visão do Mês</TabsTrigger>
           <TabsTrigger value="conciliacao" data-testid="tab-conciliacao">Conciliação Bancária</TabsTrigger>
+          <TabsTrigger value="categorias" data-testid="tab-categorias">Categorias & Regras</TabsTrigger>
         </TabsList>
 
         <TabsContent value="visao" className="space-y-5 mt-0">
@@ -528,51 +510,25 @@ export default function Lancamentos() {
             </CardContent>
           </Card>
 
-          {/* ─── SEÇÃO 3: DESPESAS DO MÊS ─── */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Wallet className="w-4 h-4 text-red-400" />
-                3. Despesas — {labelMesPtBR(selectedMes)}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-1.5 text-sm">
-                <LinhaDespesa label="Fixas" valor={totalDespesasFixas} sub={`Manuais ${formatCurrency(despesasManuaisAgrup.fixa)} · Extrato ${formatCurrency(banco.saidas.fixa)}`} />
-                <LinhaDespesa label="Variáveis" valor={totalDespesasVariaveis} sub={`Manuais ${formatCurrency(despesasManuaisAgrup.variavel)} · Extrato ${formatCurrency(banco.saidas.variavel)}`} />
-                <LinhaDespesa label="Comissões + Bônus" valor={comissoes.total} sub={comissoes.total > 0 ? "calculado pelo Pagamento" : ""} />
-                <LinhaDespesa label="Taxa de cartão" valor={comissoes.taxaCartao} sub={comissoes.taxaCartao > 0 ? "descontado pela maquininha" : ""} />
-                {totalImpostosJuros > 0 && <LinhaDespesa label="Impostos / Juros" valor={totalImpostosJuros} />}
-                {totalParcelamento > 0 && <LinhaDespesa label="Parcelamentos" valor={totalParcelamento} sub="manuais" />}
-                {totalInvestimentos > 0 && <LinhaDespesa label="Investimentos" valor={totalInvestimentos} sub="manuais" />}
-                {totalOutros > 0 && <LinhaDespesa label="Outros" valor={totalOutros} />}
-                {totalSemCategoria > 0 && (
-                  <LinhaDespesa
-                    label="Sem categoria"
-                    valor={totalSemCategoria}
-                    sub="classifique na Conciliação Bancária"
-                    alerta
-                  />
-                )}
-                {banco.transferenciaInterna > 0 && (
-                  <div className="flex items-center justify-between py-1 text-xs italic text-muted-foreground">
-                    <span>Transf. interna (excluída do total)</span>
-                    <span className="tabular-nums">{formatCurrency(banco.transferenciaInterna)}</span>
-                  </div>
-                )}
-                {banco.saidasIgnoradas > 0 && (
-                  <div className="flex items-center justify-between py-1 text-xs italic text-muted-foreground">
-                    <span>Saídas marcadas como ignoradas</span>
-                    <span className="tabular-nums">{formatCurrency(banco.saidasIgnoradas)}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between border-t border-border pt-2 mt-2 font-semibold">
-                  <span>Total de Despesas</span>
-                  <span className="tabular-nums text-red-400">{formatCurrency(totalDespesas)}</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          {/* ─── SEÇÃO 3: DESPESAS CATEGORIZADAS (dinâmico) ─── */}
+          <SumarioDespesas
+            mes={selectedMes}
+            comissoesCalc={comissoes.total}
+            bonusCalc={0}
+            taxaCartaoCalc={comissoes.taxaCartao}
+            onChange={setTotalDespesasDin}
+            refreshKey={refreshKey}
+          />
+          {(banco.transferenciaInterna > 0 || banco.saidasIgnoradas > 0) && (
+            <div className="text-[10px] italic text-muted-foreground space-x-3 px-1">
+              {banco.transferenciaInterna > 0 && (
+                <span>Transf. interna excluída: {formatCurrency(banco.transferenciaInterna)}</span>
+              )}
+              {banco.saidasIgnoradas > 0 && (
+                <span>Saídas ignoradas: {formatCurrency(banco.saidasIgnoradas)}</span>
+              )}
+            </div>
+          )}
 
           {/* ─── SEÇÃO 4: RESULTADO ─── */}
           <Card className={resultado >= 0 ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/30 bg-red-500/5"}>
@@ -631,7 +587,27 @@ export default function Lancamentos() {
                           <tr key={t.id} className={`border-b border-border/40 hover:bg-muted/30 ${!incluido ? "opacity-50" : ""}`}>
                             <td className="py-2 px-2 text-xs whitespace-nowrap">{new Date(t.date + "T12:00:00").toLocaleDateString("pt-BR")}</td>
                             <td className="py-2 px-2 text-xs">{t.description}</td>
-                            <td className="py-2 px-2 text-xs hidden md:table-cell">{t.categoria ? <Badge variant="outline" className="text-[10px]">{t.categoria}</Badge> : <span className="text-muted-foreground">—</span>}</td>
+                            <td className="py-2 px-2 text-xs hidden md:table-cell">
+                              <Select
+                                value={t.categoriaId || "__sem"}
+                                onValueChange={(v) => setCategoriaTx(t.id, v === "__sem" ? null : v)}
+                              >
+                                <SelectTrigger className="h-7 text-[10px] w-[170px]">
+                                  <SelectValue placeholder="Sem categoria" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__sem"><span className="text-muted-foreground">— Sem categoria —</span></SelectItem>
+                                  {expCategorias.map(c => (
+                                    <SelectItem key={c.id} value={c.id}>
+                                      <span className="flex items-center gap-1.5">
+                                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.cor }} />
+                                        {c.nome}
+                                      </span>
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
                             <td className="py-2 px-2 text-right tabular-nums text-red-400">-{formatCurrency(Math.abs(t.amount))}</td>
                             <td className="py-2 px-2 text-right">
                               <div className="flex items-center justify-end gap-1">
@@ -663,6 +639,10 @@ export default function Lancamentos() {
         <TabsContent value="conciliacao" className="mt-0">
           <Consolidacao embedded />
         </TabsContent>
+
+        <TabsContent value="categorias" className="mt-0">
+          <CategoriasRegrasPanel />
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -687,15 +667,3 @@ function LinhaConferencia({ label, tr, bk, tolerancia }: { label: string; tr: nu
   );
 }
 
-function LinhaDespesa({ label, valor, sub, alerta }: { label: string; valor: number; sub?: string; alerta?: boolean }) {
-  if (valor === 0 && !alerta) return null;
-  return (
-    <div className="flex items-start justify-between py-1.5 border-b border-border/40">
-      <div>
-        <div className="text-sm">{label}</div>
-        {sub && <div className={`text-[10px] ${alerta ? "text-amber-400" : "text-muted-foreground"}`}>{sub}</div>}
-      </div>
-      <div className="tabular-nums text-sm">{formatCurrency(valor)}</div>
-    </div>
-  );
-}

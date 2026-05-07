@@ -51,6 +51,8 @@ interface MetaApi {
   // v20: bônus por meta + salário fixo
   pctBonusExcedente?: number;
   salarioFixo?: number;
+  // v26: modo de comissão por profissional ('global' = usa setting da empresa)
+  modoComissao?: 'bruto' | 'liquido' | 'global';
 }
 
 interface PeriodoStats {
@@ -137,6 +139,8 @@ interface DraftMeta {
   // v20
   pctBonusExcedente: string;
   salarioFixo: string;
+  // v26
+  modoComissao: 'bruto' | 'liquido' | 'global';
   dirty: boolean;
   saving: boolean;
   editing: boolean;
@@ -280,6 +284,7 @@ export default function MetasEquipePainel() {
             pctPlano: String(meta.pctPlano ?? 0),
             pctBonusExcedente: String(meta.pctBonusExcedente ?? 0),
             salarioFixo: String(meta.salarioFixo ?? 0),
+            modoComissao: meta.modoComissao || 'global',
             dirty: false,
             saving: false,
             editing,
@@ -328,6 +333,7 @@ export default function MetasEquipePainel() {
         pctPlano: String(meta.pctPlano ?? 0),
         pctBonusExcedente: String(meta.pctBonusExcedente ?? 0),
         salarioFixo: String(meta.salarioFixo ?? 0),
+        modoComissao: meta.modoComissao || 'global',
         dirty: false,
         editing: false,
       },
@@ -354,6 +360,7 @@ export default function MetasEquipePainel() {
           pctPlano: Number(draft.pctPlano.replace(",", ".") || 0),
           pctBonusExcedente: Number((draft.pctBonusExcedente || "0").replace(",", ".") || 0),
           salarioFixo: Number((draft.salarioFixo || "0").replace(",", ".") || 0),
+          modoComissao: draft.modoComissao || 'global',
         }),
       });
       const j = await r.json();
@@ -760,6 +767,47 @@ export default function MetasEquipePainel() {
                                 />
                               </div>
                             </div>
+                          </div>
+                          <div className="col-span-2 rounded-md border border-card-border/50 px-2 py-2 bg-background/30">
+                            <p className="text-[10px] text-muted-foreground mb-1.5 font-semibold">
+                              Modo de cálculo da comissão
+                            </p>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {([
+                                { v: 'global',  label: 'Padrão da empresa' },
+                                { v: 'bruto',   label: 'Bruto (sobre preço)' },
+                                { v: 'liquido', label: 'Líquido (− insumos)' },
+                              ] as const).map(opt => {
+                                const ativo = (draft.modoComissao || 'global') === opt.v;
+                                return (
+                                  <button
+                                    key={opt.v}
+                                    type="button"
+                                    onClick={() => atualizarDraft(id, { modoComissao: opt.v })}
+                                    className={
+                                      "h-7 rounded-md border text-[10px] px-1.5 leading-tight transition-colors " +
+                                      (ativo
+                                        ? (opt.v === 'liquido'
+                                            ? "border-amber-500/60 bg-amber-500/15 text-amber-300"
+                                            : opt.v === 'bruto'
+                                              ? "border-sky-500/60 bg-sky-500/15 text-sky-300"
+                                              : "border-emerald-500/60 bg-emerald-500/15 text-emerald-300")
+                                        : "border-card-border/40 text-muted-foreground hover:bg-muted/30")
+                                    }
+                                    data-testid={`btn-modo-${opt.v}-${id}`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <p className="text-[9px] text-muted-foreground mt-1">
+                              {draft.modoComissao === 'liquido'
+                                ? "Comissão sobre (preço − ficha técnica). Ajuda a pagar insumos."
+                                : draft.modoComissao === 'bruto'
+                                  ? "Comissão sobre o preço cheio. Insumos saem só da empresa."
+                                  : "Usa o modo global definido em Configurações."}
+                            </p>
                           </div>
                           <div className="col-span-2 flex items-center justify-between gap-2 pt-1 flex-wrap">
                             <div className="flex items-center gap-2">

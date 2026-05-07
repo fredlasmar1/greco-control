@@ -6190,6 +6190,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n√
         if (!isFinite(n) || isNaN(n)) return 0;
         return Math.max(0, Math.min(100, n));
       };
+      const modoIn = String(body.modoComissao || "global").toLowerCase();
+      const modoSan: 'bruto' | 'liquido' | 'global' =
+        modoIn === 'bruto' || modoIn === 'liquido' ? (modoIn as 'bruto' | 'liquido') : 'global';
       const meta = await upsertMeta({
         profissionalId: id,
         nome: body.nome || "",
@@ -6200,6 +6203,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n√
         pctServico: clampPct(body.pctServico),
         pctProduto: clampPct(body.pctProduto),
         pctPlano: clampPct(body.pctPlano),
+        pctBonusExcedente: clampPct(body.pctBonusExcedente),
+        salarioFixo: Math.max(0, Number(body.salarioFixo) || 0),
+        modoComissao: modoSan,
       });
       return res.json({ ok: true, meta });
     } catch (err: any) {

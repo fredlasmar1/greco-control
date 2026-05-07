@@ -242,6 +242,12 @@ interface TransacaoBanco {
   // Quando preenchido, indica que a categoria foi atribuída por uma regra automática.
   // null/undefined = atribuição manual ou ainda sem categoria.
   regraIdAplicada?: string;
+  // v28: par de transferência interna entre contas (saída de uma conta + entrada
+  // espelho na outra). Ambas as transações apontam uma pra outra. Quando preenchido,
+  // ambas saem do cálculo de entradas/saídas líquidas (não dupla-contam).
+  transferenciaParId?: string;
+  // Confiança do match automático: 1.0 = exato, < 1.0 = aproximado (data/valor com tolerância)
+  transferenciaConfianca?: number;
 }
 
 /** Chave de deduplicação: contaId + date + amount + descrição normalizada (sem
@@ -4632,6 +4638,270 @@ Regras CRÍTICAS:
     delete regrasGastos[chave];
     saveRegrasGastos();
     return res.json({ ok: true });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // CONCILIAÇÃO MULTIBANCO (v28)
+  // Detecta transferências internas entre contas (saída em A + entrada espelho
+  // em B). Para o caso Greco: vendas caem no Santander/InfinityPay e são
+  // transferidas pro Itaú — sem o detector, esse R$ aparece 2x nas entradas.
+  // ════════════════════════════════════════════════════════════════════════
+
+  /** Para cada saída de conta com transito=true, procura entrada espelho na
+   *  contaDestinoId em ±janela de dias com mesmo valor (tolerância). Marca o par.
+   *  Retorna estatísticas. dryRun=true só calcula sem persistir. */
+  function detectarTransferenciasInternas(opts: {
+    mes?: string;          // YYYY-MM (limitar escopo) — opcional
+    janelaDias?: number;   // padrão 3
+    toleranciaReais?: number; // padrão 1.00
+    dryRun?: boolean;
+    forceRematch?: boolean;
+  } = {}): {
+    pareados: number;
+    pares: Array<{ outId: string; inId: string; valor: number; data: string; confianca: number; outConta: string; inConta: string }>;
+    naoCasadas: { outs: number; ins: number };
+  } {
+    const janela = opts.janelaDias ?? 3;
+    const tol = opts.toleranciaReais ?? 1.0;
+    const force = !!opts.forceRematch;
+
+    const contasMap = new Map(contasConsolidacao.map(c => [c.id, c]));
+    const contasTransito = contasConsolidacao.filter(c => c.transito && c.contaDestinoId);
+
+    // Reseta pares anteriores se forceRematch (libera pra rematch limpo)
+    if (force) {
+      for (const t of transacoesBanco) {
+        if (t.transferenciaParId) {
+          t.transferenciaParId = undefined;
+          t.transferenciaConfianca = undefined;
+        }
+      }
+    }
+
+    // Filtra ao mês se passado
+    const noEscopo = (t: TransacaoBanco) => !opts.mes || t.date.startsWith(opts.mes);
+
+    // Pra cada conta de trânsito, pega saídas no escopo, e candidatos de entrada na destino
+    const pares: Array<{ outId: string; inId: string; valor: number; data: string; confianca: number; outConta: string; inConta: string }> = [];
+    const usadasEntradas = new Set<string>(); // já pareadas neste run
+    for (const cT of contasTransito) {
+      const destinoId = cT.contaDestinoId!;
+      const destino = contasMap.get(destinoId);
+      if (!destino) continue;
+
+      const saidas = transacoesBanco.filter(t =>
+        t.contaId === cT.id && t.amount < 0 && !t.transferenciaParId && noEscopo(t)
+      );
+      // Candidatos: entradas no destino — não restringimos pelo mês na destino
+      // pra cobrir transferências cruzando virada de mês (ex: saída 30/abr → entrada 02/mai)
+      const entradasDestino = transacoesBanco.filter(t =>
+        t.contaId === destinoId && t.amount > 0 && !t.transferenciaParId && !usadasEntradas.has(t.id)
+      );
+
+      for (const out of saidas) {
+        const valorAlvo = Math.abs(out.amount);
+        const dataOut = new Date(out.date + "T12:00:00").getTime();
+
+        let melhor: TransacaoBanco | null = null;
+        let melhorScore = -1;
+        let melhorDelta = 99;
+
+        for (const inn of entradasDestino) {
+          if (usadasEntradas.has(inn.id)) continue;
+          // Valor: mesma magnitude (tol)
+          const dif = Math.abs(inn.amount - valorAlvo);
+          if (dif > tol) continue;
+          // Data: dentro da janela
+          const dataIn = new Date(inn.date + "T12:00:00").getTime();
+          const deltaDias = Math.round((dataIn - dataOut) / (1000 * 60 * 60 * 24));
+          if (deltaDias < 0 || deltaDias > janela) continue; // entrada DEPOIS da saída
+
+          // Score: valor exato (dif=0) + data próxima
+          const score = (1 - dif / Math.max(0.01, tol)) * 0.5 + (1 - deltaDias / janela) * 0.5;
+          if (score > melhorScore) {
+            melhor = inn;
+            melhorScore = score;
+            melhorDelta = deltaDias;
+          }
+        }
+
+        if (melhor) {
+          usadasEntradas.add(melhor.id);
+          pares.push({
+            outId: out.id,
+            inId: melhor.id,
+            valor: valorAlvo,
+            data: out.date,
+            confianca: Math.max(0, Math.min(1, melhorScore)),
+            outConta: cT.nome,
+            inConta: destino.nome,
+          });
+          if (!opts.dryRun) {
+            out.transferenciaParId = melhor.id;
+            out.transferenciaConfianca = melhorScore;
+            melhor.transferenciaParId = out.id;
+            melhor.transferenciaConfianca = melhorScore;
+          }
+        }
+      }
+    }
+
+    if (!opts.dryRun && pares.length > 0) saveTransacoesBanco();
+
+    // Conta o que ficou sem casar (no escopo do mês)
+    let outsSemPar = 0, insSemPar = 0;
+    for (const cT of contasTransito) {
+      outsSemPar += transacoesBanco.filter(t => t.contaId === cT.id && t.amount < 0 && !t.transferenciaParId && noEscopo(t)).length;
+      const destinoId = cT.contaDestinoId!;
+      insSemPar += transacoesBanco.filter(t => t.contaId === destinoId && t.amount > 0 && !t.transferenciaParId && noEscopo(t)).length;
+    }
+
+    return { pareados: pares.length, pares, naoCasadas: { outs: outsSemPar, ins: insSemPar } };
+  }
+
+  // POST /api/conciliacao-multibanco/detectar/:mes
+  app.post("/api/conciliacao-multibanco/detectar/:mes", (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes);
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido" });
+      const force = !!(req.body || {}).force;
+      const r = detectarTransferenciasInternas({ mes, forceRematch: force });
+      log(`multibanco/detectar mes=${mes}: pareados=${r.pareados} sem-par=${r.naoCasadas.outs}out/${r.naoCasadas.ins}in`, "consolidacao");
+      return res.json({ ok: true, ...r });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/conciliacao-multibanco/desfazer-par
+  // body: { txId } — remove o pareamento dos dois lados
+  app.post("/api/conciliacao-multibanco/desfazer-par", (req: Request, res: Response) => {
+    try {
+      const txId = String((req.body || {}).txId || "");
+      const tx = transacoesBanco.find(t => t.id === txId);
+      if (!tx || !tx.transferenciaParId) return res.status(404).json({ ok: false, error: "par não encontrado" });
+      const par = transacoesBanco.find(t => t.id === tx.transferenciaParId);
+      tx.transferenciaParId = undefined;
+      tx.transferenciaConfianca = undefined;
+      if (par) { par.transferenciaParId = undefined; par.transferenciaConfianca = undefined; }
+      saveTransacoesBanco();
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/conciliacao-multibanco/parear-manual
+  // body: { outId, inId } — força um par mesmo que não casaria automaticamente
+  app.post("/api/conciliacao-multibanco/parear-manual", (req: Request, res: Response) => {
+    try {
+      const outId = String((req.body || {}).outId || "");
+      const inId = String((req.body || {}).inId || "");
+      const out = transacoesBanco.find(t => t.id === outId);
+      const inn = transacoesBanco.find(t => t.id === inId);
+      if (!out || !inn) return res.status(404).json({ ok: false, error: "transação não encontrada" });
+      if (out.amount >= 0 || inn.amount <= 0) return res.status(400).json({ ok: false, error: "outId precisa ser saída e inId entrada" });
+      out.transferenciaParId = inn.id;
+      out.transferenciaConfianca = 1.0;
+      inn.transferenciaParId = out.id;
+      inn.transferenciaConfianca = 1.0;
+      saveTransacoesBanco();
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/conciliacao-multibanco/:mes — visão consolidada do batimento
+  app.get("/api/conciliacao-multibanco/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes);
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido" });
+
+      const txMes = transacoesBanco.filter(t => t.date.startsWith(mes) && t.incluidoNoFluxo !== false);
+      const contasMap = new Map(contasConsolidacao.map(c => [c.id, c]));
+
+      // Por conta: brutas e líquidas (líquidas excluem transferências internas do PAR)
+      type ResumoConta = {
+        id: string;
+        nome: string;
+        transito: boolean;
+        contaDestinoId?: string;
+        entradasBrutas: number; entradasQtd: number;
+        saidasBrutas: number; saidasQtd: number;
+        transferOut: number; transferOutQtd: number;  // saídas que são transferência interna (saem do líquido)
+        transferIn: number; transferInQtd: number;    // entradas que são transferência interna (saem do líquido)
+        entradasLiquidas: number; saidasLiquidas: number;
+      };
+      const porConta = new Map<string, ResumoConta>();
+      for (const c of contasConsolidacao) {
+        porConta.set(c.id, {
+          id: c.id, nome: c.nome, transito: !!c.transito, contaDestinoId: c.contaDestinoId,
+          entradasBrutas: 0, entradasQtd: 0, saidasBrutas: 0, saidasQtd: 0,
+          transferOut: 0, transferOutQtd: 0, transferIn: 0, transferInQtd: 0,
+          entradasLiquidas: 0, saidasLiquidas: 0,
+        });
+      }
+
+      for (const t of txMes) {
+        const r = porConta.get(t.contaId);
+        if (!r) continue;
+        if (t.amount > 0) {
+          r.entradasBrutas += t.amount; r.entradasQtd += 1;
+          if (t.transferenciaParId) { r.transferIn += t.amount; r.transferInQtd += 1; }
+        } else {
+          const v = Math.abs(t.amount);
+          r.saidasBrutas += v; r.saidasQtd += 1;
+          if (t.transferenciaParId) { r.transferOut += v; r.transferOutQtd += 1; }
+        }
+      }
+      for (const r of porConta.values()) {
+        r.entradasLiquidas = r.entradasBrutas - r.transferIn;
+        r.saidasLiquidas = r.saidasBrutas - r.transferOut;
+      }
+
+      // Pares detectados (lista pra UI)
+      const paresMap = new Map<string, { outId: string; inId: string; valor: number; data: string; confianca: number; outConta: string; inConta: string }>();
+      for (const t of txMes) {
+        if (!t.transferenciaParId) continue;
+        const par = transacoesBanco.find(x => x.id === t.transferenciaParId);
+        if (!par) continue;
+        const out = t.amount < 0 ? t : par;
+        const inn = t.amount > 0 ? t : par;
+        const key = [out.id, inn.id].sort().join("|");
+        if (paresMap.has(key)) continue;
+        paresMap.set(key, {
+          outId: out.id, inId: inn.id,
+          valor: Math.abs(out.amount), data: out.date,
+          confianca: t.transferenciaConfianca || 0,
+          outConta: contasMap.get(out.contaId)?.nome || "?",
+          inConta: contasMap.get(inn.contaId)?.nome || "?",
+        });
+      }
+
+      // Totais consolidados
+      const totalEntradasBrutas = Array.from(porConta.values()).reduce((s, r) => s + r.entradasBrutas, 0);
+      const totalEntradasLiquidas = Array.from(porConta.values()).reduce((s, r) => s + r.entradasLiquidas, 0);
+      const totalSaidasBrutas = Array.from(porConta.values()).reduce((s, r) => s + r.saidasBrutas, 0);
+      const totalSaidasLiquidas = Array.from(porConta.values()).reduce((s, r) => s + r.saidasLiquidas, 0);
+      const totalTransferenciasInternas = Array.from(porConta.values()).reduce((s, r) => s + r.transferOut, 0);
+
+      return res.json({
+        ok: true,
+        mes,
+        contas: Array.from(porConta.values()),
+        pares: Array.from(paresMap.values()).sort((a, b) => (a.data < b.data ? 1 : -1)),
+        totais: {
+          entradasBrutas: totalEntradasBrutas,
+          entradasLiquidas: totalEntradasLiquidas,
+          saidasBrutas: totalSaidasBrutas,
+          saidasLiquidas: totalSaidasLiquidas,
+          transferenciasInternas: totalTransferenciasInternas,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
   });
 
   // POST /api/consolidacao/dedup — remove duplicatas (mesma chave) mantendo a mais antiga

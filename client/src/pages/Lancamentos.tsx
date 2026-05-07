@@ -21,6 +21,7 @@ import {
 import type { DailyEntry } from "@shared/schema";
 import SumarioDespesas from "@/components/lancamentos/SumarioDespesas";
 import CategoriasRegrasPanel from "@/components/lancamentos/CategoriasRegrasPanel";
+import ConciliacaoMultibanco from "@/components/lancamentos/ConciliacaoMultibanco";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
@@ -442,73 +443,32 @@ export default function Lancamentos() {
             </CardContent>
           </Card>
 
-          {/* ─── SEÇÃO 2: CONFERÊNCIA TRINKS × BANCO ─── */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-blue-400" />
-                2. Conferência: Trinks × Banco
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {bankTx.length === 0 ? (
+          {/* ─── SEÇÃO 2: CONCILIAÇÃO MULTIBANCO × TRINKS ─── */}
+          {bankTx.length === 0 ? (
+            <Card>
+              <CardContent className="p-3">
                 <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
                   <div>
                     Nenhum extrato bancário importado para {labelMesPtBR(selectedMes)}.
-                    {" "}Para conferir se o que o Trinks vendeu bateu com o que entrou no banco, suba o extrato em <strong>Conciliação Bancária</strong>.
+                    {" "}Para conciliar com o Trinks, suba os extratos em <strong>Conciliação Bancária</strong>.
                   </div>
                 </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-xs text-muted-foreground">
-                        <th className="text-left py-2 px-2 font-medium">Meio</th>
-                        <th className="text-right py-2 px-2 font-medium">Trinks</th>
-                        <th className="text-right py-2 px-2 font-medium">Banco</th>
-                        <th className="text-right py-2 px-2 font-medium">Diferença</th>
-                        <th className="text-left py-2 px-2 font-medium hidden md:table-cell">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <LinhaConferencia label="Pix" tr={vendas.mes.pix} bk={banco.entradas.pix} tolerancia={tolerancia} />
-                      <LinhaConferencia label="Cartão" tr={vendas.mes.cartao} bk={banco.entradas.cartao} tolerancia={tolerancia} />
-                      <tr className="border-b border-border/40">
-                        <td className="py-2 px-2 font-medium">Dinheiro</td>
-                        <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(vendas.mes.dinheiro)}</td>
-                        <td className="py-2 px-2 text-right text-muted-foreground italic">—</td>
-                        <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(vendas.mes.dinheiro)}</td>
-                        <td className="py-2 px-2 text-xs text-muted-foreground hidden md:table-cell">Espécie não cai no banco</td>
-                      </tr>
-                      {(vendas.mes.outros > 0 || banco.entradas.outros > 0) && (
-                        <tr className="border-b border-border/40">
-                          <td className="py-2 px-2 font-medium">Outros</td>
-                          <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(vendas.mes.outros)}</td>
-                          <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(banco.entradas.outros)}</td>
-                          <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(vendas.mes.outros - banco.entradas.outros)}</td>
-                          <td className="py-2 px-2 text-xs text-muted-foreground hidden md:table-cell">Voucher, depósito, transferência…</td>
-                        </tr>
-                      )}
-                      <tr className="font-semibold">
-                        <td className="py-2 px-2">Total</td>
-                        <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(vendas.mes.total)}</td>
-                        <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(banco.entradas.total)}</td>
-                        <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(vendas.mes.total - banco.entradas.total)}</td>
-                        <td className="py-2 px-2 text-xs text-muted-foreground hidden md:table-cell">
-                          {Math.abs(vendas.mes.total - banco.entradas.total) <= tolerancia ? "Conciliado" : "Verificar pendências"}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <p className="text-[11px] text-muted-foreground mt-2">
-                Diferença positiva = Trinks vendeu mais do que caiu no banco (pendentes ou em trânsito).
-                {" "}Diferença negativa = entrou no banco mais do que o Trinks registrou (revisar conta).
-              </p>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ) : (
+            <ConciliacaoMultibanco
+              mes={selectedMes}
+              trinksMes={{
+                total: vendas.mes.total,
+                pix: vendas.mes.pix,
+                cartao: vendas.mes.cartao,
+                dinheiro: vendas.mes.dinheiro,
+                outros: vendas.mes.outros,
+              }}
+              onChanged={() => { setReloadKey(k => k + 1); setRefreshKey(k => k + 1); }}
+            />
+          )}
 
           {/* ─── SEÇÃO 3: DESPESAS CATEGORIZADAS (dinâmico) ─── */}
           <SumarioDespesas
@@ -649,21 +609,4 @@ export default function Lancamentos() {
 }
 
 // ─── Componentes auxiliares ───────────────────────────────────────────
-function LinhaConferencia({ label, tr, bk, tolerancia }: { label: string; tr: number; bk: number; tolerancia: number }) {
-  const dif = tr - bk;
-  const conciliado = Math.abs(dif) <= tolerancia;
-  return (
-    <tr className="border-b border-border/40">
-      <td className="py-2 px-2 font-medium">{label}</td>
-      <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(tr)}</td>
-      <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(bk)}</td>
-      <td className={`py-2 px-2 text-right tabular-nums ${conciliado ? "text-emerald-400" : dif > 0 ? "text-amber-400" : "text-blue-400"}`}>
-        {dif >= 0 ? "+" : ""}{formatCurrency(dif)}
-      </td>
-      <td className="py-2 px-2 text-xs text-muted-foreground hidden md:table-cell">
-        {conciliado ? "✓ Bate" : dif > 0 ? "Trinks > Banco (pendente)" : "Banco > Trinks (revisar)"}
-      </td>
-    </tr>
-  );
-}
 

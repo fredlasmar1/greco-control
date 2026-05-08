@@ -752,7 +752,10 @@ interface ServiceCostEntry {
   // v24: overrides opcionais por serviço.
   // Se ausentes, sistema usa defaults (comissão pela categoria do serviço,
   // margem desejada pela categoria do produto/serviço).
-  comissaoPct?: number;        // 0..100. Override da comissão automática.
+  comissaoPct?: number;        // 0..100. % do BARBEIRO/EXECUTOR.
+  // v31: comissão adicional do assistente (ex: químicos, depilação, mãos).
+  // 0 (default) = serviço sem assistente. Soma com comissaoPct no cálculo.
+  comissaoAssistentePct?: number;  // 0..100
   margemDesejadaPct?: number;  // 0..100. Margem alvo para o preço sugerido.
 }
 
@@ -5413,6 +5416,10 @@ Regras CRÍTICAS:
         const v = Number(c.margemDesejadaPct);
         if (isFinite(v)) entry.margemDesejadaPct = Math.max(0, Math.min(100, v));
       }
+      if (c.comissaoAssistentePct !== undefined && c.comissaoAssistentePct !== null && c.comissaoAssistentePct !== "") {
+        const v = Number(c.comissaoAssistentePct);
+        if (isFinite(v)) entry.comissaoAssistentePct = Math.max(0, Math.min(100, v));
+      }
       return entry;
     });
     saveServiceCosts();
@@ -5901,6 +5908,7 @@ Regras CRÍTICAS:
         const comissaoPct = sc?.comissaoPct !== undefined
           ? sc.comissaoPct
           : Math.round(getComissaoPctDoServico(nome) * 100);
+        const comissaoAssistentePct = sc?.comissaoAssistentePct ?? 0;
 
         // Margem desejada: override se houver, senão default por categoria
         const margemDesejadaPct = sc?.margemDesejadaPct !== undefined
@@ -5913,6 +5921,7 @@ Regras CRÍTICAS:
           fichaTecnica,
           custoFixoPorMinuto: cfm.custoFixoPorMinuto,
           comissaoPct,
+          comissaoAssistentePct,
           margemDesejadaPct,
         });
 
@@ -5922,6 +5931,8 @@ Regras CRÍTICAS:
           itensFicha: sc ? sc.items.length : 0,
           comissaoPct,
           comissaoOverride: sc?.comissaoPct !== undefined,
+          comissaoAssistentePct,
+          comissaoAssistenteOverride: sc?.comissaoAssistentePct !== undefined && sc.comissaoAssistentePct > 0,
           margemDesejadaPct,
           margemDesejadaOverride: sc?.margemDesejadaPct !== undefined,
           ...calculo,

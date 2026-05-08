@@ -146,13 +146,16 @@ export interface CalculoServicoInput {
   duracaoMin: number;
   fichaTecnica: number;       // total dos itens da ficha
   custoFixoPorMinuto: number; // vindo de calcularCustoFixoPorMinuto
-  comissaoPct: number;        // 0..100
+  comissaoPct: number;        // 0..100 — comissão do BARBEIRO/EXECUTOR
+  comissaoAssistentePct?: number;  // 0..100 — % adicional pro assistente (default 0)
   margemDesejadaPct: number;  // 0..100
 }
 
 export interface CalculoServicoOutput {
   custoFixoRateado: number;
-  comissaoValor: number;
+  comissaoValor: number;          // soma barbeiro + assistente
+  comissaoBarbeiroValor: number;  // só barbeiro
+  comissaoAssistenteValor: number; // só assistente (0 se não usado)
   custoTotal: number;
   margemRealValor: number;
   margemRealPct: number;
@@ -166,19 +169,23 @@ export function calcularMargemServico(input: CalculoServicoInput): CalculoServic
   const ficha = Math.max(0, Number(input.fichaTecnica) || 0);
   const cfm = Math.max(0, Number(input.custoFixoPorMinuto) || 0);
   const com = Math.max(0, Math.min(100, Number(input.comissaoPct) || 0));
+  const ass = Math.max(0, Math.min(100, Number(input.comissaoAssistentePct) || 0));
+  const comTot = Math.min(100, com + ass); // % total de comissão (barbeiro + assistente)
   const mar = Math.max(0, Math.min(100, Number(input.margemDesejadaPct) || 0));
 
   const custoFixoRateado = dur * cfm;
-  const comissaoValor = preco * (com / 100);
+  const comissaoBarbeiroValor = preco * (com / 100);
+  const comissaoAssistenteValor = preco * (ass / 100);
+  const comissaoValor = comissaoBarbeiroValor + comissaoAssistenteValor;
   const custoTotal = ficha + custoFixoRateado + comissaoValor;
   const margemRealValor = preco - custoTotal;
   const margemRealPct = preco > 0 ? (margemRealValor / preco) * 100 : 0;
 
   let precoSugerido: number | null = null;
   let precoSugeridoErro: string | undefined;
-  const denom = 1 - (com / 100) - (mar / 100);
+  const denom = 1 - (comTot / 100) - (mar / 100);
   if (denom <= 0) {
-    precoSugeridoErro = `Comissão (${com}%) + margem desejada (${mar}%) ≥ 100%. Impossível calcular preço sugerido.`;
+    precoSugeridoErro = `Comissão total (${comTot}%) + margem (${mar}%) ≥ 100%. Impossível calcular preço sugerido.`;
   } else {
     precoSugerido = (ficha + custoFixoRateado) / denom;
   }
@@ -186,6 +193,8 @@ export function calcularMargemServico(input: CalculoServicoInput): CalculoServic
   return {
     custoFixoRateado: Number(custoFixoRateado.toFixed(2)),
     comissaoValor: Number(comissaoValor.toFixed(2)),
+    comissaoBarbeiroValor: Number(comissaoBarbeiroValor.toFixed(2)),
+    comissaoAssistenteValor: Number(comissaoAssistenteValor.toFixed(2)),
     custoTotal: Number(custoTotal.toFixed(2)),
     margemRealValor: Number(margemRealValor.toFixed(2)),
     margemRealPct: Number(margemRealPct.toFixed(2)),

@@ -70,7 +70,8 @@ interface ServiceCostData {
   serviceId: string;
   serviceName: string;
   items: CostItem[];
-  comissaoPct?: number;        // v24: override por serviço
+  comissaoPct?: number;        // v24: % do barbeiro/executor
+  comissaoAssistentePct?: number; // v31: % adicional do assistente (default 0)
   margemDesejadaPct?: number;  // v24: override por serviço
 }
 
@@ -145,20 +146,32 @@ function CostDetailDialog({
   onClose,
   service,
   items,
+  comissaoPctInit,
+  comissaoAssistentePctInit,
+  margemDesejadaPctInit,
   onSave,
 }: {
   open: boolean;
   onClose: () => void;
   service: { id: string; name: string; price: number; duration: number; category: string };
   items: CostItem[];
-  onSave: (items: CostItem[]) => void;
+  comissaoPctInit: number;
+  comissaoAssistentePctInit: number;
+  margemDesejadaPctInit: number;
+  onSave: (data: { items: CostItem[]; comissaoPct: number; comissaoAssistentePct: number; margemDesejadaPct: number }) => void;
 }) {
   const [localItems, setLocalItems] = useState<CostItem[]>(items);
   const [showPresets, setShowPresets] = useState(false);
+  const [comissaoStr, setComissaoStr] = useState(String(comissaoPctInit));
+  const [assistenteStr, setAssistenteStr] = useState(String(comissaoAssistentePctInit));
+  const [margemStr, setMargemStr] = useState(String(margemDesejadaPctInit));
 
   useEffect(() => {
     setLocalItems(items);
-  }, [items, open]);
+    setComissaoStr(String(comissaoPctInit));
+    setAssistenteStr(String(comissaoAssistentePctInit));
+    setMargemStr(String(margemDesejadaPctInit));
+  }, [items, open, comissaoPctInit, comissaoAssistentePctInit, margemDesejadaPctInit]);
 
   const addItem = (preset?: typeof PRESET_ITEMS[0]) => {
     const newItem: CostItem = {
@@ -187,8 +200,18 @@ function CostDetailDialog({
   const netProfit = service.price - totalCost - commission40;
   const margin = service.price > 0 ? (netProfit / service.price) * 100 : 0;
 
+  const parsePct = (s: string): number => {
+    const n = Number((s || "").replace(",", "."));
+    if (!isFinite(n)) return 0;
+    return Math.max(0, Math.min(100, n));
+  };
   const handleSave = () => {
-    onSave(localItems);
+    onSave({
+      items: localItems,
+      comissaoPct: parsePct(comissaoStr),
+      comissaoAssistentePct: parsePct(assistenteStr),
+      margemDesejadaPct: parsePct(margemStr),
+    });
     onClose();
   };
 
@@ -210,7 +233,7 @@ function CostDetailDialog({
         </DialogHeader>
 
         {/* Service info bar */}
-        <div className="flex items-center gap-4 px-3 py-2 rounded-md bg-muted/30 text-sm">
+        <div className="flex items-center gap-4 px-3 py-2 rounded-md bg-muted/30 text-sm flex-wrap">
           <div>
             <span className="text-xs text-muted-foreground">Preço: </span>
             <span className="font-semibold">{formatCurrency(service.price)}</span>
@@ -223,6 +246,50 @@ function CostDetailDialog({
             <span className="text-xs text-muted-foreground">Categoria: </span>
             <span className="font-medium">{service.category}</span>
           </div>
+        </div>
+
+        {/* Comissões e margem desejada por serviço */}
+        <div className="rounded-md border border-card-border bg-background/30 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Comissões e margem deste serviço
+            </p>
+            <Badge variant="outline" className="text-[9px]">
+              Total comissão: {(parsePct(comissaoStr) + parsePct(assistenteStr)).toFixed(0)}%
+            </Badge>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="text-[10px] text-muted-foreground block mb-1">% Barbeiro / Executor</label>
+              <Input
+                type="text" inputMode="decimal" placeholder="40"
+                value={comissaoStr}
+                onChange={e => setComissaoStr(e.target.value.replace(/[^\d.,]/g, ""))}
+                className="h-8 text-sm tabular-nums"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-pink-300 block mb-1">% Assistente <span className="text-muted-foreground">(0 se não tem)</span></label>
+              <Input
+                type="text" inputMode="decimal" placeholder="0"
+                value={assistenteStr}
+                onChange={e => setAssistenteStr(e.target.value.replace(/[^\d.,]/g, ""))}
+                className="h-8 text-sm tabular-nums"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-emerald-300 block mb-1">% Margem desejada</label>
+              <Input
+                type="text" inputMode="decimal" placeholder="30"
+                value={margemStr}
+                onChange={e => setMargemStr(e.target.value.replace(/[^\d.,]/g, ""))}
+                className="h-8 text-sm tabular-nums"
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            💡 Use o assistente quando o serviço exige duas pessoas (químicas, depilação, mãos&pés). A comissão total = barbeiro + assistente.
+          </p>
         </div>
 
         {/* Items list */}
@@ -514,7 +581,12 @@ export default function Precificacao() {
       ...item,
       id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
     }));
-    handleSaveItems(targetServiceId, copiedItems);
+    handleSaveItems(targetServiceId, {
+      items: copiedItems,
+      comissaoPct: source.comissaoPct ?? comissaoPctPadrao(source.serviceName),
+      comissaoAssistentePct: source.comissaoAssistentePct ?? 0,
+      margemDesejadaPct: source.margemDesejadaPct ?? 30,
+    });
   };
 
   // Build services list from Trinks
@@ -551,12 +623,22 @@ export default function Precificacao() {
     return getItems(serviceId).reduce((s, item) => s + item.quantity * item.unitCost, 0);
   };
 
-  const handleSaveItems = (serviceId: string, items: CostItem[]) => {
+  const handleSaveItems = (
+    serviceId: string,
+    data: { items: CostItem[]; comissaoPct: number; comissaoAssistentePct: number; margemDesejadaPct: number },
+  ) => {
     const svc = services.find(s => s.id === serviceId);
     const existing = savedCosts.filter(c => c.serviceId !== serviceId);
     const updated: ServiceCostData[] = [
       ...existing,
-      { serviceId, serviceName: svc?.name || "", items },
+      {
+        serviceId,
+        serviceName: svc?.name || "",
+        items: data.items,
+        comissaoPct: data.comissaoPct,
+        comissaoAssistentePct: data.comissaoAssistentePct,
+        margemDesejadaPct: data.margemDesejadaPct,
+      },
     ];
     saveMutation.mutate(updated);
   };
@@ -573,6 +655,8 @@ export default function Precificacao() {
       const comissaoPct = sc?.comissaoPct !== undefined
         ? sc.comissaoPct
         : comissaoPctPadrao(s.name);
+      const comissaoAssistentePct = sc?.comissaoAssistentePct ?? 0;
+      const comissaoTotalPct = comissaoPct + comissaoAssistentePct;
       const margemDesejadaPct = sc?.margemDesejadaPct !== undefined
         ? sc.margemDesejadaPct
         : margemDesejadaPadrao(s.category, s.name);
@@ -581,18 +665,19 @@ export default function Precificacao() {
       const custoFixoRateado = s.duration * cfm;
       // v24 Etapa 5: em modo simulação, comissão = (preço − ficha) × % (trava custo antes da comissão)
       // No modo padrão, comissão = preço × % (sobre o preço cheio)
-      const commissionValue = modoSimulacao
-        ? Math.max(0, s.price - totalCost) * (comissaoPct / 100)
-        : s.price * (comissaoPct / 100);
+      const baseComissao = modoSimulacao ? Math.max(0, s.price - totalCost) : s.price;
+      const commissionBarbeiro = baseComissao * (comissaoPct / 100);
+      const commissionAssistente = baseComissao * (comissaoAssistentePct / 100);
+      const commissionValue = commissionBarbeiro + commissionAssistente;
       const custoTotal = totalCost + custoFixoRateado + commissionValue;
       const netProfit = s.price - custoTotal;
       const margin = s.price > 0 ? (netProfit / s.price) * 100 : 0;
 
       // Preço sugerido baseado em margem desejada
-      const denom = 1 - (comissaoPct / 100) - (margemDesejadaPct / 100);
+      const denom = 1 - (comissaoTotalPct / 100) - (margemDesejadaPct / 100);
       const precoSugerido = denom > 0 ? (totalCost + custoFixoRateado) / denom : null;
       const precoSugeridoErro = denom <= 0
-        ? `Comissão (${comissaoPct}%) + margem (${margemDesejadaPct}%) ≥ 100%`
+        ? `Comissão total (${comissaoTotalPct}%) + margem (${margemDesejadaPct}%) ≥ 100%`
         : null;
 
       return {
@@ -600,8 +685,12 @@ export default function Precificacao() {
         totalCost,
         custoFixoRateado,
         comissaoPct,
+        comissaoAssistentePct,
+        comissaoTotalPct,
         margemDesejadaPct,
         commissionValue,
+        commissionBarbeiro,
+        commissionAssistente,
         custoTotal,
         netProfit,
         margin,
@@ -994,7 +1083,17 @@ export default function Precificacao() {
                       <div><p className="text-[10px] text-muted-foreground">Preço</p><p className="text-sm font-semibold">{formatCurrency(item.price)}</p></div>
                       <div><p className="text-[10px] text-muted-foreground">Ficha técnica</p><p className="text-sm text-red-400">{item.itemCount > 0 ? formatCurrency(item.totalCost) : "—"}</p></div>
                       <div><p className="text-[10px] text-muted-foreground">Custo fixo ({item.duration}min)</p><p className="text-sm text-red-400">{formatCurrency(item.custoFixoRateado)}</p></div>
-                      <div><p className="text-[10px] text-muted-foreground">Comissão ({item.comissaoPct}%)</p><p className="text-sm text-orange-400">{formatCurrency(item.commissionValue)}</p></div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Comissão ({item.comissaoPct}%{item.comissaoAssistentePct > 0 ? ` + ${item.comissaoAssistentePct}% ass.` : ""})
+                        </p>
+                        <p className="text-sm text-orange-400">{formatCurrency(item.commissionValue)}</p>
+                        {item.comissaoAssistentePct > 0 && (
+                          <p className="text-[9px] text-pink-400/80">
+                            Barbeiro {formatCurrency(item.commissionBarbeiro)} + Assist. {formatCurrency(item.commissionAssistente)}
+                          </p>
+                        )}
+                      </div>
                       <div><p className="text-[10px] text-muted-foreground">Lucro</p><p className={`text-sm font-semibold ${item.netProfit >= 0 ? "text-green-500" : "text-red-500"}`}>{item.itemCount > 0 ? formatCurrency(item.netProfit) : "—"}</p></div>
                       <div>
                         <p className="text-[10px] text-muted-foreground">Preço sugerido (margem {item.margemDesejadaPct}%)</p>
@@ -1066,15 +1165,24 @@ export default function Precificacao() {
       </div>
 
       {/* Detail Dialog */}
-      {editingServiceData && (
-        <CostDetailDialog
-          open={!!editingService}
-          onClose={() => setEditingService(null)}
-          service={editingServiceData}
-          items={getItems(editingServiceData.id)}
-          onSave={(items) => handleSaveItems(editingServiceData.id, items)}
-        />
-      )}
+      {editingServiceData && (() => {
+        const sc = savedCosts.find(c => c.serviceId === editingServiceData.id);
+        const comInit = sc?.comissaoPct ?? comissaoPctPadrao(editingServiceData.name);
+        const assInit = sc?.comissaoAssistentePct ?? 0;
+        const marInit = sc?.margemDesejadaPct ?? margemDesejadaPadrao(editingServiceData.category, editingServiceData.name);
+        return (
+          <CostDetailDialog
+            open={!!editingService}
+            onClose={() => setEditingService(null)}
+            service={editingServiceData}
+            items={getItems(editingServiceData.id)}
+            comissaoPctInit={comInit}
+            comissaoAssistentePctInit={assInit}
+            margemDesejadaPctInit={marInit}
+            onSave={(data) => handleSaveItems(editingServiceData.id, data)}
+          />
+        );
+      })()}
 
       {/* Info */}
       <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-primary/10 border border-primary/20">

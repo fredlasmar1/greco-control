@@ -12,6 +12,7 @@ import { useStore } from "@/lib/store";
 import { Loader2 } from "lucide-react";
 import Dashboard from "@/pages/Dashboard";
 import Lancamentos from "@/pages/Lancamentos";
+import CaixaDia from "@/pages/CaixaDia";
 import Equipe from "@/pages/Equipe";
 import Servicos from "@/pages/Servicos";
 import Precificacao from "@/pages/Precificacao";
@@ -60,6 +61,7 @@ function AdminRoutes() {
         <Switch>
           <Route path="/" component={Dashboard} />
           <Route path="/lancamentos" component={Lancamentos} />
+          <Route path="/caixa-dia" component={CaixaDia} />
           <Route path="/equipe" component={Equipe} />
           {/* /servicos foi unificada em /precificacao (aba interna 'Catálogo') */}
           <Route path="/servicos">{() => <RedirectTo to="/precificacao" />}</Route>

@@ -410,6 +410,29 @@ export default function Lancamentos() {
                   <div className="text-xs text-muted-foreground">{vendas.mes.count} atendimentos</div>
                 </div>
               </div>
+              {/* Breakdown por meio (cartão, planos/outros, PIX, dinheiro) — exibe sempre */}
+              <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div className="rounded border border-card-border/50 bg-background/30 p-2">
+                  <div className="text-[10px] text-muted-foreground">💳 Cartão</div>
+                  <div className="tabular-nums font-semibold">{formatCurrency(vendas.mes.cartao)}</div>
+                  <div className="text-[9px] text-muted-foreground">{vendas.mes.total > 0 ? `${((vendas.mes.cartao / vendas.mes.total) * 100).toFixed(1)}%` : ""}</div>
+                </div>
+                <div className="rounded border border-card-border/50 bg-background/30 p-2">
+                  <div className="text-[10px] text-muted-foreground">📦 Outros (planos)</div>
+                  <div className="tabular-nums font-semibold">{formatCurrency(vendas.mes.outros)}</div>
+                  <div className="text-[9px] text-muted-foreground">{vendas.mes.total > 0 ? `${((vendas.mes.outros / vendas.mes.total) * 100).toFixed(1)}%` : ""}</div>
+                </div>
+                <div className="rounded border border-card-border/50 bg-background/30 p-2">
+                  <div className="text-[10px] text-muted-foreground">📲 PIX</div>
+                  <div className="tabular-nums font-semibold">{formatCurrency(vendas.mes.pix)}</div>
+                  <div className="text-[9px] text-muted-foreground">{vendas.mes.total > 0 ? `${((vendas.mes.pix / vendas.mes.total) * 100).toFixed(1)}%` : ""}</div>
+                </div>
+                <div className="rounded border-2 border-amber-500/40 bg-amber-500/10 p-2">
+                  <div className="text-[10px] text-amber-300">💵 Dinheiro</div>
+                  <div className="tabular-nums font-semibold text-amber-400">{formatCurrency(vendas.mes.dinheiro)}</div>
+                  <div className="text-[9px] text-muted-foreground">{vendas.mes.total > 0 ? `${((vendas.mes.dinheiro / vendas.mes.total) * 100).toFixed(1)}%` : ""}</div>
+                </div>
+              </div>
               <div className="text-[11px] text-muted-foreground mt-2">
                 Origem: {fonte === "csv" ? "CSV Trinks importado" : "Trinks API ao vivo"}
                 {trinksAt && fonte !== "csv" && ` · sincronizado ${new Date(trinksAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}`}

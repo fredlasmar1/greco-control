@@ -33,6 +33,7 @@ const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
   { path: "/conselheiro", label: "Conselheiro", icon: Scale },
   { path: "/lancamentos", label: "Lançamentos", icon: Receipt },
+  { path: "/caixa-dia", label: "Caixa do Dia", icon: Banknote },
   { path: "/equipe", label: "Equipe", icon: Users },
   { path: "/vendas-produtos", label: "Vendas Produtos", icon: TrendingUp },
   { path: "/precificacao", label: "Serviços & Precificação", icon: Scissors },

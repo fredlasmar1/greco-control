@@ -38,6 +38,12 @@ import {
   type MetaProfissional,
 } from "./metasProfissional";
 import {
+  listFechamentos as listCaixaFechamentos,
+  getFechamento as getCaixaFechamento,
+  upsertFechamento as upsertCaixaFechamento,
+  deleteFechamento as deleteCaixaFechamento,
+} from "./caixaDiario";
+import {
   listCategorias as listExpenseCategorias,
   listRegras as listExpenseRegras,
   upsertCategoria as upsertExpenseCategoria,
@@ -5097,6 +5103,153 @@ Regras CRÍTICAS:
           gapDinheiroFisico: gapDinheiro,
         },
       });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // CAIXA DO DIA (v30) — dupla confirmação dia-a-dia. Sistema mostra o esperado,
+  // usuário digita o contado, salva diferença + observação.
+  // ════════════════════════════════════════════════════════════════════════
+
+  // GET /api/caixa-dia/:data — visão consolidada do dia
+  app.get("/api/caixa-dia/:data", async (req: Request, res: Response) => {
+    try {
+      const data = String(req.params.data);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ ok: false, error: "data inválida (YYYY-MM-DD)" });
+      const contasMap = new Map(contasConsolidacao.map(c => [c.id, c]));
+
+      // ── Trinks do dia (breakdown por meio)
+      let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, outros: 0, qtd: 0 };
+      try {
+        // semi-aberto: dataInicio = data, dataFim = data+1
+        const dataObj = new Date(data + "T12:00:00");
+        const next = new Date(dataObj.getTime() + 24 * 60 * 60 * 1000);
+        const fim = next.toISOString().slice(0, 10);
+        const transApi: any = await trinksFetchAll("transacoes", { dataInicio: data, dataFim: fim });
+        const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
+        for (const t of arr) {
+          const raw = t.dataHora || t.dataReferencia || t.data || "";
+          const d = typeof raw === "string" ? raw.split("T")[0] : "";
+          if (d !== data) continue;
+          trinks.total += Number(t.totalPagar || 0);
+          trinks.qtd += 1;
+          for (const fp of (t.formasPagamentos || t.formasPagamento || [])) {
+            const nome = String(fp.nome || "").toLowerCase();
+            const v = Number(fp.valor || 0);
+            if (nome.includes("pix")) trinks.pix += v;
+            else if (nome.includes("créd") || nome.includes("cred") || nome.includes("déb") || nome.includes("deb") || nome.includes("cart")) trinks.cartao += v;
+            else if (nome.includes("dinhe") || nome.includes("espéc") || nome.includes("espec")) trinks.dinheiro += v;
+            else trinks.outros += v;
+          }
+        }
+      } catch (err: any) {
+        log(`caixa-dia/trinks erro: ${err.message}`, "caixa");
+      }
+
+      // ── Banco do dia: entradas e saídas por conta
+      const txDia = transacoesBanco.filter(t => t.date === data && t.incluidoNoFluxo !== false);
+      type RBanco = { id: string; nome: string; transito: boolean;
+        entradas: number; entradasQtd: number; saidas: number; saidasQtd: number;
+        depositosATM: number; transferOut: number; transferIn: number;
+        itens: any[];
+      };
+      const bancos = new Map<string, RBanco>();
+      for (const c of contasConsolidacao) {
+        bancos.set(c.id, { id: c.id, nome: c.nome.trim(), transito: !!c.transito,
+          entradas: 0, entradasQtd: 0, saidas: 0, saidasQtd: 0,
+          depositosATM: 0, transferOut: 0, transferIn: 0, itens: [] });
+      }
+      let depositosATMDia = 0;
+      for (const t of txDia) {
+        const r = bancos.get(t.contaId);
+        if (!r) continue;
+        r.itens.push({
+          id: t.id, description: t.description, amount: t.amount,
+          categoriaId: t.categoriaId, transferenciaParId: t.transferenciaParId,
+          justificativa: t.justificativa,
+        });
+        if (t.amount > 0) {
+          r.entradas += t.amount; r.entradasQtd++;
+          if (/DEP\s*DIN|DEPOSITO/i.test(t.description)) {
+            r.depositosATM += t.amount;
+            depositosATMDia += t.amount;
+          }
+          if (t.transferenciaParId) r.transferIn += t.amount;
+        } else {
+          r.saidas += Math.abs(t.amount); r.saidasQtd++;
+          if (t.transferenciaParId) r.transferOut += Math.abs(t.amount);
+        }
+      }
+
+      // ── Caixa físico esperado: vendas dinheiro Trinks - depósitos ATM no dia
+      // (Se o usuário já depositou parte do dinheiro do dia no ATM, isso não fica
+      //  no caixa físico mais — a outra parte fica.)
+      const esperadoCaixa = Number((trinks.dinheiro - depositosATMDia).toFixed(2));
+
+      // ── Fechamento já salvo (se houver)
+      const fechamentoSalvo = await getCaixaFechamento(data);
+
+      return res.json({
+        ok: true,
+        data,
+        trinks,
+        bancos: Array.from(bancos.values()).sort((a, b) => {
+          if (a.transito !== b.transito) return a.transito ? 1 : -1;
+          return b.entradas - a.entradas;
+        }),
+        depositosATMDia,
+        esperadoCaixa,
+        fechamento: fechamentoSalvo,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/caixa-dia/:data/fechar — salva fechamento do dia
+  // body: { contado: number, observacao?: string }
+  app.post("/api/caixa-dia/:data/fechar", async (req: Request, res: Response) => {
+    try {
+      const data = String(req.params.data);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ ok: false, error: "data inválida" });
+      const b = req.body || {};
+      const contado = Number(b.contado);
+      if (!isFinite(contado) || contado < 0) return res.status(400).json({ ok: false, error: "contado inválido" });
+      const esperado = Number(b.esperado);
+      if (!isFinite(esperado)) return res.status(400).json({ ok: false, error: "esperado inválido" });
+
+      const novo = await upsertCaixaFechamento({
+        data, esperado, contado,
+        observacao: b.observacao ? String(b.observacao).slice(0, 500) : undefined,
+      });
+      return res.json({ ok: true, fechamento: novo });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // DELETE /api/caixa-dia/:data — reabre o dia (apaga fechamento)
+  app.delete("/api/caixa-dia/:data", async (req: Request, res: Response) => {
+    try {
+      const data = String(req.params.data);
+      await deleteCaixaFechamento(data);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/caixa-dia/historico/:mes — todos fechamentos do mês (calendário)
+  app.get("/api/caixa-dia-historico/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes);
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido" });
+      const all = await listCaixaFechamentos();
+      const lista = Object.values(all).filter(f => f.data.startsWith(mes)).sort((a, b) => a.data.localeCompare(b.data));
+      const totalDif = lista.reduce((s, f) => s + f.diferenca, 0);
+      return res.json({ ok: true, mes, total: lista.length, totalDif, fechamentos: lista });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }

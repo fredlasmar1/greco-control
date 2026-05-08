@@ -4953,7 +4953,7 @@ Regras CRÍTICAS:
       const txMes = transacoesBanco.filter(t => t.date.startsWith(mes) && t.incluidoNoFluxo !== false);
 
       // ── 1) Trinks: breakdown por meio (puxa via API, com cache)
-      let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, outros: 0, qtd: 0 };
+      let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, descontoProf: 0, outros: 0, qtd: 0 };
       try {
         const dataIni = `${mes}-01`;
         const [ano, m] = mes.split("-").map(Number);
@@ -4973,6 +4973,9 @@ Regras CRÍTICAS:
             if (nome.includes("pix")) trinks.pix += v;
             else if (nome.includes("créd") || nome.includes("cred") || nome.includes("déb") || nome.includes("deb") || nome.includes("cart")) trinks.cartao += v;
             else if (nome.includes("dinhe") || nome.includes("espéc") || nome.includes("espec")) trinks.dinheiro += v;
+            else if (nome.includes("depósito") || nome.includes("deposito") || nome.includes("saldo") || nome.includes("plano") || nome.includes("assinatura")) trinks.plano += v;
+            else if (nome.includes("voucher") || nome.includes("cortes") || nome.includes("promo")) trinks.voucher += v;
+            else if (nome.includes("descontar") && nome.includes("profissional")) trinks.descontoProf += v;
             else trinks.outros += v;
           }
         }
@@ -5122,9 +5125,11 @@ Regras CRÍTICAS:
       const contasMap = new Map(contasConsolidacao.map(c => [c.id, c]));
 
       // ── Trinks do dia (breakdown por meio)
-      let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, outros: 0, qtd: 0 };
+      // 'plano' (Depósito/saldo pré-pago, NÃO é dinheiro novo entrando — cliente
+      // pagou antes), 'voucher' (cortesia, sem dinheiro), 'descontoProf'
+      // (abatimento da comissão), 'outros' (qualquer coisa não identificada).
+      let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, descontoProf: 0, outros: 0, qtd: 0 };
       try {
-        // semi-aberto: dataInicio = data, dataFim = data+1
         const dataObj = new Date(data + "T12:00:00");
         const next = new Date(dataObj.getTime() + 24 * 60 * 60 * 1000);
         const fim = next.toISOString().slice(0, 10);
@@ -5142,6 +5147,9 @@ Regras CRÍTICAS:
             if (nome.includes("pix")) trinks.pix += v;
             else if (nome.includes("créd") || nome.includes("cred") || nome.includes("déb") || nome.includes("deb") || nome.includes("cart")) trinks.cartao += v;
             else if (nome.includes("dinhe") || nome.includes("espéc") || nome.includes("espec")) trinks.dinheiro += v;
+            else if (nome.includes("depósito") || nome.includes("deposito") || nome.includes("saldo") || nome.includes("plano") || nome.includes("assinatura")) trinks.plano += v;
+            else if (nome.includes("voucher") || nome.includes("cortes") || nome.includes("promo")) trinks.voucher += v;
+            else if (nome.includes("descontar") && nome.includes("profissional")) trinks.descontoProf += v;
             else trinks.outros += v;
           }
         }

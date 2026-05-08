@@ -8,11 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Calendar, ChevronLeft, ChevronRight, Banknote, Building2, TrendingUp,
-  CheckCircle2, AlertCircle, Save, Lock, Unlock, RefreshCw,
+  CheckCircle2, AlertCircle, Save, Lock, Unlock, RefreshCw, Eye, EyeOff, Trash2, Pencil,
 } from "lucide-react";
-import { mesAtualSP } from "@/lib/mesUtils";
 
 interface Banco {
   id: string; nome: string; transito: boolean;
@@ -23,7 +23,7 @@ interface Banco {
 interface ApiResp {
   ok: boolean;
   data: string;
-  trinks: { total: number; pix: number; cartao: number; dinheiro: number; outros: number; qtd: number };
+  trinks: { total: number; pix: number; cartao: number; dinheiro: number; plano: number; voucher: number; descontoProf: number; outros: number; qtd: number };
   bancos: Banco[];
   depositosATMDia: number;
   esperadoCaixa: number;
@@ -77,6 +77,11 @@ export default function CaixaDia() {
   const [sangriasStr, setSangriasStr] = useState("");
   const [obs, setObs] = useState("");
   const [salvando, setSalvando] = useState(false);
+  // Dialog de edição: banco selecionado
+  const [bancoEdit, setBancoEdit] = useState<Banco | null>(null);
+  // Edição inline: { txId: amountStr }
+  const [editandoTxId, setEditandoTxId] = useState<string | null>(null);
+  const [editAmountStr, setEditAmountStr] = useState("");
 
   async function carregar() {
     setLoading(true);
@@ -153,6 +158,44 @@ export default function CaixaDia() {
     await carregar();
   }
 
+  async function salvarEditTx(txId: string) {
+    const n = Number(editAmountStr.replace(",", "."));
+    if (!isFinite(n)) { alert("Valor inválido"); return; }
+    await fetch(`/api/consolidacao/transacoes/${txId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: n }),
+    });
+    setEditandoTxId(null);
+    setEditAmountStr("");
+    await carregar();
+    if (bancoEdit) {
+      // re-carrega o banco no dialog
+      setBancoEdit(prev => prev ? resp?.bancos.find(b => b.id === prev.id) || null : null);
+    }
+  }
+  async function toggleFluxoTx(txId: string, incluido: boolean) {
+    await fetch(`/api/consolidacao/transacoes/${txId}/fluxo`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ incluido: !incluido }),
+    });
+    await carregar();
+  }
+  async function apagarTx(txId: string) {
+    if (!confirm("Apagar esta transação? Não pode ser desfeito.")) return;
+    await fetch(`/api/consolidacao/transacoes/${txId}`, { method: "DELETE" });
+    await carregar();
+  }
+
+  // Re-sincroniza bancoEdit quando resp atualiza (mantém dialog fresco)
+  useEffect(() => {
+    if (bancoEdit && resp) {
+      const atual = resp.bancos.find(b => b.id === bancoEdit.id);
+      if (atual && atual !== bancoEdit) setBancoEdit(atual);
+    }
+  }, [resp]); // eslint-disable-line
+
   const mes = data.slice(0, 7);
   const isHoje = data === hojeYMD();
   const status = resp?.fechamento?.status;
@@ -221,14 +264,10 @@ export default function CaixaDia() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
                 <div className="rounded border border-card-border/50 bg-background/30 p-2">
                   <div className="text-[10px] text-muted-foreground">💳 Cartão</div>
                   <div className="tabular-nums font-semibold">R$ {fmtBRL(resp.trinks.cartao)}</div>
-                </div>
-                <div className="rounded border border-card-border/50 bg-background/30 p-2">
-                  <div className="text-[10px] text-muted-foreground">📦 Outros</div>
-                  <div className="tabular-nums font-semibold">R$ {fmtBRL(resp.trinks.outros)}</div>
                 </div>
                 <div className="rounded border border-card-border/50 bg-background/30 p-2">
                   <div className="text-[10px] text-muted-foreground">📲 PIX</div>
@@ -238,11 +277,24 @@ export default function CaixaDia() {
                   <div className="text-[10px] text-amber-300">💵 Dinheiro</div>
                   <div className="tabular-nums font-semibold text-amber-400">R$ {fmtBRL(resp.trinks.dinheiro)}</div>
                 </div>
+                <div className="rounded border border-purple-500/30 bg-purple-500/5 p-2" title="Cliente pagou usando saldo de plano/assinatura — não é dinheiro novo">
+                  <div className="text-[10px] text-purple-300">📦 Plano (saldo)</div>
+                  <div className="tabular-nums font-semibold text-purple-400">R$ {fmtBRL(resp.trinks.plano)}</div>
+                </div>
+                <div className="rounded border border-pink-500/30 bg-pink-500/5 p-2" title="Cortesia/voucher — não é dinheiro real">
+                  <div className="text-[10px] text-pink-300">🎁 Voucher</div>
+                  <div className="tabular-nums font-semibold text-pink-400">R$ {fmtBRL(resp.trinks.voucher)}</div>
+                </div>
                 <div className="rounded border-2 border-emerald-500/40 bg-emerald-500/10 p-2">
                   <div className="text-[10px] text-emerald-300">TOTAL</div>
                   <div className="tabular-nums font-bold text-emerald-400">R$ {fmtBRL(resp.trinks.total)}</div>
                 </div>
               </div>
+              {(resp.trinks.plano + resp.trinks.voucher) > 0 && (
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  💡 Plano = cliente usou saldo pré-pago (cobrança original em mês anterior). Voucher = cortesia. Nenhum dos dois entra no banco hoje.
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -259,9 +311,19 @@ export default function CaixaDia() {
                 {resp.bancos.map(b => {
                   const algumaCoisa = b.entradasQtd + b.saidasQtd > 0;
                   return (
-                    <div key={b.id} className={`rounded-md border p-2 text-xs ${b.transito ? "border-amber-500/30" : "border-emerald-500/30"} ${algumaCoisa ? "bg-background/30" : "bg-background/10 opacity-60"}`}>
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => algumaCoisa && setBancoEdit(b)}
+                      disabled={!algumaCoisa}
+                      className={`text-left rounded-md border p-2 text-xs transition-colors ${b.transito ? "border-amber-500/30" : "border-emerald-500/30"} ${algumaCoisa ? "bg-background/30 hover:bg-muted/40 cursor-pointer" : "bg-background/10 opacity-60 cursor-default"}`}
+                    >
                       <div className="flex items-center justify-between mb-1">
-                        <span className="font-medium">{b.nome}</span>
+                        <span className="font-medium flex items-center gap-1">
+                          <Building2 className="w-3 h-3 text-muted-foreground" />
+                          {b.nome}
+                          {algumaCoisa && <Pencil className="w-2.5 h-2.5 text-muted-foreground opacity-60" />}
+                        </span>
                         <Badge variant="outline" className={`text-[9px] ${b.transito ? "border-amber-500/40 text-amber-300" : "border-emerald-500/40 text-emerald-300"}`}>
                           {b.transito ? "Trânsito" : "Consolida"}
                         </Badge>
@@ -282,10 +344,13 @@ export default function CaixaDia() {
                           </div>
                         )}
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
+              <p className="text-[10px] text-muted-foreground mt-1.5 px-1">
+                💡 Clique num banco pra ver/editar as transações do dia.
+              </p>
             </CardContent>
           </Card>
 
@@ -474,6 +539,93 @@ export default function CaixaDia() {
 
         </>
       )}
+
+      {/* Dialog: editar transações de um banco no dia */}
+      <Dialog open={!!bancoEdit} onOpenChange={v => { if (!v) { setBancoEdit(null); setEditandoTxId(null); } }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-cyan-400" />
+              {bancoEdit?.nome} — {labelDia(data)}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Edite valor, ignore ou apague qualquer transação. Mudanças refletem no caixa do dia automaticamente.
+            </DialogDescription>
+          </DialogHeader>
+
+          {bancoEdit && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2">
+                  <div className="text-[10px] text-muted-foreground">Entradas ({bancoEdit.entradasQtd})</div>
+                  <div className="tabular-nums font-semibold text-emerald-400">R$ {fmtBRL(bancoEdit.entradas)}</div>
+                </div>
+                <div className="rounded border border-red-500/30 bg-red-500/5 p-2">
+                  <div className="text-[10px] text-muted-foreground">Saídas ({bancoEdit.saidasQtd})</div>
+                  <div className="tabular-nums font-semibold text-red-400">R$ {fmtBRL(bancoEdit.saidas)}</div>
+                </div>
+                <div className="rounded border border-amber-500/30 bg-amber-500/5 p-2">
+                  <div className="text-[10px] text-muted-foreground">Depósito ATM</div>
+                  <div className="tabular-nums font-semibold text-amber-400">R$ {fmtBRL(bancoEdit.depositosATM)}</div>
+                </div>
+              </div>
+
+              <div className="space-y-1 max-h-[420px] overflow-y-auto">
+                {bancoEdit.itens.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic text-center py-4">Nenhuma transação neste dia.</p>
+                ) : (
+                  bancoEdit.itens
+                    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+                    .map((tx: any) => {
+                      const editando = editandoTxId === tx.id;
+                      const interna = !!tx.transferenciaParId;
+                      return (
+                        <div key={tx.id} className={`rounded border p-2 text-xs ${interna ? "border-cyan-500/30 bg-cyan-500/5" : "border-card-border/40 bg-background/30"}`}>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="truncate" title={tx.description}>{tx.description}</div>
+                              {interna && <span className="text-[9px] text-cyan-300">↔ Transferência interna</span>}
+                              {tx.justificativa && <div className="text-[9px] text-emerald-300/80">↳ {tx.justificativa}</div>}
+                            </div>
+
+                            {editando ? (
+                              <div className="flex items-center gap-1">
+                                <Input
+                                  type="text" inputMode="decimal"
+                                  value={editAmountStr}
+                                  onChange={e => setEditAmountStr(e.target.value.replace(/[^\d.,-]/g, ""))}
+                                  className="h-7 w-28 text-xs tabular-nums text-right"
+                                  autoFocus
+                                />
+                                <Button type="button" size="sm" className="h-7 px-2 text-[10px]" onClick={() => salvarEditTx(tx.id)}>OK</Button>
+                                <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[10px]" onClick={() => { setEditandoTxId(null); setEditAmountStr(""); }}>X</Button>
+                              </div>
+                            ) : (
+                              <>
+                                <span className={`tabular-nums font-medium w-24 text-right ${tx.amount < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                                  {tx.amount < 0 ? "-" : "+"}R$ {fmtBRL(Math.abs(tx.amount))}
+                                </span>
+                                <Button type="button" size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => { setEditandoTxId(tx.id); setEditAmountStr(String(tx.amount).replace(".", ",")); }} title="Editar valor">
+                                  <Pencil className="w-3 h-3" />
+                                </Button>
+                                <Button type="button" size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => toggleFluxoTx(tx.id, tx.incluidoNoFluxo !== false)} title="Ignorar/incluir">
+                                  <EyeOff className="w-3 h-3" />
+                                </Button>
+                                <Button type="button" size="sm" variant="ghost" className="h-6 w-6 p-0 text-red-400" onClick={() => apagarTx(tx.id)} title="Apagar">
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

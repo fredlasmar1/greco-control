@@ -33,6 +33,16 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+// Anti-cache para TODOS os endpoints /api/* — evita que browser/CDN sirva
+// resposta antiga depois de uma mudança (causa comum de 'não está salvando',
+// quando na verdade salvou mas o GET subsequente vem do cache).
+app.use("/api", (_req, res, next) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  next();
+});
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;

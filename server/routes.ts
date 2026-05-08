@@ -1736,6 +1736,60 @@ export async function registerRoutes(
     });
   });
 
+  // GET /api/health/persistencia — diagnóstico de onde os dados estão indo
+  app.get("/api/health/persistencia", async (_req: Request, res: Response) => {
+    const persistInfo: any = {
+      DATA_DIR,
+      DATA_DIR_isVolume: DATA_DIR === "/data",
+      env_DATA_DIR: process.env.DATA_DIR || null,
+      uptimeSec: Math.round(process.uptime()),
+      arquivos: {} as Record<string, any>,
+      kv: {} as Record<string, any>,
+    };
+    // Testa cada arquivo persistido em disco
+    const ARQUIVOS_DISCO = [
+      { nome: "financeiro", path: FINANCEIRO_FILE },
+      { nome: "consolidacao_contas", path: CONSOLIDACAO_CONTAS_FILE },
+      { nome: "consolidacao_transacoes", path: CONSOLIDACAO_TRANSACOES_FILE },
+      { nome: "regras_gastos", path: REGRAS_GASTOS_FILE },
+    ];
+    for (const a of ARQUIVOS_DISCO) {
+      try {
+        const stat = fs.statSync(a.path);
+        persistInfo.arquivos[a.nome] = {
+          existe: true,
+          path: a.path,
+          tamanhoKB: Math.round(stat.size / 1024),
+          modificadoEm: stat.mtime.toISOString(),
+        };
+      } catch {
+        persistInfo.arquivos[a.nome] = { existe: false, path: a.path };
+      }
+    }
+    // KV: contagem por chave
+    const KV_CHAVES = [
+      "financeiro", "consolidacao_contas", "consolidacao_transacoes", "regras_gastos",
+      "metas_profissional", "expense_categorias", "expense_regras", "caixa_diario",
+    ];
+    for (const k of KV_CHAVES) {
+      try {
+        const v: any = await kvGet(k);
+        if (v == null) {
+          persistInfo.kv[k] = { existe: false };
+        } else if (Array.isArray(v)) {
+          persistInfo.kv[k] = { existe: true, qtd: v.length };
+        } else if (typeof v === "object") {
+          persistInfo.kv[k] = { existe: true, chaves: Object.keys(v).length };
+        } else {
+          persistInfo.kv[k] = { existe: true, tipo: typeof v };
+        }
+      } catch (err: any) {
+        persistInfo.kv[k] = { erro: err.message };
+      }
+    }
+    return res.json({ ok: true, ...persistInfo });
+  });
+
   // ============================================================================
   // v25 Etapa 1: IMPORTAÇÃO DE RELATÓRIOS CSV DA TRINKS
   // Permite operar mesmo com a Trinks API em 429.

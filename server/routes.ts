@@ -7411,8 +7411,14 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const taxaCartaoEstimada = profMes?.taxaCartao || 0; // informativo (já abatido no líquido)
     const custoInsumos = profMes?.custoInsumos || 0;
     const pctServico = Number(meta?.pctServico || 0);
-    const pctProduto = Number(meta?.pctProduto || 0);
-    const pctPlano = Number(meta?.pctPlano || 0);
+    // v32: defaults globais (Settings) aplicados quando o profissional não tem
+    // override em MetaProfissional. "Produto = 10%, Plano = 20%" do dono.
+    const pctProdutoDefault = Number(storeData.settings?.comissaoProdutoPadraoPct ?? 10);
+    const pctPlanoDefault = Number(storeData.settings?.comissaoPlanoPadraoPct ?? 20);
+    const pctProduto = Number(meta?.pctProduto && meta.pctProduto > 0 ? meta.pctProduto : pctProdutoDefault);
+    const pctPlano = Number(meta?.pctPlano && meta.pctPlano > 0 ? meta.pctPlano : pctPlanoDefault);
+    const pctProdutoFonte: 'profissional' | 'global' = meta?.pctProduto && meta.pctProduto > 0 ? 'profissional' : 'global';
+    const pctPlanoFonte: 'profissional' | 'global' = meta?.pctPlano && meta.pctPlano > 0 ? 'profissional' : 'global';
     const pctBonusExcedente = Number(meta?.pctBonusExcedente || 0);
     const metaReais = Number(meta?.metaReais || 0);
     const salarioFixo = Number(meta?.salarioFixo || 0);
@@ -7459,10 +7465,15 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       percentuais: {
         pctServico, pctProduto, pctPlano, pctBonusExcedente,
         metaReais, salarioFixo,
+        pctProdutoFonte, pctPlanoFonte,
       },
       // Modo aplicado nesta linha (pra UI mostrar)
       modoComissao: modoAplicado,
       modoFonte: modoMeta === 'bruto' || modoMeta === 'liquido' ? 'profissional' : 'global' as 'profissional' | 'global',
+      // Categoria de ranking (preenchida pelo caller a partir da lista de assistentes)
+      categoriaRanking: 'barbeiro' as 'barbeiro' | 'assistente',
+      // Posição no ranking da categoria (1 = top, null = fora do ranking)
+      posicaoRanking: null as number | null,
       // Componentes calculados
       calculos: {
         comissaoServicos,
@@ -7470,6 +7481,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         comissaoPlano,
         excedenteMeta: excedente,
         bonusExcedente,
+        bonusRanking: 0,    // preenchido pelo caller pra top 1 de cada categoria
         salarioFixo,
         totalBruto,
       },
@@ -7560,6 +7572,43 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         const pagto = pagamentosMes[id];
         return calcularLinhaPagamento(mes, id, profMes, meta, pagto);
       }));
+
+      // v32: classifica cada linha em barbeiro vs assistente, calcula ranking e
+      // aplica bônus pro top 1 de cada categoria.
+      const normNome = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+      const assistentes = (storeData.settings?.profissionaisAssistente || [])
+        .map((n: string) => normNome(n)).filter(Boolean);
+      const isAssistente = (nome: string): boolean => {
+        const n = normNome(nome);
+        return assistentes.some((a: string) => n === a || n.includes(a) || a.includes(n));
+      };
+      for (const l of linhas) {
+        l.categoriaRanking = isAssistente(l.nome) ? 'assistente' : 'barbeiro';
+      }
+      // Top 1 de cada categoria = mais faturamento em SERVIÇOS no mês.
+      // Linhas com 0 serviços não entram no ranking (evita prêmio acidental).
+      const ordBarbeiros = linhas
+        .filter(l => l.categoriaRanking === 'barbeiro' && l.bases.servicosLiquido > 0)
+        .sort((a, b) => b.bases.servicosLiquido - a.bases.servicosLiquido);
+      const ordAssistentes = linhas
+        .filter(l => l.categoriaRanking === 'assistente' && l.bases.servicosLiquido > 0)
+        .sort((a, b) => b.bases.servicosLiquido - a.bases.servicosLiquido);
+      ordBarbeiros.forEach((l, i) => { l.posicaoRanking = i + 1; });
+      ordAssistentes.forEach((l, i) => { l.posicaoRanking = i + 1; });
+
+      const bonusBarbeiro = Number(storeData.settings?.bonusTop1BarbeiroReais ?? 150);
+      const bonusAssistente = Number(storeData.settings?.bonusTop1AssistenteReais ?? 150);
+      // Aplica bônus + recalcula totalBruto + saldoAReceber
+      for (const l of linhas) {
+        if (l.posicaoRanking === 1) {
+          const bonus = l.categoriaRanking === 'assistente' ? bonusAssistente : bonusBarbeiro;
+          if (bonus > 0) {
+            l.calculos.bonusRanking = bonus;
+            l.calculos.totalBruto += bonus;
+            l.pagamento.saldoAReceber += bonus;
+          }
+        }
+      }
 
       // Ordena por nome
       linhas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));

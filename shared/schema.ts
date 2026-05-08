@@ -78,6 +78,19 @@ export interface Settings {
   // 'liquido' = comissão sobre (preço − custo de insumos da ficha técnica),
   //             ou seja, profissional ajuda a pagar os insumos proporcionalmente.
   modoComissaoDefault?: 'bruto' | 'liquido'; // default 'bruto'
+  // v32: Comissão padrão por categoria de venda (aplicada quando o profissional
+  // não tem override em MetaProfissional). Aplica a TODOS — barbeiros, assistentes,
+  // recepção. Default: produto 10%, plano 20%.
+  comissaoProdutoPadraoPct?: number;        // 0..100, default 10
+  comissaoPlanoPadraoPct?: number;          // 0..100, default 20
+  // v32: Bônus em R$ pra quem ficou em 1º lugar no ranking do mês.
+  // Top 1 barbeiro = mais faturamento em SERVIÇOS no mês.
+  // Top 1 assistente = mais faturamento em SERVIÇOS no mês entre os assistentes.
+  bonusTop1BarbeiroReais?: number;          // default 150
+  bonusTop1AssistenteReais?: number;        // default 150
+  // v32: Lista de NOMES dos profissionais que são ASSISTENTES (não barbeiros).
+  // Ranking de assistente é separado do ranking de barbeiro.
+  profissionaisAssistente?: string[];
 }
 
 // Zod schemas for form validation

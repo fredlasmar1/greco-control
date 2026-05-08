@@ -46,12 +46,15 @@ type Linha = {
   };
   modoComissao?: 'bruto' | 'liquido';
   modoFonte?: 'profissional' | 'global';
+  categoriaRanking?: 'barbeiro' | 'assistente';
+  posicaoRanking?: number | null;
   calculos: {
     comissaoServicos: number;
     comissaoProdutos: number;
     comissaoPlano: number;
     excedenteMeta: number;
     bonusExcedente: number;
+    bonusRanking: number;
     salarioFixo: number;
     totalBruto: number;
   };
@@ -394,6 +397,20 @@ export default function Pagamento() {
                           <div className="flex items-center gap-2 flex-wrap">
                             {fechado && <Lock className="w-3 h-3 text-muted-foreground" />}
                             <span className="font-medium">{l.nome}</span>
+                            {l.posicaoRanking === 1 && l.calculos.bonusRanking > 0 && (
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] h-5 border-yellow-500/50 text-yellow-300 bg-yellow-500/15"
+                                title={`Top 1 ${l.categoriaRanking === 'assistente' ? 'assistente' : 'barbeiro'} do mês`}
+                              >
+                                🥇 Top 1 {l.categoriaRanking === 'assistente' ? 'Assist.' : 'Barbeiro'} +R$ {fmtBRL(l.calculos.bonusRanking)}
+                              </Badge>
+                            )}
+                            {l.categoriaRanking === 'assistente' && (
+                              <Badge variant="outline" className="text-[9px] h-5 border-pink-500/40 text-pink-300 bg-pink-500/10">
+                                Assistente
+                              </Badge>
+                            )}
                             {l.modoComissao === 'liquido' && (
                               <Badge
                                 variant="outline"

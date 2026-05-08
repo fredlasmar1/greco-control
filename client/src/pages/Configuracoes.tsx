@@ -145,7 +145,7 @@ export default function Configuracoes() {
   const norm = (s: string) => (s || "").trim().toLowerCase();
   const inList = (lista: string[] | undefined, nome: string) =>
     (lista || []).some((n) => norm(n) === norm(nome));
-  const toggleNaLista = (chave: "profissionaisEstetica" | "profissionaisVip" | "profissionaisExpress", nome: string) => {
+  const toggleNaLista = (chave: "profissionaisEstetica" | "profissionaisVip" | "profissionaisExpress" | "profissionaisAssistente", nome: string) => {
     setForm((prev) => {
       const atual = prev[chave] || [];
       const existe = atual.some((n) => norm(n) === norm(nome));
@@ -559,6 +559,59 @@ export default function Configuracoes() {
               </div>
             </div>
 
+            {/* v32: Comissões padrão de produto/plano + bônus de ranking */}
+            <div className="rounded-md border border-border p-3 bg-muted/20 space-y-3">
+              <div>
+                <Label className="text-xs font-medium">Comissões padrão de venda (vale pra TODOS)</Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Aplicado quando o profissional não tem % específica em "Equipe". Vale pra qualquer um (barbeiro, assistente, recepção) que vender produto/plano.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs">% Produto vendido</Label>
+                  <Input
+                    type="number" step="0.5" min="0" max="100"
+                    value={form.comissaoProdutoPadraoPct ?? 10}
+                    onChange={(e) => update("comissaoProdutoPadraoPct", Number(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">% Plano vendido</Label>
+                  <Input
+                    type="number" step="0.5" min="0" max="100"
+                    value={form.comissaoPlanoPadraoPct ?? 20}
+                    onChange={(e) => update("comissaoPlanoPadraoPct", Number(e.target.value))}
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-border/50 pt-3">
+                <Label className="text-xs font-medium">🥇 Bônus de ranking mensal</Label>
+                <p className="text-[11px] text-muted-foreground mb-2">
+                  Quem ficar em 1º lugar do mês (mais faturamento em serviços) ganha um bônus em R$.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">Top 1 Barbeiro (R$)</Label>
+                    <Input
+                      type="number" step="10" min="0"
+                      value={form.bonusTop1BarbeiroReais ?? 150}
+                      onChange={(e) => update("bonusTop1BarbeiroReais", Number(e.target.value))}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Top 1 Assistente (R$)</Label>
+                    <Input
+                      type="number" step="10" min="0"
+                      value={form.bonusTop1AssistenteReais ?? 150}
+                      onChange={(e) => update("bonusTop1AssistenteReais", Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="rounded-md border border-border p-3 bg-muted/20">
               <Label className="text-xs font-medium">Modo de cálculo da comissão (padrão)</Label>
               <p className="text-[11px] text-muted-foreground mb-2">
@@ -611,6 +664,7 @@ export default function Configuracoes() {
                     <tr className="border-b border-border text-xs text-muted-foreground">
                       <th className="text-left py-2 px-2 font-medium">Profissional</th>
                       <th className="text-center py-2 px-2 font-medium" title="Entra em 'Serviços de estética' no DRE (separado de barbeiros)">Estética</th>
+                      <th className="text-center py-2 px-2 font-medium" title="Entra no ranking de assistentes (não barbeiro)">Assistente</th>
                       <th className="text-center py-2 px-2 font-medium">Padrão</th>
                       <th className="text-center py-2 px-2 font-medium">VIP</th>
                       <th className="text-center py-2 px-2 font-medium">Express</th>
@@ -622,6 +676,7 @@ export default function Configuracoes() {
                       if (!nome) return null;
                       const cat = getCategoriaProf(nome);
                       const isEstetica = inList(form.profissionaisEstetica, nome);
+                      const isAssistente = inList(form.profissionaisAssistente, nome);
                       return (
                         <tr key={p.id} className="border-b border-border/50">
                           <td className="py-2 px-2 font-medium">{nome}</td>
@@ -632,6 +687,15 @@ export default function Configuracoes() {
                               onChange={() => toggleNaLista("profissionaisEstetica", nome)}
                               className="w-4 h-4 cursor-pointer"
                               data-testid={`estetica-${p.id}`}
+                            />
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isAssistente}
+                              onChange={() => toggleNaLista("profissionaisAssistente", nome)}
+                              className="w-4 h-4 cursor-pointer"
+                              data-testid={`assistente-${p.id}`}
                             />
                           </td>
                           {(["padrao", "vip", "express"] as const).map((c) => (

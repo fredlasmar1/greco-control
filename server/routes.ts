@@ -5609,7 +5609,7 @@ Regras CRÍTICAS:
 
   // Helper interno: calcula totais agregados por categoria para um mês YYYY-MM.
   // Reusado pelo endpoint /api/financeiro/totais/:mes e pelo cálculo de custo fixo/min.
-  function computeTotaisDoMes(mes: string) {
+  async function computeTotaisDoMes(mes: string) {
     // 1) Lançamentos manuais do mês
     const manuais = financeEntries.filter(e => e.date.startsWith(mes));
 
@@ -5710,6 +5710,42 @@ Regras CRÍTICAS:
       }
     });
 
+    // 4) Despesas do extrato bancário categorizadas pelo sistema novo (v27).
+    // Mapeia o TIPO da ExpenseCategoria pra balde contábil aqui usado.
+    // - fixo, recorrente   → totalFixas (rateáveis na precificação)
+    // - variavel, imposto  → totalVariaveis (variam com volume ou faturamento)
+    // - investimento       → totalInvestimentos
+    // - cartao, comissao, bonus, outros, insumo → ignorados aqui pra não dupla-contar
+    //   (insumo já vem da ficha técnica via auto[]; comissão idem; cartão é fee
+    //   indireto; outros/cartão da empresa não compõem custo operacional ratável).
+    try {
+      const cats: ExpenseCategoria[] = await listExpenseCategorias();
+      const catMap = new Map(cats.map(c => [c.id, c]));
+      for (const t of transacoesBanco) {
+        if (t.amount >= 0) continue;
+        if (t.incluidoNoFluxo === false) continue;
+        if (t.transferenciaParId) continue;     // transferência interna não conta
+        if (!t.date.startsWith(mes)) continue;
+        if (!t.categoriaId) continue;
+        const cat = catMap.get(t.categoriaId);
+        if (!cat) continue;
+        const v = Math.abs(t.amount);
+        switch (cat.tipo) {
+          case "fixo":
+          case "recorrente":
+            totalFixas += v; break;
+          case "variavel":
+          case "imposto":
+            totalVariaveis += v; break;
+          case "investimento":
+            totalInvestimentos += v; break;
+          // cartao, comissao, bonus, outros, insumo: pulados intencionalmente
+        }
+      }
+    } catch (err: any) {
+      log(`computeTotaisDoMes: erro lendo expense_categorias: ${err.message}`, "totais");
+    }
+
     const saldo = totalReceitas - totalFixas - totalVariaveis - totalParcelamentos - totalInvestimentos;
 
     return {
@@ -5725,12 +5761,12 @@ Regras CRÍTICAS:
 
   // ─── GET /api/financeiro/totais/:mes — Totais agregados por categoria de um mês
   // mes no formato YYYY-MM (ex: 2026-04). Soma manuais + auto-gerados (Trinks).
-  app.get("/api/financeiro/totais/:mes", (req: Request, res: Response) => {
+  app.get("/api/financeiro/totais/:mes", async (req: Request, res: Response) => {
     const mes = String(req.params.mes || "");
     if (!/^\d{4}-\d{2}$/.test(mes)) {
       return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
     }
-    return res.json(computeTotaisDoMes(mes));
+    return res.json(await computeTotaisDoMes(mes));
   });
 
   // ─── GET /api/financeiro/comissoes-debug/:mes — v24
@@ -5822,7 +5858,7 @@ Regras CRÍTICAS:
     }
     try {
       const cfg = await getConfigFin();
-      const totais = computeTotaisDoMes(mes);
+      const totais = await computeTotaisDoMes(mes);
       const result = calcularCustoFixoPorMinuto(mes, totais.totalFixas, {
         cadeiras: cfg.cadeiras,
         horasDia: cfg.horasDia,
@@ -5847,7 +5883,7 @@ Regras CRÍTICAS:
     }
     try {
       const cfg = await getConfigFin();
-      const totais = computeTotaisDoMes(mes);
+      const totais = await computeTotaisDoMes(mes);
       const cfm = calcularCustoFixoPorMinuto(mes, totais.totalFixas, {
         cadeiras: cfg.cadeiras,
         horasDia: cfg.horasDia,
@@ -5884,7 +5920,7 @@ Regras CRÍTICAS:
       }
       const servicos = Array.isArray(req.body?.servicos) ? req.body.servicos : [];
       const cfg = await getConfigFin();
-      const totais = computeTotaisDoMes(mes);
+      const totais = await computeTotaisDoMes(mes);
       const cfm = calcularCustoFixoPorMinuto(mes, totais.totalFixas, {
         cadeiras: cfg.cadeiras,
         horasDia: cfg.horasDia,

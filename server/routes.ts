@@ -42,6 +42,7 @@ import {
   getFechamento as getCaixaFechamento,
   upsertFechamento as upsertCaixaFechamento,
   deleteFechamento as deleteCaixaFechamento,
+  getFechamentoAnterior as getCaixaFechamentoAnterior,
 } from "./caixaDiario";
 import {
   listCategorias as listExpenseCategorias,
@@ -5183,13 +5184,22 @@ Regras CRÍTICAS:
         }
       }
 
-      // ── Caixa físico esperado: vendas dinheiro Trinks - depósitos ATM no dia
-      // (Se o usuário já depositou parte do dinheiro do dia no ATM, isso não fica
-      //  no caixa físico mais — a outra parte fica.)
-      const esperadoCaixa = Number((trinks.dinheiro - depositosATMDia).toFixed(2));
-
-      // ── Fechamento já salvo (se houver)
+      // ── Saldo inicial sugerido = saldo final do último dia fechado anterior
+      // (contado, não esperado — o que de fato tinha em caixa). Se não há
+      // fechamento anterior, sugerimos 0 e marcamos com flag pra UI alertar.
       const fechamentoSalvo = await getCaixaFechamento(data);
+      const fechamentoAnterior = await getCaixaFechamentoAnterior(data);
+      const saldoInicialSugerido = fechamentoSalvo
+        ? fechamentoSalvo.saldoInicial
+        : (fechamentoAnterior ? fechamentoAnterior.contado : 0);
+      const saldoInicialFonte: "fechamento_anterior" | "manual_zero" =
+        fechamentoSalvo
+          ? (fechamentoSalvo.saldoInicial === (fechamentoAnterior?.contado ?? 0) ? "fechamento_anterior" : "manual_zero")
+          : (fechamentoAnterior ? "fechamento_anterior" : "manual_zero");
+
+      // ── Esperado COM o saldo inicial. Sangrias começa em 0 (usuário digita).
+      const sangrias = fechamentoSalvo?.sangrias ?? 0;
+      const esperadoCaixa = Number((saldoInicialSugerido + trinks.dinheiro - depositosATMDia - sangrias).toFixed(2));
 
       return res.json({
         ok: true,
@@ -5200,6 +5210,9 @@ Regras CRÍTICAS:
           return b.entradas - a.entradas;
         }),
         depositosATMDia,
+        saldoInicialSugerido,
+        saldoInicialFonte,
+        fechamentoAnterior: fechamentoAnterior ? { data: fechamentoAnterior.data, contado: fechamentoAnterior.contado } : null,
         esperadoCaixa,
         fechamento: fechamentoSalvo,
       });
@@ -5209,19 +5222,23 @@ Regras CRÍTICAS:
   });
 
   // POST /api/caixa-dia/:data/fechar — salva fechamento do dia
-  // body: { contado: number, observacao?: string }
+  // body: { saldoInicial, trinksDinheiro, depositosATM, sangrias, contado, observacao? }
   app.post("/api/caixa-dia/:data/fechar", async (req: Request, res: Response) => {
     try {
       const data = String(req.params.data);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ ok: false, error: "data inválida" });
       const b = req.body || {};
+      const saldoInicial = Number(b.saldoInicial);
+      const trinksDinheiro = Number(b.trinksDinheiro);
+      const depositosATM = Number(b.depositosATM);
+      const sangrias = Number(b.sangrias);
       const contado = Number(b.contado);
-      if (!isFinite(contado) || contado < 0) return res.status(400).json({ ok: false, error: "contado inválido" });
-      const esperado = Number(b.esperado);
-      if (!isFinite(esperado)) return res.status(400).json({ ok: false, error: "esperado inválido" });
+      for (const [k, v] of [["saldoInicial",saldoInicial],["trinksDinheiro",trinksDinheiro],["depositosATM",depositosATM],["sangrias",sangrias],["contado",contado]]) {
+        if (!isFinite(v as number) || (v as number) < 0) return res.status(400).json({ ok: false, error: `${k} inválido` });
+      }
 
       const novo = await upsertCaixaFechamento({
-        data, esperado, contado,
+        data, saldoInicial, trinksDinheiro, depositosATM, sangrias, contado,
         observacao: b.observacao ? String(b.observacao).slice(0, 500) : undefined,
       });
       return res.json({ ok: true, fechamento: novo });

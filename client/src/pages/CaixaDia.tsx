@@ -27,8 +27,13 @@ interface ApiResp {
   bancos: Banco[];
   depositosATMDia: number;
   esperadoCaixa: number;
+  saldoInicialSugerido: number;
+  saldoInicialFonte: "fechamento_anterior" | "manual_zero";
+  fechamentoAnterior: { data: string; contado: number } | null;
   fechamento: null | {
-    data: string; esperado: number; contado: number; diferenca: number;
+    data: string;
+    saldoInicial: number; trinksDinheiro: number; depositosATM: number; sangrias: number;
+    esperado: number; contado: number; diferenca: number;
     observacao?: string; status: "aberto" | "fechado_ok" | "fechado_divergente"; fechadoEm: string;
   };
 }
@@ -68,6 +73,8 @@ export default function CaixaDia() {
   const [hist, setHist] = useState<Historico | null>(null);
   const [loading, setLoading] = useState(false);
   const [contadoStr, setContadoStr] = useState("");
+  const [saldoInicialStr, setSaldoInicialStr] = useState("");
+  const [sangriasStr, setSangriasStr] = useState("");
   const [obs, setObs] = useState("");
   const [salvando, setSalvando] = useState(false);
 
@@ -79,9 +86,13 @@ export default function CaixaDia() {
       setResp(j);
       if (j.fechamento) {
         setContadoStr(String(j.fechamento.contado).replace(".", ","));
+        setSaldoInicialStr(String(j.fechamento.saldoInicial).replace(".", ","));
+        setSangriasStr(String(j.fechamento.sangrias).replace(".", ","));
         setObs(j.fechamento.observacao || "");
       } else {
         setContadoStr("");
+        setSaldoInicialStr(String(j.saldoInicialSugerido).replace(".", ","));
+        setSangriasStr("0,00");
         setObs("");
       }
       // Histórico do mês
@@ -94,15 +105,23 @@ export default function CaixaDia() {
   }
   useEffect(() => { carregar(); /* eslint-disable-next-line */ }, [data]);
 
-  const contado = useMemo(() => {
-    const n = Number(contadoStr.replace(",", "."));
+  const num = (s: string): number | null => {
+    const n = Number(s.replace(",", "."));
     return isFinite(n) && n >= 0 ? n : null;
-  }, [contadoStr]);
+  };
+  const contado = useMemo(() => num(contadoStr), [contadoStr]);
+  const saldoInicial = useMemo(() => num(saldoInicialStr) ?? 0, [saldoInicialStr]);
+  const sangrias = useMemo(() => num(sangriasStr) ?? 0, [sangriasStr]);
+
+  const esperadoDinamico = useMemo(() => {
+    if (!resp) return 0;
+    return Number((saldoInicial + resp.trinks.dinheiro - resp.depositosATMDia - sangrias).toFixed(2));
+  }, [resp, saldoInicial, sangrias]);
 
   const diferenca = useMemo(() => {
     if (!resp || contado === null) return null;
-    return Number((contado - resp.esperadoCaixa).toFixed(2));
-  }, [contado, resp]);
+    return Number((contado - esperadoDinamico).toFixed(2));
+  }, [contado, esperadoDinamico, resp]);
 
   async function salvar() {
     if (!resp || contado === null) return;
@@ -112,8 +131,11 @@ export default function CaixaDia() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          saldoInicial,
+          trinksDinheiro: resp.trinks.dinheiro,
+          depositosATM: resp.depositosATMDia,
+          sangrias,
           contado,
-          esperado: resp.esperadoCaixa,
           observacao: obs.trim() || undefined,
         }),
       });
@@ -276,15 +298,75 @@ export default function CaixaDia() {
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {/* Aviso quando não há fechamento anterior */}
+              {!fechado && resp.saldoInicialFonte === "manual_zero" && (
+                <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-xs flex items-start gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium text-amber-300">Sem fechamento anterior</p>
+                    <p className="text-amber-300/80 text-[11px]">
+                      Saldo inicial sugerido como R$ 0. Se você sabe quanto tinha em caixa no início do dia, digite manualmente abaixo. Em dias futuros, o saldo virá automaticamente do fechamento anterior.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {!fechado && resp.saldoInicialFonte === "fechamento_anterior" && resp.fechamentoAnterior && (
+                <div className="mb-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-emerald-300/90">
+                    Saldo inicial vem do fechamento de {new Date(resp.fechamentoAnterior.data + "T12:00:00").toLocaleDateString("pt-BR")}: R$ {fmtBRL(resp.fechamentoAnterior.contado)}
+                  </span>
+                </div>
+              )}
+
+              {/* Composição do esperado: 4 inputs (1 fixo + 3 editáveis) */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+                <div className="rounded-md border border-card-border bg-background/30 p-2">
+                  <div className="text-[10px] text-muted-foreground mb-1">Saldo inicial</div>
+                  <Input
+                    type="text" inputMode="decimal" placeholder="0,00"
+                    value={saldoInicialStr}
+                    onChange={e => setSaldoInicialStr(e.target.value.replace(/[^\d.,]/g, ""))}
+                    disabled={fechado}
+                    className="h-8 text-sm font-semibold tabular-nums"
+                  />
+                  <div className="text-[9px] text-muted-foreground mt-0.5">caixa no início do dia</div>
+                </div>
+                <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2">
+                  <div className="text-[10px] text-emerald-300 mb-1">+ Trinks dinheiro</div>
+                  <div className="h-8 flex items-center text-sm font-semibold tabular-nums text-emerald-400">
+                    R$ {fmtBRL(resp.trinks.dinheiro)}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground mt-0.5">vendas em espécie</div>
+                </div>
+                <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-2">
+                  <div className="text-[10px] text-blue-300 mb-1">− Depósito ATM</div>
+                  <div className="h-8 flex items-center text-sm font-semibold tabular-nums text-blue-400">
+                    R$ {fmtBRL(resp.depositosATMDia)}
+                  </div>
+                  <div className="text-[9px] text-muted-foreground mt-0.5">o que foi pro banco</div>
+                </div>
+                <div className="rounded-md border border-card-border bg-background/30 p-2">
+                  <div className="text-[10px] text-muted-foreground mb-1">− Sangrias</div>
+                  <Input
+                    type="text" inputMode="decimal" placeholder="0,00"
+                    value={sangriasStr}
+                    onChange={e => setSangriasStr(e.target.value.replace(/[^\d.,]/g, ""))}
+                    disabled={fechado}
+                    className="h-8 text-sm font-semibold tabular-nums"
+                  />
+                  <div className="text-[9px] text-muted-foreground mt-0.5">despesas pagas em dinheiro</div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 
-                {/* ESPERADO */}
-                <div className="rounded-md border border-card-border bg-background/30 p-3">
-                  <div className="text-[10px] uppercase text-muted-foreground mb-1">Sistema (esperado)</div>
-                  <div className="text-2xl font-bold tabular-nums text-amber-400">R$ {fmtBRL(resp.esperadoCaixa)}</div>
-                  <div className="text-[10px] text-muted-foreground mt-1.5 space-y-0.5">
-                    <div>+ Trinks dinheiro: R$ {fmtBRL(resp.trinks.dinheiro)}</div>
-                    <div>− Depósito ATM: R$ {fmtBRL(resp.depositosATMDia)}</div>
+                {/* ESPERADO (calculado) */}
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                  <div className="text-[10px] uppercase text-amber-300 mb-1">Esperado em caixa</div>
+                  <div className="text-2xl font-bold tabular-nums text-amber-400">R$ {fmtBRL(esperadoDinamico)}</div>
+                  <div className="text-[10px] text-muted-foreground mt-1.5">
+                    Saldo inicial + Trinks dinheiro − ATM − Sangrias
                   </div>
                 </div>
 
@@ -292,16 +374,14 @@ export default function CaixaDia() {
                 <div className="rounded-md border border-card-border bg-background/30 p-3">
                   <div className="text-[10px] uppercase text-muted-foreground mb-1">Você contou no caixa</div>
                   <Input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0,00"
+                    type="text" inputMode="decimal" placeholder="0,00"
                     value={contadoStr}
                     onChange={e => setContadoStr(e.target.value.replace(/[^\d.,]/g, ""))}
                     disabled={fechado}
                     className="text-2xl font-bold h-12 text-center tabular-nums"
                   />
                   <div className="text-[10px] text-muted-foreground mt-1.5">
-                    Conte cédulas + moedas + sangrias do dia
+                    Conte cédulas + moedas no fim do expediente
                   </div>
                 </div>
 
@@ -322,7 +402,7 @@ export default function CaixaDia() {
                       </div>
                       <div className="text-[10px] mt-1.5">
                         {Math.abs(diferenca) < 0.01 ? "✅ Bate certinho" :
-                         diferenca > 0 ? "📈 Sobrou caixa — investigar (entrada não registrada?)" :
+                         diferenca > 0 ? "📈 Sobrou caixa — investigar entrada não registrada" :
                          "🚨 Faltou caixa — vazamento ou troco perdido"}
                       </div>
                     </>

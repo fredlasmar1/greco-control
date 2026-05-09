@@ -1732,7 +1732,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-05-01-fonte-mais-recente",
+      build: "2026-05-08-cron-aviso-trinks-fail",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -8862,6 +8862,18 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           log(`[cron] resumo manhã: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
         } catch (err: any) {
           log(`[cron] erro resumo manhã: ${err.message}`, "telegram");
+          // Fallback: avisa que o sistema está vivo mas a Trinks falhou
+          try {
+            const isRate = err?.status === 429 || /limite|429|rate/i.test(err?.message || "");
+            const motivo = isRate
+              ? "limite de requisições da Trinks excedido"
+              : `falha ao consultar Trinks (${err?.message || "erro desconhecido"})`;
+            const aviso = `⚠️ *Resumo da manhã indisponível*\n\nNão foi possível gerar o resumo agora: ${motivo}.\n\nO sistema continua rodando — vou tentar novamente nos próximos disparos. Se quiser, abra o Dashboard para conferir os números do CSV.`;
+            await enviarMensagem(aviso);
+            log("[cron] aviso de falha (manhã) enviado", "telegram");
+          } catch (e2: any) {
+            log(`[cron] falha também no aviso de manhã: ${e2?.message}`, "telegram");
+          }
         }
         // Em seguida, matinal individual (cache já quente — evita fetches duplicados)
         try {
@@ -8882,6 +8894,18 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           log(`[cron] resumo noite: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
         } catch (err: any) {
           log(`[cron] erro resumo noite: ${err.message}`, "telegram");
+          // Fallback: avisa que o sistema está vivo mas a Trinks falhou
+          try {
+            const isRate = err?.status === 429 || /limite|429|rate/i.test(err?.message || "");
+            const motivo = isRate
+              ? "limite de requisições da Trinks excedido"
+              : `falha ao consultar Trinks (${err?.message || "erro desconhecido"})`;
+            const aviso = `⚠️ *Resumo da noite indisponível*\n\nNão foi possível fechar o dia agora: ${motivo}.\n\nO sistema continua rodando — amanhã cedo tento de novo. Para conferir o dia, abra o Dashboard (dados do CSV).`;
+            await enviarMensagem(aviso);
+            log("[cron] aviso de falha (noite) enviado", "telegram");
+          } catch (e2: any) {
+            log(`[cron] falha também no aviso de noite: ${e2?.message}`, "telegram");
+          }
         }
       }, { timezone: "America/Sao_Paulo" });
 

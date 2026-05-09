@@ -6917,7 +6917,14 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const r = await enviarMensagem(msg);
       return res.json({ ...r, enviado: r.ok });
     } catch (err: any) {
-      return res.status(500).json({ ok: false, error: err.message });
+      // Fallback: avisa no Telegram que o sistema está vivo mas a Trinks falhou
+      const isRate = err?.status === 429 || /limite|429|rate/i.test(err?.message || "");
+      const motivo = isRate
+        ? "limite de requisições da Trinks excedido"
+        : `falha ao consultar Trinks (${err?.message || "erro desconhecido"})`;
+      const aviso = `⚠️ *Resumo da manhã indisponível*\n\nNão foi possível gerar o resumo agora: ${motivo}.\n\nO sistema continua rodando — vou tentar novamente nos próximos disparos. Se quiser, abra o Dashboard para conferir os números do CSV.`;
+      const r = await enviarMensagem(aviso).catch(() => ({ ok: false }));
+      return res.status(200).json({ ok: false, fallbackEnviado: !!(r as any).ok, error: err.message });
     }
   });
 
@@ -6930,7 +6937,14 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const r = await enviarMensagem(msg);
       return res.json({ ...r, enviado: r.ok });
     } catch (err: any) {
-      return res.status(500).json({ ok: false, error: err.message });
+      // Fallback: avisa no Telegram que o sistema está vivo mas a Trinks falhou
+      const isRate = err?.status === 429 || /limite|429|rate/i.test(err?.message || "");
+      const motivo = isRate
+        ? "limite de requisições da Trinks excedido"
+        : `falha ao consultar Trinks (${err?.message || "erro desconhecido"})`;
+      const aviso = `⚠️ *Resumo da noite indisponível*\n\nNão foi possível fechar o dia agora: ${motivo}.\n\nO sistema continua rodando — amanhã cedo tento de novo. Para conferir o dia, abra o Dashboard (dados do CSV).`;
+      const r = await enviarMensagem(aviso).catch(() => ({ ok: false }));
+      return res.status(200).json({ ok: false, fallbackEnviado: !!(r as any).ok, error: err.message });
     }
   });
 

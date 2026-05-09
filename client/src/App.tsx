@@ -29,6 +29,7 @@ import Assinaturas from "@/pages/Assinaturas";
 import Estoque from "@/pages/Estoque";
 import ImportarTrinks from "@/pages/ImportarTrinks";
 import Conselheiro from "@/pages/Conselheiro";
+import TrinksAuditoria from "@/pages/TrinksAuditoria";
 import Login from "@/pages/Login";
 import { CopilotDrawer } from "@/components/CopilotDrawer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -80,6 +81,7 @@ function AdminRoutes() {
           <Route path="/vendas-produtos" component={VendasProdutos} />
           <Route path="/importar-trinks" component={ImportarTrinks} />
           <Route path="/conselheiro" component={Conselheiro} />
+          <Route path="/trinks-auditoria" component={TrinksAuditoria} />
           <Route component={NotFound} />
         </Switch>
       </ErrorBoundary>

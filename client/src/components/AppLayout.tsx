@@ -27,6 +27,7 @@ import {
   Wallet,
   FileUp,
   Scale,
+  Activity,
 } from "lucide-react";
 
 const navItems = [
@@ -46,6 +47,7 @@ const navItems = [
   { path: "/metas", label: "Metas", icon: Target },
   { path: "/duplicados", label: "Duplicados", icon: UserX },
   { path: "/importar-trinks", label: "Importar Trinks", icon: FileUp },
+  { path: "/trinks-auditoria", label: "Auditoria Trinks", icon: Activity },
   { path: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 

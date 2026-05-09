@@ -19,6 +19,7 @@ import type {
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
 import { resolverFonte, carregarTrinksDataDoCsv } from "./fonteResolver";
+import { registrarEventoTrinks, comOrigem, resumoUltimosDias, lerUltimosDias } from "./trinksAuditLog";
 import * as cron from "node-cron";
 import {
   enviarMensagem,
@@ -1101,6 +1102,8 @@ async function trinksFetch(
 
     if (res.ok) {
       const data = await res.json();
+      // Auditoria: chamada real de sucesso
+      try { registrarEventoTrinks({ endpoint: path, status: "ok" }); } catch {}
       return data;
     }
 
@@ -1108,14 +1111,17 @@ async function trinksFetch(
     log(`Trinks error ${res.status}: ${body}`, "trinks");
 
     if (res.status === 401) {
+      try { registrarEventoTrinks({ endpoint: path, status: "erro" }); } catch {}
       throw { status: 401, message: "Chave API inválida. Verifique suas credenciais." };
     }
     if (res.status === 403) {
+      try { registrarEventoTrinks({ endpoint: path, status: "erro" }); } catch {}
       throw { status: 403, message: "Sem permissão para acessar este recurso." };
     }
 
     // 429: retry com backoff exponencial + jitter
     if (res.status === 429 && attempt < MAX_RETRIES) {
+      try { registrarEventoTrinks({ endpoint: path, status: "rate429" }); } catch {}
       const baseDelay = BASE_DELAYS_MS[attempt];
       const jitter = 1000 + Math.floor(Math.random() * 4000); // 1000–5000ms
       const totalDelay = baseDelay + jitter;
@@ -1127,10 +1133,12 @@ async function trinksFetch(
     }
 
     if (res.status === 429) {
+      try { registrarEventoTrinks({ endpoint: path, status: "rate429" }); } catch {}
       log(`RATE LIMITED by Trinks API após ${MAX_RETRIES} retries. Minute: ${rateLimiter.requestsThisMinute}, Month: ${rateLimiter.requestsThisMonth}`, "trinks");
       throw { status: 429, message: "Limite de requisições da Trinks excedido após várias tentativas. O CRM usará dados do cache." };
     }
 
+    try { registrarEventoTrinks({ endpoint: path, status: "erro" }); } catch {}
     throw { status: res.status, message: body || `Erro ${res.status} da API Trinks.` };
   }
 
@@ -1729,10 +1737,34 @@ export async function registerRoutes(
     });
   });
 
+  // GET /api/trinks/audit — auditoria persistente do consumo Trinks
+  // Conta cada chamada real à rede (ok, 429, erro), agrupada por dia/hora/endpoint/origem.
+  // Persiste em kv_store (Postgres Railway) — sobrevive a deploys, diferente do contador em memória.
+  app.get("/api/trinks/audit", async (req: Request, res: Response) => {
+    try {
+      const dias = Math.max(1, Math.min(180, parseInt(String(req.query.dias || "30"), 10) || 30));
+      const resumo = await resumoUltimosDias(dias);
+      return res.json({
+        ok: true,
+        ...resumo,
+        // Dados auxiliares pro UI
+        rateLimiterEmMemoria: {
+          monthKey: rateLimiter.monthKey,
+          requestsThisMonth: rateLimiter.requestsThisMonth,
+          maxPerMonth: MAX_REQUESTS_PER_MONTH,
+          totalRequestsSession: rateLimiter.totalRequestsSession,
+          uptimeSec: Math.round(process.uptime()),
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "falha" });
+    }
+  });
+
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-05-08-cron-aviso-trinks-fail",
+      build: "2026-05-09-trinks-audit",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -8863,7 +8895,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       // Otimização F: após o resumo geral, dispara o matinal individual no MESMO cron.
       // O cache de agendamentos/transacoes do dia (e do dia anterior) já está quente,
       // então cada profissional reaproveita via trinksFetchAllRange (zero fetches Trinks adicionais).
-      cron.schedule("0 8 * * 2-6", async () => {
+      cron.schedule("0 8 * * 2-6", async () => { await comOrigem("cron-manha", async () => {
         log("[cron] disparando resumo da manhã...", "telegram");
         try {
           const [hoje, ontem, amanhaData] = await Promise.all([
@@ -8896,10 +8928,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         } catch (err: any) {
           log(`[cron] erro matinal individual encadeado: ${err.message}`, "telegram");
         }
-      }, { timezone: "America/Sao_Paulo" });
+      }); }, { timezone: "America/Sao_Paulo" });
 
       // Noite: 20:00 ter-sab
-      cron.schedule("0 20 * * 2-6", async () => {
+      cron.schedule("0 20 * * 2-6", async () => { await comOrigem("cron-noite", async () => {
         log("[cron] disparando resumo da noite...", "telegram");
         try {
           const hoje = await calcularHojeCompleto();
@@ -8921,7 +8953,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
             log(`[cron] falha também no aviso de noite: ${e2?.message}`, "telegram");
           }
         }
-      }, { timezone: "America/Sao_Paulo" });
+      }); }, { timezone: "America/Sao_Paulo" });
 
       // ─── Crons individuais por profissional (Equipe) ───
       // Helper que dispara mensagem individual para todos ativos
@@ -8964,10 +8996,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       // (evita 2 crons disparando ao mesmo tempo e disputando o rate limit Trinks).
 
       // Semanal individual: sábado 21h
-      cron.schedule("0 21 * * 6", async () => {
+      cron.schedule("0 21 * * 6", async () => { await comOrigem("cron-semanal", async () => {
         log("[cron] disparando resumo semanal individual (Equipe)...", "telegram");
         await dispararIndividualParaTodos("semanal");
-      }, { timezone: "America/Sao_Paulo" });
+      }); }, { timezone: "America/Sao_Paulo" });
 
       // Mensal individual: 28-31 do mês às 21h, ter-sáb,
       // e só dispara se hoje for o último dia útil do mês.
@@ -8993,7 +9025,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
 
       // Alerta diário de estoque baixo: ter-sáb 09h00 (após o resumo da manhã)
       // Envia uma mensagem consolidada com produtos abaixo do mínimo cadastrado.
-      cron.schedule("0 9 * * 2-6", async () => {
+      cron.schedule("0 9 * * 2-6", async () => { await comOrigem("cron-estoque", async () => {
         try {
           const resumo = await calcularEstoqueResumo();
           const ruptura = (resumo?.produtos || []).filter((p: any) => p.nivel === "ruptura");
@@ -9016,7 +9048,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         } catch (err: any) {
           log(`[cron] erro alerta estoque: ${err.message}`, "telegram");
         }
-      }, { timezone: "America/Sao_Paulo" });
+      }); }, { timezone: "America/Sao_Paulo" });
 
       log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + alerta estoque 9h (ter-sáb) + individual MATINAL 8h/SEMANAL sáb 21h/MENSAL último dia útil 21h", "telegram");
     } catch (err: any) {

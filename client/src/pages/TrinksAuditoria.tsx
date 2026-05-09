@@ -1,0 +1,335 @@
+import { useEffect, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  Activity,
+  RefreshCw,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  BarChart3,
+} from "lucide-react";
+
+// Tipo retornado por GET /api/trinks/audit
+interface BucketDia {
+  dia: string;
+  total: number;
+  ok: number;
+  rate429: number;
+  erros: number;
+  porHora: Record<string, number>;
+  porEndpoint: Record<string, number>;
+  porOrigem: Record<string, number>;
+  primeiroEventoAt: string | null;
+  ultimoEventoAt: string | null;
+  ultimoStatus429At: string | null;
+}
+
+interface AuditResponse {
+  ok: boolean;
+  diaInicio: string;
+  diaFim: string;
+  totais: { total: number; ok: number; rate429: number; erros: number };
+  porDia: BucketDia[];
+  topEndpoints: Array<{ endpoint: string; count: number }>;
+  topOrigens: Array<{ origem: string; count: number }>;
+  porHoraAgregada: Record<string, number>;
+  rateLimiterEmMemoria?: {
+    monthKey: string;
+    requestsThisMonth: number;
+    maxPerMonth: number;
+    totalRequestsSession: number;
+    uptimeSec: number;
+  };
+}
+
+export default function TrinksAuditoria() {
+  const [dias, setDias] = useState(7);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<AuditResponse | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregar = async (n: number) => {
+    setLoading(true);
+    setErro(null);
+    try {
+      const r = await fetch(`/api/trinks/audit?dias=${n}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j: AuditResponse = await r.json();
+      setData(j);
+    } catch (e: any) {
+      setErro(e?.message || "Falha ao carregar auditoria");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void carregar(dias);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dias]);
+
+  const formatarData = (iso: string | null) => {
+    if (!iso) return "—";
+    try {
+      return new Date(iso).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    } catch {
+      return iso;
+    }
+  };
+
+  // Pega o maior valor de hora pra normalizar barras
+  const horaMax = data
+    ? Math.max(1, ...Object.values(data.porHoraAgregada || {}))
+    : 1;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Activity className="h-6 w-6" />
+            Auditoria de Consumo Trinks
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Conta cada chamada real à API Trinks (sucesso, 429, erro). Persistido no banco — sobrevive a deploys.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            className="border rounded px-3 py-2 text-sm bg-background"
+            value={dias}
+            onChange={(e) => setDias(parseInt(e.target.value, 10))}
+          >
+            <option value={1}>Hoje</option>
+            <option value={3}>Últimos 3 dias</option>
+            <option value={7}>Últimos 7 dias</option>
+            <option value={14}>Últimos 14 dias</option>
+            <option value={30}>Últimos 30 dias</option>
+            <option value={60}>Últimos 60 dias</option>
+          </select>
+          <Button variant="outline" size="sm" onClick={() => carregar(dias)} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+            Atualizar
+          </Button>
+        </div>
+      </div>
+
+      {erro && (
+        <Card className="border-destructive">
+          <CardContent className="pt-6 text-sm text-destructive flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" />
+            {erro}
+          </CardContent>
+        </Card>
+      )}
+
+      {data && (
+        <>
+          {/* Cards de totais */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Total de chamadas</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{data.totais.total.toLocaleString("pt-BR")}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {data.diaInicio} → {data.diaFim}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                  OK
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600">{data.totais.ok.toLocaleString("pt-BR")}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {data.totais.total > 0
+                    ? `${((data.totais.ok / data.totais.total) * 100).toFixed(1)}%`
+                    : "—"}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                  Rate Limit (429)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-amber-600">{data.totais.rate429.toLocaleString("pt-BR")}</div>
+                <p className="text-xs text-muted-foreground mt-1">Bloqueio Trinks</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1">
+                  <XCircle className="h-3.5 w-3.5 text-destructive" />
+                  Erros
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-destructive">{data.totais.erros.toLocaleString("pt-BR")}</div>
+                <p className="text-xs text-muted-foreground mt-1">Falhas de rede / 4xx / 5xx</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Contador em memória (referência) */}
+          {data.rateLimiterEmMemoria && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Clock className="h-4 w-4" />
+                  Contador em memória (zera a cada deploy)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm space-y-1">
+                <div>
+                  Mês <span className="font-mono">{data.rateLimiterEmMemoria.monthKey}</span>:{" "}
+                  <span className="font-bold">{data.rateLimiterEmMemoria.requestsThisMonth}</span> /{" "}
+                  {data.rateLimiterEmMemoria.maxPerMonth}
+                </div>
+                <div className="text-muted-foreground">
+                  Sessão atual: {data.rateLimiterEmMemoria.totalRequestsSession} reqs · uptime{" "}
+                  {Math.round(data.rateLimiterEmMemoria.uptimeSec / 60)} min
+                </div>
+                <div className="text-xs text-muted-foreground pt-2">
+                  ⚠️ Este contador é só do processo atual. O total real (que a Trinks vê) é a soma da auditoria persistente acima.
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Tabela por dia */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Por dia
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="py-2 pr-4 font-medium">Dia</th>
+                      <th className="py-2 pr-4 font-medium text-right">Total</th>
+                      <th className="py-2 pr-4 font-medium text-right">OK</th>
+                      <th className="py-2 pr-4 font-medium text-right">429</th>
+                      <th className="py-2 pr-4 font-medium text-right">Erros</th>
+                      <th className="py-2 pr-4 font-medium">Último 429</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.porDia.slice().reverse().map((b) => (
+                      <tr key={b.dia} className="border-b last:border-b-0 hover:bg-muted/30">
+                        <td className="py-2 pr-4 font-mono">{b.dia}</td>
+                        <td className="py-2 pr-4 text-right font-medium">{b.total}</td>
+                        <td className="py-2 pr-4 text-right text-green-600">{b.ok}</td>
+                        <td className={`py-2 pr-4 text-right ${b.rate429 > 0 ? "text-amber-600 font-bold" : "text-muted-foreground"}`}>
+                          {b.rate429}
+                        </td>
+                        <td className={`py-2 pr-4 text-right ${b.erros > 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                          {b.erros}
+                        </td>
+                        <td className="py-2 pr-4 text-xs text-muted-foreground">
+                          {formatarData(b.ultimoStatus429At)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Distribuição por hora */}
+          {data.totais.total > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Distribuição por hora do dia (agregado)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-12 md:grid-cols-24 gap-1 items-end" style={{ minHeight: "120px" }}>
+                  {Array.from({ length: 24 }, (_, h) => {
+                    const hora = String(h).padStart(2, "0");
+                    const valor = data.porHoraAgregada[hora] || 0;
+                    const altura = Math.round((valor / horaMax) * 100);
+                    return (
+                      <div key={hora} className="flex flex-col items-center gap-1">
+                        <div
+                          className="w-full bg-primary/80 rounded-sm hover:bg-primary transition-colors relative group"
+                          style={{ height: `${Math.max(2, altura)}%`, minHeight: valor > 0 ? "4px" : "2px" }}
+                          title={`${hora}h: ${valor} reqs`}
+                        >
+                          <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-xs opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none">
+                            {valor}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{hora}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Top endpoints e top origens */}
+          <div className="grid md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Top endpoints</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {data.topEndpoints.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sem dados</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {data.topEndpoints.slice(0, 15).map((it) => (
+                      <li key={it.endpoint} className="flex items-center justify-between border-b last:border-b-0 py-1.5">
+                        <span className="font-mono text-xs">{it.endpoint}</span>
+                        <span className="font-medium">{it.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Top origens</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  De onde os requests partiram (cron, dashboard, sync ad-hoc)
+                </p>
+              </CardHeader>
+              <CardContent>
+                {data.topOrigens.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sem dados</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {data.topOrigens.slice(0, 15).map((it) => (
+                      <li key={it.origem} className="flex items-center justify-between border-b last:border-b-0 py-1.5">
+                        <span className="font-mono text-xs">{it.origem}</span>
+                        <span className="font-medium">{it.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

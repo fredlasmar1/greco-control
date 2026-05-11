@@ -3043,7 +3043,7 @@ export async function registerRoutes(
           return { ok: false, data: [] as any[] };
         });
       const timeoutPromise = new Promise<{ ok: false; data: any[]; timedOut: true }>(resolve =>
-        setTimeout(() => resolve({ ok: false, data: [], timedOut: true }), 2500)
+        setTimeout(() => resolve({ ok: false, data: [], timedOut: true }), 1500) // v35: 1.5s pra resposta total ficar ~2s
       );
       const result = await Promise.race([fetchPromise, timeoutPromise]);
       if ((result as any).timedOut) {

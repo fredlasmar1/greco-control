@@ -1340,28 +1340,36 @@ async function getAgendamentosPreferCsv(
   queryParams: { dataInicio?: string; dataFim?: string } & Record<string, string | undefined>,
   apiFallback: () => Promise<any[]>,
 ): Promise<any[]> {
-  const csv = await getAgendamentosCsvFreshOrNull(24);
-  if (!csv || csv.length === 0) return apiFallback();
+  const r = await getAgendamentosPreferCsvVerbose(queryParams, apiFallback);
+  return r.data;
+}
+
+// v34: variante que retorna também a FONTE — pra UI mostrar badge ('CSV' | 'trinks-api')
+async function getAgendamentosPreferCsvVerbose(
+  queryParams: { dataInicio?: string; dataFim?: string } & Record<string, string | undefined>,
+  apiFallback: () => Promise<any[]>,
+): Promise<{ data: any[]; fonte: "csv" | "trinks-api"; csvGeradoEm?: string }> {
+  const csvInfo = await getUltimoImportAgendamentos();
+  const csv = csvInfo ? await getAgendamentosCsvFreshOrNull(24) : null;
+  if (!csv || csv.length === 0) return { data: await apiFallback(), fonte: "trinks-api" };
 
   const ini = queryParams.dataInicio;
   const fim = queryParams.dataFim;
-  if (!ini || !fim) return apiFallback();
+  if (!ini || !fim) return { data: await apiFallback(), fonte: "trinks-api" };
 
-  // Descobre intervalo coberto pelo CSV
   let csvMin = "9999-99-99", csvMax = "0000-00-00";
   for (const a of csv) {
     const d = (a.dataHoraInicio || "").slice(0, 10);
     if (d && d < csvMin) csvMin = d;
     if (d && d > csvMax) csvMax = d;
   }
-  // Se o intervalo pedido cai fora do que o CSV tem, fallback pra API
-  if (ini < csvMin || fim > csvMax) return apiFallback();
+  if (ini < csvMin || fim > csvMax) return { data: await apiFallback(), fonte: "trinks-api" };
 
-  // Filtra do CSV (semi-fechado em fim: <= fim, igual o uso típico no app)
-  return csv.filter(a => {
+  const filtered = csv.filter(a => {
     const d = (a.dataHoraInicio || "").slice(0, 10);
     return d >= ini && d <= fim;
   });
+  return { data: filtered, fonte: "csv", csvGeradoEm: csvInfo?.geradoEm };
 }
 
 // ─── Error handler wrapper ────────────────────────────────
@@ -2998,7 +3006,7 @@ export async function registerRoutes(
     // v34: Promise.allSettled em vez de all — se transacoes (API) falhar com
     // 429, ainda mostra os agendamentos do CSV. Antes, 1 falha zerava tudo.
     const [agendResult, transResult] = await Promise.allSettled([
-      getAgendamentosPreferCsv(
+      getAgendamentosPreferCsvVerbose(
         { dataInicio: hoje, dataFim: hoje },
         () => trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
       ),
@@ -3010,8 +3018,13 @@ export async function registerRoutes(
     if (transResult.status === "rejected") {
       log(`calcularDiaCompleto: transacoes falhou — ${transResult.reason?.message}`, "trinks");
     }
-    const agendData = agendResult.status === "fulfilled" ? agendResult.value : [];
+    const agendInfo = agendResult.status === "fulfilled" ? agendResult.value : { data: [], fonte: "trinks-api" as const };
+    const agendData = agendInfo.data;
     const transData = transResult.status === "fulfilled" ? transResult.value : [];
+    // v34: fonte que vai ser exposta no payload final
+    const fonteAgendamentos = agendInfo.fonte;
+    const fonteTransacoes: "trinks-api" = "trinks-api"; // transações sempre vem da API (CSV não tem)
+    const transOk = transResult.status === "fulfilled";
 
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
     const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
@@ -3192,6 +3205,11 @@ export async function registerRoutes(
         atendimentos: planoAtendimentos,
         porProfissional: planoRankingProfs,
       },
+      // v34: fonte dos dados pra UI mostrar 'CSV' / 'Trinks API' embaixo de cada card
+      fonteAgendamentos,
+      fonteTransacoes,
+      transacoesOk: transOk,
+      csvGeradoEm: agendInfo.fonte === "csv" ? (agendInfo as any).csvGeradoEm : null,
       fetchedAt: new Date().toISOString(),
     };
   }
@@ -3727,11 +3745,14 @@ export async function registerRoutes(
       const cached = getCached(cacheKey);
       if (cached) return res.json({ ...cached, fromCache: true });
 
-      const data = await getAgendamentosPreferCsv(
-      { dataInicio: amanha, dataFim: amanha },
-      () => trinksFetchAll("agendamentos", { dataInicio: amanha, dataFim: amanha }),
-    );
-      const lista = Array.isArray(data) ? data : (data?.data || []);
+      const verbose = await getAgendamentosPreferCsvVerbose(
+        { dataInicio: amanha, dataFim: amanha },
+        () => trinksFetchAll("agendamentos", { dataInicio: amanha, dataFim: amanha }),
+      );
+      const data = verbose.data;
+      const fonteAmanha = verbose.fonte; // "csv" | "trinks-api"
+      const csvGeradoEmAmanha = verbose.csvGeradoEm;
+      const lista = Array.isArray(data) ? data : ((data as any)?.data || []);
 
       // Status que NÃO contam (cancelados, no-show etc.)
       const statusIgnorar = ["cancelado", "cancelada", "no show", "no-show", "faltou"];
@@ -3808,6 +3829,9 @@ export async function registerRoutes(
         progressoPct,
         porProfissional: ranking,
         agendamentos,
+        // v34: fonte dos dados pra UI mostrar 'CSV' ou 'Trinks API'
+        fonteAgendamentos: fonteAmanha,
+        csvGeradoEm: csvGeradoEmAmanha || null,
         fetchedAt: new Date().toISOString(),
       };
 

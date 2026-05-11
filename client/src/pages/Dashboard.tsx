@@ -409,6 +409,11 @@ interface HojeCompletoData {
   }[];
   fetchedAt: string;
   fromCache?: boolean;
+  // v34: fonte dos dados — pra UI mostrar badge embaixo dos cards
+  fonteAgendamentos?: "csv" | "trinks-api";
+  fonteTransacoes?: "trinks-api";
+  transacoesOk?: boolean;
+  csvGeradoEm?: string | null;
 }
 
 interface AmanhaData {
@@ -432,6 +437,9 @@ interface AmanhaData {
   }[];
   fetchedAt: string;
   fromCache?: boolean;
+  // v34: fonte (CSV ou API Trinks)
+  fonteAgendamentos?: "csv" | "trinks-api";
+  csvGeradoEm?: string | null;
 }
 
 // Otimização E: throttle module-level entre montagens do Dashboard.
@@ -443,6 +451,53 @@ const dashFetchCache: Record<string, { payload: any; ts: number }> = {};
 // v34: helper pra invalidar todo o cache do Dashboard (usado pelo botão Atualizar)
 function invalidateDashFetchCache() {
   for (const k of Object.keys(dashFetchCache)) delete dashFetchCache[k];
+}
+
+// v34: Badge pequeno que mostra de onde veio o dado de um card.
+// CSV = dado importado do email da Trinks (auditável, exato, confiável)
+// trinks-api = dado vindo da API ao vivo (pode estar em 429)
+// indisponivel = API falhou e CSV não cobre — dado provavelmente desatualizado
+function FonteSourceBadge({
+  fonte,
+  csvGeradoEm,
+  titulo,
+}: {
+  fonte?: "csv" | "trinks-api" | "indisponivel";
+  csvGeradoEm?: string | null;
+  titulo?: string;
+}) {
+  if (!fonte) return null;
+  if (fonte === "csv") {
+    const tip = csvGeradoEm
+      ? `Dado importado do CSV da Trinks por email. Última atualização: ${new Date(csvGeradoEm).toLocaleString("pt-BR")}`
+      : "Dado importado do CSV da Trinks por email";
+    return (
+      <span
+        className="inline-flex items-center gap-0.5 text-[9px] mt-1 px-1 py-0.5 rounded border border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
+        title={tip}
+      >
+        📋 CSV
+      </span>
+    );
+  }
+  if (fonte === "trinks-api") {
+    return (
+      <span
+        className="inline-flex items-center gap-0.5 text-[9px] mt-1 px-1 py-0.5 rounded border border-blue-500/40 text-blue-300 bg-blue-500/10"
+        title={titulo || "Dado vindo da API Trinks ao vivo"}
+      >
+        🔄 Trinks API
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 text-[9px] mt-1 px-1 py-0.5 rounded border border-amber-500/40 text-amber-300 bg-amber-500/10"
+      title={titulo || "API Trinks indisponível neste momento"}
+    >
+      ⚠️ API offline
+    </span>
+  );
 }
 
 export default function Dashboard() {
@@ -977,6 +1032,10 @@ export default function Dashboard() {
                     <p className="text-[10px] text-muted-foreground">
                       {hojeCompleto.comandasCount} comanda{hojeCompleto.comandasCount !== 1 ? "s" : ""}
                     </p>
+                    <FonteSourceBadge
+                      fonte={hojeCompleto.transacoesOk === false ? "indisponivel" : "trinks-api"}
+                      titulo={hojeCompleto.transacoesOk === false ? "Trinks API com erro — sem dado de comandas pagas" : "Comandas pagas vêm da API Trinks (transações)"}
+                    />
                   </div>
 
                   <div className="p-2 rounded-md bg-primary/5 border border-primary/20">
@@ -989,6 +1048,7 @@ export default function Dashboard() {
                     <p className="text-[10px] text-muted-foreground">
                       {hojeCompleto.agendamentosRestantesCount} agend. ainda
                     </p>
+                    <FonteSourceBadge fonte={hojeCompleto.fonteAgendamentos} csvGeradoEm={hojeCompleto.csvGeradoEm} />
                   </div>
 
                   <div className="p-2 rounded-md bg-muted/30 border border-border">
@@ -1001,6 +1061,7 @@ export default function Dashboard() {
                     <p className="text-[10px] text-muted-foreground">
                       {hojeCompleto.agendamentosCount} agend. no dia
                     </p>
+                    <FonteSourceBadge fonte={hojeCompleto.fonteAgendamentos} csvGeradoEm={hojeCompleto.csvGeradoEm} />
                   </div>
 
                   <div className="p-2 rounded-md bg-muted/30 border border-border">
@@ -1288,6 +1349,7 @@ export default function Dashboard() {
                     >
                       {formatCurrency(amanha.total)}
                     </p>
+                    <FonteSourceBadge fonte={amanha.fonteAgendamentos} csvGeradoEm={amanha.csvGeradoEm} />
                   </div>
                   <div>
                     <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-1">

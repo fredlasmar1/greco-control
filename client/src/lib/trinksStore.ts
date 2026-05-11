@@ -237,9 +237,9 @@ function getProfName(item: any): string {
 
 // ─── KPI Calculations ─────────────────────────────────────
 
-export function getTrinksMonthTotals(trinks: TrinksData) {
-  const transacoes = trinks.transacoes || [];
-  const agendamentos = trinks.agendamentos || [];
+export function getTrinksMonthTotals(trinks: TrinksData | null | undefined) {
+  const transacoes = trinks?.transacoes || [];
+  const agendamentos = trinks?.agendamentos || [];
 
   const totalRevenue = transacoes.reduce((sum: number, t: any) => {
     return sum + getTransactionValue(t);
@@ -286,7 +286,7 @@ export function getTrinksMonthTotals(trinks: TrinksData) {
     }
   });
 
-  const profCount = (trinks.profissionais || []).length || 1;
+  const profCount = (trinks?.profissionais || []).length || 1;
   const dayOfMonth = new Date().getDate();
   const totalSlots = profCount * 10 * dayOfMonth;
   const occupationRate = totalSlots > 0 ? Math.min(100, (totalClients / totalSlots) * 100) : 0;
@@ -306,9 +306,9 @@ export function getTrinksMonthTotals(trinks: TrinksData) {
   };
 }
 
-export function getTrindsDailyRevenueChart(trinks: TrinksData) {
-  const transacoes = trinks.transacoes || [];
-  const agendamentos = trinks.agendamentos || [];
+export function getTrindsDailyRevenueChart(trinks: TrinksData | null | undefined) {
+  const transacoes = trinks?.transacoes || [];
+  const agendamentos = trinks?.agendamentos || [];
   const dailyMap: Record<string, { revenue: number; clients: number }> = {};
 
   transacoes.forEach((t: any) => {
@@ -335,9 +335,9 @@ export function getTrindsDailyRevenueChart(trinks: TrinksData) {
     }));
 }
 
-export function getTrinksBarberRanking(trinks: TrinksData) {
-  const profissionais = trinks.profissionais || [];
-  const agendamentos = trinks.agendamentos || [];
+export function getTrinksBarberRanking(trinks: TrinksData | null | undefined) {
+  const profissionais = trinks?.profissionais || [];
+  const agendamentos = trinks?.agendamentos || [];
   const profRevenue: Record<string, { revenue: number; clients: number; name: string }> = {};
 
   profissionais.forEach((p: any) => {
@@ -370,7 +370,7 @@ export function getTrinksBarberRanking(trinks: TrinksData) {
     }));
 }
 
-export function getTrinksPaymentMethodData(trinks: TrinksData) {
+export function getTrinksPaymentMethodData(trinks: TrinksData | null | undefined) {
   const totals = getTrinksMonthTotals(trinks);
   const data = [
     { name: "Pix", value: totals.totalPix, color: "#1E3A5F" },
@@ -385,8 +385,8 @@ export function getTrinksPaymentMethodData(trinks: TrinksData) {
 
 // ─── Revenue Summary (Day / Week / Month) ───────────────
 
-export function getTrinksRevenueSummary(trinks: TrinksData) {
-  const transacoes = trinks.transacoes || [];
+export function getTrinksRevenueSummary(trinks: TrinksData | null | undefined) {
+  const transacoes = trinks?.transacoes || [];
   const today = new Date();
   const todayStr = today.toISOString().split("T")[0];
 
@@ -414,8 +414,8 @@ export function getTrinksRevenueSummary(trinks: TrinksData) {
 }
 
 /** Revenue for a custom date range */
-export function getTrinksRevenueByRange(trinks: TrinksData, startDate: string, endDate: string) {
-  const transacoes = trinks.transacoes || [];
+export function getTrinksRevenueByRange(trinks: TrinksData | null | undefined, startDate: string, endDate: string) {
+  const transacoes = trinks?.transacoes || [];
   let total = 0;
   transacoes.forEach((t: any) => {
     const date = getItemDate(t);

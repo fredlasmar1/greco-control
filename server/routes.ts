@@ -2968,13 +2968,23 @@ export async function registerRoutes(
     // Para pegar 1 dia inteiro precisamos passar dataFim = dia + 1.
     // (Já /v1/agendamentos aceita dataInicio=dataFim normalmente.)
     const transFim = ymdAddDays(hoje, 1);
-    const [agendData, transData] = await Promise.all([
+    // v34: Promise.allSettled em vez de all — se transacoes (API) falhar com
+    // 429, ainda mostra os agendamentos do CSV. Antes, 1 falha zerava tudo.
+    const [agendResult, transResult] = await Promise.allSettled([
       getAgendamentosPreferCsv(
         { dataInicio: hoje, dataFim: hoje },
         () => trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
       ),
       trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: transFim }),
     ]);
+    if (agendResult.status === "rejected") {
+      log(`calcularDiaCompleto: agendamentos falhou — ${agendResult.reason?.message}`, "trinks");
+    }
+    if (transResult.status === "rejected") {
+      log(`calcularDiaCompleto: transacoes falhou — ${transResult.reason?.message}`, "trinks");
+    }
+    const agendData = agendResult.status === "fulfilled" ? agendResult.value : [];
+    const transData = transResult.status === "fulfilled" ? transResult.value : [];
 
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
     const transLista = Array.isArray(transData) ? transData : (transData?.data || []);

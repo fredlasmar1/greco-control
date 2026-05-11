@@ -4157,6 +4157,51 @@ export async function registerRoutes(
 
       const meta = await resolverFonte(mes);
 
+      // v35: CSV de AGENDAMENTOS (vindo do email Trinks via Apps Script) tem
+      // prioridade. Se estiver fresco (≤24h) e cobrir o mês, gera dados
+      // sintéticos a partir dele em <100ms — sem nenhum hit na API Trinks.
+      // Resolve o caso de mês corrente com 429 prolongado.
+      const csvAgendamentos = await getAgendamentosCsvFreshOrNull(24);
+      if (csvAgendamentos && csvAgendamentos.length > 0) {
+        // Filtra agendamentos do mês
+        const mesAgend = csvAgendamentos.filter(a => (a.dataHoraInicio || "").startsWith(mes));
+        if (mesAgend.length > 0) {
+          // Para o frontend, o Dashboard espera transacoes + agendamentos.
+          // Tratamos os agendamentos FINALIZADOS como transações sintéticas
+          // (são os que viraram receita). O resto vai como agendamentos puros.
+          const transacoesSinteticas = mesAgend
+            .filter(a => (a.status?.nome || "").toLowerCase().includes("finaliz"))
+            .map(a => ({
+              id: `csv-${a.id}`,
+              dataReferencia: a.dataHoraInicio,
+              dataHora: a.dataHoraInicio,
+              totalPagar: a.valor,
+              formasPagamentos: [{ nome: "agendamento_csv", valor: a.valor }],
+              profissional: a.profissional,
+              cliente: a.cliente,
+              servico: a.servico,
+              status: a.status,
+            }));
+          const ultimoImport = await getUltimoImportAgendamentos();
+          return res.json({
+            fonte: "csv-agendamentos",
+            trinksAt: meta.trinksAt,
+            csvAt: ultimoImport?.geradoEm,
+            motivo: "CSV de agendamentos (email Trinks) tem prioridade — evita 429 da API.",
+            dados: {
+              estabelecimento: null,
+              profissionais: [],
+              servicos: [],
+              agendamentos: mesAgend,
+              transacoes: transacoesSinteticas,
+              clientes: [],
+              syncedAt: ultimoImport?.geradoEm || new Date().toISOString(),
+              mes,
+            },
+          });
+        }
+      }
+
       // Caso 1: nenhuma fonte → tenta Trinks online (pode ser primeira vez), e
       // se também falhar devolve estrutura vazia com fonte="nenhuma".
       // Caso 2: CSV vence → monta TrinksData sintético do CSV financeiro.

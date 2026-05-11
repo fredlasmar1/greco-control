@@ -515,7 +515,19 @@ function FonteSourceBadge({
 export default function Dashboard() {
   const { isConnected, trinks, lastSync, isSyncing, syncData } =
     useTrinksStore();
-  const hasTrinksData = isConnected && trinks !== null;
+  // v35: também considera CSV importado por email como fonte válida de dados.
+  // Se Trinks API está em 429 mas o CSV foi sincronizado nas últimas 24h,
+  // o Dashboard usa o CSV — sai do modo demo.
+  const [csvFresh, setCsvFresh] = useState<boolean>(false);
+  useEffect(() => {
+    let cancel = false;
+    fetch("/api/trinks-csv/agendamentos/status")
+      .then(r => r.json())
+      .then(d => { if (!cancel && d?.importado && d?.ageFresco) setCsvFresh(true); })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, []);
+  const hasTrinksData = (isConnected && trinks !== null) || csvFresh;
 
   // "Hoje" em tempo-quase-real (1 chamada leve à API, cacheada 3 min)
   const [hoje, setHoje] = useState<HojeData | null>(
@@ -833,6 +845,16 @@ export default function Dashboard() {
           isSyncing={isSyncing}
           onSync={handleSync}
         />
+      ) : csvFresh ? (
+        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 flex items-center gap-2">
+          <span className="text-emerald-400">📋</span>
+          <div className="text-sm">
+            <span className="font-medium text-emerald-300">Dados do CSV (email Trinks)</span>
+            <span className="text-muted-foreground text-xs ml-2">
+              — API Trinks indisponível ou em rate limit. Usando agendamentos importados por email automaticamente.
+            </span>
+          </div>
+        </div>
       ) : (
         <DemoBanner />
       )}

@@ -438,8 +438,12 @@ interface AmanhaData {
 // Evita refazer fetches dos endpoints leves /trinks/hoje, /hoje-completo, /amanha
 // quando o usuário navega para outra aba e volta em poucos minutos.
 // O backend já cacheia esses endpoints, mas isso elimina até a ida ao backend.
-const DASH_FETCH_THROTTLE_MS = 3 * 60 * 1000; // 3 min, casa com TTL de cache do backend
+const DASH_FETCH_THROTTLE_MS = 60 * 1000; // 60s — reduzido de 3min pra dado mais fresco
 const dashFetchCache: Record<string, { payload: any; ts: number }> = {};
+// v34: helper pra invalidar todo o cache do Dashboard (usado pelo botão Atualizar)
+function invalidateDashFetchCache() {
+  for (const k of Object.keys(dashFetchCache)) delete dashFetchCache[k];
+}
 
 export default function Dashboard() {
   const { isConnected, trinks, lastSync, isSyncing, syncData } =
@@ -529,6 +533,26 @@ export default function Dashboard() {
   }, [isConnected, API_BASE]);
 
   useEffect(() => { loadAmanha(); }, [loadAmanha]);
+
+  // v34: re-fetch quando a aba do navegador volta a ter foco (após estar oculta)
+  // OU quando o usuário foca a janela. Mantém o Dashboard sempre fresco quando
+  // o usuário volta de outra aba/tarefa.
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        invalidateDashFetchCache();
+        loadHoje();
+        loadHojeCompleto();
+        loadAmanha();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onVisibilityChange);
+    };
+  }, [loadHoje, loadHojeCompleto, loadAmanha]);
 
   // ─── Seletor de mês (Dashboard pode visualizar meses passados) ───
   const mesCorrente = useMemo(() => mesAtualSP(), []);
@@ -783,7 +807,23 @@ export default function Dashboard() {
             </Button>
           )}
         </div>
-        <FecharDiaDialog />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              invalidateDashFetchCache();
+              loadHoje();
+              loadHojeCompleto();
+              loadAmanha();
+            }}
+            data-testid="btn-atualizar-dashboard"
+            title="Forçar recarga dos dados do Dashboard"
+          >
+            🔄 Atualizar
+          </Button>
+          <FecharDiaDialog />
+        </div>
       </div>
 
       {/* v25 Etapa 3: Resumo do mês via CSV importado (só aparece se houver import).

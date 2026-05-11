@@ -3003,28 +3003,59 @@ export async function registerRoutes(
     // Para pegar 1 dia inteiro precisamos passar dataFim = dia + 1.
     // (Já /v1/agendamentos aceita dataInicio=dataFim normalmente.)
     const transFim = ymdAddDays(hoje, 1);
-    // v34: Promise.allSettled em vez de all — se transacoes (API) falhar com
-    // 429, ainda mostra os agendamentos do CSV. Antes, 1 falha zerava tudo.
-    const [agendResult, transResult] = await Promise.allSettled([
-      getAgendamentosPreferCsvVerbose(
-        { dataInicio: hoje, dataFim: hoje },
-        () => trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
-      ),
-      trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: transFim }),
-    ]);
-    if (agendResult.status === "rejected") {
-      log(`calcularDiaCompleto: agendamentos falhou — ${agendResult.reason?.message}`, "trinks");
-    }
-    if (transResult.status === "rejected") {
-      log(`calcularDiaCompleto: transacoes falhou — ${transResult.reason?.message}`, "trinks");
-    }
-    const agendInfo = agendResult.status === "fulfilled" ? agendResult.value : { data: [], fonte: "trinks-api" as const };
+
+    // v35: Resposta rápida + atualização em background.
+    // 1. Agendamentos vêm do CSV (instantâneo)
+    // 2. Transações: se já tem cache fresco (≤ 2min), usa. Senão, dispara
+    //    fetch em background e retorna com transacoesPendente=true. Próxima
+    //    request pega o cache atualizado.
+    const transCacheKey = `transacoes_dia:${hoje}`;
+    const TRANS_CACHE_TTL_MS = 2 * 60 * 1000;
+    const cachedTrans = getCached(transCacheKey) as { data: any[]; at: number } | null;
+    const cachedFresh = cachedTrans && (Date.now() - cachedTrans.at) < TRANS_CACHE_TTL_MS;
+
+    let transData: any[] = cachedFresh ? (cachedTrans!.data || []) : [];
+    let transOk = !!cachedFresh;
+    let transacoesPendente = false;
+
+    // Agendamentos: rápido (CSV ou API com circuit breaker que falha rápido)
+    const agendResult = await getAgendamentosPreferCsvVerbose(
+      { dataInicio: hoje, dataFim: hoje },
+      () => trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
+    ).catch((err: any) => {
+      log(`calcularDiaCompleto: agendamentos falhou — ${err?.message}`, "trinks");
+      return { data: [], fonte: "trinks-api" as const };
+    });
+    const agendInfo = agendResult;
     const agendData = agendInfo.data;
-    const transData = transResult.status === "fulfilled" ? transResult.value : [];
-    // v34: fonte que vai ser exposta no payload final
     const fonteAgendamentos = agendInfo.fonte;
-    const fonteTransacoes: "trinks-api" = "trinks-api"; // transações sempre vem da API (CSV não tem)
-    const transOk = transResult.status === "fulfilled";
+    const fonteTransacoes: "trinks-api" = "trinks-api";
+
+    // Transações: race entre fetch real e timeout de 2.5s
+    if (!cachedFresh) {
+      const fetchPromise = trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: transFim })
+        .then((d: any[]) => {
+          setCache(transCacheKey, { data: d, at: Date.now() }, TRANS_CACHE_TTL_MS);
+          return { ok: true, data: d };
+        })
+        .catch((err: any) => {
+          log(`calcularDiaCompleto: transacoes falhou — ${err?.message}`, "trinks");
+          return { ok: false, data: [] as any[] };
+        });
+      const timeoutPromise = new Promise<{ ok: false; data: any[]; timedOut: true }>(resolve =>
+        setTimeout(() => resolve({ ok: false, data: [], timedOut: true }), 2500)
+      );
+      const result = await Promise.race([fetchPromise, timeoutPromise]);
+      if ((result as any).timedOut) {
+        // Background fetch continua rodando, vai popular o cache quando terminar
+        transacoesPendente = true;
+        transOk = false;
+        log(`calcularDiaCompleto: transacoes em background (timeout 2.5s)`, "trinks");
+      } else {
+        transData = result.data;
+        transOk = result.ok;
+      }
+    }
 
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
     const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
@@ -3205,10 +3236,11 @@ export async function registerRoutes(
         atendimentos: planoAtendimentos,
         porProfissional: planoRankingProfs,
       },
-      // v34: fonte dos dados pra UI mostrar 'CSV' / 'Trinks API' embaixo de cada card
+      // v34/35: fonte dos dados pra UI mostrar 'CSV' / 'Trinks API' embaixo de cada card
       fonteAgendamentos,
       fonteTransacoes,
       transacoesOk: transOk,
+      transacoesPendente,  // v35: true = API ainda processando em background
       csvGeradoEm: agendInfo.fonte === "csv" ? (agendInfo as any).csvGeradoEm : null,
       fetchedAt: new Date().toISOString(),
     };
@@ -3680,10 +3712,14 @@ export async function registerRoutes(
   app.get("/api/trinks/hoje-completo", async (_req: Request, res: Response) => {
     try {
       const cacheKey = `hoje_completo_${new Date().toISOString().slice(0, 10)}`;
-      const cached = getCached(cacheKey);
-      if (cached) return res.json({ ...cached, fromCache: true });
+      const cached = getCached(cacheKey) as any;
+      // v35: se o cache tem dado mas marcado como pendente, ignora e calcula
+      // de novo (transações podem ter chegado em background)
+      if (cached && !cached.transacoesPendente) return res.json({ ...cached, fromCache: true });
       const result = await calcularHojeCompleto();
-      setCache(cacheKey, result, 2 * 60 * 1000);
+      // TTL menor (30s) quando pendente, pra polling pegar atualização rápido
+      const ttl = (result as any).transacoesPendente ? 30 * 1000 : 2 * 60 * 1000;
+      setCache(cacheKey, result, ttl);
       return res.json(result);
     } catch (err: any) {
       return handleTrinksError(err, res);

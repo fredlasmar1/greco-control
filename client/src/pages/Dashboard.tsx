@@ -413,6 +413,7 @@ interface HojeCompletoData {
   fonteAgendamentos?: "csv" | "trinks-api";
   fonteTransacoes?: "trinks-api";
   transacoesOk?: boolean;
+  transacoesPendente?: boolean; // v35: API rodando em background
   csvGeradoEm?: string | null;
 }
 
@@ -462,11 +463,22 @@ function FonteSourceBadge({
   csvGeradoEm,
   titulo,
 }: {
-  fonte?: "csv" | "trinks-api" | "indisponivel";
+  fonte?: "csv" | "trinks-api" | "indisponivel" | "carregando";
   csvGeradoEm?: string | null;
   titulo?: string;
 }) {
   if (!fonte) return null;
+  if (fonte === "carregando") {
+    return (
+      <span
+        className="inline-flex items-center gap-0.5 text-[9px] mt-1 px-1 py-0.5 rounded border border-cyan-500/40 text-cyan-300 bg-cyan-500/10"
+        title={titulo || "Carregando da Trinks em background…"}
+      >
+        <span className="inline-block w-1 h-1 rounded-full bg-cyan-400 animate-pulse" />
+        🔄 Carregando…
+      </span>
+    );
+  }
   if (fonte === "csv") {
     const tip = csvGeradoEm
       ? `Dado importado do CSV da Trinks por email. Última atualização: ${new Date(csvGeradoEm).toLocaleString("pt-BR")}`
@@ -560,6 +572,18 @@ export default function Dashboard() {
   }, [isConnected, API_BASE]);
 
   useEffect(() => { loadHojeCompleto(); }, [loadHojeCompleto]);
+
+  // v35: Polling enquanto transações estão sendo carregadas em background.
+  // Sai do polling assim que transacoesPendente vira false (API respondeu).
+  useEffect(() => {
+    if (!hojeCompleto?.transacoesPendente) return;
+    const interval = setInterval(() => {
+      // Invalida o cache local pra forçar nova request
+      delete dashFetchCache["hoje-completo"];
+      loadHojeCompleto();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hojeCompleto?.transacoesPendente, loadHojeCompleto]);
 
   // Previsão do próximo dia útil
   const [amanha, setAmanha] = useState<AmanhaData | null>(
@@ -1033,8 +1057,16 @@ export default function Dashboard() {
                       {hojeCompleto.comandasCount} comanda{hojeCompleto.comandasCount !== 1 ? "s" : ""}
                     </p>
                     <FonteSourceBadge
-                      fonte={hojeCompleto.transacoesOk === false ? "indisponivel" : "trinks-api"}
-                      titulo={hojeCompleto.transacoesOk === false ? "Trinks API com erro — sem dado de comandas pagas" : "Comandas pagas vêm da API Trinks (transações)"}
+                      fonte={hojeCompleto.transacoesPendente
+                        ? "carregando"
+                        : hojeCompleto.transacoesOk === false
+                          ? "indisponivel"
+                          : "trinks-api"}
+                      titulo={hojeCompleto.transacoesPendente
+                        ? "Buscando comandas pagas em background — atualiza em segundos"
+                        : hojeCompleto.transacoesOk === false
+                          ? "Trinks API com erro — sem dado de comandas pagas"
+                          : "Comandas pagas vêm da API Trinks (transações)"}
                     />
                   </div>
 

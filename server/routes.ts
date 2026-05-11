@@ -1896,13 +1896,14 @@ export async function registerRoutes(
         if (remetente) (parsed as any).origemEmail = remetente;
 
         const stats = await salvarImportAgendamentos(parsed);
-        log(`csv-import/agendamentos: csv=${parsed.totalLinhas} linhas → +${stats.novos} novos / ~${stats.atualizados} atualizados / total acumulado=${stats.totalAcumulado}`, "csv");
+        log(`csv-import/agendamentos: csv=${parsed.totalLinhas} linhas → +${stats.novos} novos / ~${stats.atualizados} atualizados / -${stats.removidos} removidos / total acumulado=${stats.totalAcumulado}`, "csv");
 
         return res.json({
           ok: true,
           totalLinhasCsv: parsed.totalLinhas,
           novos: stats.novos,
           atualizados: stats.atualizados,
+          removidos: stats.removidos,
           totalAcumulado: stats.totalAcumulado,
           // mantém compat com versão anterior do Apps Script
           totalLinhas: stats.totalAcumulado,

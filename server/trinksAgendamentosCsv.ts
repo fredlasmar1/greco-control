@@ -226,13 +226,31 @@ export function parseCsvAgendamentos(input: Buffer | string): ImportAgendamentos
  *  CSV mais novo. Agendamentos antigos não presentes no CSV novo são
  *  preservados. Retorna stats da mesclagem. */
 export async function salvarImportAgendamentos(novo: ImportAgendamentosCsvData): Promise<{
-  totalAcumulado: number; novos: number; atualizados: number;
+  totalAcumulado: number; novos: number; atualizados: number; removidos: number;
 }> {
   const anterior = (await kvGet<ImportAgendamentosCsvData>(KV_KEY)) || null;
   const merged = new Map<string, AgendamentoCsv>();
 
+  // v35.2: identifica o PERÍODO coberto pelo CSV novo. Qualquer agendamento
+  // anterior cuja data caia DENTRO desse período mas que NÃO esteja no CSV novo
+  // foi cancelado/removido — precisa ser apagado do banco. Sem isso, mesclagem
+  // só adicionava (deixava fantasmas de imports antigos).
+  const idsNovos = new Set(novo.agendamentos.map(a => a.id));
+  const periodoIni = novo.dataInicio;
+  const periodoFim = novo.dataFim;
+
+  let removidos = 0;
   if (anterior?.agendamentos) {
-    for (const a of anterior.agendamentos) merged.set(a.id, a);
+    for (const a of anterior.agendamentos) {
+      const data = (a.dataHoraInicio || "").slice(0, 10);
+      const dentroPeriodoCsv = periodoIni && periodoFim && data >= periodoIni && data <= periodoFim;
+      // Se está dentro do período do CSV novo MAS não veio nele → foi cancelado/removido
+      if (dentroPeriodoCsv && !idsNovos.has(a.id)) {
+        removidos++;
+        continue;
+      }
+      merged.set(a.id, a);
+    }
   }
   let novos = 0, atualizados = 0;
   for (const a of novo.agendamentos) {
@@ -279,8 +297,8 @@ export async function salvarImportAgendamentos(novo: ImportAgendamentosCsvData):
     imports: importLog,
   };
   await kvSet(KV_KEY, consolidado);
-  log(`csv-agendamentos: mesclou +${novos} novos / ~${atualizados} atualizados → ${todos.length} total (${consolidado.dataInicio}..${consolidado.dataFim})`, "csv");
-  return { totalAcumulado: todos.length, novos, atualizados };
+  log(`csv-agendamentos: mesclou +${novos} novos / ~${atualizados} atualizados / -${removidos} removidos → ${todos.length} total (${consolidado.dataInicio}..${consolidado.dataFim})`, "csv");
+  return { totalAcumulado: todos.length, novos, atualizados, removidos };
 }
 
 /** Apaga TODOS os agendamentos importados — use com cuidado, só pra reset manual. */

@@ -908,6 +908,15 @@ function saveMonthlyCounter() {
 
 loadMonthlyCounter();
 
+// v34: circuit breaker. Quando o backoff acumulado pular pra mais de
+// CIRCUIT_OPEN_THRESHOLD_MS no futuro, considera o circuito ABERTO e
+// recusa novas chamadas imediatamente (sem esperar) por
+// CIRCUIT_COOLDOWN_MS. Evita que workers/scheduler fiquem queimando tempo
+// e quota tentando bater numa API que claramente está dando 429.
+const CIRCUIT_OPEN_THRESHOLD_MS = 60_000;   // backoff > 60s = circuito abre
+const CIRCUIT_COOLDOWN_MS = 5 * 60_000;     // após abrir, espera 5 min antes de testar
+let circuitOpenUntil = 0;
+
 async function waitForRateLimit(): Promise<void> {
   // Serializa via mutex: cada chamada espera a anterior terminar.
   // Sem isso, múltiplas requisições paralelas verificam rateLimiter ao mesmo
@@ -918,6 +927,16 @@ async function waitForRateLimit(): Promise<void> {
   await previous;
 
   try {
+    // Circuit breaker: se está aberto, falha imediato sem tentar request.
+    if (circuitOpenUntil > Date.now()) {
+      throw { status: 429, message: `Circuit breaker aberto até ${new Date(circuitOpenUntil).toISOString()}. API Trinks recebeu 429 recentemente — pausando chamadas pra economizar quota.` };
+    }
+    // Se o backoff acumulado já passou do limiar, abre o circuito.
+    if (trinksBackoffUntil - Date.now() > CIRCUIT_OPEN_THRESHOLD_MS) {
+      circuitOpenUntil = Date.now() + CIRCUIT_COOLDOWN_MS;
+      log(`⚠️ Circuit breaker ABERTO por ${CIRCUIT_COOLDOWN_MS / 60_000}min (backoff acumulado ${Math.round((trinksBackoffUntil - Date.now()) / 1000)}s)`, "trinks");
+      throw { status: 429, message: `Circuit breaker aberto. API Trinks está em backoff prolongado — pausando 5min.` };
+    }
     // Se a Trinks está em backoff (429 recente), espera até o cooldown acabar
     if (trinksBackoffUntil > Date.now()) {
       const wait = trinksBackoffUntil - Date.now();
@@ -1112,6 +1131,14 @@ async function trinksFetch(
       const data = await res.json();
       // Auditoria: chamada real de sucesso
       try { registrarEventoTrinks({ endpoint: path, status: "ok" }); } catch {}
+      // v34: sucesso → reseta circuit breaker (e backoff se necessário)
+      if (circuitOpenUntil > 0) {
+        log(`✅ Circuit breaker FECHADO (API Trinks recuperada)`, "trinks");
+        circuitOpenUntil = 0;
+      }
+      if (trinksBackoffUntil > Date.now()) {
+        trinksBackoffUntil = 0;
+      }
       return data;
     }
 

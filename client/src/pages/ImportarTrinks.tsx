@@ -231,6 +231,10 @@ export default function ImportarTrinks() {
         </p>
       </div>
 
+      {/* v33: Card de import automático por email (Gmail + Apps Script) */}
+      <CsvEmailStatusCard />
+
+
       {/* Card de upload */}
       <Card>
         <CardHeader>
@@ -762,3 +766,123 @@ function formatDateBR(iso: string): string {
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
 }
+
+// ─── v33: Status do import automático por email ──────────────────────────────
+
+interface CsvEmailStatus {
+  ok: boolean;
+  importado: boolean;
+  geradoEm?: string;
+  ageHoras?: number;
+  ageFresco?: boolean;
+  totalLinhas?: number;
+  confirmados?: number;
+  cancelados?: number;
+  finalizados?: number;
+  dataInicio?: string;
+  dataFim?: string;
+}
+
+function CsvEmailStatusCard() {
+  const { data, refetch } = useQuery<CsvEmailStatus>({
+    queryKey: ["/api/trinks-csv/agendamentos/status"],
+    refetchInterval: 60_000,
+  });
+  const [open, setOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function uploadManual(file: File) {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/trinks-csv/agendamentos", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!j.ok) { alert("Erro: " + (j.error || "")); return; }
+      alert(`✅ ${j.totalLinhas} agendamentos importados (${formatDateBR(j.dataInicio)} – ${formatDateBR(j.dataFim)})`);
+      refetch();
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  return (
+    <Card className="border-cyan-500/30">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2 flex-wrap">
+          📧 Importação automática por email (Trinks)
+          {data?.importado && data.ageFresco && (
+            <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-300">Fresco</Badge>
+          )}
+          {data?.importado && !data.ageFresco && (
+            <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-300">{data.ageHoras}h atrás</Badge>
+          )}
+          {!data?.importado && (
+            <Badge variant="outline" className="text-[10px] border-muted text-muted-foreground">Nunca importado</Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {data?.importado ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+            <div className="rounded border border-card-border/40 bg-background/30 p-2">
+              <div className="text-[10px] text-muted-foreground">Período do CSV</div>
+              <div className="font-semibold tabular-nums">{formatDateBR(data.dataInicio || "")} – {formatDateBR(data.dataFim || "")}</div>
+            </div>
+            <div className="rounded border border-card-border/40 bg-background/30 p-2">
+              <div className="text-[10px] text-muted-foreground">Total</div>
+              <div className="font-semibold tabular-nums">{data.totalLinhas} agendamentos</div>
+            </div>
+            <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2">
+              <div className="text-[10px] text-emerald-300">Confirmados</div>
+              <div className="font-semibold tabular-nums text-emerald-400">{data.confirmados}</div>
+            </div>
+            <div className="rounded border border-red-500/30 bg-red-500/5 p-2">
+              <div className="text-[10px] text-red-300">Cancelados</div>
+              <div className="font-semibold tabular-nums text-red-400">{data.cancelados}</div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Configure o Apps Script no seu Gmail e os CSVs do email da Trinks serão importados automaticamente a cada hora.
+          </p>
+        )}
+
+        <div className="flex items-center gap-2 flex-wrap pt-1">
+          <Button type="button" size="sm" variant="outline" onClick={() => setOpen(o => !o)}>
+            {open ? "Esconder instruções" : "Como configurar (Apps Script no Gmail)"}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => fileRef.current?.click()} disabled={uploading}>
+            {uploading ? "Enviando…" : "Importar CSV manualmente"}
+          </Button>
+          <input
+            ref={fileRef} type="file" accept=".csv" className="hidden"
+            onChange={e => e.target.files?.[0] && uploadManual(e.target.files[0])}
+          />
+        </div>
+
+        {open && (
+          <div className="rounded-md border border-cyan-500/30 bg-cyan-500/5 p-3 text-xs space-y-2">
+            <p className="font-medium">📋 Passo a passo (5 min, configura uma vez):</p>
+            <ol className="list-decimal list-inside space-y-1 text-[11px]">
+              <li>Acesse <a href="https://script.google.com" target="_blank" rel="noreferrer" className="text-cyan-400 underline">script.google.com</a> → <b>Novo projeto</b></li>
+              <li>Apague o conteúdo e cole o script disponível em <code className="bg-muted/40 px-1 rounded">/docs/apps-script-trinks-import.gs</code> (no repositório)</li>
+              <li>No topo do script, defina <code className="bg-muted/40 px-1 rounded">URL_API</code> e <code className="bg-muted/40 px-1 rounded">TOKEN</code> (mesmo valor da env <code>TRINKS_CSV_TOKEN</code> no Railway)</li>
+              <li>Salve, clique no relógio ⏰ <b>Triggers</b> → <b>Adicionar trigger</b>:
+                <div className="ml-4 mt-0.5">Função: <code>importarTrinksCsv</code> · Acionado por tempo · Por hora · A cada 1h</div>
+              </li>
+              <li>Autorize o acesso ao Gmail quando solicitado</li>
+              <li>Pronto — a cada hora o script lê emails da <code>atendimento@trinks.com</code>, extrai o CSV e envia pra cá</li>
+            </ol>
+            <p className="text-[10px] text-muted-foreground mt-2">
+              💡 No Railway, defina a env <code className="bg-muted/40 px-1 rounded">TRINKS_CSV_TOKEN</code> com um valor aleatório longo (ex: <code>openssl rand -hex 32</code>) e use o MESMO valor no script.
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+

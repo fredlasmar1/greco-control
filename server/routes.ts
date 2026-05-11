@@ -39,6 +39,11 @@ import {
   type MetaProfissional,
 } from "./metasProfissional";
 import {
+  parseCsvAgendamentos,
+  salvarImportAgendamentos,
+  getUltimoImportAgendamentos,
+} from "./trinksAgendamentosCsv";
+import {
   listFechamentos as listCaixaFechamentos,
   getFechamento as getCaixaFechamento,
   upsertFechamento as upsertCaixaFechamento,
@@ -1769,6 +1774,117 @@ export async function registerRoutes(
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
     });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // TRINKS CSV IMPORT (v33) — agendamentos enviados por email pela Trinks
+  // (atendimento@trinks.com). Importação automática via Apps Script no Gmail
+  // ou upload manual via UI. Reduz uso de tokens da API Trinks.
+  // ════════════════════════════════════════════════════════════════════════
+
+  /** Helper: valida token de auth dos imports automáticos (Apps Script).
+   *  - Em produção, exige header X-Csv-Token === env TRINKS_CSV_TOKEN
+   *  - Sem env configurado: aceita qualquer (modo dev) */
+  function checkCsvImportAuth(req: Request): { ok: boolean; reason?: string } {
+    const expected = process.env.TRINKS_CSV_TOKEN || "";
+    if (!expected) return { ok: true }; // dev mode
+    const got = String(req.headers["x-csv-token"] || req.query.token || "");
+    if (got !== expected) return { ok: false, reason: "token inválido" };
+    return { ok: true };
+  }
+
+  // POST /api/trinks-csv/agendamentos — recebe CSV (multipart 'file' OU raw text body)
+  // e parseia / persiste. Header obrigatório: X-Csv-Token quando env definido.
+  app.post(
+    "/api/trinks-csv/agendamentos",
+    upload.single("file"),
+    async (req: Request, res: Response) => {
+      try {
+        const auth = checkCsvImportAuth(req);
+        if (!auth.ok) return res.status(401).json({ ok: false, error: auth.reason });
+
+        let buf: Buffer | null = null;
+        if (req.file?.buffer) {
+          buf = req.file.buffer;
+        } else if (req.body) {
+          // Apps Script manda como body raw (text/plain ou base64)
+          if (typeof req.body === "string") {
+            buf = Buffer.from(req.body, "utf-8");
+          } else if (req.body.csvBase64) {
+            buf = Buffer.from(String(req.body.csvBase64), "base64");
+          } else if (req.body.csv) {
+            buf = Buffer.from(String(req.body.csv), "utf-8");
+          }
+        }
+        if (!buf || buf.length === 0) {
+          return res.status(400).json({ ok: false, error: "Nenhum CSV recebido (envie 'file' multipart ou body com 'csvBase64')" });
+        }
+
+        const remetente = String(req.body?.from || req.headers["x-email-from"] || "");
+        const parsed = parseCsvAgendamentos(buf);
+        if (remetente) (parsed as any).origemEmail = remetente;
+
+        await salvarImportAgendamentos(parsed);
+        log(`csv-import/agendamentos: ${parsed.totalLinhas} linhas (${parsed.dataInicio}..${parsed.dataFim})`, "csv");
+
+        return res.json({
+          ok: true,
+          totalLinhas: parsed.totalLinhas,
+          confirmados: parsed.totalConfirmados,
+          cancelados: parsed.totalCancelados,
+          finalizados: parsed.totalFinalizados,
+          dataInicio: parsed.dataInicio,
+          dataFim: parsed.dataFim,
+          geradoEm: parsed.geradoEm,
+        });
+      } catch (err: any) {
+        log(`csv-import/agendamentos ERROR: ${err.message}`, "csv");
+        return res.status(500).json({ ok: false, error: err.message });
+      }
+    },
+  );
+
+  // GET /api/trinks-csv/agendamentos/status — metadata do último import
+  app.get("/api/trinks-csv/agendamentos/status", async (_req: Request, res: Response) => {
+    try {
+      const last = await getUltimoImportAgendamentos();
+      if (!last) return res.json({ ok: true, importado: false });
+      const ageMs = Date.now() - new Date(last.geradoEm).getTime();
+      const ageHoras = Math.round(ageMs / (1000 * 60 * 60));
+      return res.json({
+        ok: true,
+        importado: true,
+        geradoEm: last.geradoEm,
+        ageHoras,
+        ageFresco: ageHoras <= 24,
+        totalLinhas: last.totalLinhas,
+        confirmados: last.totalConfirmados,
+        cancelados: last.totalCancelados,
+        finalizados: last.totalFinalizados,
+        dataInicio: last.dataInicio,
+        dataFim: last.dataFim,
+        origemEmail: (last as any).origemEmail || null,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/trinks-csv/agendamentos/lista — devolve a lista de agendamentos
+  // do último import (compatível com o formato consumido pelos endpoints da UI)
+  app.get("/api/trinks-csv/agendamentos/lista", async (_req: Request, res: Response) => {
+    try {
+      const last = await getUltimoImportAgendamentos();
+      if (!last) return res.json({ ok: true, agendamentos: [], totalLinhas: 0 });
+      return res.json({
+        ok: true,
+        agendamentos: last.agendamentos,
+        totalLinhas: last.totalLinhas,
+        geradoEm: last.geradoEm,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
   });
 
   // GET /api/health/persistencia — diagnóstico de onde os dados estão indo

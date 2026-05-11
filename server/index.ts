@@ -14,13 +14,14 @@ declare module "http" {
 
 app.use(
   express.json({
+    limit: "10mb", // v34: aumentado pra suportar CSV de agendamentos em base64
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   }),
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

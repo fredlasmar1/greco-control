@@ -686,12 +686,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     let canceled = false;
-    if (isMesCorrente) {
-      setTrinksMes(null);
-      setTrinksMesError(null);
-      // fonteMes para mês corrente é atualizado pelo effect acima
-      return;
-    }
+    // v35: carrega trinksMes TAMBÉM pra mês corrente como fallback do trinks da store.
+    // Quando a API Trinks está em 429, o sync da store falha mas o resolutor
+    // /api/mes/:mes/dados pode entregar dados do CSV (fonte alternativa).
+    // Antes: pulava o fetch pra mês corrente, deixando Dashboard em demo.
     setTrinksMesLoading(true);
     setTrinksMesError(null);
     fetch(`${API_BASE}/api/mes/${selectedMes}/dados`)
@@ -721,10 +719,14 @@ export default function Dashboard() {
     return () => { canceled = true; };
   }, [selectedMes, isMesCorrente, API_BASE]);
 
-  // Pacote efetivo de dados Trinks que alimenta os adapters (totals, ranking, etc.)
-  const trinksEffective: any = isMesCorrente ? trinks : trinksMes;
+  // v35: prefere o que tem dado real. Em mês corrente, store pode estar vazia
+  // (sync da API Trinks falhou por 429); nesse caso usa trinksMes do resolutor
+  // (que tenta CSV antes da API).
+  const trinksEffective: any = isMesCorrente
+    ? ((trinks && Array.isArray((trinks as any)?.transacoes)) ? trinks : trinksMes)
+    : trinksMes;
   const hasTrinksDataEffective = isMesCorrente
-    ? hasTrinksData
+    ? (hasTrinksData || (trinksMes !== null && Array.isArray(trinksMes?.transacoes)))
     : (trinksMes !== null && Array.isArray(trinksMes?.transacoes));
 
   // Period filter state

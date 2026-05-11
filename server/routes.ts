@@ -42,6 +42,8 @@ import {
   parseCsvAgendamentos,
   salvarImportAgendamentos,
   getUltimoImportAgendamentos,
+  getAgendamentosCsvFreshOrNull,
+  type AgendamentoCsv,
 } from "./trinksAgendamentosCsv";
 import {
   listFechamentos as listCaixaFechamentos,
@@ -1301,6 +1303,39 @@ async function trinksFetchAllRange(
   return trinksFetchAll(endpointPath, queryParams, options);
 }
 
+// v33: Wrapper específico para AGENDAMENTOS. Prefere o cache do CSV importado
+// por email (≤ 24h) quando ele cobre todo o intervalo pedido. Caso contrário,
+// cai pra trinksFetchAll (API). Economiza tokens da Trinks pra endpoints que
+// só querem a agenda futura/recente — NÃO usar onde precisa de dados detalhados
+// de pagamento (CSV não tem formaPagamento, totalPagar exato, IDs originais).
+async function getAgendamentosPreferCsv(
+  queryParams: { dataInicio?: string; dataFim?: string } & Record<string, string | undefined>,
+  apiFallback: () => Promise<any[]>,
+): Promise<any[]> {
+  const csv = await getAgendamentosCsvFreshOrNull(24);
+  if (!csv || csv.length === 0) return apiFallback();
+
+  const ini = queryParams.dataInicio;
+  const fim = queryParams.dataFim;
+  if (!ini || !fim) return apiFallback();
+
+  // Descobre intervalo coberto pelo CSV
+  let csvMin = "9999-99-99", csvMax = "0000-00-00";
+  for (const a of csv) {
+    const d = (a.dataHoraInicio || "").slice(0, 10);
+    if (d && d < csvMin) csvMin = d;
+    if (d && d > csvMax) csvMax = d;
+  }
+  // Se o intervalo pedido cai fora do que o CSV tem, fallback pra API
+  if (ini < csvMin || fim > csvMax) return apiFallback();
+
+  // Filtra do CSV (semi-fechado em fim: <= fim, igual o uso típico no app)
+  return csv.filter(a => {
+    const d = (a.dataHoraInicio || "").slice(0, 10);
+    return d >= ini && d <= fim;
+  });
+}
+
 // ─── Error handler wrapper ────────────────────────────────
 function handleTrinksError(err: any, res: Response) {
   if (err && typeof err === "object" && "status" in err) {
@@ -2505,7 +2540,10 @@ export async function registerRoutes(
       return [] as any[];
     });
     // Agendamentos em janela reduzida (14d) para heurística de nomes
-    const agendamentos: any[] = await trinksFetchAll("agendamentos", { dataInicio: dataInicio14, dataFim: hoje }).catch((e: any) => {
+    const agendamentos: any[] = await getAgendamentosPreferCsv(
+      { dataInicio: dataInicio14, dataFim: hoje },
+      () => trinksFetchAll("agendamentos", { dataInicio: dataInicio14, dataFim: hoje }),
+    ).catch((e: any) => {
       log(`estoque: erro agendamentos: ${e?.message}`, "trinks");
       return [] as any[];
     });
@@ -2792,12 +2830,16 @@ export async function registerRoutes(
   });
 
   // ─── GET /api/trinks/agendamentos ───────────────────────
+  // v33: tenta primeiro o CSV importado por email (≤24h) → fallback pra API
   app.get("/api/trinks/agendamentos", async (req: Request, res: Response) => {
     try {
       const params: Record<string, string> = {};
       if (req.query.dataInicio) params.dataInicio = String(req.query.dataInicio);
       if (req.query.dataFim) params.dataFim = String(req.query.dataFim);
-      const data = await trinksFetchAll("agendamentos", params);
+      const data = await getAgendamentosPreferCsv(
+        params,
+        () => trinksFetchAll("agendamentos", params),
+      );
       return res.json(data);
     } catch (err: any) {
       return handleTrinksError(err, res);
@@ -2908,7 +2950,10 @@ export async function registerRoutes(
     // (Já /v1/agendamentos aceita dataInicio=dataFim normalmente.)
     const transFim = ymdAddDays(hoje, 1);
     const [agendData, transData] = await Promise.all([
-      trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
+      getAgendamentosPreferCsv(
+        { dataInicio: hoje, dataFim: hoje },
+        () => trinksFetchAll("agendamentos", { dataInicio: hoje, dataFim: hoje }),
+      ),
       trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: transFim }),
     ]);
 
@@ -3506,7 +3551,10 @@ export async function registerRoutes(
     const amanha = `${pick(info, "year")}-${pick(info, "month")}-${pick(info, "day")}`;
     const proxDiaUtil = offset > 1;
 
-    const data = await trinksFetchAll("agendamentos", { dataInicio: amanha, dataFim: amanha });
+    const data = await getAgendamentosPreferCsv(
+      { dataInicio: amanha, dataFim: amanha },
+      () => trinksFetchAll("agendamentos", { dataInicio: amanha, dataFim: amanha }),
+    );
     const lista = Array.isArray(data) ? data : (data?.data || []);
     const statusIgnorar = ["cancelado", "cancelada", "no show", "no-show", "faltou"];
     const isValido = (a: any) => {
@@ -3623,7 +3671,10 @@ export async function registerRoutes(
       const cached = getCached(cacheKey);
       if (cached) return res.json({ ...cached, fromCache: true });
 
-      const data = await trinksFetchAll("agendamentos", { dataInicio: amanha, dataFim: amanha });
+      const data = await getAgendamentosPreferCsv(
+      { dataInicio: amanha, dataFim: amanha },
+      () => trinksFetchAll("agendamentos", { dataInicio: amanha, dataFim: amanha }),
+    );
       const lista = Array.isArray(data) ? data : (data?.data || []);
 
       // Status que NÃO contam (cancelados, no-show etc.)
@@ -8294,7 +8345,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         return [];
       });
       log(`[vendas-produtos] transacoes=${transacoes.length} carregando agendamentos...`, "trinks");
-      const agendamentos: any[] = await trinksFetchAll("agendamentos", { dataInicio: dataInicio14, dataFim: hoje }).catch((e: any) => {
+      const agendamentos: any[] = await getAgendamentosPreferCsv(
+      { dataInicio: dataInicio14, dataFim: hoje },
+      () => trinksFetchAll("agendamentos", { dataInicio: dataInicio14, dataFim: hoje }),
+    ).catch((e: any) => {
         log(`[vendas-produtos] erro agendamentos: ${e?.message}`, "trinks");
         return [];
       });

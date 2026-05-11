@@ -4166,11 +4166,22 @@ export async function registerRoutes(
         // Filtra agendamentos do mês
         const mesAgend = csvAgendamentos.filter(a => (a.dataHoraInicio || "").startsWith(mes));
         if (mesAgend.length > 0) {
-          // Para o frontend, o Dashboard espera transacoes + agendamentos.
-          // Tratamos os agendamentos FINALIZADOS como transações sintéticas
-          // (são os que viraram receita). O resto vai como agendamentos puros.
+          // v35.1: gera transações sintéticas pra TODOS os agendamentos passados
+          // que NÃO foram cancelados. Inclui Finalizados + Confirmados passados —
+          // este último cobre o LAG entre o atendimento acontecer e o Trinks
+          // trocar status pra "Finalizado". Sem isso, faturamento real ficaria
+          // muito subestimado (~80% menos).
+          // Hoje, em São Paulo
+          const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
           const transacoesSinteticas = mesAgend
-            .filter(a => (a.status?.nome || "").toLowerCase().includes("finaliz"))
+            .filter(a => {
+              const status = (a.status?.nome || "").toLowerCase();
+              if (status.includes("cancel")) return false; // canceladas fora
+              const data = (a.dataHoraInicio || "").slice(0, 10);
+              // Finalizados sempre contam. Confirmados só contam se data já passou.
+              if (status.includes("finaliz")) return true;
+              return data <= hoje;
+            })
             .map(a => ({
               id: `csv-${a.id}`,
               dataReferencia: a.dataHoraInicio,

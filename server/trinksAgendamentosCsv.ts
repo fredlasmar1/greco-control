@@ -26,15 +26,25 @@ export interface AgendamentoCsv {
 }
 
 export interface ImportAgendamentosCsvData {
-  geradoEm: string;       // quando o sistema importou
-  origemEmail?: string;   // do remetente (pra debug)
-  totalLinhas: number;
+  geradoEm: string;       // último import (timestamp da mesclagem mais recente)
+  origemEmail?: string;
+  totalLinhas: number;    // total acumulado após mesclagem
   totalConfirmados: number;
   totalCancelados: number;
   totalFinalizados: number;
-  dataInicio: string;     // YYYY-MM-DD
-  dataFim: string;
+  dataInicio: string;     // menor data dos agendamentos acumulados (YYYY-MM-DD)
+  dataFim: string;        // maior data acumulada
   agendamentos: AgendamentoCsv[];
+  // v34: histórico de imports (audit trail)
+  totalImports?: number;
+  imports?: Array<{
+    importadoEm: string;
+    linhasNoCsv: number;
+    novos: number;
+    atualizados: number;
+    dataInicioCsv: string;
+    dataFimCsv: string;
+  }>;
 }
 
 const KV_KEY = "trinks_csv_agendamentos";
@@ -210,9 +220,73 @@ export function parseCsvAgendamentos(input: Buffer | string): ImportAgendamentos
 
 // ─── Persistência ────────────────────────────────────────────────────────────
 
-export async function salvarImportAgendamentos(data: ImportAgendamentosCsvData): Promise<void> {
-  await kvSet(KV_KEY, data);
-  log(`csv-agendamentos: salvou ${data.totalLinhas} agendamentos (${data.dataInicio}..${data.dataFim})`, "csv");
+/** Salva uma nova importação MESCLANDO com a anterior. Agendamentos com
+ *  mesmo `id` (hash data+hora+prof+cliente) são sobrescritos pelo mais recente
+ *  — o que permite corrigir status (ex: Confirmado → Finalizado) ao receber um
+ *  CSV mais novo. Agendamentos antigos não presentes no CSV novo são
+ *  preservados. Retorna stats da mesclagem. */
+export async function salvarImportAgendamentos(novo: ImportAgendamentosCsvData): Promise<{
+  totalAcumulado: number; novos: number; atualizados: number;
+}> {
+  const anterior = (await kvGet<ImportAgendamentosCsvData>(KV_KEY)) || null;
+  const merged = new Map<string, AgendamentoCsv>();
+
+  if (anterior?.agendamentos) {
+    for (const a of anterior.agendamentos) merged.set(a.id, a);
+  }
+  let novos = 0, atualizados = 0;
+  for (const a of novo.agendamentos) {
+    if (merged.has(a.id)) atualizados++;
+    else novos++;
+    merged.set(a.id, a);
+  }
+
+  const todos = Array.from(merged.values());
+  // Recalcula totais e range agregados
+  let conf = 0, canc = 0, fin = 0;
+  let dMin = "9999-99-99", dMax = "0000-00-00";
+  for (const a of todos) {
+    const st = (a.status?.nome || "").toLowerCase();
+    if (st.includes("cancel")) canc++;
+    else if (st.includes("finaliz")) fin++;
+    else if (st.includes("confirm")) conf++;
+    const d = (a.dataHoraInicio || "").slice(0, 10);
+    if (d && d < dMin) dMin = d;
+    if (d && d > dMax) dMax = d;
+  }
+  const importLog = anterior?.imports ? [...anterior.imports] : [];
+  importLog.push({
+    importadoEm: novo.geradoEm,
+    linhasNoCsv: novo.agendamentos.length,
+    novos, atualizados,
+    dataInicioCsv: novo.dataInicio,
+    dataFimCsv: novo.dataFim,
+  });
+  // Mantém últimos 50 imports no log (audit trail enxuto)
+  while (importLog.length > 50) importLog.shift();
+
+  const consolidado: ImportAgendamentosCsvData = {
+    geradoEm: novo.geradoEm,
+    origemEmail: novo.origemEmail || anterior?.origemEmail,
+    totalLinhas: todos.length,
+    totalConfirmados: conf,
+    totalCancelados: canc,
+    totalFinalizados: fin,
+    dataInicio: dMin === "9999-99-99" ? "" : dMin,
+    dataFim: dMax === "0000-00-00" ? "" : dMax,
+    agendamentos: todos,
+    totalImports: importLog.length,
+    imports: importLog,
+  };
+  await kvSet(KV_KEY, consolidado);
+  log(`csv-agendamentos: mesclou +${novos} novos / ~${atualizados} atualizados → ${todos.length} total (${consolidado.dataInicio}..${consolidado.dataFim})`, "csv");
+  return { totalAcumulado: todos.length, novos, atualizados };
+}
+
+/** Apaga TODOS os agendamentos importados — use com cuidado, só pra reset manual. */
+export async function resetImportAgendamentos(): Promise<void> {
+  await kvSet(KV_KEY, null);
+  log(`csv-agendamentos: RESET total — todos os agendamentos importados foram apagados`, "csv");
 }
 
 export async function getUltimoImportAgendamentos(): Promise<ImportAgendamentosCsvData | null> {

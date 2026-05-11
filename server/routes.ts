@@ -43,6 +43,7 @@ import {
   salvarImportAgendamentos,
   getUltimoImportAgendamentos,
   getAgendamentosCsvFreshOrNull,
+  resetImportAgendamentos,
   type AgendamentoCsv,
 } from "./trinksAgendamentosCsv";
 import {
@@ -1859,12 +1860,17 @@ export async function registerRoutes(
         const parsed = parseCsvAgendamentos(buf);
         if (remetente) (parsed as any).origemEmail = remetente;
 
-        await salvarImportAgendamentos(parsed);
-        log(`csv-import/agendamentos: ${parsed.totalLinhas} linhas (${parsed.dataInicio}..${parsed.dataFim})`, "csv");
+        const stats = await salvarImportAgendamentos(parsed);
+        log(`csv-import/agendamentos: csv=${parsed.totalLinhas} linhas → +${stats.novos} novos / ~${stats.atualizados} atualizados / total acumulado=${stats.totalAcumulado}`, "csv");
 
         return res.json({
           ok: true,
-          totalLinhas: parsed.totalLinhas,
+          totalLinhasCsv: parsed.totalLinhas,
+          novos: stats.novos,
+          atualizados: stats.atualizados,
+          totalAcumulado: stats.totalAcumulado,
+          // mantém compat com versão anterior do Apps Script
+          totalLinhas: stats.totalAcumulado,
           confirmados: parsed.totalConfirmados,
           cancelados: parsed.totalCancelados,
           finalizados: parsed.totalFinalizados,
@@ -1900,6 +1906,19 @@ export async function registerRoutes(
         dataFim: last.dataFim,
         origemEmail: (last as any).origemEmail || null,
       });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // DELETE /api/trinks-csv/agendamentos — apaga tudo (reset). Usado pra
+  // limpar histórico antes de reimportar tudo do zero. Protegido por token.
+  app.delete("/api/trinks-csv/agendamentos", async (req: Request, res: Response) => {
+    try {
+      const auth = checkCsvImportAuth(req);
+      if (!auth.ok) return res.status(401).json({ ok: false, error: auth.reason });
+      await resetImportAgendamentos();
+      return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }

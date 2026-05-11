@@ -100,3 +100,61 @@ function obterOuCriarLabel(nome) {
   if (!label) label = GmailApp.createLabel(nome);
   return label;
 }
+
+// ─── Função de histórico (rodar manualmente quando precisar) ─────────────────
+//
+// COMO USAR pra puxar emails dos últimos N dias:
+//  1. No menu superior do editor, escolha "importarHistoricoTrinks"
+//  2. Antes de Run, edite a chamada abaixo (last line) com o número de dias
+//     que você quer pra trás (ex: 11 pra cobrir 01-11 do mês atual)
+//  3. Clique ▶ Run
+//
+// IMPORTANTE: essa função NÃO usa label, então pode reprocessar emails que
+// já foram importados antes — mas como o backend MESCLA, isso é seguro: os
+// mesmos agendamentos não duplicam.
+function importarHistoricoTrinks(dias) {
+  const N = Number(dias) || 14;
+  Logger.log(`[Greco] Importando histórico dos últimos ${N} dias…`);
+  // Sem filtro de label — reprocessa tudo do período
+  const query = `from:${REMETENTE} has:attachment newer_than:${N}d`;
+  const threads = GmailApp.search(query, 0, 100);
+  Logger.log(`[Greco] ${threads.length} thread(s) no período`);
+
+  let processados = 0, erros = 0;
+  for (const thread of threads) {
+    for (const msg of thread.getMessages()) {
+      const anexos = msg.getAttachments({ includeInlineImages: false, includeAttachments: true });
+      for (const att of anexos) {
+        if (!/\.csv$/i.test(att.getName() || "")) continue;
+        try {
+          const csvBase64 = Utilities.base64Encode(att.getBytes());
+          const resp = UrlFetchApp.fetch(URL_API, {
+            method: "post",
+            contentType: "application/json",
+            headers: { "X-Csv-Token": TOKEN, "X-Email-From": REMETENTE },
+            payload: JSON.stringify({ csvBase64, from: msg.getFrom(), assunto: msg.getSubject() }),
+            muteHttpExceptions: true,
+          });
+          const code = resp.getResponseCode();
+          if (code >= 200 && code < 300) {
+            Logger.log(`[Greco] ✅ ${msg.getDate()} → ${resp.getContentText().slice(0, 200)}`);
+            processados++;
+          } else {
+            Logger.log(`[Greco] ⚠️ HTTP ${code}: ${resp.getContentText()}`);
+            erros++;
+          }
+          Utilities.sleep(500); // 0.5s entre uploads pra não saturar
+        } catch (err) {
+          Logger.log(`[Greco] ❌ ${err}`);
+          erros++;
+        }
+      }
+    }
+  }
+  Logger.log(`[Greco] Histórico concluído. ok=${processados} err=${erros}`);
+}
+
+// Atalhos pra rodar diretamente do menu (clique nessas funções):
+function importarUltimos7Dias()  { importarHistoricoTrinks(7); }
+function importarUltimos14Dias() { importarHistoricoTrinks(14); }
+function importarUltimos30Dias() { importarHistoricoTrinks(30); }

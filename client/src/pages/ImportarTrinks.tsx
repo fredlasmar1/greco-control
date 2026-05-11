@@ -782,6 +782,14 @@ interface CsvEmailStatus {
   dataInicio?: string;
   dataFim?: string;
 }
+interface CsvEmailHistoricoItem {
+  importadoEm: string;
+  linhasNoCsv: number;
+  novos: number;
+  atualizados: number;
+  dataInicioCsv: string;
+  dataFimCsv: string;
+}
 
 function CsvEmailStatusCard() {
   const { data, refetch } = useQuery<CsvEmailStatus>({
@@ -789,6 +797,7 @@ function CsvEmailStatusCard() {
     refetchInterval: 60_000,
   });
   const [open, setOpen] = useState(false);
+  const [openHistorico, setOpenHistorico] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -852,7 +861,10 @@ function CsvEmailStatusCard() {
 
         <div className="flex items-center gap-2 flex-wrap pt-1">
           <Button type="button" size="sm" variant="outline" onClick={() => setOpen(o => !o)}>
-            {open ? "Esconder instruções" : "Como configurar (Apps Script no Gmail)"}
+            {open ? "Esconder instruções" : "Como configurar (Apps Script)"}
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setOpenHistorico(o => !o)}>
+            📅 Puxar histórico (últimos N dias)
           </Button>
           <Button type="button" size="sm" variant="ghost" onClick={() => fileRef.current?.click()} disabled={uploading}>
             {uploading ? "Enviando…" : "Importar CSV manualmente"}
@@ -862,6 +874,31 @@ function CsvEmailStatusCard() {
             onChange={e => e.target.files?.[0] && uploadManual(e.target.files[0])}
           />
         </div>
+
+        {openHistorico && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs space-y-2">
+            <p className="font-medium">📅 Importar emails antigos da Trinks</p>
+            <p className="text-[11px] text-muted-foreground">
+              O trigger automático só busca emails das últimas <b>48 horas</b>. Pra puxar histórico (ex: desde 01/05), rode UMA das funções abaixo no Apps Script:
+            </p>
+            <ol className="list-decimal list-inside space-y-1 text-[11px]">
+              <li>Abre o Apps Script (<a className="text-cyan-400 underline" href="https://script.google.com" target="_blank" rel="noreferrer">script.google.com</a>) → seu projeto "Greco Trinks Import"</li>
+              <li>No menu superior, ao lado de ▶ Run, escolhe a função desejada:
+                <div className="ml-4 mt-1 space-y-0.5 font-mono text-[10px]">
+                  <div><code className="bg-muted/40 px-1 rounded">importarUltimos7Dias</code> — últimos 7 dias</div>
+                  <div><code className="bg-muted/40 px-1 rounded">importarUltimos14Dias</code> — últimos 14 dias</div>
+                  <div><code className="bg-muted/40 px-1 rounded">importarUltimos30Dias</code> — últimos 30 dias</div>
+                  <div><code className="bg-muted/40 px-1 rounded">importarHistoricoTrinks</code> — passa N manualmente nos parâmetros</div>
+                </div>
+              </li>
+              <li>Clica ▶ Run e aguarda. O log mostra cada email processado.</li>
+              <li>Pronto — todos os CSVs são <b>mesclados</b> aqui. Agendamentos repetidos só atualizam o status (não duplicam).</li>
+            </ol>
+            <p className="text-[10px] text-amber-300/80">
+              💡 Se o script ainda não tem essas funções, copie a versão nova do template em <code>/docs/apps-script-trinks-import.gs</code> e cole por cima do código atual.
+            </p>
+          </div>
+        )}
 
         {open && (
           <div className="rounded-md border border-cyan-500/30 bg-cyan-500/5 p-3 text-xs space-y-2">

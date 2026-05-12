@@ -2032,7 +2032,45 @@ export async function registerRoutes(
       }
     }
 
-    // ─── Tentativa 2: CSV de agendamentos (do email) ───
+    // ─── Tentativa 2 (NOVA, mais precisa): CSV financeiro importado manual ───
+    // Esse CSV vem do export do portal Trinks (Relatórios > Financeiro) e tem
+    // o detalhe exato por transação: data, cliente, valorReceber, formaPagamento.
+    // Quando existe, é a fonte mais precisa fora da API.
+    const mesData = data.slice(0, 7);
+    try {
+      const finPayload: any = await kvGet(trinksImport.kvKeyFor("financeiro", mesData));
+      if (finPayload?.rows && Array.isArray(finPayload.rows) && finPayload.rows.length > 0) {
+        const rowsDia = finPayload.rows.filter((r: any) => (r.data || "").startsWith(data));
+        if (rowsDia.length > 0) {
+          let total = 0, pix = 0, cartao = 0, dinheiro = 0, plano = 0, voucher = 0, outros = 0;
+          for (const r of rowsDia) {
+            const v = Number(r.valorReceber || r.valorPago || 0);
+            total += v;
+            const bucket = classificarFormaPagamento(r.formaPagamento || r.tipoFormaPagamento || "");
+            if (bucket === "pix") pix += v;
+            else if (bucket === "cartao") cartao += v;
+            else if (bucket === "dinheiro") dinheiro += v;
+            else if (bucket === "plano") plano += v;
+            else if (bucket === "voucher") voucher += v;
+            else outros += v;
+          }
+          const snap: SnapshotDia = {
+            data, fonte: "csv-financeiro",
+            capturadoEm: new Date().toISOString(),
+            faturamento: { total, pix, cartao, dinheiro, plano, voucher, outros, qtdTransacoes: rowsDia.length },
+            agendamentos: { finalizados: rowsDia.length, confirmados: 0, cancelados: 0, noShow: 0 },
+            transacoesRaw: rowsDia,
+            avisos: [`Fonte: trinks_import:financeiro:${mesData} (${finPayload.rows.length} rows no mês, ${rowsDia.length} nesta data)`],
+          };
+          await saveSnapshot(snap);
+          return snap;
+        }
+      }
+    } catch (err: any) {
+      avisos.push(`csv-financeiro falhou: ${err?.message || err}`);
+    }
+
+    // ─── Tentativa 3: CSV de agendamentos (do email) ───
     const csv = await getAgendamentosCsvFreshOrNull(72); // tolera até 3 dias
     if (csv && csv.length > 0) {
       const doDia = csv.filter(a => (a.dataHoraInicio || "").startsWith(data));

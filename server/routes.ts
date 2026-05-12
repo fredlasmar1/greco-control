@@ -2021,6 +2021,7 @@ export async function registerRoutes(
             faturamento: { total, pix, cartao, dinheiro, plano, voucher, outros, qtdTransacoes: arr.length },
             agendamentos: { finalizados: 0, confirmados: 0, cancelados: 0, noShow: 0 },
             transacoesIds: arr.map((t: any) => String(t.id || "")).filter(Boolean),
+            transacoesRaw: arr, // v36 F3: guarda raw pra reprocessar (ranking, comissões, etc)
           };
           await saveSnapshot(snap);
           return snap;
@@ -2055,6 +2056,7 @@ export async function registerRoutes(
           faturamento: { total, pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, outros: total, qtdTransacoes: qtdTrans },
           agendamentos: { finalizados, confirmados, cancelados, noShow: 0 },
           agendamentosIds: doDia.map(a => a.id),
+          agendamentosRaw: doDia, // v36 F3: lista bruta pra reusar em comissões/ranking
           avisos: ["CSV não distingue meio de pagamento — total em 'outros'."],
         };
         await saveSnapshot(snap);
@@ -3457,19 +3459,53 @@ export async function registerRoutes(
 
     // Trinks /v1/transacoes usa intervalo semi-aberto: [dataInicio, dataFim+1)
     const transFim = ymdAddDays(dataFim, 1);
+
+    // v36 Fase 3: SNAPSHOT FIRST. Tenta montar dados a partir dos snapshots
+    // persistentes antes de bater na API Trinks. Se cobrirem o período inteiro,
+    // evita 100% das chamadas Trinks (sistema continua funcionando mesmo com
+    // API morta indefinidamente).
+    let snapshotsAgend: any[] = [];
+    let snapshotsTrans: any[] = [];
+    let snapshotCobertura = 0;
+    let snapshotDias = 0;
+    try {
+      // Gera lista de datas YYYY-MM-DD no intervalo
+      const datas: string[] = [];
+      let cur = dataInicio;
+      while (cur <= dataFim) {
+        datas.push(cur);
+        cur = ymdAddDays(cur, 1);
+      }
+      const snaps = await Promise.all(datas.map(d => getSnapshot(d)));
+      for (const s of snaps) {
+        if (!s) continue;
+        if (s.fonte === "vazio") continue;
+        snapshotDias++;
+        if (Array.isArray(s.agendamentosRaw)) snapshotsAgend.push(...s.agendamentosRaw);
+        if (Array.isArray(s.transacoesRaw)) snapshotsTrans.push(...s.transacoesRaw);
+      }
+      snapshotCobertura = datas.length > 0 ? snapshotDias / datas.length : 0;
+      log(`[periodo ${dataInicio}..${dataFim}] snapshot cobertura: ${snapshotDias}/${datas.length} (${Math.round(snapshotCobertura * 100)}%) — agend=${snapshotsAgend.length} trans=${snapshotsTrans.length}`, "equipe");
+    } catch (err: any) {
+      log(`[periodo ${dataInicio}..${dataFim}] erro lendo snapshots: ${err?.message}`, "equipe");
+    }
+
+    // Se snapshots cobrem 100% do período E tem dado, NÃO chama Trinks
+    const cobreTudo = snapshotCobertura >= 1 && (snapshotsAgend.length > 0 || snapshotsTrans.length > 0);
+
     // Buscar serial p/ não estourar rate limit do Trinks
     const profData = await trinksFetchAll("profissionais").catch((e: any) => {
       log(`[periodo ${dataInicio}..${dataFim}] erro profissionais: ${e?.message}`, "equipe");
       return [] as any[];
     });
-    // Otimização A: usa trinksFetchAllRange — reaproveita janela mensal cacheada para dia/semana
-    const agendData = await trinksFetchAllRange("agendamentos", { dataInicio, dataFim }).catch((e: any) => {
-      log(`[periodo ${dataInicio}..${dataFim}] erro agendamentos: ${e?.message}`, "equipe");
-      return [] as any[];
+    // Se snapshots cobrem tudo, usa direto sem chamar API. Senão chama com fallback.
+    const agendData = cobreTudo ? snapshotsAgend : await trinksFetchAllRange("agendamentos", { dataInicio, dataFim }).catch((e: any) => {
+      log(`[periodo ${dataInicio}..${dataFim}] erro agendamentos: ${e?.message} — fallback pra snapshots`, "equipe");
+      return snapshotsAgend; // fallback: usa o que tiver de snapshot
     });
-    const transData = await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim }).catch((e: any) => {
-      log(`[periodo ${dataInicio}..${dataFim}] erro transacoes: ${e?.message}`, "equipe");
-      return [] as any[];
+    const transData = cobreTudo ? snapshotsTrans : await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim }).catch((e: any) => {
+      log(`[periodo ${dataInicio}..${dataFim}] erro transacoes: ${e?.message} — fallback pra snapshots`, "equipe");
+      return snapshotsTrans;
     });
     const profLista = Array.isArray(profData) ? profData : (profData?.data || []);
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
@@ -9553,7 +9589,43 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         }
       }); }, { timezone: "America/Sao_Paulo" });
 
-      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + alerta estoque 9h (ter-sáb) + individual MATINAL 8h/SEMANAL sáb 21h/MENSAL último dia útil 21h", "telegram");
+      // v36 Fase 2: Cron noturno de SNAPSHOT — captura o dia atual + refina o anterior
+      // 23:30 SP todo dia (inclusive domingos, pra registrar dias vazios com aviso)
+      cron.schedule("30 23 * * *", async () => {
+        try {
+          const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+          const ontem = (() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 1);
+            return d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+          })();
+          log(`[cron-snapshot] capturando ${ontem} e ${hoje}...`, "snapshot");
+          const snapOntem = await capturarSnapshotDia(ontem);
+          const snapHoje = await capturarSnapshotDia(hoje);
+          log(`[cron-snapshot] ontem ${ontem}: fonte=${snapOntem.fonte} R$${snapOntem.faturamento.total.toFixed(2)} | hoje ${hoje}: fonte=${snapHoje.fonte} R$${snapHoje.faturamento.total.toFixed(2)}`, "snapshot");
+        } catch (err: any) {
+          log(`[cron-snapshot] erro: ${err.message}`, "snapshot");
+        }
+      }, { timezone: "America/Sao_Paulo" });
+
+      // Cron matinal de refinamento — 6h SP recaptura ontem (caso o CSV do email
+      // tenha chegado durante a madrugada com status mais atualizado)
+      cron.schedule("0 6 * * *", async () => {
+        try {
+          const ontem = (() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 1);
+            return d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+          })();
+          log(`[cron-snapshot] refinando snapshot de ${ontem}...`, "snapshot");
+          const snap = await capturarSnapshotDia(ontem);
+          log(`[cron-snapshot] refinamento ${ontem}: fonte=${snap.fonte} R$${snap.faturamento.total.toFixed(2)}`, "snapshot");
+        } catch (err: any) {
+          log(`[cron-snapshot] erro refinamento: ${err.message}`, "snapshot");
+        }
+      }, { timezone: "America/Sao_Paulo" });
+
+      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + alerta estoque 9h (ter-sáb) + individual MATINAL 8h/SEMANAL sáb 21h/MENSAL último dia útil 21h + snapshot 23h30 (refinamento 6h)", "telegram");
     } catch (err: any) {
       log(`[cron] falha ao registrar schedulers: ${err.message}`, "telegram");
     }

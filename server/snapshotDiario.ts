@@ -55,6 +55,12 @@ export interface SnapshotDia {
   // Detalhe bruto pra reprocessamentos (opcional, pesa pouco em kv)
   transacoesIds?: string[];
   agendamentosIds?: string[];
+  // v36 Fase 3: dados brutos pra reusar em endpoints downstream
+  // (calcularPeriodoPorProfissional, ranking, etc) sem precisar refazer fetch.
+  // agendamentosRaw é o que veio do CSV (sempre disponível pra dias capturados)
+  // transacoesRaw só está disponível quando fonte = trinks-api
+  agendamentosRaw?: any[];
+  transacoesRaw?: any[];
   // Erros/avisos durante a captura
   avisos?: string[];
 }

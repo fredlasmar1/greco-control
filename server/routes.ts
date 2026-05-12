@@ -47,6 +47,10 @@ import {
   type AgendamentoCsv,
 } from "./trinksAgendamentosCsv";
 import {
+  getSnapshot, saveSnapshot, listSnapshotsDoMes, snapshotVazio, classificarFormaPagamento,
+  type SnapshotDia, type FonteSnapshot,
+} from "./snapshotDiario";
+import {
   listFechamentos as listCaixaFechamentos,
   getFechamento as getCaixaFechamento,
   upsertFechamento as upsertCaixaFechamento,
@@ -1972,6 +1976,162 @@ export async function registerRoutes(
         totalLinhas: last.totalLinhas,
         geradoEm: last.geradoEm,
       });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // SNAPSHOT DIÁRIO (v36) — Cérebro de Dados
+  // Captura fotografia persistente do dia, em cascata Trinks→CSV→CSV-financeiro.
+  // Snapshot é fonte da verdade pra endpoints históricos. Trinks pode sumir
+  // que os dados já capturados ficam preservados.
+  // ════════════════════════════════════════════════════════════════════════
+
+  /** Tenta capturar o snapshot de UM dia. Cascata: Trinks → CSV agendamentos → vazio.
+   *  Sempre salva o resultado (mesmo vazio) — exceto quando "vazio" e já existe
+   *  snapshot anterior com dados (aí preserva o anterior). */
+  async function capturarSnapshotDia(data: string, opts: { preferirCsv?: boolean } = {}): Promise<SnapshotDia> {
+    const avisos: string[] = [];
+    const transFim = ymdAddDays(data, 1);
+
+    // ─── Tentativa 1: API Trinks (a menos que preferirCsv) ───
+    if (!opts.preferirCsv) {
+      try {
+        const trans: any = await trinksFetchAll("transacoes", { dataInicio: data, dataFim: transFim });
+        const arr: any[] = Array.isArray(trans) ? trans : (trans?.data || []);
+        if (arr.length > 0) {
+          let total = 0, pix = 0, cartao = 0, dinheiro = 0, plano = 0, voucher = 0, outros = 0;
+          for (const t of arr) {
+            total += Number(t.totalPagar || 0);
+            for (const fp of (t.formasPagamentos || [])) {
+              const v = Number(fp.valor || 0);
+              const bucket = classificarFormaPagamento(fp.nome || "");
+              if (bucket === "pix") pix += v;
+              else if (bucket === "cartao") cartao += v;
+              else if (bucket === "dinheiro") dinheiro += v;
+              else if (bucket === "plano") plano += v;
+              else if (bucket === "voucher") voucher += v;
+              else outros += v;
+            }
+          }
+          const snap: SnapshotDia = {
+            data, fonte: "trinks-api",
+            capturadoEm: new Date().toISOString(),
+            faturamento: { total, pix, cartao, dinheiro, plano, voucher, outros, qtdTransacoes: arr.length },
+            agendamentos: { finalizados: 0, confirmados: 0, cancelados: 0, noShow: 0 },
+            transacoesIds: arr.map((t: any) => String(t.id || "")).filter(Boolean),
+          };
+          await saveSnapshot(snap);
+          return snap;
+        }
+        avisos.push("Trinks /transacoes retornou vazio");
+      } catch (err: any) {
+        avisos.push(`Trinks /transacoes falhou: ${err?.message || err}`);
+      }
+    }
+
+    // ─── Tentativa 2: CSV de agendamentos (do email) ───
+    const csv = await getAgendamentosCsvFreshOrNull(72); // tolera até 3 dias
+    if (csv && csv.length > 0) {
+      const doDia = csv.filter(a => (a.dataHoraInicio || "").startsWith(data));
+      if (doDia.length > 0) {
+        let total = 0, qtdTrans = 0;
+        let finalizados = 0, confirmados = 0, cancelados = 0;
+        for (const a of doDia) {
+          const status = (a.status?.nome || "").toLowerCase();
+          if (status.includes("cancel")) { cancelados++; continue; }
+          if (status.includes("finaliz")) { finalizados++; total += a.valor || 0; qtdTrans++; }
+          else if (status.includes("confirm")) {
+            confirmados++;
+            // Confirmados PASSADOS (data <= hoje SP) contam como receita realizada
+            const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+            if (data <= hoje) { total += a.valor || 0; qtdTrans++; }
+          }
+        }
+        const snap: SnapshotDia = {
+          data, fonte: "csv-agendamentos",
+          capturadoEm: new Date().toISOString(),
+          faturamento: { total, pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, outros: total, qtdTransacoes: qtdTrans },
+          agendamentos: { finalizados, confirmados, cancelados, noShow: 0 },
+          agendamentosIds: doDia.map(a => a.id),
+          avisos: ["CSV não distingue meio de pagamento — total em 'outros'."],
+        };
+        await saveSnapshot(snap);
+        return snap;
+      }
+      avisos.push(`CSV de agendamentos não tem linhas para ${data}`);
+    } else {
+      avisos.push("Sem CSV de agendamentos fresco (≤72h)");
+    }
+
+    // ─── Nenhuma fonte: preserva snapshot anterior se houver ───
+    const anterior = await getSnapshot(data);
+    if (anterior) {
+      avisos.push("Nenhuma fonte nova disponível — mantendo snapshot anterior.");
+      return { ...anterior, avisos: [...(anterior.avisos || []), ...avisos] };
+    }
+    const vazio = snapshotVazio(data);
+    vazio.avisos = avisos;
+    await saveSnapshot(vazio);
+    return vazio;
+  }
+
+  // POST /api/snapshot-dia/capturar/:data
+  app.post("/api/snapshot-dia/capturar/:data", async (req: Request, res: Response) => {
+    try {
+      const data = String(req.params.data);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ ok: false, error: "data inválida YYYY-MM-DD" });
+      const preferirCsv = String(req.query.preferirCsv || "") === "true";
+      const snap = await capturarSnapshotDia(data, { preferirCsv });
+      return res.json({ ok: true, snapshot: snap });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/snapshot-dia/capturar-mes/:mes — captura todos os dias do mês em sequência
+  app.post("/api/snapshot-dia/capturar-mes/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes);
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido YYYY-MM" });
+      const preferirCsv = String(req.query.preferirCsv || "") === "true";
+      const [y, m] = mes.split("-").map(Number);
+      const hojeStr = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+      const ultimoDia = new Date(y, m, 0).getDate();
+      const resultados: Array<{ data: string; fonte: FonteSnapshot; total: number }> = [];
+      for (let d = 1; d <= ultimoDia; d++) {
+        const dataStr = `${mes}-${String(d).padStart(2, "0")}`;
+        if (dataStr > hojeStr) break; // não captura futuro
+        const snap = await capturarSnapshotDia(dataStr, { preferirCsv });
+        resultados.push({ data: dataStr, fonte: snap.fonte, total: snap.faturamento.total });
+      }
+      const totalMes = resultados.reduce((s, r) => s + r.total, 0);
+      return res.json({ ok: true, mes, resultados, totalMes });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/snapshot-dia/:data
+  app.get("/api/snapshot-dia/:data", async (req: Request, res: Response) => {
+    try {
+      const data = String(req.params.data);
+      const snap = await getSnapshot(data);
+      if (!snap) return res.json({ ok: true, encontrado: false });
+      return res.json({ ok: true, encontrado: true, snapshot: snap });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/snapshot-dia/mes/:mes — lista todos os snapshots do mês
+  app.get("/api/snapshot-dia/mes/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes);
+      const lista = await listSnapshotsDoMes(mes);
+      const totalMes = lista.reduce((s, r) => s + r.faturamento.total, 0);
+      return res.json({ ok: true, mes, totalSnapshots: lista.length, totalMes, snapshots: lista });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }

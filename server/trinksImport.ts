@@ -12,7 +12,7 @@
 
 // ─── Tipos públicos ───────────────────────────────────────────────────────────
 
-export type TrinksImportType = "financeiro" | "dre" | "ranking";
+export type TrinksImportType = "financeiro" | "dre" | "ranking" | "caixa";
 
 export interface FinanceiroRow {
   data: string;                  // YYYY-MM-DD (Data Atendimento/Venda)
@@ -95,7 +95,59 @@ export interface RankingPayload {
   periodos: RankingPeriodo[];    // 1 ou 2 períodos (lado a lado no relatório)
 }
 
-export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload;
+// v39: Caixa (relatório por comanda com breakdown de pagamento detalhado)
+export interface CaixaRow {
+  data: string;                   // YYYY-MM-DD (atendimento/venda)
+  dataPagamento: string;          // ISO ou string completa
+  tipo: string;                   // Pagamento | Estorno
+  clienteId: string;
+  clienteNome: string;
+  totalServico: number;
+  qtdServico: number;
+  totalProdutos: number;
+  qtdProdutos: number;
+  totalPacotes: number;
+  qtdPacotes: number;
+  totalVale: number;              // vale-presente
+  qtdVale: number;
+  creditoCliente: number;
+  totalDescontos: number;
+  motivoDesconto: string;
+  totalCredito: number;           // cartão crédito
+  totalDebito: number;            // cartão débito
+  totalDinheiro: number;
+  totalPrePago: number;
+  totalOutros: number;
+  totalTroco: number;
+  totalGorjeta: number;
+  totalGeral: number;
+  quemFechou: string;
+  comentarioFechamento: string;
+  comentarioEstorno: string;
+}
+
+export interface CaixaPayload {
+  tipo: "caixa";
+  mes: string;
+  periodoInicio: string;
+  periodoFim: string;
+  geradoEm: string;
+  totalLinhas: number;
+  totalValor: number;
+  totalServico: number;
+  totalProdutos: number;
+  totalPorForma: {
+    credito: number;
+    debito: number;
+    dinheiro: number;
+    prePago: number;
+    outros: number;
+  };
+  rows: CaixaRow[];
+  resumoPorDia: Record<string, { total: number; servico: number; produtos: number; comandas: number }>;
+}
+
+export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload | CaixaPayload;
 
 // ─── Utilidades ──────────────────────────────────────────────────────────────
 
@@ -214,6 +266,16 @@ export function detectTrinksType(text: string): TrinksImportType | null {
   if (head.includes("posição") && head.includes("profissional") &&
       head.includes("quantidade de atendimentos") && head.includes("ticket médio")) {
     return "ranking";
+  }
+
+  // v39: Caixa (relatório por comanda) — tem 'data de atendimento/venda' +
+  // 'total (r$) serviço' + 'quem fechou a conta'. Granularidade por comanda
+  // com breakdown de forma de pagamento (crédito/débito/dinheiro/pré-pago).
+  if (head.includes("data de atendimento/venda") &&
+      head.includes("total (r$) serviço") &&
+      head.includes("total (r$) produtos") &&
+      head.includes("quem fechou a conta")) {
+    return "caixa";
   }
 
   // Financeiro: tem "Mês de Previsão de Recebimento" e "Forma de Pagamento" e "Cliente"
@@ -587,16 +649,121 @@ export function parseRanking(text: string): RankingPayload {
   return { tipo: "ranking", geradoEm, periodos };
 }
 
+// ─── Parser: Caixa (v39) ────────────────────────────────────────────────────
+// Relatório por comanda com breakdown completo: serviço/produto/pacote separados
+// + forma de pagamento detalhada (crédito/débito/dinheiro/pré-pago).
+
+export function parseCaixa(text: string): CaixaPayload {
+  const lines = splitLines(text);
+  let geradoEm = "";
+  let periodoInicio = "";
+  let periodoFim = "";
+  // Preâmbulo
+  for (const line of lines.slice(0, 10)) {
+    const ini = line.match(/Data In[ií]cio:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    const fim = line.match(/Data Fim:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    const ger = line.match(/Relat[oó]rio gerado em\s+(.+?)["\s]*$/i);
+    if (ini) periodoInicio = parseDateBR(ini[1]);
+    if (fim) periodoFim = parseDateBR(fim[1]);
+    if (ger) geradoEm = ger[1].trim();
+  }
+
+  const headerIdx = lines.findIndex(l => /Data de Atendimento\/Venda.*Total \(R\$\)\s*Serviço/i.test(l));
+  if (headerIdx < 0) throw new Error("Cabeçalho de Caixa não encontrado");
+
+  const rows: CaixaRow[] = [];
+  const resumoPorDia: Record<string, { total: number; servico: number; produtos: number; comandas: number }> = {};
+  let totalValor = 0, totalServico = 0, totalProdutos = 0;
+  let totCred = 0, totDeb = 0, totDin = 0, totPre = 0, totOut = 0;
+
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cols = parseCsvLine(lines[i]);
+    if (cols.length < 24) continue;
+    const dataBr = cols[0];
+    if (!/^\d{2}\/\d{2}\/\d{4}$/.test(dataBr)) continue;
+    const data = parseDateBR(dataBr);
+    const row: CaixaRow = {
+      data,
+      dataPagamento: cols[1] || "",
+      tipo: cols[2] || "Pagamento",
+      clienteId: cols[3] || "",
+      clienteNome: cols[4] || "",
+      totalServico: parseBR(cols[5]),
+      qtdServico: parseInt(cols[6] || "0", 10) || 0,
+      totalProdutos: parseBR(cols[7]),
+      qtdProdutos: parseInt(cols[8] || "0", 10) || 0,
+      totalPacotes: parseBR(cols[9]),
+      qtdPacotes: parseInt(cols[10] || "0", 10) || 0,
+      totalVale: parseBR(cols[11]),
+      qtdVale: parseInt(cols[12] || "0", 10) || 0,
+      creditoCliente: parseBR(cols[13]),
+      totalDescontos: parseBR(cols[14]),
+      motivoDesconto: cols[15] || "",
+      totalCredito: parseBR(cols[16]),
+      totalDebito: parseBR(cols[17]),
+      totalDinheiro: parseBR(cols[18]),
+      totalPrePago: parseBR(cols[19]),
+      totalOutros: parseBR(cols[20]),
+      totalTroco: parseBR(cols[21]),
+      totalGorjeta: parseBR(cols[22]),
+      totalGeral: parseBR(cols[23]),
+      quemFechou: cols[24] || "",
+      comentarioFechamento: cols[25] || "",
+      comentarioEstorno: cols[26] || "",
+    };
+    rows.push(row);
+    totalValor += row.totalGeral;
+    totalServico += row.totalServico;
+    totalProdutos += row.totalProdutos;
+    totCred += row.totalCredito;
+    totDeb += row.totalDebito;
+    totDin += row.totalDinheiro;
+    totPre += row.totalPrePago;
+    totOut += row.totalOutros;
+    if (!resumoPorDia[data]) resumoPorDia[data] = { total: 0, servico: 0, produtos: 0, comandas: 0 };
+    resumoPorDia[data].total += row.totalGeral;
+    resumoPorDia[data].servico += row.totalServico;
+    resumoPorDia[data].produtos += row.totalProdutos;
+    resumoPorDia[data].comandas += 1;
+  }
+
+  // Mês predominante
+  const mesContagem: Record<string, number> = {};
+  for (const r of rows) {
+    const m = r.data.slice(0, 7);
+    mesContagem[m] = (mesContagem[m] || 0) + 1;
+  }
+  const mes = Object.entries(mesContagem).sort((a, b) => b[1] - a[1])[0]?.[0] || periodoInicio.slice(0, 7);
+
+  return {
+    tipo: "caixa", mes, periodoInicio, periodoFim, geradoEm,
+    totalLinhas: rows.length,
+    totalValor: Math.round(totalValor * 100) / 100,
+    totalServico: Math.round(totalServico * 100) / 100,
+    totalProdutos: Math.round(totalProdutos * 100) / 100,
+    totalPorForma: {
+      credito: Math.round(totCred * 100) / 100,
+      debito: Math.round(totDeb * 100) / 100,
+      dinheiro: Math.round(totDin * 100) / 100,
+      prePago: Math.round(totPre * 100) / 100,
+      outros: Math.round(totOut * 100) / 100,
+    },
+    rows,
+    resumoPorDia,
+  };
+}
+
 // ─── Parser unificado ────────────────────────────────────────────────────────
 
 export function parseTrinksCsv(buf: Buffer): TrinksImportPayload {
   const text = decodeCsvBuffer(buf);
   const tipo = detectTrinksType(text);
   if (!tipo) {
-    throw new Error("Tipo de relatório não reconhecido. Esperado: financeiro, DRE ou ranking de profissionais.");
+    throw new Error("Tipo de relatório não reconhecido. Esperado: financeiro, DRE, ranking ou caixa.");
   }
   if (tipo === "financeiro") return parseFinanceiro(text);
   if (tipo === "dre") return parseDRE(text);
+  if (tipo === "caixa") return parseCaixa(text);
   return parseRanking(text);
 }
 
@@ -788,8 +955,19 @@ export function summarize(payload: TrinksImportPayload, importadoEm: string, mes
       descricao: `DRE · Receitas R$ ${payload.totalReceitas.toFixed(2).replace(".", ",")} − Despesas R$ ${payload.totalDespesas.toFixed(2).replace(".", ",")} = R$ ${payload.resultadoPeriodo.toFixed(2).replace(".", ",")}`,
     };
   }
+  if (payload.tipo === "caixa") {
+    return {
+      tipo: "caixa",
+      mes: payload.mes,
+      totalValor: payload.totalValor,
+      totalLinhas: payload.totalLinhas,
+      geradoEm: payload.geradoEm,
+      importadoEm,
+      descricao: `Caixa · ${payload.totalLinhas} comandas · R$ ${payload.totalValor.toFixed(2).replace(".", ",")} (serv R$ ${payload.totalServico.toFixed(2)} · prod R$ ${payload.totalProdutos.toFixed(2)})`,
+    };
+  }
   // ranking — pode ter múltiplos meses; chamamos summarize por período fora
-  const p = payload.periodos.find(x => x.mes === mesOverride) || payload.periodos[0];
+  const p = payload.periodos.find((x: any) => x.mes === mesOverride) || payload.periodos[0];
   return {
     tipo: "ranking",
     mes: p?.mes || "",

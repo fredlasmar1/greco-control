@@ -54,6 +54,10 @@ type Vendedor = {
   produtosDistintos: number;
   comandas: number;
   ticketMedio: number;
+  // v39.2: comissão sobre produtos
+  pctComissao?: number;
+  pctComissaoFonte?: "meta" | "default";
+  comissaoRS?: number;
 };
 
 type RespVendas = {
@@ -215,6 +219,8 @@ export default function VendasProdutos() {
                     <th className="py-2 px-2 text-right">Margem R$</th>
                     <th className="py-2 px-2 text-right">Margem %</th>
                     <th className="py-2 px-2 text-right">Ticket médio</th>
+                    <th className="py-2 px-2 text-right">% Comissão</th>
+                    <th className="py-2 px-2 text-right">Comissão R$</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -234,6 +240,17 @@ export default function VendasProdutos() {
                       <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(v.margemRS)}</td>
                       <td className="py-2 px-2 text-right tabular-nums">{v.margemPct.toFixed(1)}%</td>
                       <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(v.ticketMedio)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">
+                        {v.pctComissao !== undefined ? (
+                          <span title={v.pctComissaoFonte === "meta" ? "% configurada na meta deste profissional" : "% padrão global (Configurações)"}>
+                            {v.pctComissao.toFixed(0)}%
+                            {v.pctComissaoFonte === "default" && <span className="text-[9px] text-muted-foreground ml-0.5">*</span>}
+                          </span>
+                        ) : "—"}
+                      </td>
+                      <td className="py-2 px-2 text-right tabular-nums font-medium text-emerald-400">
+                        R$ {fmtBRL(v.comissaoRS ?? 0)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

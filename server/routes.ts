@@ -3016,6 +3016,13 @@ export async function registerRoutes(
     for (const p of (profissionais || [])) {
       mapaProf.set(Number(p.id), p.nome || p.apelido || `Profissional ${p.id}`);
     }
+    // v39.1: também aplica dicionário manual de IDs legados (Configurações)
+    try {
+      const conhecidos = await getProfsConhecidos();
+      for (const [id, nome] of Object.entries(conhecidos)) {
+        mapaProf.set(Number(id), String(nome));
+      }
+    } catch { /* ignora */ }
 
     // Heurística: a API Trinks guarda em /v1/transacoes IDs legados
     // (ex: 55740, 653128) que NÃO batem com /v1/profissionais (825xxx, 829xxx).
@@ -9278,11 +9285,31 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         v.comandas.forEach(c => cur.comandas.add(c));
         consolidadoPorNome.set(key, cur);
       }
+      // v39.2: comissão por profissional — busca metas individuais e aplica default global
+      const metasMap = await getAllMetas().catch(() => ({} as any));
+      const pctProdutoDefault = Number(storeData.settings?.comissaoProdutoPadraoPct ?? 10);
+      // Cria índice nome normalizado → pctProduto (das metas)
+      const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().trim();
+      const metaPorNome = new Map<string, number>();
+      for (const m of Object.values(metasMap) as any[]) {
+        const pct = Number(m?.pctProduto);
+        if (m?.nome && pct > 0) metaPorNome.set(norm(m.nome), pct);
+      }
+      const buscarPct = (nome: string): { pct: number; fonte: "meta"|"default" } => {
+        const n = norm(nome);
+        for (const [mn, p] of metaPorNome) {
+          if (n === mn || n.includes(mn) || mn.includes(n)) return { pct: p, fonte: "meta" };
+        }
+        return { pct: pctProdutoDefault, fonte: "default" };
+      };
+
       // v38.1: separa ranking de ativos vs histórico (ex-funcionários).
       // Não-ativos NÃO disputam pódio com os atuais — apresentado separado.
       const todosVendedores = Array.from(consolidadoPorNome.values()).map(v => {
         const margemRS = v.receita - v.custoTotal;
         const margemPct = v.receita > 0 ? (margemRS / v.receita) * 100 : 0;
+        const { pct: pctComissao, fonte: pctFonte } = buscarPct(v.nome);
+        const comissaoRS = (v.receita * pctComissao) / 100;
         return {
           id: v.ids[0], // primeiro ID (para chave React)
           ids: v.ids,
@@ -9295,6 +9322,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           produtosDistintos: v.produtosDistintos.size,
           comandas: v.comandas.size,
           ticketMedio: v.comandas.size > 0 ? v.receita / v.comandas.size : 0,
+          // v39.2: comissão sobre produtos
+          pctComissao,
+          pctComissaoFonte: pctFonte, // 'meta' = override individual / 'default' = padrão global
+          comissaoRS,
           historico: /ex.?func|hist[oó]rico|sem identif|profissional \d+/i.test(v.nome),
         };
       }).sort((a, b) => b.receita - a.receita);

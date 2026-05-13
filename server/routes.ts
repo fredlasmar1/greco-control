@@ -2898,20 +2898,57 @@ export async function registerRoutes(
     const movs = await getMovimentacoesEstoque();
     const deltaPorProd = getDeltasPorProduto(movs);
 
-    // Sequencial para não saturar o rate limit da Trinks (40 req/min).
-    // Produtos + profissionais são leves; transações e agendamentos são paginados pesados.
-    const produtos: any[] = await trinksFetchAll("produtos").catch((e: any) => {
-      log(`estoque: erro produtos: ${e?.message}`, "trinks");
+    // v38.2: cache PERSISTENTE em kv_store. Quando Trinks responde, salva.
+    // Quando falha (429), usa cache anterior. Estoque continua funcionando
+    // mesmo com API morta indefinidamente.
+    const KV_CACHE_PRODUTOS = "cache_trinks_produtos";
+    const KV_CACHE_PROFS_TRINKS = "cache_trinks_profissionais";
+    const KV_CACHE_TRANS_30D = `cache_trinks_transacoes_30d`;
+
+    const produtos: any[] = await trinksFetchAll("produtos").then(async (data) => {
+      const arr = Array.isArray(data) ? data : (data?.data || []);
+      if (arr.length > 0) {
+        await kvSet(KV_CACHE_PRODUTOS, { produtos: arr, salvoEm: new Date().toISOString() }).catch(()=>{});
+      }
+      return arr;
+    }).catch(async (e: any) => {
+      log(`estoque: erro produtos: ${e?.message} — usando cache kv`, "trinks");
+      const cache = await kvGet<{ produtos: any[]; salvoEm: string }>(KV_CACHE_PRODUTOS).catch(() => null);
+      if (cache?.produtos?.length) {
+        log(`estoque: cache produtos: ${cache.produtos.length} itens (salvo ${cache.salvoEm})`, "trinks");
+        return cache.produtos;
+      }
       return [] as any[];
     });
-    const profissionais: any[] = await trinksFetchAll("profissionais").catch((e: any) => {
-      log(`estoque: erro profissionais: ${e?.message}`, "trinks");
+    const profissionais: any[] = await trinksFetchAll("profissionais").then(async (data) => {
+      const arr = Array.isArray(data) ? data : (data?.data || []);
+      if (arr.length > 0) {
+        await kvSet(KV_CACHE_PROFS_TRINKS, { profissionais: arr, salvoEm: new Date().toISOString() }).catch(()=>{});
+      }
+      return arr;
+    }).catch(async (e: any) => {
+      log(`estoque: erro profissionais: ${e?.message} — usando cache kv`, "trinks");
+      const cache = await kvGet<{ profissionais: any[]; salvoEm: string }>(KV_CACHE_PROFS_TRINKS).catch(() => null);
+      if (cache?.profissionais?.length) {
+        return cache.profissionais;
+      }
       return [] as any[];
     });
     // Trinks /v1/transacoes usa intervalo semi-aberto [dataInicio, dataFim) — somar +1d.
     const transFim = ymdAddDays(hoje, 1);
-    const transacoes: any[] = await trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: transFim }).catch((e: any) => {
-      log(`estoque: erro transacoes: ${e?.message}`, "trinks");
+    const transacoes: any[] = await trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: transFim }).then(async (data) => {
+      const arr = Array.isArray(data) ? data : (data?.data || []);
+      if (arr.length > 0) {
+        await kvSet(KV_CACHE_TRANS_30D, { transacoes: arr, salvoEm: new Date().toISOString(), periodo: { dataInicio: dataInicio30, dataFim: hoje } }).catch(()=>{});
+      }
+      return arr;
+    }).catch(async (e: any) => {
+      log(`estoque: erro transacoes: ${e?.message} — usando cache kv`, "trinks");
+      const cache = await kvGet<{ transacoes: any[]; salvoEm: string; periodo: any }>(KV_CACHE_TRANS_30D).catch(() => null);
+      if (cache?.transacoes?.length) {
+        log(`estoque: cache transacoes: ${cache.transacoes.length} itens (salvo ${cache.salvoEm}, periodo ${JSON.stringify(cache.periodo)})`, "trinks");
+        return cache.transacoes;
+      }
       return [] as any[];
     });
     // Agendamentos em janela reduzida (14d) para heurística de nomes

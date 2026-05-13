@@ -3602,9 +3602,25 @@ export async function registerRoutes(
 
     // Buscar serial p/ não estourar rate limit do Trinks
     const profData = await trinksFetchAll("profissionais").catch((e: any) => {
-      log(`[periodo ${dataInicio}..${dataFim}] erro profissionais: ${e?.message}`, "equipe");
+      log(`[periodo ${dataInicio}..${dataFim}] erro profissionais: ${e?.message} — fallback pra metas`, "equipe");
       return [] as any[];
     });
+    // v37.3: fallback — se profData vier vazio (API 429), monta lista a partir
+    // das metas persistidas. As metas têm profissionalId real (Trinks) + nome,
+    // o que permite que resolveProf relacione os agendamentos do CSV (que tem
+    // só nome) com o profissional real.
+    let profListaEffective = Array.isArray(profData) ? profData : (profData?.data || []);
+    if (profListaEffective.length === 0) {
+      try {
+        const metasMap = await getAllMetas();
+        profListaEffective = Object.values(metasMap).map((m: any) => ({
+          id: m.profissionalId, nome: m.nome, apelido: m.nome,
+        }));
+        log(`[periodo ${dataInicio}..${dataFim}] usando ${profListaEffective.length} profissionais das metas (Trinks vazio)`, "equipe");
+      } catch (e: any) {
+        log(`[periodo ${dataInicio}..${dataFim}] fallback metas falhou: ${e?.message}`, "equipe");
+      }
+    }
     // Se snapshots cobrem tudo, usa direto sem chamar API. Senão chama com fallback.
     const agendData = cobreTudo ? snapshotsAgend : await trinksFetchAllRange("agendamentos", { dataInicio, dataFim }).catch((e: any) => {
       log(`[periodo ${dataInicio}..${dataFim}] erro agendamentos: ${e?.message} — fallback pra snapshots`, "equipe");
@@ -3614,7 +3630,7 @@ export async function registerRoutes(
       log(`[periodo ${dataInicio}..${dataFim}] erro transacoes: ${e?.message} — fallback pra snapshots`, "equipe");
       return snapshotsTrans;
     });
-    const profLista = Array.isArray(profData) ? profData : (profData?.data || []);
+    const profLista = profListaEffective; // v37.3: usa fallback de metas se Trinks zerou
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
     const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
 

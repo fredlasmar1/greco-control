@@ -2054,17 +2054,56 @@ export async function registerRoutes(
             else if (bucket === "voucher") voucher += v;
             else outros += v;
           }
-          // v37.1: ENRIQUECE com agendamentos do CSV email pra ter profissionalId
-          // (CSV financeiro tem só data+cliente+valor, sem profissional).
-          // Cruza por data+cliente → permite ranking por profissional.
+          // v37.2: ENRIQUECE row do CSV financeiro com servicos[].idProfissional
+          // derivado do CSV de agendamentos. Sem isso, calcularPeriodoPorProfissional
+          // não conseguia atribuir valor a profissional (ranking ficava zerado).
           let agendamentosRaw: any[] = [];
           let comissoesPorProf: Record<string, any> = {};
+          let rowsEnriquecidas: any[] = rowsDia;
           try {
             const csv = await getAgendamentosCsvFreshOrNull(72);
             if (csv) {
               const agendDia = csv.filter(a => (a.dataHoraInicio || "").startsWith(data));
               agendamentosRaw = agendDia;
-              // Agrega por profissional usando agendamentos finalizados/confirmados
+              // Index agendamentos por cliente (lower-trim) → profissional+valor
+              const norm = (s: string) => String(s || "").toLowerCase().trim();
+              const idxCliente = new Map<string, { profId: string; profNome: string; valor: number; servicoNome: string }>();
+              for (const a of agendDia) {
+                const status = (a.status?.nome || "").toLowerCase();
+                if (status.includes("cancel")) continue;
+                const nomeCli = norm(a.cliente?.nome || "");
+                if (!nomeCli) continue;
+                if (!idxCliente.has(nomeCli)) {
+                  idxCliente.set(nomeCli, {
+                    profId: a.profissional?.id || "?",
+                    profNome: a.profissional?.nome || "?",
+                    valor: a.valor || 0,
+                    servicoNome: a.servico?.nome || "",
+                  });
+                }
+              }
+              // Enriquecer cada row do CSV financeiro com servicos[]+profissional.
+              // calcularPeriodoPorProfissional lê servicos[].idProfissionalQueRealizouServico.
+              rowsEnriquecidas = rowsDia.map((r: any) => {
+                const nomeCli = norm(r.cliente);
+                const match = idxCliente.get(nomeCli);
+                if (match) {
+                  return {
+                    ...r,
+                    dataHora: r.data, // alias pra função
+                    cliente: { nome: r.cliente },
+                    servicos: [{
+                      idProfissionalQueRealizouServico: match.profId,
+                      preco: Number(r.valorReceber || 0),
+                      valor: Number(r.valorReceber || 0),
+                      nome: match.servicoNome,
+                    }],
+                    formasPagamentos: [{ nome: r.formaPagamento || "outros", valor: Number(r.valorReceber || 0) }],
+                  };
+                }
+                return r;
+              });
+              // Agrega por profissional usando agendamentos do CSV (não-cancelados)
               for (const a of agendDia) {
                 const status = (a.status?.nome || "").toLowerCase();
                 if (status.includes("cancel")) continue;
@@ -2087,10 +2126,10 @@ export async function registerRoutes(
             capturadoEm: new Date().toISOString(),
             faturamento: { total, pix, cartao, dinheiro, plano, voucher, outros, qtdTransacoes: rowsDia.length },
             agendamentos: { finalizados: rowsDia.length, confirmados: agendamentosRaw.length, cancelados: 0, noShow: 0 },
-            transacoesRaw: rowsDia,
+            transacoesRaw: rowsEnriquecidas,
             agendamentosRaw,
             comissoesPorProf: Object.keys(comissoesPorProf).length > 0 ? comissoesPorProf : undefined,
-            avisos: [`Fonte: trinks_import:financeiro:${mesData} (${finPayload.rows.length} rows no mês, ${rowsDia.length} nesta data); agendamentos enriquecidos: ${agendamentosRaw.length}`],
+            avisos: [`Fonte: trinks_import:financeiro:${mesData} (${finPayload.rows.length} rows no mês, ${rowsDia.length} nesta data); enriquecimento prof: ${agendamentosRaw.length} agendamentos`],
           };
           await saveSnapshot(snap);
           return snap;

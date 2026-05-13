@@ -1982,6 +1982,57 @@ export async function registerRoutes(
   });
 
   // ════════════════════════════════════════════════════════════════════════
+  // PROFISSIONAIS CONHECIDOS (v38) — dicionário manual id → nome
+  // Pra resolver IDs órfãos que aparecem nas transações Trinks (ex: 644414)
+  // que não estão na lista oficial /profissionais (geralmente IDs legados de
+  // profissionais antigos que saíram). Usuário cadastra manualmente o nome.
+  // ════════════════════════════════════════════════════════════════════════
+  const KV_PROFS_CONHECIDOS = "profissionais_conhecidos";
+
+  async function getProfsConhecidos(): Promise<Record<string, string>> {
+    return (await kvGet<Record<string, string>>(KV_PROFS_CONHECIDOS)) || {};
+  }
+
+  // GET /api/profissionais-conhecidos — lista o dicionário
+  app.get("/api/profissionais-conhecidos", async (_req: Request, res: Response) => {
+    try {
+      const m = await getProfsConhecidos();
+      return res.json({ ok: true, total: Object.keys(m).length, profissionais: m });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/profissionais-conhecidos — cadastra/atualiza um id → nome
+  // body: { id: "644414", nome: "Fulano da Silva" }
+  app.post("/api/profissionais-conhecidos", async (req: Request, res: Response) => {
+    try {
+      const id = String((req.body || {}).id || "").trim();
+      const nome = String((req.body || {}).nome || "").trim();
+      if (!id || !nome) return res.status(400).json({ ok: false, error: "id e nome obrigatórios" });
+      const atual = await getProfsConhecidos();
+      atual[id] = nome;
+      await kvSet(KV_PROFS_CONHECIDOS, atual);
+      log(`profs-conhecidos: ${id} → ${nome}`, "config");
+      return res.json({ ok: true, id, nome });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // DELETE /api/profissionais-conhecidos/:id
+  app.delete("/api/profissionais-conhecidos/:id", async (req: Request, res: Response) => {
+    try {
+      const atual = await getProfsConhecidos();
+      delete atual[String(req.params.id)];
+      await kvSet(KV_PROFS_CONHECIDOS, atual);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
   // SNAPSHOT DIÁRIO (v36) — Cérebro de Dados
   // Captura fotografia persistente do dia, em cascata Trinks→CSV→CSV-financeiro.
   // Snapshot é fonte da verdade pra endpoints históricos. Trinks pode sumir
@@ -8890,6 +8941,14 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       for (const p of profissionais || []) {
         mapaProf.set(Number(p.id), p.nome || p.apelido || `Profissional ${p.id}`);
       }
+      // v38: também carrega dicionário manual de profs conhecidos (kv_store)
+      // pra resolver IDs órfãos (ex: 644414 que não está em /profissionais)
+      try {
+        const conhecidos = await getProfsConhecidos();
+        for (const [id, nome] of Object.entries(conhecidos)) {
+          mapaProf.set(Number(id), String(nome));
+        }
+      } catch { /* ignora */ }
 
       // Heurística: Trinks /v1/transacoes guarda IDs legados (ex: 55740, 653128)
       // que não batem com /v1/profissionais (825xxx). Cruzamos via agendamentos

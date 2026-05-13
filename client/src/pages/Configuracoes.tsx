@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { UsuariosManager } from "@/components/UsuariosManager";
+import { ProfsConhecidosManager } from "@/components/ProfsConhecidosManager";
 import {
   Settings,
   Key,
@@ -733,6 +734,8 @@ export default function Configuracoes() {
           Salvar Configurações
         </Button>
       </form>
+
+      <ProfsConhecidosManager />
 
       <UsuariosManager />
     </div>

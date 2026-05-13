@@ -2904,6 +2904,10 @@ export async function registerRoutes(
     const KV_CACHE_PRODUTOS = "cache_trinks_produtos";
     const KV_CACHE_PROFS_TRINKS = "cache_trinks_profissionais";
     const KV_CACHE_TRANS_30D = `cache_trinks_transacoes_30d`;
+    // v38.3: rastreia quando cada fonte veio do cache (pra UI mostrar idade)
+    const fontesCache: { produtos: string | null; profissionais: string | null; transacoes: string | null } = {
+      produtos: null, profissionais: null, transacoes: null,
+    };
 
     const produtos: any[] = await trinksFetchAll("produtos").then(async (data) => {
       const arr = Array.isArray(data) ? data : (data?.data || []);
@@ -2916,6 +2920,7 @@ export async function registerRoutes(
       const cache = await kvGet<{ produtos: any[]; salvoEm: string }>(KV_CACHE_PRODUTOS).catch(() => null);
       if (cache?.produtos?.length) {
         log(`estoque: cache produtos: ${cache.produtos.length} itens (salvo ${cache.salvoEm})`, "trinks");
+        fontesCache.produtos = cache.salvoEm;
         return cache.produtos;
       }
       return [] as any[];
@@ -2930,6 +2935,7 @@ export async function registerRoutes(
       log(`estoque: erro profissionais: ${e?.message} — usando cache kv`, "trinks");
       const cache = await kvGet<{ profissionais: any[]; salvoEm: string }>(KV_CACHE_PROFS_TRINKS).catch(() => null);
       if (cache?.profissionais?.length) {
+        fontesCache.profissionais = cache.salvoEm;
         return cache.profissionais;
       }
       return [] as any[];
@@ -2947,6 +2953,7 @@ export async function registerRoutes(
       const cache = await kvGet<{ transacoes: any[]; salvoEm: string; periodo: any }>(KV_CACHE_TRANS_30D).catch(() => null);
       if (cache?.transacoes?.length) {
         log(`estoque: cache transacoes: ${cache.transacoes.length} itens (salvo ${cache.salvoEm}, periodo ${JSON.stringify(cache.periodo)})`, "trinks");
+        fontesCache.transacoes = cache.salvoEm;
         return cache.transacoes;
       }
       return [] as any[];
@@ -3205,9 +3212,21 @@ export async function registerRoutes(
     // Ordena movimentações de hoje do mais recente para o mais antigo
     movHoje.sort((a, b) => String(b.data).localeCompare(String(a.data)));
 
+    // v38.3: se alguma fonte veio do cache, marca a mais antiga e expõe pra UI.
+    const cacheUsado = !!(fontesCache.produtos || fontesCache.profissionais || fontesCache.transacoes);
+    const idadesCache = [fontesCache.produtos, fontesCache.profissionais, fontesCache.transacoes]
+      .filter((d): d is string => !!d)
+      .map(d => Date.now() - new Date(d).getTime());
+    const cacheIdadeMs = idadesCache.length > 0 ? Math.max(...idadesCache) : null;
+    const cacheIdadeHoras = cacheIdadeMs ? Math.round(cacheIdadeMs / (1000 * 60 * 60)) : null;
+
     const resumo = {
       atualizadoEm: new Date().toISOString(),
       fonte: "trinks-transacoes-30d",
+      // v38.3: status de frescor do dado pra UI mostrar badge
+      cacheUsado,
+      cacheIdadeHoras,
+      fontesCache, // detalhe: { produtos: salvoEm, profissionais: salvoEm, transacoes: salvoEm }
       limitacaoApi: "A API Trinks não expõe saldo/custo/valor de estoque. Dados derivados das transações (comandas) dos últimos 30 dias.",
       janela: { dataInicio: dataInicio30, dataFim: hoje },
       totalProdutos: lista.length,

@@ -74,6 +74,10 @@ interface VendedorRanking {
 interface Resumo {
   atualizadoEm: string;
   fonte?: string;
+  // v38.3: status de frescor (quando alguma fonte veio do cache)
+  cacheUsado?: boolean;
+  cacheIdadeHoras?: number | null;
+  fontesCache?: { produtos: string | null; profissionais: string | null; transacoes: string | null };
   limitacaoApi?: string;
   janela?: { dataInicio: string; dataFim: string };
   totalProdutos: number;
@@ -620,8 +624,13 @@ export default function Estoque() {
             </Card>
           )}
 
-          <div className="text-[11px] text-muted-foreground text-center pt-1">
-            Atualizado em {new Date(resumo.atualizadoEm).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+          <div className="text-[11px] text-muted-foreground text-center pt-1 space-y-1">
+            <div>Atualizado em {new Date(resumo.atualizadoEm).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}</div>
+            {resumo.cacheUsado && (
+              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-amber-500/40 text-amber-300 bg-amber-500/10">
+                ⚠️ Trinks API indisponível — usando cache de {resumo.cacheIdadeHoras !== null && resumo.cacheIdadeHoras !== undefined ? `${resumo.cacheIdadeHoras}h atrás` : "sessão anterior"}
+              </div>
+            )}
           </div>
         </>
       )}

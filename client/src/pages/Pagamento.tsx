@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,9 @@ import {
   FileText,
   AlertTriangle,
   CheckCircle2,
+  ChevronRight,
+  ChevronDown,
+  Crown,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
@@ -52,11 +55,18 @@ type Linha = {
     comissaoServicos: number;
     comissaoProdutos: number;
     comissaoPlano: number;
+    comissaoClubeGreco: number;
     excedenteMeta: number;
     bonusExcedente: number;
     bonusRanking: number;
     salarioFixo: number;
     totalBruto: number;
+  };
+  clubeGreco?: {
+    assinantes: number;
+    valorVendasRS: number;
+    comissaoRS: number;
+    pctEfetivo: number;
   };
   pagamento: {
     vale: number;
@@ -79,7 +89,22 @@ type RespApi = {
   dataInicio: string;
   dataFim: string;
   linhas: Linha[];
-  totais: { totalBruto: number; totalVale: number; totalAjuste: number; totalConsumoInterno: number; totalTaxaCartao: number; totalSaldo: number };
+  totais: {
+    totalBruto: number;
+    totalComissaoServicos?: number;
+    totalComissaoProdutos?: number;
+    totalComissaoPlano?: number;
+    totalComissaoClubeGreco?: number;
+    totalBonusExcedente?: number;
+    totalBonusRanking?: number;
+    totalSalarioFixo?: number;
+    totalVale: number;
+    totalAjuste: number;
+    totalConsumoInterno: number;
+    totalTaxaCartao: number;
+    totalSaldo: number;
+  };
+  clubeOrfaos?: Array<{ seller: string; assinantes: number; valorVendasRS: number; comissaoRS: number }>;
   faturamento?: {
     totalReais: number;
     totalAtendimentos: number;
@@ -119,6 +144,7 @@ export default function Pagamento() {
   const [edit, setEdit] = useState<{ vale: string; valeNota: string; ajuste: string; ajusteNota: string; consumoInterno: string; consumoInternoNota: string }>({
     vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "",
   });
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [acaoLinha, setAcaoLinha] = useState<string | null>(null);
   const [atualizandoTrinks, setAtualizandoTrinks] = useState(false);
@@ -350,6 +376,64 @@ export default function Pagamento() {
                 <Stat label="Taxa cartão (info)" valor={data.totais.totalTaxaCartao || 0} muted />
                 <Stat label="Total a pagar" valor={data.totais.totalSaldo} bold />
               </div>
+              {/* Breakdown da folha — 3 blocos visuais */}
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-emerald-400 font-semibold mb-2">Comissões da folha</div>
+                  <div className="space-y-1 text-xs">
+                    <Row label="Serviços" valor={data.totais.totalComissaoServicos || 0} />
+                    <Row label="Produtos" valor={data.totais.totalComissaoProdutos || 0} />
+                    <Row label="Plano (Trinks)" valor={data.totais.totalComissaoPlano || 0} />
+                    {(data.totais.totalComissaoClubeGreco || 0) > 0 && (
+                      <Row
+                        label={<span className="flex items-center gap-1"><Crown className="w-3 h-3 text-purple-400" />Clube Greco</span>}
+                        valor={data.totais.totalComissaoClubeGreco || 0}
+                      />
+                    )}
+                    {(data.totais.totalSalarioFixo || 0) > 0 && (
+                      <Row label="Salário fixo" valor={data.totais.totalSalarioFixo || 0} />
+                    )}
+                  </div>
+                </div>
+                <div className="rounded border border-yellow-500/30 bg-yellow-500/5 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-yellow-400 font-semibold mb-2">Bônus da folha</div>
+                  <div className="space-y-1 text-xs">
+                    <Row label="🥇 Top 1 (barbeiro + assist.)" valor={data.totais.totalBonusRanking || 0} />
+                    <Row label="Excedente de meta" valor={data.totais.totalBonusExcedente || 0} />
+                    {(data.totais.totalBonusRanking || 0) + (data.totais.totalBonusExcedente || 0) === 0 && (
+                      <div className="text-muted-foreground italic">Sem bônus distribuídos.</div>
+                    )}
+                  </div>
+                </div>
+                <div className="rounded border border-red-500/30 bg-red-500/5 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-red-400 font-semibold mb-2">Descontos da folha</div>
+                  <div className="space-y-1 text-xs">
+                    <Row label="Vales" valor={-(data.totais.totalVale || 0)} />
+                    <Row label="Consumo interno" valor={-(data.totais.totalConsumoInterno || 0)} />
+                    <Row label="Ajustes" valor={data.totais.totalAjuste || 0} />
+                  </div>
+                </div>
+              </div>
+              {/* Aviso: sellers do Clube Greco sem match em profissional */}
+              {(data.clubeOrfaos && data.clubeOrfaos.length > 0) && (
+                <div className="mt-3 p-3 rounded border border-amber-500/30 bg-amber-500/5 text-xs">
+                  <div className="flex items-center gap-2 mb-2 text-amber-400 font-medium">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {data.clubeOrfaos.length} vendedor(es) do Clube Greco sem profissional correspondente
+                  </div>
+                  <div className="text-muted-foreground mb-2">
+                    Estes vendedores receberam comissão de assinaturas pagas no mês mas não bateram com nenhum profissional ativo na folha. A comissão deles não está sendo somada ao "A pagar". Cadastre-os ou ajuste o nome em <strong>Assinaturas</strong>.
+                  </div>
+                  <ul className="space-y-0.5">
+                    {data.clubeOrfaos.map(o => (
+                      <li key={o.seller} className="flex items-baseline justify-between">
+                        <span>{o.seller} ({o.assinantes} assinat.)</span>
+                        <span className="tabular-nums text-amber-400">R$ {fmtBRL(o.comissaoRS)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </>
           )}
         </CardContent>
@@ -372,188 +456,286 @@ export default function Pagamento() {
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
+                {/* Cabeçalho com 3 blocos visuais: Comissões | Bônus | Descontos */}
                 <thead>
+                  <tr className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                    <th className="py-1 pr-3"></th>
+                    <th colSpan={3} className="py-1 px-2 text-center border-b border-emerald-500/30 bg-emerald-500/5 rounded-t">
+                      Comissões
+                    </th>
+                    <th className="py-1 px-2 text-center border-b border-yellow-500/30 bg-yellow-500/5 rounded-t">
+                      Bônus
+                    </th>
+                    <th colSpan={3} className="py-1 px-2 text-center border-b border-red-500/30 bg-red-500/5 rounded-t">
+                      Descontos
+                    </th>
+                    <th colSpan={2} className="py-1 px-2"></th>
+                  </tr>
                   <tr className="border-b text-left text-xs text-muted-foreground">
                     <th className="py-2 pr-3">Profissional</th>
-                    <th className="py-2 px-2 text-right">Serviços líq.</th>
-                    <th className="py-2 px-2 text-right">Produtos com.</th>
-                    <th className="py-2 px-2 text-right">Plano</th>
-                    <th className="py-2 px-2 text-right">Bônus meta</th>
-                    <th className="py-2 px-2 text-right">Total bruto</th>
-                    <th className="py-2 px-2 text-right">Vale (15)</th>
-                    <th className="py-2 px-2 text-right">Consumo</th>
-                    <th className="py-2 px-2 text-right">Ajuste</th>
-                    <th className="py-2 px-2 text-right font-semibold">Saldo</th>
+                    <th className="py-2 px-2 text-right bg-emerald-500/5">Serviços</th>
+                    <th className="py-2 px-2 text-right bg-emerald-500/5">Produtos</th>
+                    <th className="py-2 px-2 text-right bg-emerald-500/5">Pacotes/Assin.</th>
+                    <th className="py-2 px-2 text-right bg-yellow-500/5">Bônus</th>
+                    <th className="py-2 px-2 text-right bg-red-500/5">Vale</th>
+                    <th className="py-2 px-2 text-right bg-red-500/5">Consumo</th>
+                    <th className="py-2 px-2 text-right bg-red-500/5">Ajuste</th>
+                    <th className="py-2 px-2 text-right font-semibold">A pagar</th>
                     <th className="py-2 pl-2 text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {linhasFiltradas.map(l => {
                     const editando = editandoId === l.profissionalId;
+                    const expandido = expandedId === l.profissionalId;
                     const fechado = l.pagamento.fechado;
+                    const bonusTotal = l.calculos.bonusExcedente + l.calculos.bonusRanking;
+                    const pacotesValor = l.bases.planoReais + (l.clubeGreco?.valorVendasRS || 0);
+                    const pacotesComissao = l.calculos.comissaoPlano + l.calculos.comissaoClubeGreco;
+                    const pctDoFaturamento = l.bases.servicosLiquido + l.bases.produtosLiquidoComissionavel > 0
+                      ? (l.pagamento.saldoAReceber / (l.bases.servicosLiquido + l.bases.produtosLiquidoComissionavel + l.bases.planoReais)) * 100
+                      : 0;
                     return (
-                      <tr key={l.profissionalId} className={`border-b ${fechado ? "bg-muted/20" : ""}`}>
-                        <td className="py-2 pr-3">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {fechado && <Lock className="w-3 h-3 text-muted-foreground" />}
-                            <span className="font-medium">{l.nome}</span>
-                            {l.posicaoRanking === 1 && l.calculos.bonusRanking > 0 && (
-                              <Badge
-                                variant="outline"
-                                className="text-[9px] h-5 border-yellow-500/50 text-yellow-300 bg-yellow-500/15"
-                                title={`Top 1 ${l.categoriaRanking === 'assistente' ? 'assistente' : 'barbeiro'} do mês`}
-                              >
-                                🥇 Top 1 {l.categoriaRanking === 'assistente' ? 'Assist.' : 'Barbeiro'} +R$ {fmtBRL(l.calculos.bonusRanking)}
-                              </Badge>
-                            )}
-                            {l.categoriaRanking === 'assistente' && (
-                              <Badge variant="outline" className="text-[9px] h-5 border-pink-500/40 text-pink-300 bg-pink-500/10">
-                                Assistente
-                              </Badge>
-                            )}
-                            {l.modoComissao === 'liquido' && (
-                              <Badge
-                                variant="outline"
-                                className="text-[9px] h-5 border-amber-500/40 text-amber-400 bg-amber-500/10"
-                                title={l.modoFonte === 'profissional' ? "Modo override deste profissional" : "Modo padrão da empresa"}
-                              >
-                                Líquido{l.modoFonte === 'profissional' ? '*' : ''}
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            Meta R$ {fmtBRL(l.percentuais.metaReais)} · {l.percentuais.pctServico}%/{l.percentuais.pctProduto}%/{l.percentuais.pctPlano}%
-                            {l.percentuais.pctBonusExcedente > 0 ? ` · Bônus ${l.percentuais.pctBonusExcedente}%` : ""}
-                            {l.percentuais.salarioFixo > 0 ? ` · Fixo R$ ${fmtBRL(l.percentuais.salarioFixo)}` : ""}
-                            {l.modoComissao === 'liquido' && l.bases.custoInsumos != null && l.bases.custoInsumos > 0 && (
-                              <span className="text-amber-400"> · Insumos R$ {fmtBRL(l.bases.custoInsumos)} descontados</span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums">
-                          R$ {fmtBRL(l.bases.servicosLiquido)}
-                          <div className="text-[10px] text-muted-foreground">→ R$ {fmtBRL(l.calculos.comissaoServicos)}</div>
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums">
-                          R$ {fmtBRL(l.bases.produtosLiquidoComissionavel)}
-                          <div className="text-[10px] text-muted-foreground">→ R$ {fmtBRL(l.calculos.comissaoProdutos)}</div>
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums">
-                          R$ {fmtBRL(l.bases.planoReais)}
-                          <div className="text-[10px] text-muted-foreground">→ R$ {fmtBRL(l.calculos.comissaoPlano)}</div>
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums">
-                          R$ {fmtBRL(l.calculos.bonusExcedente)}
-                          {l.calculos.excedenteMeta > 0 && (
-                            <div className="text-[10px] text-muted-foreground">excd R$ {fmtBRL(l.calculos.excedenteMeta)}</div>
-                          )}
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums font-semibold">
-                          R$ {fmtBRL(l.calculos.totalBruto)}
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums">
-                          {editando ? (
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              max="1000"
-                              value={edit.vale}
-                              onChange={e => setEdit({ ...edit, vale: e.target.value })}
-                              className="w-24 h-8 text-right"
-                              data-testid={`vale-${l.profissionalId}`}
-                            />
-                          ) : (
-                            <>R$ {fmtBRL(l.pagamento.vale)}</>
-                          )}
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums">
-                          {editando ? (
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={edit.consumoInterno}
-                              onChange={e => setEdit({ ...edit, consumoInterno: e.target.value })}
-                              className="w-24 h-8 text-right"
-                              data-testid={`consumo-${l.profissionalId}`}
-                            />
-                          ) : (
-                            <>R$ {fmtBRL(l.pagamento.consumoInterno)}</>
-                          )}
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums">
-                          {editando ? (
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={edit.ajuste}
-                              onChange={e => setEdit({ ...edit, ajuste: e.target.value })}
-                              className="w-24 h-8 text-right"
-                              data-testid={`ajuste-${l.profissionalId}`}
-                            />
-                          ) : (
-                            <>R$ {fmtBRL(l.pagamento.ajuste)}</>
-                          )}
-                        </td>
-                        <td className="py-2 px-2 text-right tabular-nums font-bold">
-                          R$ {fmtBRL(l.pagamento.saldoAReceber)}
-                        </td>
-                        <td className="py-2 pl-2 text-right">
-                          <div className="flex items-center justify-end gap-1">
+                      <React.Fragment key={l.profissionalId}>
+                        <tr
+                          className={`border-b ${fechado ? "bg-muted/20" : ""} ${expandido ? "bg-muted/10" : "hover:bg-muted/5"} cursor-pointer`}
+                          onClick={(e) => {
+                            // só expande se não tiver clicado em botão ou input
+                            const target = e.target as HTMLElement;
+                            if (target.closest("button") || target.closest("input")) return;
+                            setExpandedId(expandido ? null : l.profissionalId);
+                          }}
+                        >
+                          {/* Profissional */}
+                          <td className="py-2 pr-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {expandido ? <ChevronDown className="w-3 h-3 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
+                              {fechado && <Lock className="w-3 h-3 text-muted-foreground" />}
+                              <span className="font-medium">{l.nome}</span>
+                              {l.posicaoRanking === 1 && l.calculos.bonusRanking > 0 && (
+                                <Badge variant="outline" className="text-[9px] h-5 border-yellow-500/50 text-yellow-300 bg-yellow-500/15" title={`Top 1 ${l.categoriaRanking === 'assistente' ? 'assistente' : 'barbeiro'} do mês`}>
+                                  🥇 Top 1
+                                </Badge>
+                              )}
+                              {l.categoriaRanking === 'assistente' && (
+                                <Badge variant="outline" className="text-[9px] h-5 border-pink-500/40 text-pink-300 bg-pink-500/10">Assist.</Badge>
+                              )}
+                              {l.modoComissao === 'liquido' && (
+                                <Badge variant="outline" className="text-[9px] h-5 border-amber-500/40 text-amber-400 bg-amber-500/10" title={l.modoFonte === 'profissional' ? "Modo override" : "Modo padrão"}>
+                                  Líquido{l.modoFonte === 'profissional' ? '*' : ''}
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              Meta R$ {fmtBRL(l.percentuais.metaReais)} · {l.percentuais.pctServico}%/{l.percentuais.pctProduto}%/{l.percentuais.pctPlano}%
+                              {pctDoFaturamento > 0 && <span> · <strong className="text-foreground">{pctDoFaturamento.toFixed(1)}%</strong> do faturamento</span>}
+                            </div>
+                          </td>
+
+                          {/* Comissões — Serviços */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-emerald-500/5">
+                            <div className="text-emerald-400 font-semibold">R$ {fmtBRL(l.calculos.comissaoServicos)}</div>
+                            <div className="text-[10px] text-muted-foreground">{l.percentuais.pctServico}% de {fmtBRL(l.bases.servicosLiquido)}</div>
+                          </td>
+                          {/* Comissões — Produtos */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-emerald-500/5">
+                            <div className="text-emerald-400 font-semibold">R$ {fmtBRL(l.calculos.comissaoProdutos)}</div>
+                            <div className="text-[10px] text-muted-foreground">{l.percentuais.pctProduto}% de {fmtBRL(l.bases.produtosLiquidoComissionavel)}</div>
+                          </td>
+                          {/* Comissões — Pacotes/Assinaturas (Trinks + Clube Greco) */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-emerald-500/5">
+                            <div className="text-emerald-400 font-semibold">R$ {fmtBRL(pacotesComissao)}</div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {l.percentuais.pctPlano}% de {fmtBRL(pacotesValor)}
+                              {(l.clubeGreco?.assinantes || 0) > 0 && (
+                                <span className="text-purple-400" title={`${l.clubeGreco?.assinantes} assinaturas do Clube Greco vendidas`}>
+                                  {" "}· Clube +{fmtBRL(l.clubeGreco?.comissaoRS || 0)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Bônus — soma excedente + ranking */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-yellow-500/5">
+                            <div className={`font-semibold ${bonusTotal > 0 ? "text-yellow-400" : "text-muted-foreground"}`}>
+                              R$ {fmtBRL(bonusTotal)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {l.calculos.bonusRanking > 0 && <span>🥇 {fmtBRL(l.calculos.bonusRanking)} </span>}
+                              {l.calculos.bonusExcedente > 0 && <span>· meta+{fmtBRL(l.calculos.bonusExcedente)}</span>}
+                              {bonusTotal === 0 && <span>—</span>}
+                            </div>
+                          </td>
+
+                          {/* Descontos — Vale */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-red-500/5">
                             {editando ? (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="default"
-                                  onClick={() => salvarEdicao(l)}
-                                  disabled={salvando}
-                                  className="h-8"
-                                >
-                                  {salvando ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                                </Button>
-                                <Button size="sm" variant="ghost" onClick={cancelarEdicao} className="h-8 px-2">
-                                  <XIcon className="w-3 h-3" />
-                                </Button>
-                              </>
+                              <Input type="number" step="0.01" min="0" max="1000" value={edit.vale} onChange={e => setEdit({ ...edit, vale: e.target.value })} className="w-20 h-8 text-right" data-testid={`vale-${l.profissionalId}`} onClick={e => e.stopPropagation()} />
                             ) : (
-                              <>
-                                {!fechado && (
-                                  <Button size="sm" variant="outline" onClick={() => iniciarEdicao(l)} className="h-8 px-2">
-                                    <Pencil className="w-3 h-3" />
-                                  </Button>
-                                )}
-                                <Button size="sm" variant="outline" onClick={() => abrirRecibo(l)} className="h-8 px-2" title="Recibo">
-                                  <FileText className="w-3 h-3" />
-                                </Button>
-                                {fechado ? (
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => reabrirMes(l)}
-                                    disabled={acaoLinha === l.profissionalId}
-                                    className="h-8 px-2"
-                                    title="Reabrir mês"
-                                  >
-                                    <Unlock className="w-3 h-3" />
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => fecharMes(l)}
-                                    disabled={acaoLinha === l.profissionalId}
-                                    className="h-8 px-2"
-                                    title="Fechar mês"
-                                  >
-                                    <Lock className="w-3 h-3" />
-                                  </Button>
-                                )}
-                              </>
+                              <span className={l.pagamento.vale > 0 ? "text-red-400" : "text-muted-foreground"}>
+                                {l.pagamento.vale > 0 ? `−${fmtBRL(l.pagamento.vale)}` : "—"}
+                              </span>
                             )}
-                          </div>
-                        </td>
-                      </tr>
+                          </td>
+                          {/* Descontos — Consumo */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-red-500/5">
+                            {editando ? (
+                              <Input type="number" step="0.01" min="0" value={edit.consumoInterno} onChange={e => setEdit({ ...edit, consumoInterno: e.target.value })} className="w-20 h-8 text-right" data-testid={`consumo-${l.profissionalId}`} onClick={e => e.stopPropagation()} />
+                            ) : (
+                              <span className={l.pagamento.consumoInterno > 0 ? "text-red-400" : "text-muted-foreground"}>
+                                {l.pagamento.consumoInterno > 0 ? `−${fmtBRL(l.pagamento.consumoInterno)}` : "—"}
+                              </span>
+                            )}
+                          </td>
+                          {/* Descontos — Ajuste (pode ser positivo ou negativo) */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-red-500/5">
+                            {editando ? (
+                              <Input type="number" step="0.01" value={edit.ajuste} onChange={e => setEdit({ ...edit, ajuste: e.target.value })} className="w-20 h-8 text-right" data-testid={`ajuste-${l.profissionalId}`} onClick={e => e.stopPropagation()} />
+                            ) : (
+                              <span className={l.pagamento.ajuste > 0 ? "text-emerald-400" : l.pagamento.ajuste < 0 ? "text-red-400" : "text-muted-foreground"}>
+                                {l.pagamento.ajuste !== 0 ? `${l.pagamento.ajuste > 0 ? "+" : ""}${fmtBRL(l.pagamento.ajuste)}` : "—"}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* TOTAL A PAGAR */}
+                          <td className="py-2 px-2 text-right tabular-nums font-bold text-base">
+                            R$ {fmtBRL(l.pagamento.saldoAReceber)}
+                          </td>
+
+                          {/* Ações */}
+                          <td className="py-2 pl-2 text-right">
+                            <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                              {editando ? (
+                                <>
+                                  <Button size="sm" variant="default" onClick={() => salvarEdicao(l)} disabled={salvando} className="h-8">
+                                    {salvando ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={cancelarEdicao} className="h-8 px-2">
+                                    <XIcon className="w-3 h-3" />
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  {!fechado && (
+                                    <Button size="sm" variant="outline" onClick={() => iniciarEdicao(l)} className="h-8 px-2">
+                                      <Pencil className="w-3 h-3" />
+                                    </Button>
+                                  )}
+                                  <Button size="sm" variant="outline" onClick={() => abrirRecibo(l)} className="h-8 px-2" title="Recibo">
+                                    <FileText className="w-3 h-3" />
+                                  </Button>
+                                  {fechado ? (
+                                    <Button size="sm" variant="ghost" onClick={() => reabrirMes(l)} disabled={acaoLinha === l.profissionalId} className="h-8 px-2" title="Reabrir mês">
+                                      <Unlock className="w-3 h-3" />
+                                    </Button>
+                                  ) : (
+                                    <Button size="sm" variant="ghost" onClick={() => fecharMes(l)} disabled={acaoLinha === l.profissionalId} className="h-8 px-2" title="Fechar mês">
+                                      <Lock className="w-3 h-3" />
+                                    </Button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* Linha expandida — memória de cálculo */}
+                        {expandido && (
+                          <tr className="bg-muted/10 border-b">
+                            <td colSpan={10} className="py-3 px-4">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                                {/* Comissões — detalhe */}
+                                <div className="space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wide text-emerald-400 font-semibold mb-1">Comissões</div>
+                                  <Row label={`Serviços (${l.percentuais.pctServico}% × ${fmtBRL(l.bases.baseComissaoServicos || l.bases.servicosLiquido)})`} valor={l.calculos.comissaoServicos} />
+                                  <Row label={`Produtos (${l.percentuais.pctProduto}% × ${fmtBRL(l.bases.produtosLiquidoComissionavel)})`} valor={l.calculos.comissaoProdutos} />
+                                  <Row label={`Plano Trinks (${l.percentuais.pctPlano}% × ${fmtBRL(l.bases.planoReais)})`} valor={l.calculos.comissaoPlano} />
+                                  {(l.clubeGreco?.assinantes || 0) > 0 && (
+                                    <Row
+                                      label={
+                                        <span className="flex items-center gap-1">
+                                          <Crown className="w-3 h-3 text-purple-400" />
+                                          Clube Greco ({l.clubeGreco?.assinantes} assinat. · {l.clubeGreco?.pctEfetivo?.toFixed(0)}% × {fmtBRL(l.clubeGreco?.valorVendasRS || 0)})
+                                        </span>
+                                      }
+                                      valor={l.calculos.comissaoClubeGreco}
+                                    />
+                                  )}
+                                  {l.percentuais.salarioFixo > 0 && (
+                                    <Row label="Salário fixo" valor={l.percentuais.salarioFixo} />
+                                  )}
+                                  <div className="border-t border-emerald-500/20 pt-1 mt-1">
+                                    <Row label={<strong>Subtotal comissões</strong>} valor={l.calculos.comissaoServicos + l.calculos.comissaoProdutos + l.calculos.comissaoPlano + l.calculos.comissaoClubeGreco + l.percentuais.salarioFixo} bold />
+                                  </div>
+                                </div>
+
+                                {/* Bônus — detalhe */}
+                                <div className="space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wide text-yellow-400 font-semibold mb-1">Bônus</div>
+                                  {l.calculos.bonusRanking > 0 && (
+                                    <Row label={`🥇 Top 1 ${l.categoriaRanking === 'assistente' ? 'Assistente' : 'Barbeiro'}`} valor={l.calculos.bonusRanking} />
+                                  )}
+                                  {l.percentuais.pctBonusExcedente > 0 && (
+                                    <Row
+                                      label={`Excedente meta (${l.percentuais.pctBonusExcedente}% × ${fmtBRL(l.calculos.excedenteMeta)})`}
+                                      valor={l.calculos.bonusExcedente}
+                                    />
+                                  )}
+                                  {bonusTotal === 0 && (
+                                    <div className="text-muted-foreground italic">Sem bônus neste mês.</div>
+                                  )}
+                                  {bonusTotal > 0 && (
+                                    <div className="border-t border-yellow-500/20 pt-1 mt-1">
+                                      <Row label={<strong>Subtotal bônus</strong>} valor={bonusTotal} bold />
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Descontos — detalhe */}
+                                <div className="space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wide text-red-400 font-semibold mb-1">Descontos / Ajustes</div>
+                                  {l.pagamento.vale > 0 && (
+                                    <Row label={`Vale${l.pagamento.valeNota ? ` — ${l.pagamento.valeNota}` : ""}`} valor={-l.pagamento.vale} />
+                                  )}
+                                  {l.pagamento.consumoInterno > 0 && (
+                                    <Row label={`Consumo interno${l.pagamento.consumoInternoNota ? ` — ${l.pagamento.consumoInternoNota}` : ""}`} valor={-l.pagamento.consumoInterno} />
+                                  )}
+                                  {l.pagamento.ajuste !== 0 && (
+                                    <Row label={`Ajuste${l.pagamento.ajusteNota ? ` — ${l.pagamento.ajusteNota}` : ""}`} valor={l.pagamento.ajuste} />
+                                  )}
+                                  {l.pagamento.vale === 0 && l.pagamento.consumoInterno === 0 && l.pagamento.ajuste === 0 && (
+                                    <div className="text-muted-foreground italic">Sem descontos.</div>
+                                  )}
+                                  {l.bases.taxaCartaoEstimada != null && l.bases.taxaCartaoEstimada > 0 && (
+                                    <div className="text-[10px] text-muted-foreground pt-1">
+                                      Taxa cartão (info, já abatida do líquido): R$ {fmtBRL(l.bases.taxaCartaoEstimada)}
+                                    </div>
+                                  )}
+                                  {l.modoComissao === 'liquido' && l.bases.custoInsumos != null && l.bases.custoInsumos > 0 && (
+                                    <div className="text-[10px] text-amber-400 pt-1">
+                                      Insumos descontados da base de serviços: R$ {fmtBRL(l.bases.custoInsumos)}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Linha do total no detalhe */}
+                              <div className="mt-3 pt-3 border-t flex items-center justify-end gap-6 text-sm">
+                                <div className="text-muted-foreground">
+                                  Bruto: <strong className="text-foreground">R$ {fmtBRL(l.calculos.totalBruto)}</strong>
+                                </div>
+                                <div className="text-muted-foreground">
+                                  Descontos: <strong className="text-red-400">−R$ {fmtBRL(l.pagamento.vale + l.pagamento.consumoInterno - l.pagamento.ajuste)}</strong>
+                                </div>
+                                <div className="text-base">
+                                  <strong>Total a pagar: R$ {fmtBRL(l.pagamento.saldoAReceber)}</strong>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -612,6 +794,18 @@ function Stat({ label, valor, bold, muted }: { label: string; valor: number; bol
     <div className={`rounded border p-2 ${muted ? "opacity-80" : ""}`}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className={`tabular-nums ${bold ? "text-base font-bold" : "text-sm font-medium"}`}>R$ {fmtBRL(valor)}</div>
+    </div>
+  );
+}
+
+function Row({ label, valor, bold }: { label: React.ReactNode; valor: number; bold?: boolean }) {
+  const positivo = valor >= 0;
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className={`text-muted-foreground ${bold ? "text-foreground" : ""}`}>{label}</span>
+      <span className={`tabular-nums ${bold ? "font-bold" : ""} ${positivo ? "text-emerald-400" : "text-red-400"}`}>
+        {positivo ? "" : "−"}R$ {fmtBRL(Math.abs(valor))}
+      </span>
     </div>
   );
 }

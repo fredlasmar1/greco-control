@@ -8456,6 +8456,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     profMes: any,
     meta: any,
     pagto: any,
+    clubeGreco?: { assinantes: number; valorVendasRS: number; comissaoRS: number; pctEfetivo: number },
   ) {
     const servicosLiquido = profMes?.servicos?.liquido || 0;
     const produtosLiquidoComissionavel = profMes?.produtos?.liquidoComissionavel || 0;
@@ -8491,9 +8492,10 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const comissaoServicos = (baseComissaoServicos * pctServico) / 100;
     const comissaoProdutos = (produtosLiquidoComissionavel * pctProduto) / 100;
     const comissaoPlano = (planoReais * pctPlano) / 100;
+    const comissaoClubeGreco = Number(clubeGreco?.comissaoRS || 0);
     const excedente = Math.max(0, servicosLiquido - metaReais);
     const bonusExcedente = (excedente * pctBonusExcedente) / 100;
-    const totalBruto = comissaoServicos + comissaoProdutos + comissaoPlano + bonusExcedente + salarioFixo;
+    const totalBruto = comissaoServicos + comissaoProdutos + comissaoPlano + comissaoClubeGreco + bonusExcedente + salarioFixo;
 
     const vale = Number(pagto?.vale || 0);
     const ajuste = Number(pagto?.ajuste || 0);
@@ -8531,12 +8533,15 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         comissaoServicos,
         comissaoProdutos,
         comissaoPlano,
+        comissaoClubeGreco,
         excedenteMeta: excedente,
         bonusExcedente,
         bonusRanking: 0,    // preenchido pelo caller pra top 1 de cada categoria
         salarioFixo,
         totalBruto,
       },
+      // Detalhe Clube Greco (assinaturas vendidas via aba Assinaturas)
+      clubeGreco: clubeGreco || { assinantes: 0, valorVendasRS: 0, comissaoRS: 0, pctEfetivo: 0 },
       // Estado mensal
       pagamento: {
         vale,
@@ -8618,11 +8623,59 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       Object.keys(periodo.porProfissional).forEach(id => ids.add(id));
       Object.keys(metas).forEach(id => ids.add(id));
 
+      // ─── Comissão Clube Greco por seller no mês ───
+      // 20% (ou pct individual) sobre mensalidades pagas DO MÊS REQUISITADO.
+      const pctClubePadrao = Number(storeData.settings?.comissaoPlanoPadraoPct ?? 20);
+      const normNomeBusca = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+      type ClubeBucket = { seller: string; assinantes: number; valorVendasRS: number; comissaoRS: number; pctSoma: number; pctCount: number };
+      const clubeBySeller = new Map<string, ClubeBucket>();
+      for (const c of assinaturaClientes) {
+        const seller = (c.seller || "").trim();
+        if (!seller) continue;
+        const pagouNoMes = c.payments.some(p => p.mes === mes && p.pago);
+        if (!pagouNoMes) continue;
+        const pct = Number(c.commissionPct ?? pctClubePadrao);
+        const valor = Number(c.planValue || 0);
+        const comissao = valor * (pct / 100);
+        const key = normNomeBusca(seller);
+        const b = clubeBySeller.get(key) || { seller, assinantes: 0, valorVendasRS: 0, comissaoRS: 0, pctSoma: 0, pctCount: 0 };
+        b.assinantes += 1;
+        b.valorVendasRS += valor;
+        b.comissaoRS += comissao;
+        b.pctSoma += pct;
+        b.pctCount += 1;
+        clubeBySeller.set(key, b);
+      }
+      // Matching seller → profissional por nome (substring tolerante)
+      const matchClubePorProfId = new Map<string, { assinantes: number; valorVendasRS: number; comissaoRS: number; pctEfetivo: number }>();
+      const sellersUsados = new Set<string>();
+      for (const id of ids) {
+        const profMes = periodo.porProfissional[id];
+        const meta = metas[id];
+        const nomeProf = profMes?.nome || meta?.nome || "";
+        if (!nomeProf) continue;
+        const n = normNomeBusca(nomeProf);
+        let match: ClubeBucket | undefined;
+        for (const [k, v] of clubeBySeller) {
+          if (sellersUsados.has(k)) continue;
+          if (n === k || n.includes(k) || k.includes(n)) { match = v; sellersUsados.add(k); break; }
+        }
+        if (match) {
+          matchClubePorProfId.set(id, {
+            assinantes: match.assinantes,
+            valorVendasRS: match.valorVendasRS,
+            comissaoRS: match.comissaoRS,
+            pctEfetivo: match.pctCount > 0 ? match.pctSoma / match.pctCount : pctClubePadrao,
+          });
+        }
+      }
+
       const linhas = await Promise.all(Array.from(ids).map(async (id) => {
         const profMes = periodo.porProfissional[id];
         const meta = metas[id];
         const pagto = pagamentosMes[id];
-        return calcularLinhaPagamento(mes, id, profMes, meta, pagto);
+        const clube = matchClubePorProfId.get(id);
+        return calcularLinhaPagamento(mes, id, profMes, meta, pagto, clube);
       }));
 
       // v32: classifica cada linha em barbeiro vs assistente, calcula ranking e
@@ -8665,15 +8718,34 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       // Ordena por nome
       linhas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
+      // Sellers do Clube Greco que NÃO bateram com nenhum profissional ativo —
+      // útil pra UI alertar "fulano vendeu mas não tem cadastro"
+      const clubeOrfaos: Array<{ seller: string; assinantes: number; valorVendasRS: number; comissaoRS: number }> = [];
+      for (const [k, v] of clubeBySeller) {
+        if (!sellersUsados.has(k)) clubeOrfaos.push({ seller: v.seller, assinantes: v.assinantes, valorVendasRS: v.valorVendasRS, comissaoRS: v.comissaoRS });
+      }
+
       // Totais
       const totais = linhas.reduce((acc, l) => ({
         totalBruto: acc.totalBruto + l.calculos.totalBruto,
+        totalComissaoServicos: acc.totalComissaoServicos + l.calculos.comissaoServicos,
+        totalComissaoProdutos: acc.totalComissaoProdutos + l.calculos.comissaoProdutos,
+        totalComissaoPlano: acc.totalComissaoPlano + l.calculos.comissaoPlano,
+        totalComissaoClubeGreco: acc.totalComissaoClubeGreco + l.calculos.comissaoClubeGreco,
+        totalBonusExcedente: acc.totalBonusExcedente + l.calculos.bonusExcedente,
+        totalBonusRanking: acc.totalBonusRanking + l.calculos.bonusRanking,
+        totalSalarioFixo: acc.totalSalarioFixo + l.calculos.salarioFixo,
         totalVale: acc.totalVale + l.pagamento.vale,
         totalAjuste: acc.totalAjuste + l.pagamento.ajuste,
         totalConsumoInterno: acc.totalConsumoInterno + l.pagamento.consumoInterno,
         totalTaxaCartao: acc.totalTaxaCartao + l.bases.taxaCartaoEstimada,
         totalSaldo: acc.totalSaldo + l.pagamento.saldoAReceber,
-      }), { totalBruto: 0, totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalTaxaCartao: 0, totalSaldo: 0 });
+      }), {
+        totalBruto: 0, totalComissaoServicos: 0, totalComissaoProdutos: 0,
+        totalComissaoPlano: 0, totalComissaoClubeGreco: 0,
+        totalBonusExcedente: 0, totalBonusRanking: 0, totalSalarioFixo: 0,
+        totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalTaxaCartao: 0, totalSaldo: 0,
+      });
 
       return res.json({
         ok: true,
@@ -8682,6 +8754,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         dataFim,
         linhas,
         totais,
+        clubeOrfaos, // sellers do Clube Greco sem match em profissional ativo
         // Faturamento bruto do período (todas as transações da Trinks no intervalo)
         // — útil pra comparar com o cálculo de comissões e detectar discrepâncias.
         faturamento: {

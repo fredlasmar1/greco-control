@@ -11,7 +11,7 @@ import { useLocation } from "wouter";
 import {
   Users, DollarSign, Search, Plus, Trash2, XCircle, CheckCircle,
   Crown, FileText, ExternalLink, Upload, AlertTriangle, Calendar, Clock,
-  Eye, X, Pencil, Banknote,
+  Eye, X, Pencil, Banknote, UserPlus,
 } from "lucide-react";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
@@ -119,6 +119,7 @@ export default function Assinaturas() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [showBulk, setShowBulk] = useState(false);
   const loadData = () => {
     setLoading(true);
     Promise.all([
@@ -170,6 +171,14 @@ export default function Assinaturas() {
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => setLocation("/consolidacao")} title="Ver extrato InfinitePay">
             <Banknote className="w-3.5 h-3.5 mr-1.5" /> Extrato InfinitePay
+          </Button>
+          <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => setShowBulk(true)} title="Atribuir vendedor a vários assinantes de uma vez">
+            <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Atribuir vendedor em lote
+            {(stats?.assinantesSemVendedor || 0) > 0 && (
+              <span className="ml-1.5 bg-amber-500/20 text-amber-400 text-[9px] px-1.5 py-0.5 rounded-full">
+                {stats?.assinantesSemVendedor}
+              </span>
+            )}
           </Button>
           <Button size="sm" className="bg-primary hover:bg-primary/80 text-white" onClick={() => { setEditingId(null); setShowForm(true); }}>
             <Plus className="w-4 h-4 mr-1.5" /> Novo Assinante
@@ -527,7 +536,170 @@ export default function Assinaturas() {
           onChanged={loadData}
         />
       )}
+
+      {/* Dialog: Atribuir vendedor em lote */}
+      <BulkVendedorDialog
+        open={showBulk}
+        clientes={clientes}
+        onClose={() => setShowBulk(false)}
+        onSaved={() => { setShowBulk(false); loadData(); }}
+      />
     </div>
+  );
+}
+
+// ─── Bulk Vendedor Dialog ──────────────────────────────────
+function BulkVendedorDialog({ open, clientes, onClose, onSaved }: {
+  open: boolean; clientes: Cliente[]; onClose: () => void; onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [seller, setSeller] = useState("");
+  const [pct, setPct] = useState("");
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"sem_vendedor" | "todos">("sem_vendedor");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setSeller(""); setPct(""); setSearch("");
+      setFilter("sem_vendedor");
+      setSelected(new Set());
+    }
+  }, [open]);
+
+  const lista = useMemo(() => {
+    let l = clientes;
+    if (filter === "sem_vendedor") l = l.filter(c => !c.seller || !c.seller.trim());
+    if (search) {
+      const q = search.toLowerCase();
+      l = l.filter(c => c.name.toLowerCase().includes(q) || (c.plan || "").toLowerCase().includes(q));
+    }
+    return l;
+  }, [clientes, filter, search]);
+
+  const toggleOne = (id: string) => {
+    setSelected(prev => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id); else s.add(id);
+      return s;
+    });
+  };
+  const toggleAll = () => {
+    if (selected.size === lista.length) setSelected(new Set());
+    else setSelected(new Set(lista.map(c => c.id)));
+  };
+
+  const aplicar = async () => {
+    if (!seller.trim()) { toast({ title: "Informe o vendedor", variant: "destructive" }); return; }
+    if (selected.size === 0) { toast({ title: "Selecione ao menos 1 assinante", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/assinaturas/clientes/bulk-vendedor`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ids: Array.from(selected),
+          seller: seller.trim(),
+          commissionPct: pct === "" ? undefined : Number(pct),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast({ title: `${data.atualizados} assinante(s) atualizado(s) com vendedor "${seller}"` });
+        onSaved();
+      } else {
+        toast({ title: data.error || "Erro", variant: "destructive" });
+      }
+    } catch { toast({ title: "Erro ao salvar", variant: "destructive" }); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="bg-card border-card-border max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserPlus className="w-4 h-4 text-primary" /> Atribuir vendedor em lote
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-1.5 md:col-span-2">
+              <Label className="text-xs">Vendedor (quem fechou)</Label>
+              <Input value={seller} onChange={e => setSeller(e.target.value)} placeholder="Ex: CAMILA BARBOSA" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">% Comissão (vazio = padrão 20%)</Label>
+              <Input type="number" step="0.5" min="0" max="100" value={pct} onChange={e => setPct(e.target.value)} placeholder="20" />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 bg-muted/30 rounded-md p-1">
+              <button onClick={() => setFilter("sem_vendedor")} className={`text-[11px] px-2.5 py-1 rounded ${filter === "sem_vendedor" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground"}`}>
+                Sem vendedor ({clientes.filter(c => !c.seller || !c.seller.trim()).length})
+              </button>
+              <button onClick={() => setFilter("todos")} className={`text-[11px] px-2.5 py-1 rounded ${filter === "todos" ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground"}`}>
+                Todos ({clientes.length})
+              </button>
+            </div>
+            <div className="relative flex-1 min-w-[150px]">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input placeholder="Buscar nome ou plano..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8 h-8 text-xs" />
+            </div>
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={toggleAll}>
+              {selected.size === lista.length && lista.length > 0 ? "Limpar seleção" : `Selecionar todos (${lista.length})`}
+            </Button>
+          </div>
+
+          <div className="border border-border rounded-md max-h-[40vh] overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-card border-b border-border">
+                <tr>
+                  <th className="w-8 p-2"></th>
+                  <th className="text-left p-2 text-muted-foreground font-medium">Assinante</th>
+                  <th className="text-left p-2 text-muted-foreground font-medium hidden md:table-cell">Plano</th>
+                  <th className="text-right p-2 text-muted-foreground font-medium">Valor</th>
+                  <th className="text-left p-2 text-muted-foreground font-medium">Vendedor atual</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lista.length === 0 ? (
+                  <tr><td colSpan={5} className="text-center py-6 text-muted-foreground">Nenhum assinante.</td></tr>
+                ) : lista.map(c => {
+                  const sel = selected.has(c.id);
+                  return (
+                    <tr key={c.id} onClick={() => toggleOne(c.id)} className={`border-b border-border/30 cursor-pointer hover:bg-muted/30 ${sel ? "bg-primary/10" : ""}`}>
+                      <td className="p-2"><input type="checkbox" checked={sel} onChange={() => toggleOne(c.id)} onClick={e => e.stopPropagation()} /></td>
+                      <td className="p-2 font-medium">{c.name}</td>
+                      <td className="p-2 text-muted-foreground hidden md:table-cell truncate max-w-[200px]" title={c.plan}>{c.plan}</td>
+                      <td className="p-2 text-right tabular-nums">{formatCurrency(c.planValue)}</td>
+                      <td className="p-2">
+                        {c.seller ? <span className="text-foreground">{c.seller}</span> : <span className="text-amber-400">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <div className="text-xs text-muted-foreground">
+              <strong className="text-foreground">{selected.size}</strong> selecionado(s) · vendedor: <strong className="text-foreground">{seller || "—"}</strong> · {pct || "20"}%
+            </div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={onClose}>Cancelar</Button>
+              <Button size="sm" className="bg-primary hover:bg-primary/80 text-white" onClick={aplicar} disabled={saving || selected.size === 0 || !seller.trim()}>
+                {saving ? "Aplicando..." : `Aplicar a ${selected.size}`}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

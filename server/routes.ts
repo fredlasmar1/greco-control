@@ -7712,6 +7712,34 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     return res.json({ message: "Assinante excluído" });
   });
 
+  // PUT /api/assinaturas/clientes/bulk-vendedor — atribuir vendedor + % comissão em lote
+  app.put("/api/assinaturas/clientes/bulk-vendedor", (req: Request, res: Response) => {
+    const { ids, seller, commissionPct } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "ids precisa ser um array não vazio" });
+    }
+    if (seller === undefined || seller === null) {
+      return res.status(400).json({ error: "seller é obrigatório (use string vazia '' para remover)" });
+    }
+    const now = new Date().toISOString();
+    const sellerVal = String(seller).trim();
+    let atualizados = 0;
+    for (const id of ids) {
+      const c = assinaturaClientes.find(x => x.id === id);
+      if (!c) continue;
+      c.seller = sellerVal || undefined;
+      if (commissionPct !== undefined) {
+        c.commissionPct = (commissionPct === '' || commissionPct === null)
+          ? undefined
+          : Number(commissionPct);
+      }
+      c.updatedAt = now;
+      atualizados++;
+    }
+    if (atualizados > 0) saveAssinaturaClientes();
+    return res.json({ atualizados, total: ids.length });
+  });
+
   // PUT /api/assinaturas/clientes/:id/cancelar
   app.put("/api/assinaturas/clientes/:id/cancelar", (req: Request, res: Response) => {
     const id = req.params.id as string;

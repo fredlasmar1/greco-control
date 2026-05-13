@@ -4392,10 +4392,50 @@ export async function registerRoutes(
 
       const meta = await resolverFonte(mes);
 
-      // v35: CSV de AGENDAMENTOS (vindo do email Trinks via Apps Script) tem
-      // prioridade. Se estiver fresco (≤24h) e cobrir o mês, gera dados
-      // sintéticos a partir dele em <100ms — sem nenhum hit na API Trinks.
-      // Resolve o caso de mês corrente com 429 prolongado.
+      // v37: ORDEM DE PRIORIDADE corrigida
+      // 1. CSV FINANCEIRO importado (mais preciso — tem PIX/cartão/dinheiro detalhado)
+      // 2. Snapshots persistidos do mês
+      // 3. CSV de agendamentos do email
+      // 4. API Trinks (fallback)
+      // Antes priorizava agendamentos sobre financeiro — invertido pra usar
+      // a fonte que tem detalhe de forma de pagamento.
+      try {
+        const finPayload: any = await kvGet(trinksImport.kvKeyFor("financeiro", mes));
+        if (finPayload?.rows && Array.isArray(finPayload.rows) && finPayload.rows.length > 0) {
+          // Constrói transacoes sintéticas a partir do CSV financeiro
+          const transSinteticas = finPayload.rows
+            .filter((r: any) => (r.data || "").startsWith(mes))
+            .map((r: any) => ({
+              id: `csvfin-${r.data}-${r.cliente || ""}-${r.valorReceber}`.replace(/\s+/g, "-"),
+              dataReferencia: r.data,
+              dataHora: r.data,
+              totalPagar: Number(r.valorReceber || r.valorPago || 0),
+              formasPagamentos: [{ nome: r.formaPagamento || r.tipoFormaPagamento || "outros", valor: Number(r.valorReceber || 0) }],
+              cliente: { nome: r.cliente || "" },
+            }));
+          if (transSinteticas.length > 0) {
+            return res.json({
+              fonte: "csv-financeiro",
+              trinksAt: meta.trinksAt,
+              csvAt: finPayload.geradoEm || meta.csvAt,
+              motivo: `CSV financeiro Trinks (${transSinteticas.length} transações no mês).`,
+              dados: {
+                estabelecimento: null,
+                profissionais: [],
+                servicos: [],
+                agendamentos: [],
+                transacoes: transSinteticas,
+                clientes: [],
+                syncedAt: finPayload.geradoEm || new Date().toISOString(),
+                mes,
+              },
+            });
+          }
+        }
+      } catch { /* segue cascata */ }
+
+      // 2. CSV de AGENDAMENTOS (vindo do email Trinks via Apps Script) — fallback
+      // quando não tem CSV financeiro. Resolve o caso de mês corrente com 429.
       const csvAgendamentos = await getAgendamentosCsvFreshOrNull(24);
       if (csvAgendamentos && csvAgendamentos.length > 0) {
         // Filtra agendamentos do mês

@@ -2054,13 +2054,43 @@ export async function registerRoutes(
             else if (bucket === "voucher") voucher += v;
             else outros += v;
           }
+          // v37.1: ENRIQUECE com agendamentos do CSV email pra ter profissionalId
+          // (CSV financeiro tem só data+cliente+valor, sem profissional).
+          // Cruza por data+cliente → permite ranking por profissional.
+          let agendamentosRaw: any[] = [];
+          let comissoesPorProf: Record<string, any> = {};
+          try {
+            const csv = await getAgendamentosCsvFreshOrNull(72);
+            if (csv) {
+              const agendDia = csv.filter(a => (a.dataHoraInicio || "").startsWith(data));
+              agendamentosRaw = agendDia;
+              // Agrega por profissional usando agendamentos finalizados/confirmados
+              for (const a of agendDia) {
+                const status = (a.status?.nome || "").toLowerCase();
+                if (status.includes("cancel")) continue;
+                const profNome = a.profissional?.nome || "?";
+                const profId = a.profissional?.id || "?";
+                if (!comissoesPorProf[profId]) {
+                  comissoesPorProf[profId] = {
+                    nome: profNome, servicosLiquido: 0, produtosLiquido: 0,
+                    planoReais: 0, qtdAtendimentos: 0,
+                  };
+                }
+                comissoesPorProf[profId].servicosLiquido += (a.valor || 0);
+                comissoesPorProf[profId].qtdAtendimentos += 1;
+              }
+            }
+          } catch { /* sem enriquecimento, segue */ }
+
           const snap: SnapshotDia = {
             data, fonte: "csv-financeiro",
             capturadoEm: new Date().toISOString(),
             faturamento: { total, pix, cartao, dinheiro, plano, voucher, outros, qtdTransacoes: rowsDia.length },
-            agendamentos: { finalizados: rowsDia.length, confirmados: 0, cancelados: 0, noShow: 0 },
+            agendamentos: { finalizados: rowsDia.length, confirmados: agendamentosRaw.length, cancelados: 0, noShow: 0 },
             transacoesRaw: rowsDia,
-            avisos: [`Fonte: trinks_import:financeiro:${mesData} (${finPayload.rows.length} rows no mês, ${rowsDia.length} nesta data)`],
+            agendamentosRaw,
+            comissoesPorProf: Object.keys(comissoesPorProf).length > 0 ? comissoesPorProf : undefined,
+            avisos: [`Fonte: trinks_import:financeiro:${mesData} (${finPayload.rows.length} rows no mês, ${rowsDia.length} nesta data); agendamentos enriquecidos: ${agendamentosRaw.length}`],
           };
           await saveSnapshot(snap);
           return snap;

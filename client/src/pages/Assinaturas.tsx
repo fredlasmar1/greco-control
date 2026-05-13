@@ -53,6 +53,21 @@ interface Cliente {
   paymentStatus: string;
   notes?: string;
   createdAt: string;
+  seller?: string;
+  commissionPct?: number;
+  commissionPctEfetivo?: number;
+  commissionPctFonte?: 'cliente' | 'global';
+  comissaoMensalRS?: number;
+  comissaoAcumuladaRS?: number;
+  mesesPagos?: number;
+}
+interface RankingComissao {
+  seller: string;
+  assinantes: number;
+  mesesPagos: number;
+  comissaoAcumuladaRS: number;
+  comissaoMesAtualRS: number;
+  receitaMensalRS: number;
 }
 interface DashboardStats {
   totalAssinantes: number;
@@ -62,6 +77,11 @@ interface DashboardStats {
   monthlyRevenue: number;
   planDistribution: { name: string; count: number }[];
   vencendoEmBreve: number;
+  pctPlanoPadrao?: number;
+  rankingComissoes?: RankingComissao[];
+  totalComissaoMesAtual?: number;
+  totalComissaoAcumulada?: number;
+  assinantesSemVendedor?: number;
 }
 
 // Gera lista de meses do contrato
@@ -190,6 +210,75 @@ export default function Assinaturas() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Comissões de Assinaturas — quem vendeu ganha % sobre cada mensalidade paga */}
+      {(() => {
+        const ranking = stats?.rankingComissoes || [];
+        const pctPadrao = stats?.pctPlanoPadrao ?? 20;
+        const totalMes = stats?.totalComissaoMesAtual || 0;
+        const totalAcum = stats?.totalComissaoAcumulada || 0;
+        const semVendedor = stats?.assinantesSemVendedor || 0;
+        if (ranking.length === 0 && semVendedor === 0) return null;
+        return (
+          <Card className="bg-card border-card-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-emerald-400" />
+                  Comissões de Assinaturas <span className="text-[10px] text-muted-foreground font-normal">({pctPadrao}% padrão por mensalidade paga)</span>
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-emerald-400">
+                    Mês atual: <strong>{formatCurrency(totalMes)}</strong>
+                  </span>
+                  <span className="text-muted-foreground">
+                    Acumulado: <strong>{formatCurrency(totalAcum)}</strong>
+                  </span>
+                  {semVendedor > 0 && (
+                    <span className="text-amber-400" title="Assinantes sem vendedor cadastrado">
+                      <AlertTriangle className="w-3 h-3 inline mr-1" />{semVendedor} sem vendedor
+                    </span>
+                  )}
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {ranking.length === 0 ? (
+                <div className="text-xs text-muted-foreground text-center py-4">
+                  Nenhum vendedor cadastrado ainda. Edite os assinantes e informe quem vendeu para começar a contabilizar a comissão.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs text-muted-foreground">
+                        <th className="text-left py-2 px-2 font-medium">Vendedor</th>
+                        <th className="text-right py-2 px-2 font-medium">Assinantes</th>
+                        <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Receita ativa/mês</th>
+                        <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Meses pagos</th>
+                        <th className="text-right py-2 px-2 font-medium">Comissão mês atual</th>
+                        <th className="text-right py-2 px-2 font-medium">Comissão acumulada</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ranking.map(r => (
+                        <tr key={r.seller} className="border-b border-border/50">
+                          <td className="py-2 px-2 font-medium">{r.seller}</td>
+                          <td className="py-2 px-2 text-right tabular-nums">{r.assinantes}</td>
+                          <td className="py-2 px-2 text-right tabular-nums text-muted-foreground hidden md:table-cell">{formatCurrency(r.receitaMensalRS)}</td>
+                          <td className="py-2 px-2 text-right tabular-nums text-muted-foreground hidden md:table-cell">{r.mesesPagos}</td>
+                          <td className="py-2 px-2 text-right tabular-nums text-emerald-400 font-semibold">{formatCurrency(r.comissaoMesAtualRS)}</td>
+                          <td className="py-2 px-2 text-right tabular-nums font-semibold">{formatCurrency(r.comissaoAcumuladaRS)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Vencimento de contratos — atenção pra renovação */}
       {(() => {
@@ -322,6 +411,8 @@ export default function Assinaturas() {
                   <th className="text-left p-3 text-muted-foreground font-medium">Assinante</th>
                   <th className="text-left p-3 text-muted-foreground font-medium">Plano</th>
                   <th className="text-right p-3 text-muted-foreground font-medium">Valor</th>
+                  <th className="text-left p-3 text-muted-foreground font-medium">Vendedor</th>
+                  <th className="text-right p-3 text-muted-foreground font-medium">Comissão</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Contrato</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Vencimento</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Dia Pgto</th>
@@ -331,9 +422,9 @@ export default function Assinaturas() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={8} className="py-12 text-center text-muted-foreground">Carregando...</td></tr>
+                  <tr><td colSpan={10} className="py-12 text-center text-muted-foreground">Carregando...</td></tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan={8} className="py-12 text-center text-muted-foreground">
+                  <tr><td colSpan={10} className="py-12 text-center text-muted-foreground">
                     {clientes.length === 0 ? "Nenhum assinante cadastrado. Clique em 'Novo Assinante' para começar." : "Nenhum resultado encontrado."}
                   </td></tr>
                 ) : (
@@ -351,6 +442,19 @@ export default function Assinaturas() {
                           <p className="max-w-[200px] truncate" title={c.plan}>{c.plan || "—"}</p>
                         </td>
                         <td className="p-3 text-right font-semibold">{formatCurrency(c.planValue)}</td>
+                        <td className="p-3">
+                          {c.seller ? (
+                            <span className="text-xs">{c.seller}</span>
+                          ) : (
+                            <span className="text-[10px] text-amber-400">não informado</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="text-xs font-semibold text-emerald-400 tabular-nums">{formatCurrency(c.comissaoAcumuladaRS || 0)}</div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {formatCurrency(c.comissaoMensalRS || 0)}/mês • {c.commissionPctEfetivo ?? 20}%
+                          </div>
+                        </td>
                         <td className="p-3 text-center">
                           <div className="text-[10px] text-muted-foreground">
                             {formatDateBR(c.contractDate)} → {formatDateBR(c.contractEndDate)}
@@ -437,6 +541,7 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
     name: "", phone: "", email: "", plan: "", planValue: "",
     contractDate: new Date().toISOString().split("T")[0],
     contractDurationMonths: "12", paymentDay: "10", contractUrl: "", notes: "",
+    seller: "", commissionPct: "",
   });
 
   useEffect(() => {
@@ -449,6 +554,8 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
           contractDurationMonths: c.contractDurationMonths?.toString() || "12",
           paymentDay: c.paymentDay?.toString() || "10",
           contractUrl: c.contractUrl || "", notes: c.notes || "",
+          seller: c.seller || "",
+          commissionPct: c.commissionPct != null ? String(c.commissionPct) : "",
         });
       });
     } else if (open) {
@@ -456,6 +563,7 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
         name: "", phone: "", email: "", plan: "", planValue: "",
         contractDate: new Date().toISOString().split("T")[0],
         contractDurationMonths: "12", paymentDay: "10", contractUrl: "", notes: "",
+        seller: "", commissionPct: "",
       });
     }
   }, [open, editId]);
@@ -519,6 +627,21 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
             <Label className="text-xs">Valor mensal (R$) *</Label>
             <Input type="number" step="0.01" value={form.planValue} onChange={e => setForm({ ...form, planValue: e.target.value })} placeholder="120,00" />
           </div>
+
+          {/* Vendedor + Comissão */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-1.5 md:col-span-2">
+              <Label className="text-xs">Vendedor (quem fechou a venda)</Label>
+              <Input value={form.seller} onChange={e => setForm({ ...form, seller: e.target.value })} placeholder="Ex: Camila, Larissa, Guilherme..." />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">% Comissão</Label>
+              <Input type="number" step="0.5" min="0" max="100" value={form.commissionPct} onChange={e => setForm({ ...form, commissionPct: e.target.value })} placeholder="20" />
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground -mt-2">
+            Vendedor ganha {form.commissionPct || "20"}% sobre cada mensalidade paga. Deixe em branco para usar o padrão (20%).
+          </p>
 
           <div className="border-t border-border pt-3" />
 
@@ -629,6 +752,16 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
             <div><span className="text-muted-foreground">Duração:</span> {client.contractDurationMonths} meses</div>
             <div><span className="text-muted-foreground">Dia pgto:</span> Todo dia {client.paymentDay}</div>
             {client.phone && <div><span className="text-muted-foreground">Tel:</span> {client.phone}</div>}
+            <div className="col-span-2 mt-1 p-2 rounded bg-emerald-500/5 border border-emerald-500/20">
+              <span className="text-muted-foreground">Vendedor:</span>{" "}
+              <span className="font-medium">{client.seller || <span className="text-amber-400">não informado</span>}</span>
+              <span className="text-muted-foreground"> • {client.commissionPctEfetivo ?? 20}% por mensalidade paga</span>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                Comissão por mês: <span className="text-emerald-400 font-semibold">{formatCurrency(client.comissaoMensalRS || 0)}</span>
+                {" • "}Acumulada: <span className="text-emerald-400 font-semibold">{formatCurrency(client.comissaoAcumuladaRS || 0)}</span>
+                {" "}({client.mesesPagos || 0} {(client.mesesPagos || 0) === 1 ? "mês pago" : "meses pagos"})
+              </div>
+            </div>
           </div>
 
           {/* Contrato */}

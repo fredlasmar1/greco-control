@@ -348,6 +348,9 @@ interface AssinaturaCliente {
   // Status
   status: 'active' | 'cancelled' | 'expired';
   notes?: string;
+  // Vendedor & comissão (20% padrão sobre cada mensalidade paga)
+  seller?: string;
+  commissionPct?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -7590,10 +7593,22 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
 
   // GET /api/assinaturas/clientes — lista com status de pagamento calculado
   app.get("/api/assinaturas/clientes", (_req: Request, res: Response) => {
-    const enriched = assinaturaClientes.map(c => ({
-      ...c,
-      paymentStatus: getPaymentStatus(c),
-    }));
+    const pctPadrao = Number(storeData.settings?.comissaoPlanoPadraoPct ?? 20);
+    const enriched = assinaturaClientes.map(c => {
+      const pct = Number(c.commissionPct ?? pctPadrao);
+      const pagos = c.payments.filter(p => p.pago).length;
+      const comissaoMensal = (c.planValue || 0) * (pct / 100);
+      const comissaoAcumulada = comissaoMensal * pagos;
+      return {
+        ...c,
+        paymentStatus: getPaymentStatus(c),
+        commissionPctEfetivo: pct,
+        commissionPctFonte: c.commissionPct != null ? 'cliente' : 'global',
+        comissaoMensalRS: comissaoMensal,
+        comissaoAcumuladaRS: comissaoAcumulada,
+        mesesPagos: pagos,
+      };
+    });
     return res.json(enriched.sort((a, b) => a.name.localeCompare(b.name)));
   });
 
@@ -7602,12 +7617,24 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const id = req.params.id as string;
     const c = assinaturaClientes.find(c => c.id === id);
     if (!c) return res.status(404).json({ error: "Cliente não encontrado" });
-    return res.json({ ...c, paymentStatus: getPaymentStatus(c) });
+    const pctPadrao = Number(storeData.settings?.comissaoPlanoPadraoPct ?? 20);
+    const pct = Number(c.commissionPct ?? pctPadrao);
+    const pagos = c.payments.filter(p => p.pago).length;
+    const comissaoMensal = (c.planValue || 0) * (pct / 100);
+    return res.json({
+      ...c,
+      paymentStatus: getPaymentStatus(c),
+      commissionPctEfetivo: pct,
+      commissionPctFonte: c.commissionPct != null ? 'cliente' : 'global',
+      comissaoMensalRS: comissaoMensal,
+      comissaoAcumuladaRS: comissaoMensal * pagos,
+      mesesPagos: pagos,
+    });
   });
 
   // POST /api/assinaturas/clientes — cadastrar novo assinante
   app.post("/api/assinaturas/clientes", (req: Request, res: Response) => {
-    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes } = req.body;
+    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes, seller, commissionPct } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: "Nome é obrigatório" });
     if (!plan) return res.status(400).json({ error: "Plano é obrigatório" });
     if (!planValue) return res.status(400).json({ error: "Valor é obrigatório" });
@@ -7635,6 +7662,8 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       payments: [],
       status: "active",
       notes: notes || undefined,
+      seller: seller ? String(seller).trim() : undefined,
+      commissionPct: commissionPct != null && commissionPct !== '' ? Number(commissionPct) : undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -7649,7 +7678,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const idx = assinaturaClientes.findIndex(c => c.id === id);
     if (idx < 0) return res.status(404).json({ error: "Cliente não encontrado" });
     const c = assinaturaClientes[idx];
-    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes, status } = req.body;
+    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes, status, seller, commissionPct } = req.body;
     if (name !== undefined) c.name = String(name).trim();
     if (phone !== undefined) c.phone = phone || undefined;
     if (email !== undefined) c.email = email || undefined;
@@ -7666,6 +7695,8 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     if (contractUrl !== undefined) c.contractUrl = contractUrl || undefined;
     if (notes !== undefined) c.notes = notes || undefined;
     if (status !== undefined) c.status = status as any;
+    if (seller !== undefined) c.seller = seller ? String(seller).trim() : undefined;
+    if (commissionPct !== undefined) c.commissionPct = commissionPct === '' || commissionPct === null ? undefined : Number(commissionPct);
     c.updatedAt = new Date().toISOString();
     saveAssinaturaClientes();
     return res.json({ message: "Assinante atualizado" });
@@ -7804,6 +7835,46 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const end = new Date(c.contractEndDate);
       return end >= now && end <= in30;
     });
+
+    // ─── Comissões por vendedor ───
+    // 20% (configurável por cliente, default em settings.comissaoPlanoPadraoPct)
+    // sobre cada mensalidade efetivamente paga.
+    const pctPadrao = Number(storeData.settings?.comissaoPlanoPadraoPct ?? 20);
+    const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    type CommBucket = {
+      seller: string;
+      assinantes: number;
+      mesesPagos: number;
+      comissaoAcumuladaRS: number;
+      comissaoMesAtualRS: number;
+      receitaMensalRS: number;
+    };
+    const byVendedor = new Map<string, CommBucket>();
+    for (const c of assinaturaClientes) {
+      const seller = (c.seller || "").trim();
+      if (!seller) continue;
+      const pct = Number(c.commissionPct ?? pctPadrao);
+      const comissaoMensal = (c.planValue || 0) * (pct / 100);
+      const pagos = c.payments.filter(p => p.pago).length;
+      const pagouMesAtual = c.payments.some(p => p.mes === mesAtual && p.pago);
+      const key = seller.toLowerCase();
+      const b = byVendedor.get(key) || {
+        seller, assinantes: 0, mesesPagos: 0,
+        comissaoAcumuladaRS: 0, comissaoMesAtualRS: 0, receitaMensalRS: 0,
+      };
+      b.assinantes += 1;
+      b.mesesPagos += pagos;
+      b.comissaoAcumuladaRS += comissaoMensal * pagos;
+      if (pagouMesAtual) b.comissaoMesAtualRS += comissaoMensal;
+      if (c.status === 'active') b.receitaMensalRS += (c.planValue || 0);
+      byVendedor.set(key, b);
+    }
+    const rankingComissoes = Array.from(byVendedor.values())
+      .sort((a, b) => b.comissaoAcumuladaRS - a.comissaoAcumuladaRS);
+    const totalComissaoMesAtual = rankingComissoes.reduce((s, r) => s + r.comissaoMesAtualRS, 0);
+    const totalComissaoAcumulada = rankingComissoes.reduce((s, r) => s + r.comissaoAcumuladaRS, 0);
+    const semVendedor = assinaturaClientes.filter(c => !c.seller || !c.seller.trim()).length;
+
     return res.json({
       totalAssinantes: assinaturaClientes.length,
       ativos: active.length,
@@ -7812,6 +7883,12 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       monthlyRevenue,
       planDistribution,
       vencendoEmBreve: vencendoEmBreve.length,
+      // novos
+      pctPlanoPadrao: pctPadrao,
+      rankingComissoes,
+      totalComissaoMesAtual,
+      totalComissaoAcumulada,
+      assinantesSemVendedor: semVendedor,
     });
   });
 

@@ -47,32 +47,12 @@ export function useTrinksMonth(selectedMes: string): UseTrinksMonthResult {
   const [trinksAt, setTrinksAt] = useState<string | null>(null);
   const [csvAt, setCsvAt] = useState<string | null>(null);
 
-  // Mês corrente: pega meta da fonte (badge) sem rebaixar performance.
+  // v37: SEMPRE busca o pacote completo via resolutor. Antes só fazia pra meses
+  // passados — pro mês corrente dependia 100% da useTrinksStore que fica vazia
+  // quando API Trinks está em 429. Agora o resolutor (que tenta snapshot →
+  // csv-financeiro → csv-agendamentos → trinks) é fonte secundária garantida.
   useEffect(() => {
     let canceled = false;
-    if (!isMesCorrente) return;
-    fetch(`${API_BASE}/api/mes/${selectedMes}/fonte`)
-      .then((r) => r.json())
-      .then((m) => {
-        if (canceled || !m) return;
-        const f = m.fonte;
-        setFonte(f === "csv" || f === "trinks" || f === "nenhuma" ? f : "atual");
-        setTrinksAt(m.trinksAt || null);
-        setCsvAt(m.csvAt || null);
-      })
-      .catch(() => {});
-    return () => { canceled = true; };
-  }, [selectedMes, isMesCorrente]);
-
-  // Mês não-corrente: busca o pacote completo + meta da fonte via resolutor.
-  useEffect(() => {
-    let canceled = false;
-    if (isMesCorrente) {
-      setTrinksMes(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
     setLoading(true);
     setError(null);
     fetch(`${API_BASE}/api/mes/${selectedMes}/dados`)
@@ -102,10 +82,16 @@ export function useTrinksMonth(selectedMes: string): UseTrinksMonthResult {
     return () => { canceled = true; };
   }, [selectedMes, isMesCorrente]);
 
-  const trinks = isMesCorrente ? trinksAtual : trinksMes;
-  const hasTrinksData = isMesCorrente
-    ? (isConnected && trinksAtual !== null)
-    : (trinksMes !== null && Array.isArray(trinksMes?.transacoes));
+  // v37: pra mês corrente prefere store (live) quando tem dado, senão usa
+  // resolutor (snapshot/CSV). Pra meses passados, usa só o resolutor.
+  const storeTemDado = isMesCorrente && trinksAtual && Array.isArray((trinksAtual as any)?.transacoes) && ((trinksAtual as any).transacoes.length > 0);
+  const trinks = isMesCorrente
+    ? (storeTemDado ? trinksAtual : trinksMes)
+    : trinksMes;
+  const hasTrinksData = !!trinks && (
+    (Array.isArray((trinks as any)?.transacoes) && (trinks as any).transacoes.length > 0) ||
+    (Array.isArray((trinks as any)?.agendamentos) && (trinks as any).agendamentos.length > 0)
+  );
 
   return {
     trinks,

@@ -359,6 +359,35 @@ export default function VendasProdutos() {
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-card-border bg-muted/40 font-semibold">
+                    <td className="py-2.5 px-2" colSpan={3}>
+                      TOTAL — {produtosOrdenados.length} produtos
+                    </td>
+                    <td className="py-2.5 px-2 text-right tabular-nums">
+                      {produtosOrdenados.reduce((s, p) => s + p.unidades, 0)}
+                    </td>
+                    <td className="py-2.5 px-2"></td>
+                    <td className="py-2.5 px-2"></td>
+                    <td className="py-2.5 px-2 text-right tabular-nums text-emerald-400">
+                      R$ {fmtBRL(produtosOrdenados.reduce((s, p) => s + p.receita, 0))}
+                    </td>
+                    <td className="py-2.5 px-2 text-right tabular-nums text-muted-foreground">
+                      R$ {fmtBRL(produtosOrdenados.reduce((s, p) => s + p.custoTotal, 0))}
+                    </td>
+                    <td className="py-2.5 px-2 text-right tabular-nums text-emerald-400">
+                      R$ {fmtBRL(produtosOrdenados.reduce((s, p) => s + p.margemRS, 0))}
+                    </td>
+                    <td className="py-2.5 px-2 text-right tabular-nums">
+                      {(() => {
+                        const rec = produtosOrdenados.reduce((s, p) => s + p.receita, 0);
+                        const mar = produtosOrdenados.reduce((s, p) => s + p.margemRS, 0);
+                        return rec > 0 ? `${((mar / rec) * 100).toFixed(1)}%` : "—";
+                      })()}
+                    </td>
+                    <td className="py-2.5 px-2"></td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}

@@ -9134,7 +9134,9 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         v.comandas.forEach(c => cur.comandas.add(c));
         consolidadoPorNome.set(key, cur);
       }
-      const vendedoresArr = Array.from(consolidadoPorNome.values()).map(v => {
+      // v38.1: separa ranking de ativos vs histórico (ex-funcionários).
+      // Não-ativos NÃO disputam pódio com os atuais — apresentado separado.
+      const todosVendedores = Array.from(consolidadoPorNome.values()).map(v => {
         const margemRS = v.receita - v.custoTotal;
         const margemPct = v.receita > 0 ? (margemRS / v.receita) * 100 : 0;
         return {
@@ -9149,8 +9151,11 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           produtosDistintos: v.produtosDistintos.size,
           comandas: v.comandas.size,
           ticketMedio: v.comandas.size > 0 ? v.receita / v.comandas.size : 0,
+          historico: /ex.?func|hist[oó]rico|sem identif|profissional \d+/i.test(v.nome),
         };
       }).sort((a, b) => b.receita - a.receita);
+      const vendedoresArr = todosVendedores.filter(v => !v.historico);
+      const vendedoresHistorico = todosVendedores.filter(v => v.historico);
 
       const totalMargemRS = totalReceita - totalCusto;
       const totalMargemPct = totalReceita > 0 ? (totalMargemRS / totalReceita) * 100 : 0;
@@ -9173,6 +9178,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         },
         produtos: produtosArr,
         ranking: vendedoresArr,
+        rankingHistorico: vendedoresHistorico, // v38.1: ex-funcionários separados
         atualizadoEm: new Date().toISOString(),
       };
       setCache(ck, resp, 5 * 60 * 1000);

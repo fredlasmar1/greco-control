@@ -73,6 +73,7 @@ type RespVendas = {
   };
   produtos: Produto[];
   ranking: Vendedor[];
+  rankingHistorico?: Vendedor[]; // v38.1: ex-funcionários separados
   atualizadoEm: string;
 };
 
@@ -237,6 +238,30 @@ export default function VendasProdutos() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* v38.1: Bloco de ex-funcionários — fora do ranking principal */}
+          {data?.rankingHistorico && data.rankingHistorico.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-card-border/50">
+              <p className="text-[11px] uppercase text-muted-foreground mb-2 flex items-center gap-2">
+                📜 Vendas históricas (ex-funcionários) — fora do ranking
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <tbody>
+                    {data.rankingHistorico.map((v) => (
+                      <tr key={v.id} className="border-b last:border-0 text-muted-foreground">
+                        <td className="py-1.5 px-2 font-medium">{v.nome}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums">{v.comandas} comandas</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums">{v.unidades} un.</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums">R$ {fmtBRL(v.receita)}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums">{v.margemPct.toFixed(1)}% margem</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </CardContent>

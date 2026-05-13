@@ -2083,11 +2083,54 @@ export async function registerRoutes(
       }
     }
 
-    // ─── Tentativa 2 (NOVA, mais precisa): CSV financeiro importado manual ───
-    // Esse CSV vem do export do portal Trinks (Relatórios > Financeiro) e tem
-    // o detalhe exato por transação: data, cliente, valorReceber, formaPagamento.
-    // Quando existe, é a fonte mais precisa fora da API.
     const mesData = data.slice(0, 7);
+
+    // ─── Tentativa 2 (v39, MAIS PRECISA): CSV CAIXA por comanda ───
+    // Tem breakdown completo de forma de pagamento (crédito/débito/dinheiro/
+    // pré-pago) + serviço vs produto separados — fonte ideal pra fechar dia.
+    try {
+      const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", mesData));
+      if (caixaPayload?.rows && Array.isArray(caixaPayload.rows)) {
+        const rowsDia = caixaPayload.rows.filter((r: any) => (r.data || "").startsWith(data));
+        if (rowsDia.length > 0) {
+          let total = 0, cartao = 0, dinheiro = 0, plano = 0, outros = 0;
+          for (const r of rowsDia) {
+            total += Number(r.totalGeral || 0);
+            cartao += Number(r.totalCredito || 0) + Number(r.totalDebito || 0);
+            dinheiro += Number(r.totalDinheiro || 0);
+            plano += Number(r.totalPrePago || 0);
+            outros += Number(r.totalOutros || 0);
+          }
+          const snap: SnapshotDia = {
+            data, fonte: "csv-financeiro", // mantém compat de UI
+            capturadoEm: new Date().toISOString(),
+            faturamento: {
+              total, pix: 0, cartao, dinheiro, plano, voucher: 0, outros,
+              qtdTransacoes: rowsDia.length,
+            },
+            agendamentos: { finalizados: rowsDia.length, confirmados: 0, cancelados: 0, noShow: 0 },
+            transacoesRaw: rowsDia.map((r: any) => ({
+              dataHora: r.data, cliente: { id: r.clienteId, nome: r.clienteNome },
+              totalPagar: r.totalGeral,
+              formasPagamentos: [
+                ...(r.totalCredito > 0 ? [{ nome: "Cartão de Crédito", valor: r.totalCredito }] : []),
+                ...(r.totalDebito > 0 ? [{ nome: "Cartão de Débito", valor: r.totalDebito }] : []),
+                ...(r.totalDinheiro > 0 ? [{ nome: "Dinheiro", valor: r.totalDinheiro }] : []),
+                ...(r.totalPrePago > 0 ? [{ nome: "Pré-Pago", valor: r.totalPrePago }] : []),
+                ...(r.totalOutros > 0 ? [{ nome: "Outros", valor: r.totalOutros }] : []),
+              ],
+            })),
+            avisos: [`Fonte: trinks_import:caixa:${mesData} (${caixaPayload.rows.length} comandas no mês, ${rowsDia.length} nesta data)`],
+          };
+          await saveSnapshot(snap);
+          return snap;
+        }
+      }
+    } catch (err: any) {
+      avisos.push(`csv-caixa falhou: ${err?.message || err}`);
+    }
+
+    // ─── Tentativa 3 (CSV financeiro formato antigo) ───
     try {
       const finPayload: any = await kvGet(trinksImport.kvKeyFor("financeiro", mesData));
       if (finPayload?.rows && Array.isArray(finPayload.rows) && finPayload.rows.length > 0) {
@@ -4584,13 +4627,58 @@ export async function registerRoutes(
 
       const meta = await resolverFonte(mes);
 
-      // v37: ORDEM DE PRIORIDADE corrigida
-      // 1. CSV FINANCEIRO importado (mais preciso — tem PIX/cartão/dinheiro detalhado)
-      // 2. Snapshots persistidos do mês
+      // v39: ORDEM DE PRIORIDADE
+      // 1. CSV CAIXA (relatório por comanda, breakdown PIX/cartão/dinheiro/pré-pago) — MAIS RICO
+      // 2. CSV FINANCEIRO (formato antigo, valor agregado por pagamento)
       // 3. CSV de agendamentos do email
       // 4. API Trinks (fallback)
-      // Antes priorizava agendamentos sobre financeiro — invertido pra usar
-      // a fonte que tem detalhe de forma de pagamento.
+      try {
+        const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+        if (caixaPayload?.rows && Array.isArray(caixaPayload.rows) && caixaPayload.rows.length > 0) {
+          // Constrói transações sintéticas pro mês a partir do CSV caixa
+          const transSinteticas = caixaPayload.rows
+            .filter((r: any) => (r.data || "").startsWith(mes))
+            .map((r: any) => {
+              const formas: any[] = [];
+              if (r.totalCredito > 0) formas.push({ nome: "Cartão de Crédito", valor: r.totalCredito });
+              if (r.totalDebito > 0) formas.push({ nome: "Cartão de Débito", valor: r.totalDebito });
+              if (r.totalDinheiro > 0) formas.push({ nome: "Dinheiro", valor: r.totalDinheiro });
+              if (r.totalPrePago > 0) formas.push({ nome: "Pré-Pago", valor: r.totalPrePago });
+              if (r.totalOutros > 0) formas.push({ nome: "Outros", valor: r.totalOutros });
+              return {
+                id: `csvcaixa-${r.data}-${r.clienteId || r.clienteNome}`.replace(/\s+/g, "-"),
+                dataReferencia: r.data,
+                dataHora: r.data,
+                totalPagar: r.totalGeral,
+                formasPagamentos: formas,
+                cliente: { id: r.clienteId, nome: r.clienteNome },
+                totalServico: r.totalServico,
+                totalProdutos: r.totalProdutos,
+                qtdServicos: r.qtdServico,
+                qtdProdutos: r.qtdProdutos,
+              };
+            });
+          if (transSinteticas.length > 0) {
+            return res.json({
+              fonte: "csv-caixa",
+              trinksAt: meta.trinksAt,
+              csvAt: caixaPayload.geradoEm || meta.csvAt,
+              motivo: `CSV Caixa Trinks (${transSinteticas.length} comandas no mês, breakdown completo de forma de pagamento).`,
+              dados: {
+                estabelecimento: null,
+                profissionais: [],
+                servicos: [],
+                agendamentos: [],
+                transacoes: transSinteticas,
+                clientes: [],
+                syncedAt: caixaPayload.geradoEm || new Date().toISOString(),
+                mes,
+              },
+            });
+          }
+        }
+      } catch { /* segue cascata */ }
+
       try {
         const finPayload: any = await kvGet(trinksImport.kvKeyFor("financeiro", mes));
         if (finPayload?.rows && Array.isArray(finPayload.rows) && finPayload.rows.length > 0) {

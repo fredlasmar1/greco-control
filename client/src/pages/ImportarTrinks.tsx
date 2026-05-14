@@ -28,11 +28,12 @@ import {
   Wallet,
   Users,
   RefreshCw,
+  Banknote,
 } from "lucide-react";
 
 // ─── Tipos espelhando o backend (server/trinksImport.ts) ─────────────────────
 
-type TipoImport = "financeiro" | "dre" | "ranking";
+type TipoImport = "financeiro" | "dre" | "ranking" | "caixa";
 
 interface ImportItem {
   chave: string;
@@ -67,12 +68,14 @@ const TIPO_LABELS: Record<TipoImport, string> = {
   financeiro: "Financeiro",
   dre: "DRE",
   ranking: "Ranking de Profissionais",
+  caixa: "Caixa (Pagamentos por Comanda)",
 };
 
 const TIPO_ICONS: Record<TipoImport, any> = {
   financeiro: Wallet,
   dre: TrendingUp,
   ranking: Users,
+  caixa: Banknote,
 };
 
 function mesLabel(mes: string): string {

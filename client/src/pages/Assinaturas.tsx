@@ -34,6 +34,10 @@ interface PagamentoMensal {
   pago: boolean;
   pagoEm?: string;
   valor: number;
+  formaPagamento?: 'dinheiro' | 'pix' | 'cartao' | 'infinitepay' | 'outro';
+  contaId?: string;
+  dataPagamento?: string;
+  transacaoBancoId?: string;
 }
 interface Cliente {
   id: string;
@@ -68,6 +72,13 @@ interface RankingComissao {
   comissaoAcumuladaRS: number;
   comissaoMesAtualRS: number;
   receitaMensalRS: number;
+}
+interface SugestaoExtrato {
+  clienteId: string;
+  clienteNome: string;
+  mes: string;
+  planValue: number;
+  transacao: { id: string; date: string; amount: number; description: string; contaId: string; contaNome: string };
 }
 interface DashboardStats {
   totalAssinantes: number;
@@ -120,18 +131,42 @@ export default function Assinaturas() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [showBulk, setShowBulk] = useState(false);
+  const [sugestoes, setSugestoes] = useState<SugestaoExtrato[]>([]);
+  const [aplicandoSugestoes, setAplicandoSugestoes] = useState(false);
   const loadData = () => {
     setLoading(true);
+    const mesAtual = new Date().toISOString().slice(0, 7);
     Promise.all([
       fetch(`${API_BASE}/api/assinaturas/clientes`).then(r => r.json()),
       fetch(`${API_BASE}/api/assinaturas/dashboard`).then(r => r.json()),
-    ]).then(([c, s]) => {
+      fetch(`${API_BASE}/api/assinaturas/sugestoes-extrato?mes=${mesAtual}`).then(r => r.json()),
+    ]).then(([c, s, sug]) => {
       setClientes(Array.isArray(c) ? c : []);
       setStats(s);
+      setSugestoes(sug?.sugestoes || []);
       setLoading(false);
     }).catch(() => setLoading(false));
   };
   useEffect(() => { loadData(); }, []);
+
+  const aplicarTodasSugestoes = async () => {
+    if (sugestoes.length === 0) return;
+    setAplicandoSugestoes(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/assinaturas/sugestoes-extrato/aplicar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          itens: sugestoes.map(s => ({ clienteId: s.clienteId, mes: s.mes, transacaoId: s.transacao.id })),
+        }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        toast({ title: `${d.aplicados} pagamento(s) vinculado(s) ao extrato` });
+        loadData();
+      }
+    } finally { setAplicandoSugestoes(false); }
+  };
 
   const filtered = useMemo(() => {
     let list = clientes;
@@ -389,6 +424,70 @@ export default function Assinaturas() {
           </Card>
         );
       })()}
+
+      {/* Sugestões: transações do extrato que provavelmente são assinaturas */}
+      {sugestoes.length > 0 && (
+        <Card className="border-emerald-500/40 bg-emerald-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Banknote className="w-4 h-4 text-emerald-400" />
+                Possíveis pagamentos no extrato
+                <span className="text-[10px] text-muted-foreground font-normal">
+                  ({sugestoes.length} {sugestoes.length === 1 ? "match" : "matches"} de valor + data no mês atual)
+                </span>
+              </div>
+              <Button
+                size="sm"
+                className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                onClick={aplicarTodasSugestoes}
+                disabled={aplicandoSugestoes}
+              >
+                <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
+                {aplicandoSugestoes ? "Aplicando..." : "Confirmar todos"}
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-[11px] text-muted-foreground">
+                    <th className="text-left py-1.5 px-2 font-medium">Assinante</th>
+                    <th className="text-left py-1.5 px-2 font-medium hidden md:table-cell">Conta</th>
+                    <th className="text-left py-1.5 px-2 font-medium">Data extrato</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Valor</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sugestoes.map(s => (
+                    <tr key={`${s.clienteId}-${s.mes}`} className="border-b border-border/30">
+                      <td className="py-1.5 px-2 font-medium">{s.clienteNome}</td>
+                      <td className="py-1.5 px-2 text-muted-foreground hidden md:table-cell">{s.transacao.contaNome}</td>
+                      <td className="py-1.5 px-2">{formatDateBR(s.transacao.date)}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums text-emerald-400 font-semibold">{formatCurrency(s.transacao.amount)}</td>
+                      <td className="py-1.5 px-2 text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-[10px]"
+                          onClick={() => setDetailId(s.clienteId)}
+                        >
+                          Revisar
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-2">
+              Cada linha é uma entrada no extrato com valor exato da mensalidade, em janela de ±10 dias do dia de pagamento. Clique em "Confirmar todos" pra marcar todas como pagas vinculadas ao extrato.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filtros + busca */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -866,19 +965,20 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
   const [client, setClient] = useState<Cliente | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [pagandoMes, setPagandoMes] = useState<string | null>(null);
 
   const load = () => {
     fetch(`${API_BASE}/api/assinaturas/clientes/${clientId}`).then(r => r.json()).then(setClient);
   };
   useEffect(() => { load(); }, [clientId]);
 
-  const togglePayment = async (mes: string, pago: boolean) => {
+  const desmarcarPagamento = async (mes: string) => {
     await fetch(`${API_BASE}/api/assinaturas/clientes/${clientId}/pagamento`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mes, pago }),
+      body: JSON.stringify({ mes, pago: false }),
     });
-    toast({ title: pago ? `${formatMonthBR(mes)} marcado como pago` : `${formatMonthBR(mes)} desmarcado` });
+    toast({ title: `${formatMonthBR(mes)} desmarcado` });
     load();
     onChanged();
   };
@@ -969,6 +1069,9 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
                 const pago = pg?.pago || false;
                 const passado = mes <= mesAtual;
                 const inadimplente = passado && !pago;
+                const formaLabel: Record<string, string> = {
+                  dinheiro: "Dinheiro", pix: "PIX", cartao: "Cartão", infinitepay: "InfinitePay", outro: "Outro",
+                };
                 return (
                   <div key={mes} className={`flex items-center justify-between p-2.5 rounded-lg border text-xs ${
                     pago
@@ -981,7 +1084,15 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
                       {pago ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : inadimplente ? <AlertTriangle className="w-4 h-4 text-red-400" /> : <Clock className="w-4 h-4 text-muted-foreground" />}
                       <div>
                         <div className="font-medium">{formatMonthBR(mes)}</div>
-                        {pago && pg?.pagoEm && <div className="text-[9px] text-muted-foreground">Pago {formatDateBR(pg.pagoEm.slice(0, 10))}</div>}
+                        {pago && pg?.dataPagamento && (
+                          <div className="text-[9px] text-muted-foreground">
+                            Pago {formatDateBR(pg.dataPagamento)}
+                            {pg.formaPagamento && ` • ${formaLabel[pg.formaPagamento] || pg.formaPagamento}`}
+                          </div>
+                        )}
+                        {pago && !pg?.dataPagamento && pg?.pagoEm && (
+                          <div className="text-[9px] text-muted-foreground">Pago {formatDateBR(pg.pagoEm.slice(0, 10))}</div>
+                        )}
                         {inadimplente && !pago && <div className="text-[9px] text-red-400 font-semibold">Atrasado</div>}
                       </div>
                     </div>
@@ -989,7 +1100,7 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
                       size="sm"
                       variant={pago ? "outline" : "default"}
                       className={`h-7 text-[10px] ${pago ? "text-muted-foreground" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
-                      onClick={() => togglePayment(mes, !pago)}
+                      onClick={() => pago ? desmarcarPagamento(mes) : setPagandoMes(mes)}
                     >
                       {pago ? "Desfazer" : "Marcar Pago"}
                     </Button>
@@ -998,6 +1109,16 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
               })}
             </div>
           </div>
+
+          {pagandoMes && (
+            <MarcarPagoDialog
+              clientId={clientId}
+              mes={pagandoMes}
+              valorSugerido={client.planValue}
+              onClose={() => setPagandoMes(null)}
+              onSaved={() => { setPagandoMes(null); load(); onChanged(); }}
+            />
+          )}
 
           {client.notes && (
             <div className="border-t border-border pt-3">
@@ -1018,6 +1139,182 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
             </a>
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Marcar Pago Dialog ────────────────────────────────────
+// Dois caminhos:
+//  1. "Registrar novo": forma + conta + valor → cria transação no fluxo de caixa
+//  2. "Vincular ao extrato": busca em transacoesBanco por valor±0,02 e data±10d,
+//     usuário escolhe a transação que corresponde — não duplica entrada.
+interface ContaConsolidacao { id: string; nome: string; tipo: string; ativa: boolean; }
+interface CandidataMatch { id: string; date: string; amount: number; description: string; contaId: string; contaNome: string; }
+
+function MarcarPagoDialog({ clientId, mes, valorSugerido, onClose, onSaved }: {
+  clientId: string;
+  mes: string;
+  valorSugerido: number;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [aba, setAba] = useState<"registrar" | "vincular">("registrar");
+  const [contas, setContas] = useState<ContaConsolidacao[]>([]);
+  const [candidatas, setCandidatas] = useState<CandidataMatch[]>([]);
+  const [carregandoMatch, setCarregandoMatch] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+
+  const [forma, setForma] = useState<'dinheiro' | 'pix' | 'cartao' | 'infinitepay' | 'outro'>("pix");
+  const [contaId, setContaId] = useState("");
+  const [valor, setValor] = useState(String(valorSugerido));
+  const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/consolidacao/contas`).then(r => r.json()).then((c: ContaConsolidacao[]) => {
+      const ativas = (c || []).filter(x => x.ativa);
+      setContas(ativas);
+      setContaId(prev => prev || (ativas[0]?.id ?? ""));
+    });
+  }, []);
+
+  useEffect(() => {
+    if (aba !== "vincular") return;
+    setCarregandoMatch(true);
+    fetch(`${API_BASE}/api/assinaturas/clientes/${clientId}/match-transacoes?mes=${mes}&janelaDias=10`)
+      .then(r => r.json())
+      .then(d => setCandidatas(d.candidatas || []))
+      .finally(() => setCarregandoMatch(false));
+  }, [aba, clientId, mes]);
+
+  const registrar = async () => {
+    if (!contaId) { toast({ title: "Selecione a conta destino", variant: "destructive" }); return; }
+    const v = Number(valor);
+    if (!Number.isFinite(v) || v <= 0) { toast({ title: "Valor inválido", variant: "destructive" }); return; }
+    setSalvando(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/assinaturas/clientes/${clientId}/pagamento`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mes, pago: true, formaPagamento: forma, contaId, valor: v, dataPagamento }),
+      });
+      if (res.ok) { toast({ title: `${formatMonthBR(mes)} pago — entrada criada no caixa` }); onSaved(); }
+      else { const e = await res.json(); toast({ title: e.error || "Erro", variant: "destructive" }); }
+    } finally { setSalvando(false); }
+  };
+
+  const vincular = async (txId: string) => {
+    setSalvando(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/assinaturas/clientes/${clientId}/pagamento`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mes, pago: true, vincularTransacaoId: txId }),
+      });
+      if (res.ok) { toast({ title: `${formatMonthBR(mes)} pago — vinculado ao extrato` }); onSaved(); }
+      else { const e = await res.json(); toast({ title: e.error || "Erro", variant: "destructive" }); }
+    } finally { setSalvando(false); }
+  };
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="bg-card border-card-border max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-400" /> Registrar pagamento — {formatMonthBR(mes)}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex items-center gap-1 bg-muted/30 rounded-md p-1 mb-3">
+          <button onClick={() => setAba("registrar")} className={`flex-1 text-xs px-3 py-1.5 rounded ${aba === "registrar" ? "bg-primary text-white" : "text-muted-foreground"}`}>
+            Registrar novo
+          </button>
+          <button onClick={() => setAba("vincular")} className={`flex-1 text-xs px-3 py-1.5 rounded ${aba === "vincular" ? "bg-primary text-white" : "text-muted-foreground"}`}>
+            Vincular ao extrato
+          </button>
+        </div>
+
+        {aba === "registrar" ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Forma de pagamento</Label>
+                <Select value={forma} onValueChange={(v: any) => setForma(v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="dinheiro">Dinheiro</SelectItem>
+                    <SelectItem value="pix">PIX</SelectItem>
+                    <SelectItem value="cartao">Cartão</SelectItem>
+                    <SelectItem value="infinitepay">InfinitePay</SelectItem>
+                    <SelectItem value="outro">Outro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Conta destino</Label>
+                <Select value={contaId} onValueChange={setContaId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {contas.map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Data do pagamento</Label>
+                <Input type="date" value={dataPagamento} onChange={e => setDataPagamento(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Valor (R$)</Label>
+                <Input type="number" step="0.01" value={valor} onChange={e => setValor(e.target.value)} />
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Gera uma entrada de {formatCurrency(Number(valor) || 0)} na conta selecionada, marcada como Assinatura.
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button size="sm" variant="outline" onClick={onClose}>Cancelar</Button>
+              <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={registrar} disabled={salvando}>
+                {salvando ? "Salvando..." : "Confirmar pagamento"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-[11px] text-muted-foreground">
+              Procurando entradas de {formatCurrency(valorSugerido)} ±R$ 0,02 numa janela de ±10 dias do vencimento.
+            </p>
+            {carregandoMatch ? (
+              <div className="text-center py-6 text-muted-foreground text-xs">Buscando...</div>
+            ) : candidatas.length === 0 ? (
+              <div className="text-center py-6 text-muted-foreground text-xs">
+                Nenhuma transação compatível no extrato. Use "Registrar novo" ou importe o extrato em Consolidação.
+              </div>
+            ) : (
+              <div className="border border-border rounded-md max-h-[40vh] overflow-y-auto">
+                {candidatas.map(c => (
+                  <div key={c.id} className="flex items-center justify-between p-2 border-b border-border/30 last:border-b-0 hover:bg-muted/30">
+                    <div className="text-xs">
+                      <div className="font-medium">{formatDateBR(c.date)} • {c.contaNome}</div>
+                      <div className="text-[10px] text-muted-foreground truncate max-w-[220px]" title={c.description}>{c.description}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-emerald-400 text-xs font-semibold tabular-nums">{formatCurrency(c.amount)}</span>
+                      <Button size="sm" className="h-7 text-[10px] bg-primary hover:bg-primary/80 text-white" onClick={() => vincular(c.id)} disabled={salvando}>
+                        Vincular
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button size="sm" variant="outline" onClick={onClose}>Cancelar</Button>
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

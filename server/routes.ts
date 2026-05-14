@@ -273,6 +273,10 @@ interface TransacaoBanco {
   // entre meses e aparece como tooltip/badge nas próximas análises.
   justificativa?: string;
   justificadoEm?: string; // ISO timestamp
+  // Quando preenchido, indica que esta transação foi gerada (ou vinculada
+  // manualmente) a partir de uma mensalidade de assinatura. Permite desfazer
+  // o pagamento e remover a entrada correspondente sem ambiguidade.
+  origemAssinatura?: { clienteId: string; mes: string };
 }
 
 /** Chave de deduplicação: contaId + date + amount + descrição normalizada (sem
@@ -326,8 +330,15 @@ let transacoesBanco: TransacaoBanco[] = [];
 interface PagamentoMensal {
   mes: string; // YYYY-MM
   pago: boolean;
-  pagoEm?: string; // ISO date
+  pagoEm?: string; // ISO timestamp do registro
   valor: number;
+  // Como o assinante pagou esse mês — registrado na hora de marcar pago.
+  // Quando preenchido, o sistema gera/vincula uma TransacaoBanco correspondente
+  // pra entrada aparecer no fluxo de caixa da conta certa.
+  formaPagamento?: 'dinheiro' | 'pix' | 'cartao' | 'infinitepay' | 'outro';
+  contaId?: string;            // conta destino (id em contasConsolidacao)
+  dataPagamento?: string;      // YYYY-MM-DD (quando o dinheiro entrou)
+  transacaoBancoId?: string;   // id da transacao gerada/vinculada (link bidirecional)
 }
 interface AssinaturaCliente {
   id: string;
@@ -7754,28 +7765,253 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   // PUT /api/assinaturas/clientes/:id/pagamento — registrar pagamento de um mês
   app.put("/api/assinaturas/clientes/:id/pagamento", (req: Request, res: Response) => {
     const id = req.params.id as string;
-    const { mes, pago } = req.body; // mes: "YYYY-MM", pago: boolean
+    const {
+      mes, pago,
+      formaPagamento, contaId, dataPagamento, valor,
+      vincularTransacaoId, // se preenchido, NÃO cria nova: marca a existente como origem
+    } = req.body;
     if (!mes) return res.status(400).json({ error: "Mês é obrigatório (YYYY-MM)" });
     const idx = assinaturaClientes.findIndex(c => c.id === id);
     if (idx < 0) return res.status(404).json({ error: "Cliente não encontrado" });
     const c = assinaturaClientes[idx];
     const pIdx = c.payments.findIndex(p => p.mes === mes);
+
     if (pago) {
-      if (pIdx >= 0) {
-        c.payments[pIdx].pago = true;
-        c.payments[pIdx].pagoEm = new Date().toISOString();
-      } else {
-        c.payments.push({ mes, pago: true, pagoEm: new Date().toISOString(), valor: c.planValue });
+      const valorPago = Number(valor ?? c.planValue);
+      const dataPg = (dataPagamento && /^\d{4}-\d{2}-\d{2}$/.test(dataPagamento))
+        ? dataPagamento
+        : new Date().toISOString().slice(0, 10);
+      let transacaoBancoId: string | undefined;
+
+      // Caminho 1: vincula a uma transação já existente no extrato (não duplica).
+      if (vincularTransacaoId) {
+        const tIdx = transacoesBanco.findIndex(t => t.id === vincularTransacaoId);
+        if (tIdx < 0) return res.status(404).json({ error: "Transação a vincular não encontrada" });
+        transacoesBanco[tIdx].origemAssinatura = { clienteId: id, mes };
+        // Anota descrição pra ficar legível na lista do extrato.
+        const descAtual = transacoesBanco[tIdx].description || "";
+        if (!/assinatura/i.test(descAtual)) {
+          transacoesBanco[tIdx].description = `${descAtual} • Assinatura ${c.name}`.trim();
+        }
+        saveTransacoesBanco();
+        transacaoBancoId = vincularTransacaoId;
       }
+      // Caminho 2: cria uma transação nova na conta destino (forma dinheiro/pix/cartão).
+      else if (formaPagamento && contaId) {
+        const conta = contasConsolidacao.find(cc => cc.id === contaId);
+        if (!conta) return res.status(404).json({ error: "Conta destino não encontrada" });
+        const tipoMap: Record<string, TipoTransacao> = {
+          dinheiro: 'outro', pix: 'pix', cartao: 'credito', infinitepay: 'pix', outro: 'outro',
+        };
+        const novaTx: TransacaoBanco = {
+          id: `tx_assin_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+          contaId,
+          date: dataPg,
+          description: `Assinatura ${c.name} (${mes})`,
+          amount: valorPago,
+          tipo: tipoMap[formaPagamento] || 'outro',
+          importedAt: new Date().toISOString(),
+          incluidoNoFluxo: true,
+          origemAssinatura: { clienteId: id, mes },
+        };
+        transacoesBanco.push(novaTx);
+        saveTransacoesBanco();
+        transacaoBancoId = novaTx.id;
+      }
+      // Caminho 3: sem forma/conta — só marca pago (retrocompat com chamadas antigas).
+
+      const pagamento: PagamentoMensal = {
+        mes,
+        pago: true,
+        pagoEm: new Date().toISOString(),
+        valor: valorPago,
+        formaPagamento,
+        contaId,
+        dataPagamento: dataPg,
+        transacaoBancoId,
+      };
+      if (pIdx >= 0) c.payments[pIdx] = { ...c.payments[pIdx], ...pagamento };
+      else c.payments.push(pagamento);
     } else {
+      // Desfazer: se tinha transação vinculada, remove (se foi criada por nós) ou
+      // só desvincula (se foi um match com transação existente do extrato).
       if (pIdx >= 0) {
-        c.payments[pIdx].pago = false;
-        c.payments[pIdx].pagoEm = undefined;
+        const antigo = c.payments[pIdx];
+        if (antigo.transacaoBancoId) {
+          const tIdx = transacoesBanco.findIndex(t => t.id === antigo.transacaoBancoId);
+          if (tIdx >= 0) {
+            const tx = transacoesBanco[tIdx];
+            // Heurística: transações criadas por nós têm id começando com "tx_assin_".
+            // Se for assim, removemos. Se era do extrato, só limpamos a origem.
+            if (tx.id.startsWith("tx_assin_")) {
+              transacoesBanco.splice(tIdx, 1);
+            } else {
+              tx.origemAssinatura = undefined;
+              tx.description = tx.description.replace(/\s*•\s*Assinatura .+$/i, "");
+            }
+            saveTransacoesBanco();
+          }
+        }
+        c.payments[pIdx] = {
+          ...antigo,
+          pago: false,
+          pagoEm: undefined,
+          transacaoBancoId: undefined,
+        };
       }
     }
     c.updatedAt = new Date().toISOString();
     saveAssinaturaClientes();
     return res.json({ message: pago ? "Pagamento registrado" : "Pagamento desmarcado" });
+  });
+
+  // GET /api/assinaturas/clientes/:id/match-transacoes?mes=YYYY-MM&janelaDias=7
+  // Lista transações de entrada (amount > 0) sem origemAssinatura, com valor
+  // próximo ao planValue (±0,01) dentro de uma janela em torno do dia de
+  // pagamento do mês. Usado pra "vincular a transação existente".
+  app.get("/api/assinaturas/clientes/:id/match-transacoes", (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    const mes = String(req.query.mes || ""); // YYYY-MM
+    const janela = Math.max(0, Math.min(30, Number(req.query.janelaDias) || 7));
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: "Mês inválido" });
+    const c = assinaturaClientes.find(c => c.id === id);
+    if (!c) return res.status(404).json({ error: "Cliente não encontrado" });
+
+    const [y, m] = mes.split("-").map(Number);
+    const diaPg = Math.min(c.paymentDay || 10, 28);
+    const centro = new Date(Date.UTC(y, m - 1, diaPg));
+    const inicio = new Date(centro.getTime() - janela * 86400000);
+    const fim = new Date(centro.getTime() + janela * 86400000);
+    const iniStr = inicio.toISOString().slice(0, 10);
+    const fimStr = fim.toISOString().slice(0, 10);
+    const valorAlvo = c.planValue;
+
+    const candidatas = transacoesBanco
+      .filter(t =>
+        t.amount > 0 &&
+        !t.origemAssinatura &&
+        t.date >= iniStr && t.date <= fimStr &&
+        Math.abs(t.amount - valorAlvo) < 0.02
+      )
+      .map(t => {
+        const conta = contasConsolidacao.find(cc => cc.id === t.contaId);
+        return {
+          id: t.id,
+          date: t.date,
+          amount: t.amount,
+          description: t.description,
+          contaId: t.contaId,
+          contaNome: conta?.nome || "—",
+        };
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return res.json({ candidatas, janela: { inicio: iniStr, fim: fimStr, diaPg } });
+  });
+
+  // GET /api/assinaturas/sugestoes-extrato?mes=YYYY-MM
+  // Para cada assinante com mensalidade em aberto no mês, busca transações
+  // de entrada sem origemAssinatura no extrato cuja janela bate. Retorna
+  // 1 sugestão por assinante (a mais próxima do dia de pagamento). Usado
+  // como aviso na tela Consolidação depois de importar extrato novo.
+  app.get("/api/assinaturas/sugestoes-extrato", (req: Request, res: Response) => {
+    const mes = String(req.query.mes || new Date().toISOString().slice(0, 7));
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: "Mês inválido (YYYY-MM)" });
+    const janela = Math.max(0, Math.min(30, Number(req.query.janelaDias) || 10));
+    const [y, m] = mes.split("-").map(Number);
+
+    const sugestoes: Array<{
+      clienteId: string; clienteNome: string; mes: string; planValue: number;
+      transacao: { id: string; date: string; amount: number; description: string; contaId: string; contaNome: string };
+    }> = [];
+
+    for (const c of assinaturaClientes) {
+      if (c.status !== "active") continue;
+      // Já marcado como pago neste mês? pula.
+      const pg = c.payments.find(p => p.mes === mes);
+      if (pg?.pago) continue;
+      // Está dentro do contrato?
+      const inicioContrato = c.contractDate.slice(0, 7);
+      const fimContrato = c.contractEndDate.slice(0, 7);
+      if (mes < inicioContrato || mes > fimContrato) continue;
+
+      const diaPg = Math.min(c.paymentDay || 10, 28);
+      const centro = new Date(Date.UTC(y, m - 1, diaPg));
+      const inicio = new Date(centro.getTime() - janela * 86400000).toISOString().slice(0, 10);
+      const fim = new Date(centro.getTime() + janela * 86400000).toISOString().slice(0, 10);
+
+      const match = transacoesBanco
+        .filter(t =>
+          t.amount > 0 &&
+          !t.origemAssinatura &&
+          t.date >= inicio && t.date <= fim &&
+          Math.abs(t.amount - c.planValue) < 0.02
+        )
+        .sort((a, b) => {
+          // Mais próximo da data de pagamento
+          const da = Math.abs(new Date(a.date).getTime() - centro.getTime());
+          const db = Math.abs(new Date(b.date).getTime() - centro.getTime());
+          return da - db;
+        })[0];
+
+      if (match) {
+        const conta = contasConsolidacao.find(cc => cc.id === match.contaId);
+        sugestoes.push({
+          clienteId: c.id,
+          clienteNome: c.name,
+          mes,
+          planValue: c.planValue,
+          transacao: {
+            id: match.id, date: match.date, amount: match.amount,
+            description: match.description, contaId: match.contaId,
+            contaNome: conta?.nome || "—",
+          },
+        });
+      }
+    }
+    return res.json({ sugestoes, mes });
+  });
+
+  // POST /api/assinaturas/sugestoes-extrato/aplicar
+  // Aplica em lote: aceita [{ clienteId, mes, transacaoId }] e marca cada
+  // pagamento como pago vinculando a transação correspondente.
+  app.post("/api/assinaturas/sugestoes-extrato/aplicar", (req: Request, res: Response) => {
+    const itens: Array<{ clienteId: string; mes: string; transacaoId: string }> = req.body?.itens || [];
+    if (!Array.isArray(itens) || itens.length === 0) {
+      return res.status(400).json({ error: "Lista vazia" });
+    }
+    let aplicados = 0;
+    for (const it of itens) {
+      const c = assinaturaClientes.find(c => c.id === it.clienteId);
+      const tIdx = transacoesBanco.findIndex(t => t.id === it.transacaoId);
+      if (!c || tIdx < 0) continue;
+      const tx = transacoesBanco[tIdx];
+      if (tx.origemAssinatura) continue;
+
+      tx.origemAssinatura = { clienteId: c.id, mes: it.mes };
+      if (!/assinatura/i.test(tx.description || "")) {
+        tx.description = `${tx.description} • Assinatura ${c.name}`.trim();
+      }
+
+      const pIdx = c.payments.findIndex(p => p.mes === it.mes);
+      const pagamento: PagamentoMensal = {
+        mes: it.mes,
+        pago: true,
+        pagoEm: new Date().toISOString(),
+        valor: tx.amount,
+        formaPagamento: 'infinitepay',
+        contaId: tx.contaId,
+        dataPagamento: tx.date,
+        transacaoBancoId: tx.id,
+      };
+      if (pIdx >= 0) c.payments[pIdx] = { ...c.payments[pIdx], ...pagamento };
+      else c.payments.push(pagamento);
+      c.updatedAt = new Date().toISOString();
+      aplicados++;
+    }
+    saveTransacoesBanco();
+    saveAssinaturaClientes();
+    return res.json({ aplicados });
   });
 
   // POST /api/assinaturas/clientes/:id/contrato — upload do contrato (PDF)

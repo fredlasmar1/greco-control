@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -496,7 +496,7 @@ export default function Pagamento() {
                       ? (l.pagamento.saldoAReceber / (l.bases.servicosLiquido + l.bases.produtosLiquidoComissionavel + l.bases.planoReais)) * 100
                       : 0;
                     return (
-                      <React.Fragment key={l.profissionalId}>
+                      <Fragment key={l.profissionalId}>
                         <tr
                           className={`border-b ${fechado ? "bg-muted/20" : ""} ${expandido ? "bg-muted/10" : "hover:bg-muted/5"} cursor-pointer`}
                           onClick={(e) => {
@@ -735,7 +735,7 @@ export default function Pagamento() {
                             </td>
                           </tr>
                         )}
-                      </React.Fragment>
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -798,7 +798,7 @@ function Stat({ label, valor, bold, muted }: { label: string; valor: number; bol
   );
 }
 
-function Row({ label, valor, bold }: { label: React.ReactNode; valor: number; bold?: boolean }) {
+function Row({ label, valor, bold }: { label: ReactNode; valor: number; bold?: boolean }) {
   const positivo = valor >= 0;
   return (
     <div className="flex items-baseline justify-between gap-2">

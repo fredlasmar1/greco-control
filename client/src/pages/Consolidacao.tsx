@@ -1026,6 +1026,12 @@ function ContaCard({ conta, totalTx, onReload, mes, onChangeMes, todasContas = [
       } else {
         toast({ title: "IA processou!", description: `${data.inserted} transações extraídas.` });
       }
+      if (data.matchesAssinaturas > 0) {
+        toast({
+          title: `${data.matchesAssinaturas} assinatura(s) vinculada(s) automaticamente`,
+          description: "Pagamentos identificados no extrato — confira em Assinaturas.",
+        });
+      }
       onReload();
     } catch (err: any) {
       toast({ title: "Erro no processamento IA", description: err.message, variant: "destructive" });
@@ -1069,6 +1075,12 @@ function ContaCard({ conta, totalTx, onReload, mes, onChangeMes, todasContas = [
           toast({
             title: "PDF processado!",
             description: `${data.inserted} transações extraídas via IA.`,
+          });
+        }
+        if (data.matchesAssinaturas > 0) {
+          toast({
+            title: `${data.matchesAssinaturas} assinatura(s) vinculada(s) automaticamente`,
+            description: "Pagamentos identificados no extrato — confira em Assinaturas.",
           });
         }
         onReload();
@@ -1157,6 +1169,12 @@ function ContaCard({ conta, totalTx, onReload, mes, onChangeMes, todasContas = [
         toast({
           title: "Importado!",
           description: `${data.inserted} transações${antecipacoes > 0 ? ` (${antecipacoes} antecipações detectadas)` : ""}.`,
+        });
+      }
+      if (data.matchesAssinaturas > 0) {
+        toast({
+          title: `${data.matchesAssinaturas} assinatura(s) vinculada(s) automaticamente`,
+          description: "Pagamentos identificados no extrato — confira em Assinaturas.",
         });
       }
       onReload();

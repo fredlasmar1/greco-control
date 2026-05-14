@@ -5415,7 +5415,9 @@ Regras CRÍTICAS:
       }
       const mesPredominante = Object.entries(contagemPorMes)
         .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-      return res.json({ ok: true, inserted: novas.length, mesPredominante });
+      const mesesEntradas = Array.from(new Set(novas.filter(t => t.amount > 0).map(t => t.date.slice(0, 7))));
+      const matchesAssinaturas = autoMatchAssinaturas(mesesEntradas);
+      return res.json({ ok: true, inserted: novas.length, mesPredominante, matchesAssinaturas });
     } catch (err: any) {
       log(`IA upload error: ${err.message}`, "consolidacao");
       return res.status(500).json({ error: err.message || "Erro processando arquivo com IA" });
@@ -5523,7 +5525,9 @@ Regras CRÍTICAS:
       }
       const mesPredominante = Object.entries(contagemPorMes)
         .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-      return res.json({ ok: true, inserted: novas.length, mesPredominante });
+      const mesesEntradas = Array.from(new Set(novas.filter(t => t.amount > 0).map(t => t.date.slice(0, 7))));
+      const matchesAssinaturas = autoMatchAssinaturas(mesesEntradas);
+      return res.json({ ok: true, inserted: novas.length, mesPredominante, matchesAssinaturas });
     } catch (err: any) {
       log(`PDF upload error: ${err.message}`, "consolidacao");
       return res.status(500).json({ error: err.message || "Erro processando PDF" });
@@ -5577,7 +5581,9 @@ Regras CRÍTICAS:
     }
     const mesPredominante = Object.entries(contagemPorMes)
       .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-    return res.json({ ok: true, inserted: novas.length, mesPredominante });
+    const mesesEntradas = Array.from(new Set(novas.filter(t => t.amount > 0).map(t => t.date.slice(0, 7))));
+    const matchesAssinaturas = autoMatchAssinaturas(mesesEntradas);
+    return res.json({ ok: true, inserted: novas.length, mesPredominante, matchesAssinaturas });
   });
 
   // PUT /api/consolidacao/transacoes/:id — atualiza valor/tipo/descrição de uma transação
@@ -7602,21 +7608,113 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   // ASSINATURAS ROUTES
   // ──────────────────────────────────────────────────────────────────
 
+  // Aplica matches automáticos entre transações de entrada (sem origem) e
+  // mensalidades de assinaturas em aberto. Usado depois de importar extrato.
+  // Critério: amount ≈ planValue (±0,02), date dentro de ±10 dias do paymentDay
+  // do mês de cada parcela em aberto. Pega 1 match por (cliente,mes) — o mais
+  // próximo do dia de pagamento — e não toca em transações já vinculadas.
+  // Retorna número de matches aplicados.
+  function autoMatchAssinaturas(meses: string[]): number {
+    if (meses.length === 0) return 0;
+    let aplicados = 0;
+    const txsUsadas = new Set<string>();
+
+    for (const c of assinaturaClientes) {
+      if (c.status !== "active") continue;
+      const diaPg = Math.min(c.paymentDay || 10, 28);
+
+      for (const mes of meses) {
+        if (!/^\d{4}-\d{2}$/.test(mes)) continue;
+        // Está dentro do contrato?
+        const inicioContrato = c.contractDate.slice(0, 7);
+        const fimContrato = c.contractEndDate.slice(0, 7);
+        if (mes < inicioContrato || mes > fimContrato) continue;
+        // Já pago?
+        const pg = c.payments.find(p => p.mes === mes);
+        if (pg?.pago) continue;
+
+        const [y, m] = mes.split("-").map(Number);
+        const centro = new Date(Date.UTC(y, m - 1, diaPg));
+        const inicio = new Date(centro.getTime() - 10 * 86400000).toISOString().slice(0, 10);
+        const fim = new Date(centro.getTime() + 10 * 86400000).toISOString().slice(0, 10);
+
+        const candidata = transacoesBanco
+          .filter(t =>
+            !txsUsadas.has(t.id) &&
+            t.amount > 0 &&
+            !t.origemAssinatura &&
+            t.date >= inicio && t.date <= fim &&
+            Math.abs(t.amount - c.planValue) < 0.02
+          )
+          .sort((a, b) => {
+            const da = Math.abs(new Date(a.date).getTime() - centro.getTime());
+            const db = Math.abs(new Date(b.date).getTime() - centro.getTime());
+            return da - db;
+          })[0];
+
+        if (!candidata) continue;
+        txsUsadas.add(candidata.id);
+        candidata.origemAssinatura = { clienteId: c.id, mes };
+        if (!/assinatura/i.test(candidata.description || "")) {
+          candidata.description = `${candidata.description} • Assinatura ${c.name}`.trim();
+        }
+
+        const pIdx = c.payments.findIndex(p => p.mes === mes);
+        const pagamento: PagamentoMensal = {
+          mes,
+          pago: true,
+          pagoEm: new Date().toISOString(),
+          valor: candidata.amount,
+          formaPagamento: 'infinitepay',
+          contaId: candidata.contaId,
+          dataPagamento: candidata.date,
+          transacaoBancoId: candidata.id,
+        };
+        if (pIdx >= 0) c.payments[pIdx] = { ...c.payments[pIdx], ...pagamento };
+        else c.payments.push(pagamento);
+        c.updatedAt = new Date().toISOString();
+        aplicados++;
+      }
+    }
+    if (aplicados > 0) {
+      saveTransacoesBanco();
+      saveAssinaturaClientes();
+      log(`auto-match assinaturas: ${aplicados} pagamento(s) vinculado(s) ao extrato`, "consolidacao");
+    }
+    return aplicados;
+  }
+
+  // Helper: comissão como BÔNUS ÚNICO sobre a 1ª parcela paga (não recorrente).
+  // Retorna { comissaoBonusRS, comissaoPaga, primeiraParcelaMes }.
+  function calcularComissao(c: AssinaturaCliente, pct: number) {
+    const comissaoBonusRS = (c.planValue || 0) * (pct / 100);
+    // Primeira parcela = mês do início do contrato.
+    const inicio = new Date(c.contractDate);
+    const primeiraParcelaMes = `${inicio.getFullYear()}-${String(inicio.getMonth() + 1).padStart(2, "0")}`;
+    const pgPrimeira = c.payments.find(p => p.mes === primeiraParcelaMes);
+    const comissaoPaga = !!pgPrimeira?.pago;
+    return { comissaoBonusRS, comissaoPaga, primeiraParcelaMes };
+  }
+
   // GET /api/assinaturas/clientes — lista com status de pagamento calculado
   app.get("/api/assinaturas/clientes", (_req: Request, res: Response) => {
     const pctPadrao = Number(storeData.settings?.comissaoPlanoPadraoPct ?? 20);
     const enriched = assinaturaClientes.map(c => {
       const pct = Number(c.commissionPct ?? pctPadrao);
       const pagos = c.payments.filter(p => p.pago).length;
-      const comissaoMensal = (c.planValue || 0) * (pct / 100);
-      const comissaoAcumulada = comissaoMensal * pagos;
+      const { comissaoBonusRS, comissaoPaga, primeiraParcelaMes } = calcularComissao(c, pct);
       return {
         ...c,
         paymentStatus: getPaymentStatus(c),
         commissionPctEfetivo: pct,
         commissionPctFonte: c.commissionPct != null ? 'cliente' : 'global',
-        comissaoMensalRS: comissaoMensal,
-        comissaoAcumuladaRS: comissaoAcumulada,
+        // Bônus único: valor potencial e se já foi pago.
+        comissaoBonusRS,
+        comissaoPaga,
+        primeiraParcelaMes,
+        // Retrocompat: campos antigos refletem o bônus único, não recorrência.
+        comissaoMensalRS: 0,
+        comissaoAcumuladaRS: comissaoPaga ? comissaoBonusRS : 0,
         mesesPagos: pagos,
       };
     });
@@ -7631,14 +7729,17 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const pctPadrao = Number(storeData.settings?.comissaoPlanoPadraoPct ?? 20);
     const pct = Number(c.commissionPct ?? pctPadrao);
     const pagos = c.payments.filter(p => p.pago).length;
-    const comissaoMensal = (c.planValue || 0) * (pct / 100);
+    const { comissaoBonusRS, comissaoPaga, primeiraParcelaMes } = calcularComissao(c, pct);
     return res.json({
       ...c,
       paymentStatus: getPaymentStatus(c),
       commissionPctEfetivo: pct,
       commissionPctFonte: c.commissionPct != null ? 'cliente' : 'global',
-      comissaoMensalRS: comissaoMensal,
-      comissaoAcumuladaRS: comissaoMensal * pagos,
+      comissaoBonusRS,
+      comissaoPaga,
+      primeiraParcelaMes,
+      comissaoMensalRS: 0,
+      comissaoAcumuladaRS: comissaoPaga ? comissaoBonusRS : 0,
       mesesPagos: pagos,
     });
   });
@@ -8101,15 +8202,18 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     });
 
     // ─── Comissões por vendedor ───
-    // 20% (configurável por cliente, default em settings.comissaoPlanoPadraoPct)
-    // sobre cada mensalidade efetivamente paga.
+    // BÔNUS ÚNICO: 20% (configurável) sobre a 1ª parcela paga. Não recorre.
+    // - comissaoPagaRS:    total já creditado (1ª parcela paga)
+    // - comissaoPendenteRS: bônus de vendas onde a 1ª parcela AINDA não foi paga
+    // - comissaoMesAtualRS: bônus pagos NESTE mês (1ª parcela quitada em mês atual)
     const pctPadrao = Number(storeData.settings?.comissaoPlanoPadraoPct ?? 20);
     const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     type CommBucket = {
       seller: string;
       assinantes: number;
       mesesPagos: number;
-      comissaoAcumuladaRS: number;
+      comissaoAcumuladaRS: number;   // = comissaoPagaRS (mantém nome pra retrocompat UI)
+      comissaoPendenteRS: number;
       comissaoMesAtualRS: number;
       receitaMensalRS: number;
     };
@@ -8118,18 +8222,21 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const seller = (c.seller || "").trim();
       if (!seller) continue;
       const pct = Number(c.commissionPct ?? pctPadrao);
-      const comissaoMensal = (c.planValue || 0) * (pct / 100);
       const pagos = c.payments.filter(p => p.pago).length;
-      const pagouMesAtual = c.payments.some(p => p.mes === mesAtual && p.pago);
+      const { comissaoBonusRS, comissaoPaga, primeiraParcelaMes } = calcularComissao(c, pct);
+      const pgPrimeira = c.payments.find(p => p.mes === primeiraParcelaMes);
+      const bonusFoiNesteMes = comissaoPaga && pgPrimeira?.pagoEm?.slice(0, 7) === mesAtual;
       const key = seller.toLowerCase();
       const b = byVendedor.get(key) || {
         seller, assinantes: 0, mesesPagos: 0,
-        comissaoAcumuladaRS: 0, comissaoMesAtualRS: 0, receitaMensalRS: 0,
+        comissaoAcumuladaRS: 0, comissaoPendenteRS: 0,
+        comissaoMesAtualRS: 0, receitaMensalRS: 0,
       };
       b.assinantes += 1;
       b.mesesPagos += pagos;
-      b.comissaoAcumuladaRS += comissaoMensal * pagos;
-      if (pagouMesAtual) b.comissaoMesAtualRS += comissaoMensal;
+      if (comissaoPaga) b.comissaoAcumuladaRS += comissaoBonusRS;
+      else b.comissaoPendenteRS += comissaoBonusRS;
+      if (bonusFoiNesteMes) b.comissaoMesAtualRS += comissaoBonusRS;
       if (c.status === 'active') b.receitaMensalRS += (c.planValue || 0);
       byVendedor.set(key, b);
     }

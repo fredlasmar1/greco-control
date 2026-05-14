@@ -61,16 +61,20 @@ interface Cliente {
   commissionPct?: number;
   commissionPctEfetivo?: number;
   commissionPctFonte?: 'cliente' | 'global';
-  comissaoMensalRS?: number;
-  comissaoAcumuladaRS?: number;
+  comissaoMensalRS?: number;       // legado — sempre 0 com a nova regra
+  comissaoAcumuladaRS?: number;    // bônus já recebido (1ª parcela paga)
+  comissaoBonusRS?: number;        // valor do bônus (potencial ou recebido)
+  comissaoPaga?: boolean;          // true se a 1ª parcela foi paga
+  primeiraParcelaMes?: string;     // YYYY-MM da 1ª parcela
   mesesPagos?: number;
 }
 interface RankingComissao {
   seller: string;
   assinantes: number;
   mesesPagos: number;
-  comissaoAcumuladaRS: number;
-  comissaoMesAtualRS: number;
+  comissaoAcumuladaRS: number;     // bônus de 1ª parcela já pagos
+  comissaoPendenteRS: number;      // bônus aguardando 1ª parcela
+  comissaoMesAtualRS: number;      // bônus creditados neste mês
   receitaMensalRS: number;
 }
 interface SugestaoExtrato {
@@ -255,7 +259,7 @@ export default function Assinaturas() {
         </Card>
       </div>
 
-      {/* Comissões de Assinaturas — quem vendeu ganha % sobre cada mensalidade paga */}
+      {/* Comissões de Assinaturas — bônus único de % na 1ª parcela paga */}
       {(() => {
         const ranking = stats?.rankingComissoes || [];
         const pctPadrao = stats?.pctPlanoPadrao ?? 20;
@@ -269,14 +273,14 @@ export default function Assinaturas() {
               <CardTitle className="text-sm flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <DollarSign className="w-4 h-4 text-emerald-400" />
-                  Comissões de Assinaturas <span className="text-[10px] text-muted-foreground font-normal">({pctPadrao}% padrão por mensalidade paga)</span>
+                  Comissões de Assinaturas <span className="text-[10px] text-muted-foreground font-normal">(bônus único de {pctPadrao}% na 1ª parcela)</span>
                 </div>
                 <div className="flex items-center gap-3 text-xs">
                   <span className="text-emerald-400">
-                    Mês atual: <strong>{formatCurrency(totalMes)}</strong>
+                    Bônus pagos no mês: <strong>{formatCurrency(totalMes)}</strong>
                   </span>
                   <span className="text-muted-foreground">
-                    Acumulado: <strong>{formatCurrency(totalAcum)}</strong>
+                    Total pago: <strong>{formatCurrency(totalAcum)}</strong>
                   </span>
                   {semVendedor > 0 && (
                     <span className="text-amber-400" title="Assinantes sem vendedor cadastrado">
@@ -297,11 +301,11 @@ export default function Assinaturas() {
                     <thead>
                       <tr className="border-b border-border text-xs text-muted-foreground">
                         <th className="text-left py-2 px-2 font-medium">Vendedor</th>
-                        <th className="text-right py-2 px-2 font-medium">Assinantes</th>
+                        <th className="text-right py-2 px-2 font-medium">Vendas</th>
                         <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Receita ativa/mês</th>
-                        <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Meses pagos</th>
-                        <th className="text-right py-2 px-2 font-medium">Comissão mês atual</th>
-                        <th className="text-right py-2 px-2 font-medium">Comissão acumulada</th>
+                        <th className="text-right py-2 px-2 font-medium">Bônus no mês</th>
+                        <th className="text-right py-2 px-2 font-medium">Bônus pago</th>
+                        <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Bônus pendente</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -310,9 +314,9 @@ export default function Assinaturas() {
                           <td className="py-2 px-2 font-medium">{r.seller}</td>
                           <td className="py-2 px-2 text-right tabular-nums">{r.assinantes}</td>
                           <td className="py-2 px-2 text-right tabular-nums text-muted-foreground hidden md:table-cell">{formatCurrency(r.receitaMensalRS)}</td>
-                          <td className="py-2 px-2 text-right tabular-nums text-muted-foreground hidden md:table-cell">{r.mesesPagos}</td>
                           <td className="py-2 px-2 text-right tabular-nums text-emerald-400 font-semibold">{formatCurrency(r.comissaoMesAtualRS)}</td>
                           <td className="py-2 px-2 text-right tabular-nums font-semibold">{formatCurrency(r.comissaoAcumuladaRS)}</td>
+                          <td className="py-2 px-2 text-right tabular-nums text-amber-400 hidden md:table-cell">{formatCurrency(r.comissaoPendenteRS || 0)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -520,7 +524,7 @@ export default function Assinaturas() {
                   <th className="text-left p-3 text-muted-foreground font-medium">Plano</th>
                   <th className="text-right p-3 text-muted-foreground font-medium">Valor</th>
                   <th className="text-left p-3 text-muted-foreground font-medium">Vendedor</th>
-                  <th className="text-right p-3 text-muted-foreground font-medium">Comissão</th>
+                  <th className="text-right p-3 text-muted-foreground font-medium">Bônus venda</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Contrato</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Vencimento</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Dia Pgto</th>
@@ -558,9 +562,11 @@ export default function Assinaturas() {
                           )}
                         </td>
                         <td className="p-3 text-right">
-                          <div className="text-xs font-semibold text-emerald-400 tabular-nums">{formatCurrency(c.comissaoAcumuladaRS || 0)}</div>
+                          <div className={`text-xs font-semibold tabular-nums ${c.comissaoPaga ? "text-emerald-400" : "text-amber-400"}`}>
+                            {formatCurrency(c.comissaoBonusRS || 0)}
+                          </div>
                           <div className="text-[10px] text-muted-foreground">
-                            {formatCurrency(c.comissaoMensalRS || 0)}/mês • {c.commissionPctEfetivo ?? 20}%
+                            {c.comissaoPaga ? "pago" : "aguarda 1ª parcela"} • {c.commissionPctEfetivo ?? 20}%
                           </div>
                         </td>
                         <td className="p-3 text-center">
@@ -911,7 +917,7 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
             </div>
           </div>
           <p className="text-[10px] text-muted-foreground -mt-2">
-            Vendedor ganha {form.commissionPct || "20"}% sobre cada mensalidade paga. Deixe em branco para usar o padrão (20%).
+            Vendedor ganha {form.commissionPct || "20"}% como bônus único, creditado quando a 1ª parcela for paga. Deixe em branco para usar o padrão (20%).
           </p>
 
           <div className="border-t border-border pt-3" />
@@ -1027,11 +1033,16 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
             <div className="col-span-2 mt-1 p-2 rounded bg-emerald-500/5 border border-emerald-500/20">
               <span className="text-muted-foreground">Vendedor:</span>{" "}
               <span className="font-medium">{client.seller || <span className="text-amber-400">não informado</span>}</span>
-              <span className="text-muted-foreground"> • {client.commissionPctEfetivo ?? 20}% por mensalidade paga</span>
-              <div className="text-[10px] text-muted-foreground mt-0.5">
-                Comissão por mês: <span className="text-emerald-400 font-semibold">{formatCurrency(client.comissaoMensalRS || 0)}</span>
-                {" • "}Acumulada: <span className="text-emerald-400 font-semibold">{formatCurrency(client.comissaoAcumuladaRS || 0)}</span>
-                {" "}({client.mesesPagos || 0} {(client.mesesPagos || 0) === 1 ? "mês pago" : "meses pagos"})
+              <span className="text-muted-foreground"> • bônus único de {client.commissionPctEfetivo ?? 20}% na 1ª parcela</span>
+              <div className="text-[10px] mt-0.5">
+                Bônus: <span className={`font-semibold ${client.comissaoPaga ? "text-emerald-400" : "text-amber-400"}`}>{formatCurrency(client.comissaoBonusRS || 0)}</span>
+                {" "}
+                <span className={client.comissaoPaga ? "text-emerald-400" : "text-amber-400"}>
+                  {client.comissaoPaga ? "(pago — 1ª parcela quitada)" : "(pendente — aguarda 1ª parcela)"}
+                </span>
+                <span className="text-muted-foreground">
+                  {" • "}{client.mesesPagos || 0} {(client.mesesPagos || 0) === 1 ? "mensalidade paga no total" : "mensalidades pagas no total"}
+                </span>
               </div>
             </div>
           </div>

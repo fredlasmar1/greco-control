@@ -7696,6 +7696,103 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     return { comissaoBonusRS, comissaoPaga, primeiraParcelaMes };
   }
 
+  // GET /api/assinaturas/matriz-pagamentos?ate=YYYY-MM&meses=6
+  // Visão matricial cliente × mês pra acompanhar quem pagou em cada mês.
+  // Cada célula tem um status: pago | atrasado | pendente | futuro | sem_contrato.
+  // Calcula também inadimplenciaConsecutiva (meses seguidos sem pagar antes do mês atual).
+  app.get("/api/assinaturas/matriz-pagamentos", (req: Request, res: Response) => {
+    const meses = Math.max(1, Math.min(24, Number(req.query.meses) || 6));
+    const hoje = new Date();
+    const mesAtual = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
+    const ateMes = String(req.query.ate || mesAtual);
+    if (!/^\d{4}-\d{2}$/.test(ateMes)) return res.status(400).json({ error: "ate inválido (YYYY-MM)" });
+
+    // Gera lista de meses pra exibir (terminando em ateMes, indo pra trás `meses` meses)
+    const [yAte, mAte] = ateMes.split("-").map(Number);
+    const colunas: string[] = [];
+    for (let i = meses - 1; i >= 0; i--) {
+      const d = new Date(Date.UTC(yAte, mAte - 1 - i, 1));
+      colunas.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+    }
+
+    const limiarAlerta = Math.max(1, Number(storeData.settings?.assinaturaAlertaMesesInadimplente ?? 2));
+
+    const linhas = assinaturaClientes
+      .filter(c => c.status === 'active')
+      .map(c => {
+        const inicioContrato = c.contractDate.slice(0, 7);
+        const fimContrato = c.contractEndDate.slice(0, 7);
+        const pagoMap = new Map(c.payments.map(p => [p.mes, p]));
+
+        const cells = colunas.map(mes => {
+          const dentroContrato = mes >= inicioContrato && mes <= fimContrato;
+          if (!dentroContrato) return { mes, status: 'sem_contrato' as const };
+          const pg = pagoMap.get(mes);
+          if (pg?.pago) {
+            return {
+              mes,
+              status: 'pago' as const,
+              formaPagamento: pg.formaPagamento,
+              dataPagamento: pg.dataPagamento,
+              transacaoBancoId: pg.transacaoBancoId,
+            };
+          }
+          if (mes > mesAtual) return { mes, status: 'futuro' as const };
+          if (mes === mesAtual) return { mes, status: 'pendente' as const };
+          return { mes, status: 'atrasado' as const };
+        });
+
+        // Inadimplência consecutiva: meses antes (ou incluindo) o atual, contando
+        // pra trás, parando no primeiro mês pago ou fora de contrato.
+        let inadimplenciaConsecutiva = 0;
+        const mesesAteHoje: string[] = [];
+        const [yH, mH] = mesAtual.split("-").map(Number);
+        const limiteHistorico = 60; // pra evitar loop infinito
+        for (let i = 0; i < limiteHistorico; i++) {
+          const d = new Date(Date.UTC(yH, mH - 1 - i, 1));
+          const mes = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+          if (mes < inicioContrato) break;
+          if (mes > fimContrato) continue;
+          mesesAteHoje.push(mes);
+        }
+        for (const mes of mesesAteHoje) {
+          if (mes === mesAtual) continue; // mês atual ainda pode ser pago dentro do prazo
+          const pg = pagoMap.get(mes);
+          if (pg?.pago) break;
+          inadimplenciaConsecutiva++;
+        }
+
+        return {
+          clienteId: c.id,
+          name: c.name,
+          phone: c.phone,
+          planValue: c.planValue,
+          plan: c.plan,
+          seller: c.seller,
+          contractDate: c.contractDate,
+          contractEndDate: c.contractEndDate,
+          paymentDay: c.paymentDay,
+          cells,
+          inadimplenciaConsecutiva,
+          deveAlertarCancelamento: inadimplenciaConsecutiva >= limiarAlerta,
+        };
+      })
+      // Ordena: mais inadimplentes primeiro, depois por nome
+      .sort((a, b) => {
+        if (b.inadimplenciaConsecutiva !== a.inadimplenciaConsecutiva) {
+          return b.inadimplenciaConsecutiva - a.inadimplenciaConsecutiva;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+    return res.json({
+      meses: colunas,
+      mesAtual,
+      limiarAlerta,
+      linhas,
+    });
+  });
+
   // GET /api/assinaturas/clientes — lista com status de pagamento calculado
   app.get("/api/assinaturas/clientes", (_req: Request, res: Response) => {
     const pctPadrao = Number(storeData.settings?.comissaoPlanoPadraoPct ?? 20);

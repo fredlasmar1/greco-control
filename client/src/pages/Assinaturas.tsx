@@ -11,7 +11,7 @@ import { useLocation } from "wouter";
 import {
   Users, DollarSign, Search, Plus, Trash2, XCircle, CheckCircle,
   Crown, FileText, ExternalLink, Upload, AlertTriangle, Calendar, Clock,
-  Eye, X, Pencil, Banknote, UserPlus,
+  Eye, X, Pencil, Banknote, UserPlus, ChevronLeft, ChevronRight,
 } from "lucide-react";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
@@ -428,6 +428,12 @@ export default function Assinaturas() {
           </Card>
         );
       })()}
+
+      {/* Pagamentos mês a mês — matriz cliente × mês + alerta de inadimplência */}
+      <MatrizPagamentos
+        onOpenCliente={setDetailId}
+        onCancelar={cancelar}
+      />
 
       {/* Sugestões: transações do extrato que provavelmente são assinaturas */}
       {sugestoes.length > 0 && (
@@ -1152,6 +1158,336 @@ function DetalheDialog({ clientId, onClose, onChanged }: {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── Matriz de Pagamentos (mês × cliente) ──────────────────
+type MatrizStatus = 'pago' | 'atrasado' | 'pendente' | 'futuro' | 'sem_contrato';
+interface MatrizCell { mes: string; status: MatrizStatus; formaPagamento?: string; dataPagamento?: string; transacaoBancoId?: string; }
+interface MatrizLinha {
+  clienteId: string; name: string; phone?: string; planValue: number;
+  plan: string; seller?: string; contractDate: string; contractEndDate: string;
+  paymentDay: number; cells: MatrizCell[];
+  inadimplenciaConsecutiva: number;
+  deveAlertarCancelamento: boolean;
+}
+interface MatrizData {
+  meses: string[];
+  mesAtual: string;
+  limiarAlerta: number;
+  linhas: MatrizLinha[];
+}
+
+function MatrizPagamentos({ onOpenCliente, onCancelar }: {
+  onOpenCliente: (id: string) => void;
+  onCancelar: (id: string) => void;
+}) {
+  const { toast } = useToast();
+  const [data, setData] = useState<MatrizData | null>(null);
+  const [janelaMeses, setJanelaMeses] = useState(6);
+  const [offset, setOffset] = useState(0); // 0 = inclui mês atual; >0 = passado
+  const [busca, setBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState<"todos" | "atrasados">("todos");
+  const [salvandoLimiar, setSalvandoLimiar] = useState(false);
+  const csvInput = useRef<HTMLInputElement>(null);
+  const [uploadingCSV, setUploadingCSV] = useState(false);
+
+  const ateMes = useMemo(() => {
+    const d = new Date();
+    d.setUTCMonth(d.getUTCMonth() - offset);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  }, [offset]);
+
+  const carregar = () => {
+    fetch(`${API_BASE}/api/assinaturas/matriz-pagamentos?meses=${janelaMeses}&ate=${ateMes}`)
+      .then(r => r.json())
+      .then(setData);
+  };
+  useEffect(() => { carregar(); }, [ateMes, janelaMeses]);
+
+  const linhasFiltradas = useMemo(() => {
+    if (!data) return [];
+    let l = data.linhas;
+    if (filtroStatus === "atrasados") l = l.filter(x => x.inadimplenciaConsecutiva > 0);
+    if (busca) {
+      const q = busca.toLowerCase();
+      l = l.filter(x => x.name.toLowerCase().includes(q) || (x.phone || "").includes(q));
+    }
+    return l;
+  }, [data, busca, filtroStatus]);
+
+  const salvarLimiar = async (novoLimiar: number) => {
+    if (!Number.isFinite(novoLimiar) || novoLimiar < 1) return;
+    setSalvandoLimiar(true);
+    try {
+      const store = await fetch(`${API_BASE}/api/store`).then(r => r.json());
+      const settings = { ...(store?.settings || {}), assinaturaAlertaMesesInadimplente: novoLimiar };
+      await fetch(`${API_BASE}/api/store`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings }),
+      });
+      toast({ title: `Alerta de cancelamento ajustado pra ${novoLimiar} mês(es)` });
+      carregar();
+    } finally { setSalvandoLimiar(false); }
+  };
+
+  const uploadCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingCSV(true);
+    try {
+      // Busca conta InfinitePay (ou conta única "maquininha"). Se não houver, avisa.
+      const contas: any[] = await fetch(`${API_BASE}/api/consolidacao/contas`).then(r => r.json());
+      const infinity = contas.find((c: any) =>
+        /infinit|infinity/i.test(c.nome) || c.tipo === "maquininha"
+      );
+      if (!infinity) {
+        toast({
+          title: "Conta InfinitePay não encontrada",
+          description: "Crie uma conta tipo 'maquininha' chamada InfinitePay na aba Consolidação.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const form = new FormData();
+      form.append("file", file);
+      form.append("contaId", infinity.id);
+      const res = await fetch(`${API_BASE}/api/consolidacao/upload-ia`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Falha ao processar CSV");
+      }
+      const r = await res.json();
+      toast({
+        title: `Extrato processado — ${r.inserted} transações`,
+        description: r.matchesAssinaturas > 0
+          ? `${r.matchesAssinaturas} assinatura(s) vinculada(s) automaticamente.`
+          : "Nenhuma assinatura nova foi reconhecida.",
+      });
+      carregar();
+    } catch (err: any) {
+      toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
+    } finally {
+      setUploadingCSV(false);
+      if (csvInput.current) csvInput.current.value = "";
+    }
+  };
+
+  if (!data) return null;
+  const totalAtrasados = data.linhas.filter(l => l.deveAlertarCancelamento).length;
+
+  return (
+    <Card className="bg-card border-card-border">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-primary" />
+            Pagamentos mês a mês
+            <span className="text-[10px] text-muted-foreground font-normal">
+              ({data.linhas.length} ativos
+              {totalAtrasados > 0 && ` • `}
+              {totalAtrasados > 0 && (
+                <span className="text-red-400">{totalAtrasados} pra cancelar</span>
+              )})
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              ref={csvInput}
+              type="file"
+              accept=".csv,.xlsx,.xls,.pdf"
+              onChange={uploadCSV}
+              className="hidden"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              onClick={() => csvInput.current?.click()}
+              disabled={uploadingCSV}
+              title="Subir extrato InfinitePay (CSV/Excel/PDF) — a IA processa e vincula pagamentos"
+            >
+              <Upload className="w-3.5 h-3.5 mr-1.5" />
+              {uploadingCSV ? "Processando..." : "Subir extrato InfinitePay"}
+            </Button>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => setOffset(o => o + janelaMeses)} title="Janela anterior">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8 w-8 p-0" disabled={offset === 0} onClick={() => setOffset(o => Math.max(0, o - janelaMeses))} title="Janela seguinte">
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-3 flex-wrap mb-3 text-xs">
+          <div className="flex items-center gap-1 bg-muted/30 rounded-md p-1">
+            <button onClick={() => setFiltroStatus("todos")} className={`px-2.5 py-1 rounded text-[11px] ${filtroStatus === "todos" ? "bg-primary text-white" : "text-muted-foreground"}`}>Todos</button>
+            <button onClick={() => setFiltroStatus("atrasados")} className={`px-2.5 py-1 rounded text-[11px] ${filtroStatus === "atrasados" ? "bg-red-600 text-white" : "text-muted-foreground"}`}>Só atrasados</button>
+          </div>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Input placeholder="Buscar nome ou telefone..." value={busca} onChange={e => setBusca(e.target.value)} className="pl-8 h-8 w-56 text-xs" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">Janela:</span>
+            <Select value={String(janelaMeses)} onValueChange={v => { setJanelaMeses(Number(v)); setOffset(0); }}>
+              <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="3">3 meses</SelectItem>
+                <SelectItem value="6">6 meses</SelectItem>
+                <SelectItem value="12">12 meses</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">Alerta após</span>
+            <Input
+              type="number"
+              min="1"
+              max="12"
+              defaultValue={data.limiarAlerta}
+              onBlur={e => {
+                const v = Number(e.target.value);
+                if (v !== data.limiarAlerta) salvarLimiar(v);
+              }}
+              disabled={salvandoLimiar}
+              className="h-8 w-14 text-xs"
+            />
+            <span className="text-muted-foreground">mês(es) sem pagar</span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left p-2 text-muted-foreground font-medium sticky left-0 bg-card">Assinante</th>
+                {data.meses.map(m => (
+                  <th key={m} className="text-center p-2 text-muted-foreground font-medium min-w-[70px]">{formatMonthBR(m)}</th>
+                ))}
+                <th className="text-right p-2 text-muted-foreground font-medium">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {linhasFiltradas.length === 0 ? (
+                <tr>
+                  <td colSpan={data.meses.length + 2} className="py-8 text-center text-muted-foreground">
+                    {filtroStatus === "atrasados" ? "Nenhum assinante em atraso. 🎉" : "Nenhum assinante."}
+                  </td>
+                </tr>
+              ) : linhasFiltradas.map(l => (
+                <tr key={l.clienteId} className={`border-b border-border/30 hover:bg-muted/20 ${l.deveAlertarCancelamento ? "bg-red-500/5" : ""}`}>
+                  <td className="p-2 sticky left-0 bg-card hover:bg-muted/20">
+                    <button onClick={() => onOpenCliente(l.clienteId)} className="font-medium hover:underline text-left">
+                      {l.name}
+                    </button>
+                    <div className="text-[10px] text-muted-foreground">
+                      {formatCurrency(l.planValue)} • Dia {l.paymentDay}
+                      {l.inadimplenciaConsecutiva > 0 && (
+                        <span className="ml-1 text-red-400 font-semibold">• {l.inadimplenciaConsecutiva} sem pagar</span>
+                      )}
+                    </div>
+                  </td>
+                  {l.cells.map(c => <CelulaMes key={c.mes} cell={c} clienteId={l.clienteId} planValue={l.planValue} onChanged={carregar} />)}
+                  <td className="p-2 text-right">
+                    {l.deveAlertarCancelamento && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-[10px] border-red-500/40 text-red-400 hover:bg-red-500/10"
+                        onClick={() => onCancelar(l.clienteId)}
+                      >
+                        <XCircle className="w-3 h-3 mr-1" />
+                        Cancelar
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-3 flex items-center gap-3 text-[10px] text-muted-foreground flex-wrap">
+          <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-500/30 border border-emerald-500/40" /> pago</span>
+          <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-red-500/30 border border-red-500/40" /> atrasado</span>
+          <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-500/30 border border-amber-500/40" /> pendente (mês atual)</span>
+          <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-muted/40 border border-border" /> futuro</span>
+          <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-transparent border border-dashed border-muted-foreground/40" /> fora do contrato</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CelulaMes({ cell, clienteId, planValue, onChanged }: {
+  cell: MatrizCell; clienteId: string; planValue: number; onChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const desmarcar = async () => {
+    setBusy(true);
+    try {
+      await fetch(`${API_BASE}/api/assinaturas/clientes/${clienteId}/pagamento`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mes: cell.mes, pago: false }),
+      });
+      toast({ title: `${formatMonthBR(cell.mes)} desmarcado` });
+      onChanged();
+    } finally { setBusy(false); }
+  };
+
+  if (cell.status === 'sem_contrato') {
+    return <td className="p-2 text-center"><span className="text-muted-foreground/30">—</span></td>;
+  }
+  if (cell.status === 'futuro') {
+    return <td className="p-2 text-center"><Clock className="w-3.5 h-3.5 text-muted-foreground/50 inline" /></td>;
+  }
+
+  const cls = cell.status === 'pago'
+    ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-400"
+    : cell.status === 'pendente'
+      ? "bg-amber-500/10 border-amber-500/40 text-amber-400"
+      : "bg-red-500/10 border-red-500/40 text-red-400";
+
+  return (
+    <>
+      <td className="p-2 text-center">
+        <button
+          onClick={() => cell.status === 'pago' ? desmarcar() : setOpen(true)}
+          disabled={busy}
+          className={`inline-flex items-center justify-center w-7 h-7 rounded border ${cls} hover:scale-110 transition`}
+          title={
+            cell.status === 'pago'
+              ? `Pago${cell.dataPagamento ? ` em ${formatDateBR(cell.dataPagamento)}` : ""}${cell.formaPagamento ? ` (${cell.formaPagamento})` : ""} — clique pra desmarcar`
+              : "Clique pra registrar pagamento"
+          }
+        >
+          {cell.status === 'pago' && <CheckCircle className="w-4 h-4" />}
+          {cell.status === 'atrasado' && <X className="w-4 h-4" />}
+          {cell.status === 'pendente' && <Clock className="w-4 h-4" />}
+        </button>
+      </td>
+      {open && (
+        <MarcarPagoDialog
+          clientId={clienteId}
+          mes={cell.mes}
+          valorSugerido={planValue}
+          onClose={() => setOpen(false)}
+          onSaved={() => { setOpen(false); onChanged(); }}
+        />
+      )}
+    </>
   );
 }
 

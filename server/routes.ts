@@ -3813,11 +3813,19 @@ export async function registerRoutes(
     // Se snapshots cobrem 100% do período E tem dado, NÃO chama Trinks
     const cobreTudo = snapshotCobertura >= 1 && (snapshotsAgend.length > 0 || snapshotsTrans.length > 0);
 
-    // Buscar serial p/ não estourar rate limit do Trinks
-    const profData = await trinksFetchAll("profissionais").catch((e: any) => {
-      log(`[periodo ${dataInicio}..${dataFim}] erro profissionais: ${e?.message} — fallback pra metas`, "equipe");
-      return [] as any[];
-    });
+    // Buscar serial p/ não estourar rate limit do Trinks.
+    // Timeout 5s pra não travar quando Trinks está rate-limited (retries com
+    // backoff somam 30s+ por chamada). Vai usar fallback de metas se vazio.
+    const profData = await Promise.race([
+      trinksFetchAll("profissionais").catch((e: any) => {
+        log(`[periodo ${dataInicio}..${dataFim}] erro profissionais: ${e?.message} — fallback pra metas`, "equipe");
+        return [] as any[];
+      }),
+      new Promise<any[]>(resolve => setTimeout(() => {
+        log(`[periodo ${dataInicio}..${dataFim}] timeout Trinks profissionais — fallback pra metas`, "equipe");
+        resolve([]);
+      }, 5000)),
+    ]);
     // v37.3: fallback — se profData vier vazio (API 429), monta lista a partir
     // das metas persistidas. As metas têm profissionalId real (Trinks) + nome,
     // o que permite que resolveProf relacione os agendamentos do CSV (que tem
@@ -10323,12 +10331,16 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       // Serial para evitar competir pelo rate limit do Trinks (40/min) com 9 fetches paralelos.
       // Otimização A: mês PRIMEIRO — popula cache mensal de agendamentos/transacoes;
       // semana e dia em seguida reaproveitam essa janela via trinksFetchAllRange (zero fetches reais).
-      log(`[equipe/desempenho] calculando mês ${mesIni}..${mesFim}...`, "equipe");
-      const mesData = await calcularPeriodoPorProfissional(mesIni, mesFim);
-      log(`[equipe/desempenho] calculando semana ${semIni}..${semFim}...`, "equipe");
-      const semana = await calcularPeriodoPorProfissional(semIni, semFim);
-      log(`[equipe/desempenho] calculando dia ${hoje}...`, "equipe");
-      const dia = await calcularPeriodoPorProfissional(hoje, hoje);
+      // Paralelo: a serialização original era pra reaproveitar cache do mês
+      // nos cálculos de semana/dia, mas com Trinks rate-limited as 3 chamadas
+      // viravam timeout serial (30s+) e Railway matava a request. Paralelo,
+      // cada uma tem timeout interno de 5s por fetch, total ~10s.
+      log(`[equipe/desempenho] calculando mês/semana/dia em paralelo...`, "equipe");
+      const [mesData, semana, dia] = await Promise.all([
+        calcularPeriodoPorProfissional(mesIni, mesFim),
+        calcularPeriodoPorProfissional(semIni, semFim),
+        calcularPeriodoPorProfissional(hoje, hoje),
+      ]);
       const metas = await getAllMetas();
       log(`[equipe/desempenho] dia=${Object.keys(dia.porProfissional).length} sem=${Object.keys(semana.porProfissional).length} mes=${Object.keys(mesData.porProfissional).length} metas=${Object.keys(metas).length}`, "equipe");
 

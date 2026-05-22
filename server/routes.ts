@@ -3506,6 +3506,16 @@ export async function registerRoutes(
             setCache(transCacheKey, { data: d, at: Date.now() }, TRANS_CACHE_TTL_MS);
             return d;
           })
+          .catch((err: any) => {
+            // Em 429 persistente, popula cache vazio por 60s pra parar o
+            // polling do frontend e evitar disparar nova chamada Trinks
+            // a cada 5s (5s polling × 429 = storm).
+            if (err?.status === 429) {
+              const fallback = (cachedTrans?.data) || [];
+              setCache(transCacheKey, { data: fallback, at: Date.now() }, 60_000);
+            }
+            throw err;
+          })
           .finally(() => { inflightTrinksFetches.delete(transCacheKey); });
         inflightTrinksFetches.set(transCacheKey, inflight);
       }

@@ -3834,15 +3834,34 @@ export async function registerRoutes(
         log(`[periodo ${dataInicio}..${dataFim}] fallback metas falhou: ${e?.message}`, "equipe");
       }
     }
-    // Se snapshots cobrem tudo, usa direto sem chamar API. Senão chama com fallback.
-    const agendData = cobreTudo ? snapshotsAgend : await trinksFetchAllRange("agendamentos", { dataInicio, dataFim }).catch((e: any) => {
-      log(`[periodo ${dataInicio}..${dataFim}] erro agendamentos: ${e?.message} — fallback pra snapshots`, "equipe");
-      return snapshotsAgend; // fallback: usa o que tiver de snapshot
-    });
-    const transData = cobreTudo ? snapshotsTrans : await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim }).catch((e: any) => {
-      log(`[periodo ${dataInicio}..${dataFim}] erro transacoes: ${e?.message} — fallback pra snapshots`, "equipe");
-      return snapshotsTrans;
-    });
+    // Se snapshots cobrem tudo, usa direto sem chamar API. Senão chama com
+    // timeout de 5s — se Trinks demorar (rate limit + retries com backoff),
+    // abandona e usa o que tiver de snapshot pra não travar a página.
+    const PERIODO_TRINKS_TIMEOUT_MS = 5000;
+    const withTimeout = <T>(p: Promise<T>, fallback: T, label: string): Promise<T> =>
+      Promise.race([
+        p,
+        new Promise<T>(resolve => setTimeout(() => {
+          log(`[periodo ${dataInicio}..${dataFim}] timeout Trinks ${label} — usando snapshots`, "equipe");
+          resolve(fallback);
+        }, PERIODO_TRINKS_TIMEOUT_MS)),
+      ]);
+    const agendData = cobreTudo ? snapshotsAgend : await withTimeout(
+      trinksFetchAllRange("agendamentos", { dataInicio, dataFim }).catch((e: any) => {
+        log(`[periodo ${dataInicio}..${dataFim}] erro agendamentos: ${e?.message} — fallback pra snapshots`, "equipe");
+        return snapshotsAgend;
+      }),
+      snapshotsAgend,
+      "agendamentos",
+    );
+    const transData = cobreTudo ? snapshotsTrans : await withTimeout(
+      trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim }).catch((e: any) => {
+        log(`[periodo ${dataInicio}..${dataFim}] erro transacoes: ${e?.message} — fallback pra snapshots`, "equipe");
+        return snapshotsTrans;
+      }),
+      snapshotsTrans,
+      "transacoes",
+    );
     const profLista = profListaEffective; // v37.3: usa fallback de metas se Trinks zerou
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
     const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
@@ -6218,7 +6237,15 @@ Regras CRÍTICAS:
         const dataObj = new Date(data + "T12:00:00");
         const next = new Date(dataObj.getTime() + 24 * 60 * 60 * 1000);
         const fim = next.toISOString().slice(0, 10);
-        const transApi: any = await trinksFetchAll("transacoes", { dataInicio: data, dataFim: fim });
+        // Timeout de 5s pra Trinks — se rate-limit+retries fazem demorar,
+        // segue com trinks zerado em vez de travar a aba Caixa do Dia.
+        const transApi: any = await Promise.race([
+          trinksFetchAll("transacoes", { dataInicio: data, dataFim: fim }),
+          new Promise((resolve) => setTimeout(() => {
+            log(`caixa-dia/trinks timeout 5s — seguindo sem dados Trinks`, "caixa");
+            resolve([]);
+          }, 5000)),
+        ]);
         const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
         for (const t of arr) {
           const raw = t.dataHora || t.dataReferencia || t.data || "";

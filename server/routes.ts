@@ -1028,6 +1028,11 @@ interface CacheEntry {
 
 const memoryCache: Record<string, CacheEntry> = {};
 
+// Deduplica fetches Trinks em voo por chave de cache. Sem isso, polling do
+// dashboard (5s) dispara N chamadas paralelas pro mesmo dia, saturando o
+// rate limit (40/min) e fazendo o dashboard mostrar dados parciais.
+const inflightTrinksFetches: Map<string, Promise<any[]>> = new Map();
+
 const CACHE_TTLS: Record<string, number> = {
   "estabelecimentos": 24 * 60 * 60 * 1000,    // 24h
   "profissionais": 24 * 60 * 60 * 1000,        // 24h
@@ -3494,11 +3499,18 @@ export async function registerRoutes(
 
     // Transações: race entre fetch real e timeout de 2.5s
     if (!cachedFresh) {
-      const fetchPromise = trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: transFim })
-        .then((d: any[]) => {
-          setCache(transCacheKey, { data: d, at: Date.now() }, TRANS_CACHE_TTL_MS);
-          return { ok: true, data: d };
-        })
+      let inflight = inflightTrinksFetches.get(transCacheKey);
+      if (!inflight) {
+        inflight = trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: transFim })
+          .then((d: any[]) => {
+            setCache(transCacheKey, { data: d, at: Date.now() }, TRANS_CACHE_TTL_MS);
+            return d;
+          })
+          .finally(() => { inflightTrinksFetches.delete(transCacheKey); });
+        inflightTrinksFetches.set(transCacheKey, inflight);
+      }
+      const fetchPromise = inflight
+        .then((d: any[]) => ({ ok: true, data: d }))
         .catch((err: any) => {
           log(`calcularDiaCompleto: transacoes falhou — ${err?.message}`, "trinks");
           return { ok: false, data: [] as any[] };

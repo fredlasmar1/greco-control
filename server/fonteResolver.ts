@@ -47,7 +47,21 @@ async function getCsvFinanceiroImportadoEm(mes: string): Promise<{ importadoEm: 
   }
 }
 
-/** Decide qual fonte vence para um mês. Mais recente vence. */
+/**
+ * Modo de resolução de fonte. Configurado via env TRINKS_MODE.
+ *   - "csv-first" (default desde 22/05/2026): CSV vence sempre que existir.
+ *     Trinks só é usada para meses sem CSV. Recomendado: zero risco de estourar API.
+ *   - "mais-recente": comportamento antigo — quem tem timestamp mais recente vence.
+ */
+export type ModoFonte = "csv-first" | "mais-recente";
+
+export function getModoFonte(): ModoFonte {
+  const env = String(process.env.TRINKS_MODE || "").toLowerCase().trim();
+  if (env === "mais-recente") return "mais-recente";
+  return "csv-first";
+}
+
+/** Decide qual fonte vence para um mês. */
 export async function resolverFonte(mes: string): Promise<ResolverFonteResult> {
   const [trinksMeta, csvInfo] = await Promise.all([
     getSyncMeta(mes),
@@ -55,6 +69,7 @@ export async function resolverFonte(mes: string): Promise<ResolverFonteResult> {
   ]);
   const trinksAt = trinksMeta?.syncedAt || null;
   const csvAt = csvInfo.importadoEm || null;
+  const modo = getModoFonte();
 
   if (!trinksAt && !csvAt) {
     return { fonte: "nenhuma", trinksAt, csvAt, motivo: "Sem CSV importado e sem sync Trinks registrado." };
@@ -65,13 +80,23 @@ export async function resolverFonte(mes: string): Promise<ResolverFonteResult> {
   if (!trinksAt && csvAt) {
     return { fonte: "csv", trinksAt, csvAt, motivo: "Apenas CSV disponível." };
   }
-  // Ambos: comparar timestamps
+  // Ambos disponíveis:
+  if (modo === "csv-first") {
+    return { fonte: "csv", trinksAt, csvAt, motivo: "CSV é a fonte principal (modo csv-first)." };
+  }
+  // modo "mais-recente": comparar timestamps
   const tT = new Date(trinksAt!).getTime();
   const tC = new Date(csvAt!).getTime();
   if (tC > tT) {
     return { fonte: "csv", trinksAt, csvAt, motivo: "CSV mais recente que Trinks." };
   }
   return { fonte: "trinks", trinksAt, csvAt, motivo: "Trinks mais recente que CSV." };
+}
+
+/** Verifica se um mês já tem CSV importado. Útil para decidir se vale chamar Trinks. */
+export async function temCsvDoMes(mes: string): Promise<boolean> {
+  const info = await getCsvFinanceiroImportadoEm(mes);
+  return !!info.importadoEm;
 }
 
 // ─── Conversão CSV financeiro → "transações sintéticas" ─────────────────────

@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { resolverFonte, carregarTrinksDataDoCsv } from "./fonteResolver";
+import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { registrarEventoTrinks, comOrigem, resumoUltimosDias, lerUltimosDias } from "./trinksAuditLog";
 import * as cron from "node-cron";
 import {
@@ -1831,6 +1831,26 @@ export async function registerRoutes(
     });
   });
 
+  // POST /api/trinks/reset-monthly — zera o contador mensal Trinks em memória.
+  // Útil quando o contador estourou (4500/4500) mas o mês real ainda não virou.
+  // Também permite "liberar" se você importou todos os CSVs e quer voltar a usar Trinks.
+  app.post("/api/trinks/reset-monthly", async (_req: Request, res: Response) => {
+    const antes = rateLimiter.requestsThisMonth;
+    rateLimiter.requestsThisMonth = 0;
+    rateLimiter.requestsThisMinute = 0;
+    rateLimiter.minuteStart = Date.now();
+    // Atualiza cache em disco também (sobrevive a 1 restart)
+    try { saveMonthlyCounter(); } catch {}
+    log(`[trinks] contador mensal resetado manualmente: era ${antes}, agora 0`, "trinks");
+    return res.json({
+      ok: true,
+      antes,
+      agora: rateLimiter.requestsThisMonth,
+      monthKey: rateLimiter.monthKey,
+      maxPerMonth: MAX_REQUESTS_PER_MONTH,
+    });
+  });
+
   // GET /api/trinks/audit — auditoria persistente do consumo Trinks
   // Conta cada chamada real à rede (ok, 429, erro), agrupada por dia/hora/endpoint/origem.
   // Persiste em kv_store (Postgres Railway) — sobrevive a deploys, diferente do contador em memória.
@@ -1858,7 +1878,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-05-09-trinks-audit",
+      build: "2026-05-22-csv-first",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -4550,6 +4570,39 @@ export async function registerRoutes(
       const mes = String(req.params.mes || "").trim();
       if (!/^\d{4}-\d{2}$/.test(mes)) {
         return res.status(400).json({ error: "Mês inválido. Use YYYY-MM." });
+      }
+
+      // ├── Modo csv-first: se já temos CSV importado do mês, não gasta Trinks.
+      //    Use ?force=1 pra ignorar (sync explícito do usuário admin).
+      const force = String(req.query.force || "").trim() === "1";
+      if (!force && getModoFonte() === "csv-first" && await temCsvDoMes(mes)) {
+        log(`[sync-mes/${mes}] bloqueado: modo csv-first e já existe CSV do mês. Use ?force=1 para sobrescrever.`, "trinks");
+        return res.status(409).json({
+          error: `Mês ${mes} já tem CSV importado. Sync Trinks bloqueado em modo csv-first. Use ?force=1 se realmente quiser sincronizar (gasta API).`,
+          motivo: "csv-first",
+          mes,
+        });
+      }
+
+      // ├── Trava 6h: protege contra cliques repetidos no botão de sync.
+      //    Cada sync de mês dispara 80-200 chamadas (paginated). Sem trava, 1 usuário
+      //    abrindo o dashboard 10x pode queimar 2000+ tokens. Com ?force=1 pula a trava.
+      if (!force) {
+        const travaKey = `trinks:sync-mes:trava:${mes}`;
+        const ultimoSync = await kvGet<number>(travaKey);
+        const agora = Date.now();
+        const SEIS_HORAS = 6 * 60 * 60 * 1000;
+        if (ultimoSync && (agora - ultimoSync) < SEIS_HORAS) {
+          const minutosFalta = Math.ceil((SEIS_HORAS - (agora - ultimoSync)) / 60000);
+          log(`[sync-mes/${mes}] bloqueado pela trava 6h (faltam ${minutosFalta}min). Use ?force=1.`, "trinks");
+          return res.status(429).json({
+            error: `Sync deste mês foi feito há menos de 6h. Aguarde ${minutosFalta} minutos ou use ?force=1.`,
+            motivo: "trava-6h",
+            ultimoSyncAt: new Date(ultimoSync).toISOString(),
+          });
+        }
+        // Registra agora; se o sync falhar, vai sobrescrever no próximo ok.
+        try { await kvSet(travaKey, agora); } catch {}
       }
       // Calcula primeiro e último dia do mês pedido
       const [yStr, mStr] = mes.split("-");
@@ -10646,7 +10699,39 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         }
       }, { timezone: "America/Sao_Paulo" });
 
-      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + alerta estoque 9h (ter-sáb) + individual MATINAL 8h/SEMANAL sáb 21h/MENSAL último dia útil 21h + snapshot 23h30 (refinamento 6h)", "telegram");
+      // ─── Lembrete CSV 19h ter-sáb ─────────────────────────────────────────
+      // Em modo csv-first, o sistema depende do upload diário do relatório Trinks.
+      // Este cron lembra o usuário antes do fechamento das 20h, para garantir que
+      // o resumo da noite tenha dados frescos.
+      cron.schedule("0 19 * * 2-6", async () => {
+        try {
+          // Só envia se estamos em modo csv-first
+          if (getModoFonte() !== "csv-first") {
+            log("[cron] lembrete CSV pulado: modo não é csv-first", "telegram");
+            return;
+          }
+          // Só manda se o CSV de hoje (mês atual) parece desatualizado
+          // (importado há mais de 12h ou nunca importado neste mês)
+          const mesAtual = ymdHoje().slice(0, 7); // "YYYY-MM"
+          const meta = await resolverFonte(mesAtual);
+          const csvAt = meta.csvAt ? new Date(meta.csvAt).getTime() : 0;
+          const horasDesdeUltimoCsv = csvAt ? (Date.now() - csvAt) / (60 * 60 * 1000) : 999;
+          if (horasDesdeUltimoCsv < 12) {
+            log(`[cron] lembrete CSV pulado: CSV atualizado há ${horasDesdeUltimoCsv.toFixed(1)}h`, "telegram");
+            return;
+          }
+          const ultimoUploadTxt = meta.csvAt
+            ? new Date(meta.csvAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+            : "nunca";
+          const aviso = `⏰ *Lembrete: subir o CSV do dia*\n\nO sistema agora usa o CSV da Trinks como fonte principal.\n\nÚltimo upload: *${ultimoUploadTxt}*\n\nPara o resumo da noite (20h) sair com os números corretos:\n1. Entre no painel Trinks → Relatórios → Financeiro\n2. Exporte o CSV de hoje\n3. Suba em [grecocontrol.com.br/importar-trinks](https://grecocontrol.com.br/importar-trinks)\n\nSe já subiu, pode ignorar.`;
+          const r = await enviarMensagem(aviso);
+          log(`[cron] lembrete CSV: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
+        } catch (err: any) {
+          log(`[cron] erro lembrete CSV: ${err.message}`, "telegram");
+        }
+      }, { timezone: "America/Sao_Paulo" });
+
+      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + lembrete CSV 19h (ter-sáb) + alerta estoque 9h (ter-sáb) + individual MATINAL 8h/SEMANAL sáb 21h/MENSAL último dia útil 21h + snapshot 23h30 (refinamento 6h)", "telegram");
     } catch (err: any) {
       log(`[cron] falha ao registrar schedulers: ${err.message}`, "telegram");
     }

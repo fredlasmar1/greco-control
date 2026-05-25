@@ -1883,7 +1883,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-05-22-csv-first",
+      build: "2026-05-25-snapshot-csv",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -10726,7 +10726,9 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
 
       // v36 Fase 2: Cron noturno de SNAPSHOT — captura o dia atual + refina o anterior
       // 23:30 SP todo dia (inclusive domingos, pra registrar dias vazios com aviso)
-      cron.schedule("30 23 * * *", async () => {
+      // ⚠️ Em modo csv-first, passa preferirCsv:true e envolve com comOrigem para
+      // (a) não queimar Trinks quando o CSV já tem o dia, (b) origens identificadas.
+      cron.schedule("30 23 * * *", async () => { await comOrigem("cron-snapshot-23h30", async () => {
         try {
           const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
           const ontem = (() => {
@@ -10734,31 +10736,33 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
             d.setDate(d.getDate() - 1);
             return d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
           })();
-          log(`[cron-snapshot] capturando ${ontem} e ${hoje}...`, "snapshot");
-          const snapOntem = await capturarSnapshotDia(ontem);
-          const snapHoje = await capturarSnapshotDia(hoje);
+          const preferirCsv = getModoFonte() === "csv-first";
+          log(`[cron-snapshot] capturando ${ontem} e ${hoje} (preferirCsv=${preferirCsv})...`, "snapshot");
+          const snapOntem = await capturarSnapshotDia(ontem, { preferirCsv });
+          const snapHoje = await capturarSnapshotDia(hoje, { preferirCsv });
           log(`[cron-snapshot] ontem ${ontem}: fonte=${snapOntem.fonte} R$${snapOntem.faturamento.total.toFixed(2)} | hoje ${hoje}: fonte=${snapHoje.fonte} R$${snapHoje.faturamento.total.toFixed(2)}`, "snapshot");
         } catch (err: any) {
           log(`[cron-snapshot] erro: ${err.message}`, "snapshot");
         }
-      }, { timezone: "America/Sao_Paulo" });
+      }); }, { timezone: "America/Sao_Paulo" });
 
       // Cron matinal de refinamento — 6h SP recaptura ontem (caso o CSV do email
       // tenha chegado durante a madrugada com status mais atualizado)
-      cron.schedule("0 6 * * *", async () => {
+      cron.schedule("0 6 * * *", async () => { await comOrigem("cron-snapshot-refino-6h", async () => {
         try {
           const ontem = (() => {
             const d = new Date();
             d.setDate(d.getDate() - 1);
             return d.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
           })();
-          log(`[cron-snapshot] refinando snapshot de ${ontem}...`, "snapshot");
-          const snap = await capturarSnapshotDia(ontem);
+          const preferirCsv = getModoFonte() === "csv-first";
+          log(`[cron-snapshot] refinando snapshot de ${ontem} (preferirCsv=${preferirCsv})...`, "snapshot");
+          const snap = await capturarSnapshotDia(ontem, { preferirCsv });
           log(`[cron-snapshot] refinamento ${ontem}: fonte=${snap.fonte} R$${snap.faturamento.total.toFixed(2)}`, "snapshot");
         } catch (err: any) {
           log(`[cron-snapshot] erro refinamento: ${err.message}`, "snapshot");
         }
-      }, { timezone: "America/Sao_Paulo" });
+      }); }, { timezone: "America/Sao_Paulo" });
 
       // ─── Lembrete CSV 19h ter-sáb ─────────────────────────────────────────
       // Em modo csv-first, o sistema depende do upload diário do relatório Trinks.

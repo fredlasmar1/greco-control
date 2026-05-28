@@ -6277,6 +6277,33 @@ Regras CRÍTICAS:
         log(`caixa-dia/trinks erro: ${err.message}`, "caixa");
       }
 
+      // ── Fallback: API Trinks não trouxe nada (rate limit) → usa o CSV
+      // "Caixa por comanda" importado em /importar-trinks. Mesma lógica do
+      // capturarSnapshotDia (tentativa 2). Mapeia crédito+débito → cartao,
+      // pré-pago → plano.
+      if (trinks.qtd === 0) {
+        try {
+          const mesData = data.slice(0, 7);
+          const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", mesData));
+          if (caixaPayload?.rows && Array.isArray(caixaPayload.rows)) {
+            const rowsDia = caixaPayload.rows.filter((r: any) => (r.data || "").startsWith(data));
+            for (const r of rowsDia) {
+              trinks.total += Number(r.totalGeral || 0);
+              trinks.qtd += 1;
+              trinks.cartao += Number(r.totalCredito || 0) + Number(r.totalDebito || 0);
+              trinks.dinheiro += Number(r.totalDinheiro || 0);
+              trinks.plano += Number(r.totalPrePago || 0);
+              trinks.outros += Number(r.totalOutros || 0);
+            }
+            if (rowsDia.length > 0) {
+              log(`caixa-dia/${data}: usando CSV importado (${rowsDia.length} comandas, R$ ${trinks.total})`, "caixa");
+            }
+          }
+        } catch (err: any) {
+          log(`caixa-dia/csv-fallback erro: ${err.message}`, "caixa");
+        }
+      }
+
       // ── Banco do dia: entradas e saídas por conta
       const txDia = transacoesBanco.filter(t => t.date === data && t.incluidoNoFluxo !== false);
       type RBanco = { id: string; nome: string; transito: boolean;

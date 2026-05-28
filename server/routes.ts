@@ -3886,6 +3886,18 @@ export async function registerRoutes(
       idNovoParaNome.set(id, nome);
       if (!nomeParaIdPrimario.has(norm(nome))) nomeParaIdPrimario.set(norm(nome), id);
     });
+    // v39.1: dicionário manual de IDs (Configurações → profissionais conhecidos).
+    // Essencial quando a API Trinks está bloqueada: resolve IDs legados
+    // (ex: 653128 → ANDRÉ) que não vêm das metas nem da API.
+    try {
+      const conhecidos = await getProfsConhecidos();
+      for (const [id, nome] of Object.entries(conhecidos)) {
+        const n = String(nome || "").trim();
+        if (!id || !n) continue;
+        idNovoParaNome.set(String(id), n);
+        if (!nomeParaIdPrimario.has(norm(n))) nomeParaIdPrimario.set(norm(n), String(id));
+      }
+    } catch { /* ignora */ }
 
     // ── Heurística ID legado → nome via cruzamento (data, nomeCliente) com agendamentos ──
     // IMPORTANTE: cliente.id difere entre /v1/agendamentos e /v1/transacoes (namespaces distintos).

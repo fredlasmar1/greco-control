@@ -227,10 +227,13 @@ export default function ImportarTrinks() {
         <h2 className="text-xl font-semibold">Importar Relatórios da Trinks</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
           Suba os CSVs exportados pelo painel da Trinks. Tipos suportados:
+          <strong className="text-foreground mx-1">Caixa por comanda</strong>·
           <strong className="text-foreground mx-1">Financeiro</strong>·
           <strong className="text-foreground mx-1">DRE</strong>·
           <strong className="text-foreground mx-1">Ranking de Profissionais</strong>.
-          O sistema detecta o tipo automaticamente.
+          O sistema detecta o tipo automaticamente. Para preencher o caixa do dia
+          (faturamento por forma de pagamento) quando a API da Trinks está fora,
+          use o relatório <strong className="text-foreground">Caixa por comanda</strong>.
         </p>
       </div>
 

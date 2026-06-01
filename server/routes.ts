@@ -3547,6 +3547,36 @@ export async function registerRoutes(
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
     const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
 
+    // Fallback unificado: API trouxe vazio mas o CSV "Caixa por comanda" do
+    // mês cobre este dia. Monta transações sintéticas (mesmo formato Trinks)
+    // pra alimentar totalFechado + breakdown + comandas downstream. Mesma
+    // lógica usada em capturarSnapshotDia e caixa-dia.
+    if (transLista.length === 0) {
+      try {
+        const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", hoje.slice(0, 7)));
+        const rowsDia = (caixaPayload?.rows || []).filter((r: any) => (r.data || "").startsWith(hoje));
+        if (rowsDia.length > 0) {
+          for (const r of rowsDia) {
+            transLista.push({
+              dataHora: r.data,
+              cliente: { nome: r.clienteNome || "Cliente" },
+              totalPagar: Number(r.totalGeral || 0),
+              formasPagamentos: [
+                ...(Number(r.totalCredito) > 0 ? [{ nome: "Cartão de Crédito", valor: Number(r.totalCredito) }] : []),
+                ...(Number(r.totalDebito) > 0 ? [{ nome: "Cartão de Débito", valor: Number(r.totalDebito) }] : []),
+                ...(Number(r.totalDinheiro) > 0 ? [{ nome: "Dinheiro", valor: Number(r.totalDinheiro) }] : []),
+                ...(Number(r.totalPrePago) > 0 ? [{ nome: "Pré-Pago", valor: Number(r.totalPrePago) }] : []),
+                ...(Number(r.totalOutros) > 0 ? [{ nome: "Outros", valor: Number(r.totalOutros) }] : []),
+              ],
+            });
+          }
+          transOk = true;
+          transacoesPendente = false;
+          log(`calcularDiaCompleto/${hoje}: CSV fallback (${rowsDia.length} comandas)`, "trinks");
+        }
+      } catch { /* segue com transLista vazia */ }
+    }
+
     const statusIgnorar = ["cancelado", "cancelada", "no show", "no-show", "faltou"];
     const getStatusStr = (a: any) =>
       (typeof a.status === "string" ? a.status : (a.status?.descricao || a.status?.nome || "")).toLowerCase();

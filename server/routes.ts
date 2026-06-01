@@ -10294,6 +10294,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         let planos = 0;
         let produtosVendidos = 0;
         let totalAtendimentos = 0;
+        let totalTrinksReais = 0;
         if (periodo) {
           for (const p of Object.values(periodo.porProfissional)) {
             const fatServicos = p.servicos.reais || 0;
@@ -10302,8 +10303,14 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
             planos += p.plano.reais || 0;
             produtosVendidos += p.produtos.reais || 0;
             totalAtendimentos += p.total.count || 0;
+            totalTrinksReais += p.total.reais || 0;
           }
         }
+        // "Outros" cobre o gap entre total Trinks e a soma de barbeiros+estética+
+        // plano+produtos. Inclui pacotes, gorjetas, descontos, ajustes, etc.
+        // Sem isso o DRE fica R$ 10k abaixo do Fechamento (Trinks) e a conta não
+        // fecha entre as abas.
+        const outrosTrinks = Math.max(0, totalTrinksReais - servicosBarbeiros - servicosEstetica - planos - produtosVendidos);
 
         // 2. Comissões + bônus + taxa cartão (fonte: cálculo de pagamento)
         let comissoes = 0;
@@ -10354,7 +10361,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           saldoBancario = { entradas, saidas, saldo: entradas - saidas };
         } catch {}
 
-        const totalEntradas = servicosBarbeiros + servicosEstetica + planos + produtosVendidos + outrasReceitas;
+        const totalEntradas = servicosBarbeiros + servicosEstetica + planos + produtosVendidos + outrosTrinks + outrasReceitas;
         const totalSaidas = comissoes + taxaCartao + custoProdutos + despesasFixas + despesasVariaveis + parcelamentos + investimentos;
         const resultadoLiquido = totalEntradas - totalSaidas;
         const margem = totalEntradas > 0 ? (resultadoLiquido / totalEntradas) * 100 : 0;
@@ -10368,6 +10375,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
             servicosEstetica,
             planos,
             produtosVendidos,
+            outrosTrinks,
             outrasReceitas,
             total: totalEntradas,
             atendimentos: totalAtendimentos,

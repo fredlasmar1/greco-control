@@ -1260,8 +1260,10 @@ async function trinksFetchAll(
   // Sem essa guarda, um 429/timeout transient deixaria o sistema travado mostrando "0 produtos" até o TTL expirar.
   if (allItems.length > 0) {
     let ttl = CACHE_TTLS[endpointPath] || 15 * 60 * 1000;
-    // Otimização C: TTL estendido para janelas de meses fechados (dataFim < 1º dia do mês corrente em SP).
-    // Dados de meses passados são imutáveis na prática — 24h é seguro e reduz fetches em históricos.
+    // Cache estendido pra dias/meses passados — dados imutáveis.
+    // - dataFim < primeiro do mês: 30 dias (mês fechado)
+    // - dataFim < hoje: 7 dias (dia passado do mês corrente)
+    // Reduz drasticamente as chamadas Trinks ao navegar em histórico.
     const df = queryParams?.dataFim;
     if (df && (endpointPath === "agendamentos" || endpointPath === "transacoes" || endpointPath === "lancamentos")) {
       const fmtSP = new Intl.DateTimeFormat("en-CA", {
@@ -1270,7 +1272,9 @@ async function trinksFetchAll(
       const hojeSP = fmtSP.format(new Date()); // YYYY-MM-DD
       const primeiroDoMesSP = `${hojeSP.slice(0, 7)}-01`;
       if (df < primeiroDoMesSP) {
-        ttl = 24 * 60 * 60 * 1000; // 24h para meses fechados
+        ttl = 30 * 24 * 60 * 60 * 1000; // 30 dias — mês fechado, imutável
+      } else if (df < hojeSP) {
+        ttl = 7 * 24 * 60 * 60 * 1000; // 7 dias — dia passado do mês corrente
       }
     }
     setCache(cacheKey, allItems, ttl);
@@ -6253,7 +6257,34 @@ Regras CRÍTICAS:
       // pagou antes), 'voucher' (cortesia, sem dinheiro), 'descontoProf'
       // (abatimento da comissão), 'outros' (qualquer coisa não identificada).
       let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, descontoProf: 0, outros: 0, qtd: 0 };
-      try {
+
+      // CSV-first pra dias passados: se o CSV "Caixa por comanda" do mês já
+      // cobre este dia, usa direto e PULA a API Trinks. Economiza chamadas
+      // (dias passados são imutáveis). Pra hoje, API tem preferência.
+      const hojeSP_caixa = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date());
+      let csvUsado = false;
+      if (data < hojeSP_caixa) {
+        try {
+          const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", data.slice(0, 7)));
+          const rowsDia = (caixaPayload?.rows || []).filter((r: any) => (r.data || "").startsWith(data));
+          if (rowsDia.length > 0) {
+            for (const r of rowsDia) {
+              trinks.total += Number(r.totalGeral || 0);
+              trinks.qtd += 1;
+              trinks.cartao += Number(r.totalCredito || 0) + Number(r.totalDebito || 0);
+              trinks.dinheiro += Number(r.totalDinheiro || 0);
+              trinks.plano += Number(r.totalPrePago || 0);
+              trinks.outros += Number(r.totalOutros || 0);
+            }
+            csvUsado = true;
+            log(`caixa-dia/${data}: CSV-first (${rowsDia.length} comandas) — API Trinks evitada`, "caixa");
+          }
+        } catch { /* segue pra API */ }
+      }
+
+      if (!csvUsado) try {
         const dataObj = new Date(data + "T12:00:00");
         const next = new Date(dataObj.getTime() + 24 * 60 * 60 * 1000);
         const fim = next.toISOString().slice(0, 10);
@@ -10841,6 +10872,44 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     }
   } else {
     log("[cron] TELEGRAM_BOT_TOKEN não configurado — schedulers desativados", "telegram");
+  }
+
+  // ─── Pré-fetch noturno: 03h SP, todo dia ──────────────────────────
+  // Baixa em UMA chamada agendamentos+transações do mês corrente
+  // (1º até ontem). Como dataFim < hoje, fica em cache por 7 dias.
+  // Próximas consultas a qualquer dia passado do mês servem do cache
+  // via trinksTryFromCachedRange — zero chamadas Trinks extras.
+  // Economia: ~150 chamadas/mês por usuário ativo no dashboard.
+  try {
+    cron.schedule("0 3 * * *", async () => {
+      try {
+        const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+        const ontemSP = (() => {
+          const d = new Date(hojeSP + "T12:00:00");
+          d.setDate(d.getDate() - 1);
+          return d.toISOString().slice(0, 10);
+        })();
+        const primeiroDoMes = `${hojeSP.slice(0, 7)}-01`;
+        if (ontemSP < primeiroDoMes) {
+          log(`[prefetch] primeiro dia do mês — nada a pré-buscar`, "trinks");
+          return;
+        }
+        // transFim semi-aberto: precisa ser hojeSP pra incluir ontem.
+        log(`[prefetch] aquecendo cache ${primeiroDoMes}..${ontemSP} (transFim=${hojeSP})...`, "trinks");
+        const [trans, agend] = await Promise.allSettled([
+          trinksFetchAllRange("transacoes", { dataInicio: primeiroDoMes, dataFim: hojeSP }),
+          trinksFetchAllRange("agendamentos", { dataInicio: primeiroDoMes, dataFim: ontemSP }),
+        ]);
+        const tCount = trans.status === "fulfilled" && Array.isArray(trans.value) ? trans.value.length : 0;
+        const aCount = agend.status === "fulfilled" && Array.isArray(agend.value) ? agend.value.length : 0;
+        log(`[prefetch] cache aquecido — transacoes=${tCount} agendamentos=${aCount}`, "trinks");
+      } catch (err: any) {
+        log(`[prefetch] erro: ${err?.message || err}`, "trinks");
+      }
+    }, { timezone: "America/Sao_Paulo" });
+    log("[cron] pré-fetch noturno 03h SP ativo", "trinks");
+  } catch (err: any) {
+    log(`[cron] falha registrar pré-fetch: ${err.message}`, "trinks");
   }
 
   // ──────────────────────────────────────────────────────────────────

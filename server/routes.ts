@@ -4845,7 +4845,52 @@ export async function registerRoutes(
 
       const meta = await resolverFonte(mes);
 
-      // v39: ORDEM DE PRIORIDADE
+      // v40: API Trinks tem prioridade pra MESES PASSADOS — tem o dado completo
+      // e fica cacheada por 30 dias (cache estendido em trinksFetchAll).
+      // Para o mês CORRENTE, mantém CSV-first (evita storm de 429 em uso ao vivo).
+      const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+      const mesCorrente = hojeSP.slice(0, 7);
+      const ehMesPassado = mes < mesCorrente;
+
+      if (ehMesPassado && trinksConfig) {
+        try {
+          const [yStr, mStr] = mes.split("-");
+          const y = parseInt(yStr, 10);
+          const m = parseInt(mStr, 10);
+          const ultimoDia = new Date(y, m, 0).getDate();
+          const dataInicio = `${mes}-01`;
+          const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
+          const transFim = ymdAddDays(dataFim, 1);
+          const transacoesApi = await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim })
+            .catch((e: any) => { log(`/api/mes/${mes}/dados Trinks transacoes err: ${e.message}`, "trinks"); return [] as any[]; });
+          if (Array.isArray(transacoesApi) && transacoesApi.length > 0) {
+            const agendamentosApi = await trinksFetchAllRange("agendamentos", { dataInicio, dataFim })
+              .catch(() => [] as any[]);
+            const profissionaisApi = await trinksFetchAll("profissionais").catch(() => [] as any[]);
+            log(`/api/mes/${mes}/dados via API Trinks (${transacoesApi.length} comandas, ${(Array.isArray(agendamentosApi) ? agendamentosApi.length : 0)} agend)`, "trinks");
+            return res.json({
+              fonte: "trinks",
+              trinksAt: new Date().toISOString(),
+              csvAt: meta.csvAt,
+              motivo: `API Trinks (${transacoesApi.length} comandas — fonte completa pra mês fechado).`,
+              dados: {
+                estabelecimento: null,
+                profissionais: Array.isArray(profissionaisApi) ? profissionaisApi : [],
+                servicos: [],
+                agendamentos: Array.isArray(agendamentosApi) ? agendamentosApi : [],
+                transacoes: transacoesApi,
+                clientes: [],
+                syncedAt: new Date().toISOString(),
+                mes,
+              },
+            });
+          }
+        } catch (err: any) {
+          log(`/api/mes/${mes}/dados API-first falhou, cai pro CSV: ${err.message}`, "trinks");
+        }
+      }
+
+      // v39: cascata CSV (mês corrente OU API falhou)
       // 1. CSV CAIXA (relatório por comanda, breakdown PIX/cartão/dinheiro/pré-pago) — MAIS RICO
       // 2. CSV FINANCEIRO (formato antigo, valor agregado por pagamento)
       // 3. CSV de agendamentos do email
@@ -10381,6 +10426,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
 
       const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
 
+      // Filtros: ex-funcionários (inativos) + IDs sintéticos sem nome real
+      const inativos = await getProfsInativos();
       const profsRanked = Object.values(periodo.porProfissional)
         .map(p => ({
           id: p.profissionalId,
@@ -10406,6 +10453,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           ticketMedio: p.total.count > 0 ? p.total.reais / p.total.count : 0,
           taxaCartao: p.taxaCartao,
         }))
+        .filter(p => !inativos.has(String(p.id)))
+        .filter(p => !String(p.nome || "").startsWith("Profissional "))
         .filter(p => p.faturamento.total > 0 || p.atendimentos.total > 0)
         .sort((a, b) => b.faturamento.total - a.faturamento.total);
 

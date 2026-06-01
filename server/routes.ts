@@ -2031,9 +2031,21 @@ export async function registerRoutes(
   // profissionais antigos que saíram). Usuário cadastra manualmente o nome.
   // ════════════════════════════════════════════════════════════════════════
   const KV_PROFS_CONHECIDOS = "profissionais_conhecidos";
+  const KV_PROFS_INATIVOS = "profissionais_inativos";
 
   async function getProfsConhecidos(): Promise<Record<string, string>> {
     return (await kvGet<Record<string, string>>(KV_PROFS_CONHECIDOS)) || {};
+  }
+
+  // Lista de IDs inativos — saíram da equipe mas têm histórico no sistema.
+  // Mantemos o nome no dicionário pra dados antigos não virar "Profissional XXX",
+  // mas excluímos do ranking de Equipe.
+  async function getProfsInativos(): Promise<Set<string>> {
+    const lista = (await kvGet<string[]>(KV_PROFS_INATIVOS)) || [];
+    return new Set(lista.map(String));
+  }
+  async function setProfsInativos(ids: string[]): Promise<void> {
+    await kvSet(KV_PROFS_INATIVOS, Array.from(new Set(ids.map(String))));
   }
 
   // GET /api/profissionais-conhecidos — lista o dicionário
@@ -2069,6 +2081,43 @@ export async function registerRoutes(
       const atual = await getProfsConhecidos();
       delete atual[String(req.params.id)];
       await kvSet(KV_PROFS_CONHECIDOS, atual);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/profissionais-inativos — lista IDs marcados como ex-funcionários
+  app.get("/api/profissionais-inativos", async (_req: Request, res: Response) => {
+    try {
+      const set = await getProfsInativos();
+      return res.json({ ok: true, total: set.size, ids: Array.from(set) });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+  // POST /api/profissionais-inativos { id }  → marca como inativo
+  app.post("/api/profissionais-inativos", async (req: Request, res: Response) => {
+    try {
+      const id = String((req.body || {}).id || "").trim();
+      if (!id) return res.status(400).json({ ok: false, error: "id obrigatório" });
+      const atual = await getProfsInativos();
+      atual.add(id);
+      await setProfsInativos(Array.from(atual));
+      invalidateCache("equipe-desempenho-completo");
+      return res.json({ ok: true, id });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+  // DELETE /api/profissionais-inativos/:id → reativa
+  app.delete("/api/profissionais-inativos/:id", async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const atual = await getProfsInativos();
+      atual.delete(id);
+      await setProfsInativos(Array.from(atual));
+      invalidateCache("equipe-desempenho-completo");
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
@@ -10502,8 +10551,11 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           totalProfsRanking: totalProfsComMov,
         };
       });
+      // Exclui ex-funcionários marcados como inativos, mesmo com histórico.
+      const inativos = await getProfsInativos();
       // Remove linhas "fantasma" (IDs históricos sem nome real e sem movimento e sem meta)
       const linhas = linhasRaw.filter(l => {
+        if (inativos.has(String(l.profissionalId))) return false;
         if (l.meta) return true;
         // Exclui nome sintético "Profissional <id>" sem meta — IDs legados
         // (hex ou Trinks puro) de snapshots que perderam o vínculo com o

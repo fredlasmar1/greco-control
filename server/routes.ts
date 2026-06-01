@@ -6257,34 +6257,7 @@ Regras CRÍTICAS:
       // pagou antes), 'voucher' (cortesia, sem dinheiro), 'descontoProf'
       // (abatimento da comissão), 'outros' (qualquer coisa não identificada).
       let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, descontoProf: 0, outros: 0, qtd: 0 };
-
-      // CSV-first pra dias passados: se o CSV "Caixa por comanda" do mês já
-      // cobre este dia, usa direto e PULA a API Trinks. Economiza chamadas
-      // (dias passados são imutáveis). Pra hoje, API tem preferência.
-      const hojeSP_caixa = new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
-      }).format(new Date());
-      let csvUsado = false;
-      if (data < hojeSP_caixa) {
-        try {
-          const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", data.slice(0, 7)));
-          const rowsDia = (caixaPayload?.rows || []).filter((r: any) => (r.data || "").startsWith(data));
-          if (rowsDia.length > 0) {
-            for (const r of rowsDia) {
-              trinks.total += Number(r.totalGeral || 0);
-              trinks.qtd += 1;
-              trinks.cartao += Number(r.totalCredito || 0) + Number(r.totalDebito || 0);
-              trinks.dinheiro += Number(r.totalDinheiro || 0);
-              trinks.plano += Number(r.totalPrePago || 0);
-              trinks.outros += Number(r.totalOutros || 0);
-            }
-            csvUsado = true;
-            log(`caixa-dia/${data}: CSV-first (${rowsDia.length} comandas) — API Trinks evitada`, "caixa");
-          }
-        } catch { /* segue pra API */ }
-      }
-
-      if (!csvUsado) try {
+      try {
         const dataObj = new Date(data + "T12:00:00");
         const next = new Date(dataObj.getTime() + 24 * 60 * 60 * 1000);
         const fim = next.toISOString().slice(0, 10);

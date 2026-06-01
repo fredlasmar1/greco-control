@@ -10505,6 +10505,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       // Remove linhas "fantasma" (IDs históricos sem nome real e sem movimento e sem meta)
       const linhas = linhasRaw.filter(l => {
         if (l.meta) return true;
+        // Exclui nome sintético "Profissional <id>" sem meta — IDs legados
+        // (hex ou Trinks puro) de snapshots que perderam o vínculo com o
+        // profissional real. Sem meta + nome sintético = ruído no ranking.
+        if (String(l.nome || "").startsWith("Profissional ")) return false;
         if (l.dia.count > 0 || l.semana.count > 0 || l.mes.count > 0) return true;
         if (l.dia.reais > 0 || l.semana.reais > 0 || l.mes.reais > 0) return true;
         return false;

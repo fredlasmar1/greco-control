@@ -3893,8 +3893,17 @@ export async function registerRoutes(
       log(`[periodo ${dataInicio}..${dataFim}] erro lendo snapshots: ${err?.message}`, "equipe");
     }
 
-    // Se snapshots cobrem 100% do período E tem dado, NÃO chama Trinks
-    const cobreTudo = snapshotCobertura >= 1 && (snapshotsAgend.length > 0 || snapshotsTrans.length > 0);
+    // Pra meses passados, NUNCA confia 100% nos snapshots — eles podem ter sido
+    // capturados durante 429 da Trinks (dado parcial). Força a chamada pra API
+    // (já fica em cache estendido 7d/30d). Pro período corrente/futuro, mantém
+    // o snapshot-first pra evitar storm de 429 em uso ao vivo.
+    const hojeSP_periodo = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const periodoEhPassado = dataFim < hojeSP_periodo;
+    // Se snapshots cobrem 100% do período E tem dado, NÃO chama Trinks — EXCETO
+    // se for mês passado (aí prefere API que tem o dado completo).
+    const cobreTudo = !periodoEhPassado
+      && snapshotCobertura >= 1
+      && (snapshotsAgend.length > 0 || snapshotsTrans.length > 0);
 
     // Buscar serial p/ não estourar rate limit do Trinks.
     // Timeout 5s pra não travar quando Trinks está rate-limited (retries com

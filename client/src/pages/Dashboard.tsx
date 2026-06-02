@@ -692,6 +692,10 @@ export default function Dashboard() {
     // Antes: pulava o fetch pra mês corrente, deixando Dashboard em demo.
     setTrinksMesLoading(true);
     setTrinksMesError(null);
+    // Limpa os dados anteriores ao trocar de mês — evita race condition onde
+    // a tela mostra label do mês novo mas ainda renderiza dados do mês antigo
+    // até o fetch terminar.
+    setTrinksMes(null);
     fetch(`${API_BASE}/api/mes/${selectedMes}/dados`)
       .then(async (r) => {
         const j = await r.json().catch(() => null);

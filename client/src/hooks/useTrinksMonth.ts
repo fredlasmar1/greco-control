@@ -55,6 +55,9 @@ export function useTrinksMonth(selectedMes: string): UseTrinksMonthResult {
     let canceled = false;
     setLoading(true);
     setError(null);
+    // Limpa dados anteriores ao trocar de mês — evita render de label novo
+    // com dados do mês antigo enquanto o fetch não chega.
+    setTrinksMes(null);
     fetch(`${API_BASE}/api/mes/${selectedMes}/dados`)
       .then(async (r) => {
         const j = await r.json().catch(() => null);

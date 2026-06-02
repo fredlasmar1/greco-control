@@ -934,10 +934,10 @@ export default function Dashboard() {
       </div>
 
       {/* v25 Etapa 3: Resumo do mês via CSV importado.
-          v40: só aparece quando a API NÃO tem dado pro mês (fonte!=trinks).
-          Se a API resolveu o mês, ela é canônica e mostrar o CSV ao lado vira
-          ruído (dois totais diferentes pro mesmo mês). */}
-      {fonteMes !== "trinks" && <DashboardImportSummaryCard mes={selectedMes} />}
+          Mostra SEMPRE que tiver import — usuário precisa poder comparar o
+          CSV importado com a API ao vivo (auditoria/reconciliação). O badge
+          "Fonte: CSV" já indica que esse total pode divergir do total da API. */}
+      <DashboardImportSummaryCard mes={selectedMes} />
 
       {/* Revenue Highlight */}
       <div className={`grid gap-4 ${isMesCorrente ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1"}`}>

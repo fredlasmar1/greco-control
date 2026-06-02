@@ -19,6 +19,7 @@ import type {
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
+import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import { registrarEventoTrinks, comOrigem, resumoUltimosDias, lerUltimosDias } from "./trinksAuditLog";
 import * as cron from "node-cron";
 import {
@@ -2617,6 +2618,11 @@ export async function registerRoutes(
       }
 
       await saveTrinksImportIndex(idx);
+      // Invalida cache canônico dos meses afetados — auto-reconciliação:
+      // próxima leitura via mesService vai recomparar fontes e atualizar.
+      for (const p of persistidas) {
+        if (p.mes) invalidarMesCacheCanonical(p.mes);
+      }
       log(`Trinks import confirm: ${req.file.originalname} → ${persistidas.length} chave(s)`, "trinks-import");
       return res.json({ ok: true, importadas: persistidas });
     } catch (err: any) {
@@ -4824,7 +4830,25 @@ export async function registerRoutes(
     }
   });
 
-  // ─── GET /api/mes/:mes/fonte — meta da fonte vencedora (leve) ──────────
+  // ─── GET /api/mes/:mes/canonico — fonte ÚNICA da verdade (mesService) ──
+  // Retorna a fonte escolhida + breakdown + auditoria de TODAS as fontes.
+  // Substitui as cascatas espalhadas. Todos os endpoints novos devem usar.
+  app.get("/api/mes/:mes/canonico", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "").trim();
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ error: "Mês inválido. Use YYYY-MM." });
+      }
+      const force = String(req.query.force || "") === "1";
+      const data = await getMesDataCanonical(mes, { trinksFetchAllRange, log }, { force });
+      return res.json(data);
+    } catch (err: any) {
+      log(`/api/mes/${req.params.mes}/canonico erro: ${err?.message}`, "mesService");
+      return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // ─── GET /api/mes/:mes/fonte — meta da fonte vencedora (leve, legado) ──
   // Apenas retorna { fonte, trinksAt, csvAt, motivo } para o frontend exibir badge
   // sem precisar baixar todos os dados do mês.
   app.get("/api/mes/:mes/fonte", async (req: Request, res: Response) => {

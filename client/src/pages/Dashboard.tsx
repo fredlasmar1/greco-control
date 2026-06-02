@@ -933,9 +933,11 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* v25 Etapa 3: Resumo do mês via CSV importado (só aparece se houver import).
-          Passa o mês selecionado para refletir históricos quando o usuário navega no seletor. */}
-      <DashboardImportSummaryCard mes={selectedMes} />
+      {/* v25 Etapa 3: Resumo do mês via CSV importado.
+          v40: só aparece quando a API NÃO tem dado pro mês (fonte!=trinks).
+          Se a API resolveu o mês, ela é canônica e mostrar o CSV ao lado vira
+          ruído (dois totais diferentes pro mesmo mês). */}
+      {fonteMes !== "trinks" && <DashboardImportSummaryCard mes={selectedMes} />}
 
       {/* Revenue Highlight */}
       <div className={`grid gap-4 ${isMesCorrente ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1"}`}>
@@ -994,8 +996,13 @@ export default function Dashboard() {
               </span>
             </div>
             <p className="text-2xl sm:text-3xl font-bold text-primary" data-testid="revenue-month">
-              {formatCurrency(revenueSummary.monthRevenue)}
+              {(!isMesCorrente && (trinksMesLoading || !hasTrinksDataEffective))
+                ? "—"
+                : formatCurrency(revenueSummary.monthRevenue)}
             </p>
+            {!isMesCorrente && trinksMesLoading && (
+              <p className="text-xs text-muted-foreground mt-1">Carregando…</p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1688,22 +1695,24 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard
           title="Ticket Médio"
-          value={formatCurrency(totals.avgTicket)}
+          value={(!isMesCorrente && (trinksMesLoading || !hasTrinksDataEffective)) ? "—" : formatCurrency(totals.avgTicket)}
           trend={3.2}
           icon={<BarChart3 className="w-4 h-4 text-primary" />}
         />
         <KPICard
           title="Taxa de Ocupação"
-          value={formatPercent(totals.occupationRate)}
+          value={(!isMesCorrente && (trinksMesLoading || !hasTrinksDataEffective)) ? "—" : formatPercent(totals.occupationRate)}
           trend={-1.5}
           icon={<TrendingUp className="w-4 h-4 text-primary" />}
         />
-        <KPICard
-          title="Atendimentos Hoje"
-          value={`${todayClients} clientes`}
-          trend={12.0}
-          icon={<Users className="w-4 h-4 text-primary" />}
-        />
+        {isMesCorrente && (
+          <KPICard
+            title="Atendimentos Hoje"
+            value={`${todayClients} clientes`}
+            trend={12.0}
+            icon={<Users className="w-4 h-4 text-primary" />}
+          />
+        )}
       </div>
 
       {/* Revenue Chart + Goal Progress */}

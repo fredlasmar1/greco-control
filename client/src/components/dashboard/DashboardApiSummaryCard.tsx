@@ -1,41 +1,58 @@
 /**
- * Resumo do mês via API Trinks ao vivo — espelho do DashboardImportSummaryCard,
- * mas alimentado por /api/equipe/mes/:mes e /api/financeiro/dre/:mes.
- * Mostrado lado a lado com o card de CSV importado para auditoria/comparação.
+ * Resumo do mês via mesService (fonte canônica unificada).
+ * Chama /api/mes/:mes/canonico — o serviço escolhe a melhor fonte e
+ * devolve TODAS as outras pra auditoria visual.
  */
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, TrendingUp, Users, Receipt, Loader2 } from "lucide-react";
+import { Activity, Receipt, Loader2, GitCompareArrows } from "lucide-react";
 
-interface ApiSummary {
+interface FonteAudit {
+  disponivel: boolean;
   faturamento: number;
-  atendimentos: number;
-  breakdown: Record<string, number>;
-  dreReceitas: number;
-  dreDespesas: number;
-  dreResultado: number;
-  topProfs: { nome: string; total: number }[];
-  totalProfs: number;
-  periodoInicio: string;
-  periodoFim: string;
+  comandas?: number;
+  pagamentos?: number;
+  capturadoEm?: string | null;
+  geradoEm?: string | null;
+}
+interface CanonicoResponse {
+  mes: string;
+  fonte: "api-trinks" | "csv-caixa" | "csv-financeiro" | "snapshot" | "vazio";
+  comandas: number;
+  faturamento: number;
+  breakdown: { pix: number; cartaoCredito: number; cartaoDebito: number; dinheiro: number; plano: number; voucher: number; outros: number };
+  fontesAuditoria: { apiTrinks: FonteAudit; csvCaixa: FonteAudit; csvFinanceiro: FonteAudit };
 }
 
 const fmtBRL = (v: number) =>
-  new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(v || 0);
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v || 0);
 
-interface Props {
-  mes?: string;
-}
+const fonteLabel = (f: CanonicoResponse["fonte"]): string => {
+  switch (f) {
+    case "api-trinks": return "API Trinks";
+    case "csv-caixa": return "CSV Caixa";
+    case "csv-financeiro": return "CSV Financeiro";
+    case "snapshot": return "Snapshot";
+    case "vazio": return "Vazio";
+  }
+};
+
+const fonteCor = (f: CanonicoResponse["fonte"]): string => {
+  switch (f) {
+    case "api-trinks": return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+    case "csv-caixa":
+    case "csv-financeiro": return "bg-amber-500/15 text-amber-400 border-amber-500/30";
+    case "snapshot": return "bg-blue-500/15 text-blue-400 border-blue-500/30";
+    case "vazio": return "bg-muted text-muted-foreground";
+  }
+};
+
+interface Props { mes?: string; }
 
 export default function DashboardApiSummaryCard({ mes: mesProp }: Props) {
   const mes = mesProp || new Date().toISOString().slice(0, 7);
-  const [data, setData] = useState<ApiSummary | null>(null);
+  const [data, setData] = useState<CanonicoResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -46,68 +63,15 @@ export default function DashboardApiSummaryCard({ mes: mesProp }: Props) {
       setErro(null);
       setData(null);
       try {
-        const [dadosRes, dreRes] = await Promise.all([
-          fetch(`/api/mes/${mes}/dados`),
-          fetch(`/api/financeiro/dre/${mes}`).catch(() => null),
-        ]);
+        const r = await fetch(`/api/mes/${mes}/canonico`);
         if (!alive) return;
-        if (!dadosRes.ok) {
-          setErro(`HTTP ${dadosRes.status}`);
+        if (!r.ok) {
+          setErro(`HTTP ${r.status}`);
           setLoading(false);
           return;
         }
-        const dadosJson = await dadosRes.json();
-        const trans = dadosJson?.dados?.transacoes || [];
-
-        // Faturamento + breakdown forma pagamento
-        let faturamento = 0;
-        const breakdown: Record<string, number> = {};
-        for (const t of trans) {
-          faturamento += Number(t.totalPagar || 0);
-          const formas = t.formasPagamentos || t.formasPagamento || [];
-          for (const fp of formas) {
-            const nome = (fp.nome || "").trim() || "Outros";
-            breakdown[nome] = (breakdown[nome] || 0) + Number(fp.valor || 0);
-          }
-        }
-
-        // DRE
-        let dreReceitas = 0, dreDespesas = 0, dreResultado = 0;
-        if (dreRes && dreRes.ok) {
-          const dreJson = await dreRes.json();
-          const atual = dreJson?.atual;
-          if (atual) {
-            dreReceitas = atual.entradas?.total || 0;
-            dreDespesas = atual.saidas?.total || 0;
-            dreResultado = atual.resultadoLiquido || 0;
-          }
-        }
-
-        // Top profs (via /api/equipe/mes/:mes pra pegar ranking com filtros aplicados)
-        let topProfs: { nome: string; total: number }[] = [];
-        let totalProfs = 0;
-        try {
-          const eqRes = await fetch(`/api/equipe/mes/${mes}`);
-          if (eqRes.ok) {
-            const eqJson = await eqRes.json();
-            const profs = (eqJson?.profissionais || [])
-              .map((p: any) => ({ nome: p.nome || "—", total: p.faturamento?.total || 0 }))
-              .sort((a: any, b: any) => b.total - a.total);
-            topProfs = profs.slice(0, 5);
-            totalProfs = profs.length;
-          }
-        } catch { /* ok ficar vazio */ }
-
-        if (!alive) return;
-        setData({
-          faturamento,
-          atendimentos: trans.length,
-          breakdown,
-          dreReceitas, dreDespesas, dreResultado,
-          topProfs, totalProfs,
-          periodoInicio: `${mes}-01`,
-          periodoFim: mes,
-        });
+        const j: CanonicoResponse = await r.json();
+        if (alive) setData(j);
       } catch (e: any) {
         if (alive) setErro(e?.message || "erro");
       } finally {
@@ -119,106 +83,100 @@ export default function DashboardApiSummaryCard({ mes: mesProp }: Props) {
   }, [mes]);
 
   return (
-    <Card className="bg-card border-card-border" data-testid="card-resumo-api">
+    <Card className="bg-card border-card-border" data-testid="card-resumo-canonico">
       <CardHeader className="pb-3 border-b border-card-border">
         <div className="flex items-start justify-between flex-wrap gap-2">
           <div>
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Activity className="w-4 h-4 text-emerald-400" />
-              Resumo do mês — {mes} (API Trinks)
+              Resumo canônico — {mes}
             </CardTitle>
             <p className="text-[11px] text-muted-foreground mt-1">
-              Dados consolidados da API Trinks ao vivo. Fonte canônica — comparar com o CSV importado para auditar.
+              Fonte única da verdade. O serviço compara todas as fontes e escolhe a mais completa.
             </p>
           </div>
-          <Badge className="text-[10px] bg-emerald-500/15 text-emerald-400 border-emerald-500/30">
-            Fonte: API
-          </Badge>
+          {data && (
+            <Badge className={`text-[10px] border ${fonteCor(data.fonte)}`}>
+              Fonte escolhida: {fonteLabel(data.fonte)}
+            </Badge>
+          )}
         </div>
       </CardHeader>
 
-      <CardContent className="p-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <CardContent className="p-4 space-y-4">
         {loading && (
-          <div className="col-span-full flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="w-4 h-4 animate-spin" /> Carregando da API Trinks…
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Carregando…
           </div>
         )}
         {erro && !loading && (
-          <div className="col-span-full text-sm text-red-400">Erro: {erro}</div>
+          <div className="text-sm text-red-400">Erro: {erro}</div>
         )}
         {data && !loading && (
           <>
-            {/* Financeiro */}
+            {/* Total + breakdown da fonte escolhida */}
             <div className="border border-card-border/60 rounded-md p-3 bg-background/30">
               <div className="flex items-center gap-1.5 mb-2">
                 <Receipt className="w-3.5 h-3.5 text-blue-400" />
                 <p className="text-xs font-semibold">Financeiro (recebimentos)</p>
               </div>
-              <p className="text-xl font-bold text-blue-400">{fmtBRL(data.faturamento)}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                {data.atendimentos} comanda(s) · mês {mes}
-              </p>
-              {Object.keys(data.breakdown).length > 0 && (
-                <ul className="mt-2 space-y-0.5 max-h-24 overflow-y-auto">
-                  {Object.entries(data.breakdown)
-                    .sort((a, b) => b[1] - a[1])
-                    .slice(0, 5)
-                    .map(([forma, valor]) => (
-                      <li key={forma} className="flex justify-between text-[10px]">
-                        <span className="text-muted-foreground truncate mr-2">{forma}</span>
-                        <span className="font-mono">{fmtBRL(valor)}</span>
-                      </li>
-                    ))}
-                </ul>
-              )}
+              <p className="text-2xl font-bold text-blue-400">{fmtBRL(data.faturamento)}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{data.comandas} comandas</p>
+              <ul className="mt-2 space-y-0.5">
+                {data.breakdown.pix > 0 && <li className="flex justify-between text-[10px]"><span className="text-muted-foreground">PIX</span><span className="font-mono">{fmtBRL(data.breakdown.pix)}</span></li>}
+                {data.breakdown.cartaoCredito > 0 && <li className="flex justify-between text-[10px]"><span className="text-muted-foreground">Cartão Crédito</span><span className="font-mono">{fmtBRL(data.breakdown.cartaoCredito)}</span></li>}
+                {data.breakdown.cartaoDebito > 0 && <li className="flex justify-between text-[10px]"><span className="text-muted-foreground">Cartão Débito</span><span className="font-mono">{fmtBRL(data.breakdown.cartaoDebito)}</span></li>}
+                {data.breakdown.dinheiro > 0 && <li className="flex justify-between text-[10px]"><span className="text-muted-foreground">Dinheiro</span><span className="font-mono">{fmtBRL(data.breakdown.dinheiro)}</span></li>}
+                {data.breakdown.plano > 0 && <li className="flex justify-between text-[10px]"><span className="text-muted-foreground">Pré-Pago/Plano</span><span className="font-mono">{fmtBRL(data.breakdown.plano)}</span></li>}
+                {data.breakdown.voucher > 0 && <li className="flex justify-between text-[10px]"><span className="text-muted-foreground">Voucher</span><span className="font-mono">{fmtBRL(data.breakdown.voucher)}</span></li>}
+                {data.breakdown.outros > 0 && <li className="flex justify-between text-[10px]"><span className="text-muted-foreground">Outros</span><span className="font-mono">{fmtBRL(data.breakdown.outros)}</span></li>}
+              </ul>
             </div>
 
-            {/* DRE */}
+            {/* Auditoria de TODAS as fontes — confirma que as contas batem */}
             <div className="border border-card-border/60 rounded-md p-3 bg-background/30">
               <div className="flex items-center gap-1.5 mb-2">
-                <TrendingUp className="w-3.5 h-3.5 text-green-400" />
-                <p className="text-xs font-semibold">DRE (resultado do mês)</p>
+                <GitCompareArrows className="w-3.5 h-3.5 text-purple-400" />
+                <p className="text-xs font-semibold">Auditoria — todas as fontes</p>
               </div>
-              <p className={`text-xl font-bold ${data.dreResultado >= 0 ? "text-green-400" : "text-red-400"}`}>
-                {fmtBRL(data.dreResultado)}
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="text-muted-foreground border-b border-card-border/30">
+                    <th className="text-left py-1 font-normal">Fonte</th>
+                    <th className="text-right py-1 font-normal">Faturamento</th>
+                    <th className="text-right py-1 font-normal">Itens</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className={data.fonte === "api-trinks" ? "bg-emerald-500/5" : ""}>
+                    <td className="py-1">
+                      <span className="text-emerald-400">API Trinks</span>
+                      {!data.fontesAuditoria.apiTrinks.disponivel && <span className="text-muted-foreground ml-1">(indisponível)</span>}
+                    </td>
+                    <td className="py-1 text-right font-mono">{fmtBRL(data.fontesAuditoria.apiTrinks.faturamento)}</td>
+                    <td className="py-1 text-right font-mono">{data.fontesAuditoria.apiTrinks.comandas || 0}</td>
+                  </tr>
+                  <tr className={data.fonte === "csv-caixa" ? "bg-amber-500/5" : ""}>
+                    <td className="py-1">
+                      <span className="text-amber-400">CSV Caixa</span>
+                      {!data.fontesAuditoria.csvCaixa.disponivel && <span className="text-muted-foreground ml-1">(não importado)</span>}
+                    </td>
+                    <td className="py-1 text-right font-mono">{fmtBRL(data.fontesAuditoria.csvCaixa.faturamento)}</td>
+                    <td className="py-1 text-right font-mono">{data.fontesAuditoria.csvCaixa.comandas || 0}</td>
+                  </tr>
+                  <tr className={data.fonte === "csv-financeiro" ? "bg-amber-500/5" : ""}>
+                    <td className="py-1">
+                      <span className="text-amber-400">CSV Financeiro</span>
+                      {!data.fontesAuditoria.csvFinanceiro.disponivel && <span className="text-muted-foreground ml-1">(não importado)</span>}
+                    </td>
+                    <td className="py-1 text-right font-mono">{fmtBRL(data.fontesAuditoria.csvFinanceiro.faturamento)}</td>
+                    <td className="py-1 text-right font-mono">{data.fontesAuditoria.csvFinanceiro.pagamentos || 0}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p className="text-[10px] text-muted-foreground mt-2">
+                ✓ A linha destacada é a escolhida. Se houver grande divergência entre fontes, considere re-importar o CSV mais recente.
               </p>
-              <div className="text-[11px] text-muted-foreground mt-0.5 space-y-0.5">
-                <div className="flex justify-between">
-                  <span>Receitas</span>
-                  <span className="font-mono text-foreground/80">{fmtBRL(data.dreReceitas)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Despesas</span>
-                  <span className="font-mono text-foreground/80">{fmtBRL(data.dreDespesas)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Top profissionais */}
-            <div className="border border-card-border/60 rounded-md p-3 bg-background/30">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Users className="w-3.5 h-3.5 text-purple-400" />
-                <p className="text-xs font-semibold">Top profissionais</p>
-              </div>
-              <p className="text-xl font-bold text-purple-400">
-                {fmtBRL(data.topProfs.reduce((s, p) => s + p.total, 0))}
-              </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                {data.totalProfs} profissionais
-              </p>
-              {data.topProfs.length > 0 && (
-                <ul className="mt-2 space-y-0.5 max-h-24 overflow-y-auto">
-                  {data.topProfs.map((p, i) => (
-                    <li key={p.nome + i} className="flex justify-between text-[10px]">
-                      <span className="text-muted-foreground truncate mr-2">
-                        <span className="text-foreground/70 mr-1">#{i + 1}</span>
-                        {p.nome}
-                      </span>
-                      <span className="font-mono">{fmtBRL(p.total)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
           </>
         )}

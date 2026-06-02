@@ -4876,6 +4876,39 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Mês inválido. Use YYYY-MM." });
       }
 
+      // v41: mesService primeiro — fonte única canônica. Se devolveu dado,
+      // usa esse e pula a cascata legada (CSV → API → snapshot). Garante
+      // que TODAS as telas vejam o mesmo número pra um mês.
+      try {
+        const canonical = await getMesDataCanonical(mes, { trinksFetchAllRange, log });
+        if (canonical.fonte !== "vazio" && canonical.transacoes.length > 0) {
+          const fonteUi =
+            canonical.fonte === "api-trinks" ? "trinks" :
+            canonical.fonte === "csv-caixa" || canonical.fonte === "csv-financeiro" ? "csv" :
+            "nenhuma";
+          return res.json({
+            fonte: fonteUi,
+            fonteDetalhada: canonical.fonte,
+            trinksAt: canonical.fontesAuditoria.apiTrinks.capturadoEm,
+            csvAt: canonical.fontesAuditoria.csvCaixa.geradoEm || canonical.fontesAuditoria.csvFinanceiro.geradoEm,
+            motivo: `${canonical.fonte} venceu (${canonical.comandas} comandas, R$ ${canonical.faturamento.toFixed(2)})`,
+            fontesAuditoria: canonical.fontesAuditoria,
+            dados: {
+              estabelecimento: null,
+              profissionais: [],
+              servicos: [],
+              agendamentos: canonical.agendamentos,
+              transacoes: canonical.transacoes,
+              clientes: [],
+              syncedAt: canonical.capturadoEm,
+              mes,
+            },
+          });
+        }
+      } catch (err: any) {
+        log(`/api/mes/${mes}/dados mesService falhou, cai pra legado: ${err?.message}`, "mesService");
+      }
+
       const meta = await resolverFonte(mes);
 
       // v40: API Trinks tem prioridade pra MESES PASSADOS — tem o dado completo
@@ -10499,6 +10532,12 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         .filter(p => p.faturamento.total > 0 || p.atendimentos.total > 0)
         .sort((a, b) => b.faturamento.total - a.faturamento.total);
 
+      // v41: anexa auditoria de fontes — usuário vê os totais do mesService
+      // ao lado do total que vem de calcularPeriodoPorProfissional.
+      const canonicoAudit = await getMesDataCanonical(mes, { trinksFetchAllRange, log })
+        .then(c => ({ fonteEscolhida: c.fonte, faturamento: c.faturamento, comandas: c.comandas, fontesAuditoria: c.fontesAuditoria }))
+        .catch(() => null);
+
       return res.json({
         ok: true,
         mes,
@@ -10519,6 +10558,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         },
         profissionais: profsRanked,
         config: periodo.config,
+        canonico: canonicoAudit,
         fetchedAt: new Date().toISOString(),
       });
     } catch (err: any) {

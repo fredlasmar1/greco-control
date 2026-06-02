@@ -4879,9 +4879,14 @@ export async function registerRoutes(
       // v41: mesService primeiro — fonte única canônica. Se devolveu dado,
       // usa esse e pula a cascata legada (CSV → API → snapshot). Garante
       // que TODAS as telas vejam o mesmo número pra um mês.
+      // Timeout 12s: se a API Trinks tá lenta (paginação ou rate limit),
+      // cai pra cascata legada que tem seus próprios fallbacks.
       try {
-        const canonical = await getMesDataCanonical(mes, { trinksFetchAllRange, log });
-        if (canonical.fonte !== "vazio" && canonical.transacoes.length > 0) {
+        const canonical = await Promise.race([
+          getMesDataCanonical(mes, { trinksFetchAllRange, log }),
+          new Promise<null>((_, rej) => setTimeout(() => rej(new Error("mesService timeout 12s")), 12_000)),
+        ]);
+        if (canonical && canonical.fonte !== "vazio" && canonical.transacoes.length > 0) {
           const fonteUi =
             canonical.fonte === "api-trinks" ? "trinks" :
             canonical.fonte === "csv-caixa" || canonical.fonte === "csv-financeiro" ? "csv" :

@@ -71,6 +71,7 @@ import {
 } from "recharts";
 import { Link } from "wouter";
 import DashboardImportSummaryCard from "@/components/dashboard/DashboardImportSummaryCard";
+import DashboardApiSummaryCard from "@/components/dashboard/DashboardApiSummaryCard";
 import { FonteBadge } from "@/components/dashboard/FonteBadge";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -933,11 +934,13 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* v25 Etapa 3: Resumo do mês via CSV importado.
-          Mostra SEMPRE que tiver import — usuário precisa poder comparar o
-          CSV importado com a API ao vivo (auditoria/reconciliação). O badge
-          "Fonte: CSV" já indica que esse total pode divergir do total da API. */}
-      <DashboardImportSummaryCard mes={selectedMes} />
+      {/* v40: 2 painéis lado a lado — Trinks API (canônico) + CSV importado
+          (auditoria). Cada um com seus próprios totais e badges. Em telas
+          pequenas empilha vertical. */}
+      <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
+        <DashboardApiSummaryCard mes={selectedMes} />
+        <DashboardImportSummaryCard mes={selectedMes} />
+      </div>
 
       {/* Revenue Highlight */}
       <div className={`grid gap-4 ${isMesCorrente ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1"}`}>

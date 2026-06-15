@@ -116,6 +116,8 @@ interface DesempenhoApi {
   linhas: LinhaDesempenho[];
   fonte?: "trinks-api" | "trinks-import";
   importInfo?: { geradoEm: string | null };
+  // v42: profissionais do ranking com Total Serviços > 0 sem categoria de comissão.
+  semCategoria?: Array<{ nome: string; totalServicos: number }>;
 }
 
 interface ImportItem {
@@ -495,6 +497,30 @@ export default function MetasEquipePainel() {
       </CardHeader>
 
       <CardContent className="p-0">
+        {/* v42: aviso de profissionais sem categoria de comissão (não pagar zero em silêncio) */}
+        {desempenho?.semCategoria && desempenho.semCategoria.length > 0 && (
+          <div
+            data-testid="aviso-sem-categoria"
+            className="mx-4 mt-4 mb-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200"
+          >
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
+              <div>
+                <strong className="text-amber-100">
+                  {desempenho.semCategoria.length} profissional(is) sem categoria de comissão
+                </strong>
+                <span className="text-amber-200/80"> — comissão NÃO calculada (cadastre a categoria em Configurações):</span>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {desempenho.semCategoria.map((p) => (
+                    <Badge key={p.nome} variant="outline" className="border-amber-500/40 text-amber-100">
+                      {p.nome} · {fmtBRL(p.totalServicos)} em serviços
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {loading && metas.length === 0 ? (
           <div className="p-6 text-center text-xs text-muted-foreground">Carregando metas e desempenho...</div>
         ) : metas.length === 0 ? (

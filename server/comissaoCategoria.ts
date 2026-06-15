@@ -90,6 +90,93 @@ export function getComissaoPctDoServico(
   return getPctPadrao();
 }
 
+// ====================================================================
+// v42: Comissão a partir do RANKING (apelido antes do hífen × Total Serviços)
+// ====================================================================
+// O CSV "Ranking de Profissionais" traz o campo `Profissional` no formato
+// "APELIDO - NOME COMPLETO" (ex.: "ANDRÉ - CARLOS ANDRÉ"). O match
+// profissional→categoria é feito pelo APELIDO (token antes do primeiro hífen).
+//
+// Regra confirmada (categorias exclusivas):
+//   André                                  → VIP        → 50%
+//   Pedro Henrique, Lucas, José Armando,    → Clássico   → 40%
+//   Matheus
+//   César, Leonardo                         → Express    → 50%
+//   Débora, Ellen, Patrícia                 → Assistente → 40%
+//
+// IMPORTANTE: comissão R$ = `Total Serviços` × (% da categoria). Usa-se
+// `Total Serviços` (NÃO `Valor Total`), que separa serviço de produto por pessoa.
+// Profissional sem categoria → categoria=null, comissão=0 e `mapeado=false`:
+// o chamador DEVE avisar (nunca pagar zero em silêncio nem inventar categoria).
+
+export type CategoriaComissao = "VIP" | "Express" | "Classico" | "Assistente";
+
+// Apelidos normalizados (sem acento, minúsculo) → categoria.
+const APELIDO_CATEGORIA: Record<string, CategoriaComissao> = {
+  "andre": "VIP",
+  "pedro": "Classico", "pedro henrique": "Classico",
+  "lucas": "Classico",
+  "jose armando": "Classico", "armando": "Classico", "armandinho": "Classico",
+  "matheus": "Classico",
+  "cesar": "Express",
+  "leonardo": "Express",
+  "debora": "Assistente",
+  "ellen": "Assistente",
+  "patricia": "Assistente",
+};
+
+const PCT_CATEGORIA: Record<CategoriaComissao, number> = {
+  VIP: COMISSAO_VIP_EXPRESS,        // 50%
+  Express: COMISSAO_VIP_EXPRESS,    // 50%
+  Classico: COMISSAO_PADRAO,        // 40%
+  Assistente: COMISSAO_PADRAO,      // 40%
+};
+
+/** Extrai o apelido (token antes do primeiro hífen) já normalizado. */
+export function apelidoDoRanking(profissional: string): string {
+  const antesDoHifen = String(profissional || "").split(/[-–—]/)[0];
+  return norm(antesDoHifen);
+}
+
+/** Categoria pelo apelido do ranking, ou null se não mapeado (não assume nada). */
+export function categoriaPorApelidoRanking(profissional: string): CategoriaComissao | null {
+  const ap = apelidoDoRanking(profissional);
+  if (!ap) return null;
+  if (APELIDO_CATEGORIA[ap]) return APELIDO_CATEGORIA[ap];
+  // fallback: primeiro nome do apelido (ex.: "pedro henrique" → "pedro")
+  const token1 = ap.split(/\s+/)[0];
+  if (token1 && APELIDO_CATEGORIA[token1]) return APELIDO_CATEGORIA[token1];
+  return null;
+}
+
+/** % (fração) da categoria. */
+export function pctDaCategoria(cat: CategoriaComissao): number {
+  return PCT_CATEGORIA[cat];
+}
+
+export interface ComissaoRankingResult {
+  categoria: CategoriaComissao | null;
+  pct: number;          // fração (0.50 / 0.40 / 0)
+  comissao: number;     // R$ = totalServicos × pct
+  mapeado: boolean;     // false → chamador deve AVISAR (sem categoria)
+}
+
+/**
+ * Comissão de serviços a partir do ranking:
+ *   comissão R$ = `Total Serviços` × (% da categoria do apelido).
+ * Retorna comissao=0 / mapeado=false quando o profissional não casa com o mapa.
+ */
+export function comissaoServicosRanking(
+  profissional: string,
+  totalServicos: number,
+): ComissaoRankingResult {
+  const cat = categoriaPorApelidoRanking(profissional);
+  const ts = Math.max(0, Number(totalServicos) || 0);
+  if (!cat) return { categoria: null, pct: 0, comissao: 0, mapeado: false };
+  const pct = pctDaCategoria(cat);
+  return { categoria: cat, pct, comissao: Math.round(ts * pct * 100) / 100, mapeado: true };
+}
+
 // Categoria textual (para logs/debug).
 export function getCategoriaServico(
   nomeServico?: string | null,

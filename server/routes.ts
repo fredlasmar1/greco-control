@@ -83,6 +83,7 @@ import {
   getCategoriaServico,
   getMargemDesejadaDefault,
   calcularMargemServico,
+  comissaoServicosRanking,
 } from "./comissaoCategoria";
 import {
   getOverrides,
@@ -2727,6 +2728,27 @@ export async function registerRoutes(
       const config = { taxaCartaoPct: (cfgFin as any)?.taxaCartaoPct || 0 };
 
       const mesData = trinksImport.rankingPeriodoParaResultado(periodo, nomeParaIdPrimario, config);
+
+      // v42: comissão por categoria (apelido antes do hífen × `Total Serviços`).
+      // Profissional com `Total Serviços > 0` que não casa com o mapa de
+      // categorias NÃO recebe comissão em silêncio — vai pra `semCategoria`
+      // (aviso na UI + log) pro Fred cadastrar.
+      const normNomeImport = (s: string) =>
+        String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+      const comissaoPorNome = new Map<string, { categoria: string | null; pct: number; comissaoServicos: number; totalServicos: number }>();
+      const semCategoria: Array<{ nome: string; totalServicos: number }> = [];
+      for (const p of (periodo.profissionais || [])) {
+        const ts = Number(p.totalServicos || 0);
+        const r = comissaoServicosRanking(p.profissional, ts);
+        comissaoPorNome.set(normNomeImport(p.profissional), {
+          categoria: r.categoria, pct: r.pct, comissaoServicos: r.comissao, totalServicos: ts,
+        });
+        if (!r.mapeado && ts > 0) {
+          semCategoria.push({ nome: p.profissional, totalServicos: ts });
+          log(`[equipe/desempenho-import] ${mes}: "${p.profissional}" sem categoria de comissão (Total Serviços R$ ${ts.toFixed(2)}) — comissão NÃO calculada, cadastrar categoria`, "comissao");
+        }
+      }
+
       // dia/semana = vazio (CSV é mensal). Mantemos formato compatível.
       const diaVazio = trinksImport.periodoVazio(periodo.periodoInicio, periodo.periodoInicio);
       const semVazio = trinksImport.periodoVazio(periodo.periodoInicio, periodo.periodoFim);
@@ -2800,8 +2822,12 @@ export async function registerRoutes(
         const diaObj = { ...z };
         const semanaObj = { ...z };
         const mesObj = mkObj(profMes);
+        const comInfo = comissaoPorNome.get(normNomeImport(nome));
         return {
           profissionalId: id, nome,
+          comissao: comInfo
+            ? { categoria: comInfo.categoria, pct: comInfo.pct, comissaoServicos: comInfo.comissaoServicos, totalServicos: comInfo.totalServicos, semCategoria: comInfo.categoria === null && comInfo.totalServicos > 0 }
+            : { categoria: null, pct: 0, comissaoServicos: 0, totalServicos: 0, semCategoria: false },
           meta: meta ? { metaReais: meta.metaReais, metaAtendimentos: meta.metaAtendimentos, telegramChatId: meta.telegramChatId, ativoEnvio: meta.ativoEnvio, pctServico: meta.pctServico || 0, pctProduto: meta.pctProduto || 0, pctPlano: meta.pctPlano || 0 } : null,
           metasCalculadas: metasCalc,
           dia: diaObj,
@@ -2836,6 +2862,9 @@ export async function registerRoutes(
         totais: { dia: diaVazio.totais, semana: semVazio.totais, mes: mesData.totais },
         config,
         linhas: linhasRaw,
+        // v42: profissionais com Total Serviços > 0 sem categoria de comissão.
+        // UI deve avisar (não pagar zero em silêncio).
+        semCategoria,
         importInfo: { geradoEm: rankingData?.geradoEm || null },
         fetchedAt: new Date().toISOString(),
       };
@@ -4864,11 +4893,11 @@ export async function registerRoutes(
     }
   });
 
-  // ─── GET /api/mes/:mes/dados — "mais recente vence" ───────────────────
-  // Retorna TrinksData da fonte vencedora (CSV ou Trinks) + meta. Substitui o
-  // fetch direto a /api/trinks/sync-mes/:mes no Dashboard quando o mês não é o
-  // corrente. Para o mês corrente o frontend pode continuar usando /sync mas
-  // este endpoint também funciona (usa sync-mes internamente).
+  // ─── GET /api/mes/:mes/dados — divisão de trabalho por janela-de-tempo ──
+  // v42: cada fonte governa a janela onde é melhor (não competem por score):
+  //   • mês fechado  → CSV sempre (Financeiro p/ faturamento+breakdown); API NUNCA.
+  //   • mês corrente → API governa o "agora"; CSV importado como provisório.
+  // Retorna TrinksData da fonte da janela + meta de auditoria.
   app.get("/api/mes/:mes/dados", async (req: Request, res: Response) => {
     try {
       const mes = String(req.params.mes || "").trim();
@@ -4896,7 +4925,7 @@ export async function registerRoutes(
             fonteDetalhada: canonical.fonte,
             trinksAt: canonical.fontesAuditoria.apiTrinks.capturadoEm,
             csvAt: canonical.fontesAuditoria.csvCaixa.geradoEm || canonical.fontesAuditoria.csvFinanceiro.geradoEm,
-            motivo: `${canonical.fonte} venceu (${canonical.comandas} comandas, R$ ${canonical.faturamento.toFixed(2)})`,
+            motivo: `Fonte do mês: ${canonical.fonte} (${canonical.comandas} comandas, R$ ${canonical.faturamento.toFixed(2)}). Divergências entre fontes são nota de auditoria, não disputa.`,
             fontesAuditoria: canonical.fontesAuditoria,
             dados: {
               estabelecimento: null,
@@ -4916,50 +4945,12 @@ export async function registerRoutes(
 
       const meta = await resolverFonte(mes);
 
-      // v40: API Trinks tem prioridade pra MESES PASSADOS — tem o dado completo
-      // e fica cacheada por 30 dias (cache estendido em trinksFetchAll).
-      // Para o mês CORRENTE, mantém CSV-first (evita storm de 429 em uso ao vivo).
-      const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-      const mesCorrente = hojeSP.slice(0, 7);
-      const ehMesPassado = mes < mesCorrente;
-
-      if (ehMesPassado && trinksConfig) {
-        try {
-          const [yStr, mStr] = mes.split("-");
-          const y = parseInt(yStr, 10);
-          const m = parseInt(mStr, 10);
-          const ultimoDia = new Date(y, m, 0).getDate();
-          const dataInicio = `${mes}-01`;
-          const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
-          const transFim = ymdAddDays(dataFim, 1);
-          const transacoesApi = await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim })
-            .catch((e: any) => { log(`/api/mes/${mes}/dados Trinks transacoes err: ${e.message}`, "trinks"); return [] as any[]; });
-          if (Array.isArray(transacoesApi) && transacoesApi.length > 0) {
-            const agendamentosApi = await trinksFetchAllRange("agendamentos", { dataInicio, dataFim })
-              .catch(() => [] as any[]);
-            const profissionaisApi = await trinksFetchAll("profissionais").catch(() => [] as any[]);
-            log(`/api/mes/${mes}/dados via API Trinks (${transacoesApi.length} comandas, ${(Array.isArray(agendamentosApi) ? agendamentosApi.length : 0)} agend)`, "trinks");
-            return res.json({
-              fonte: "trinks",
-              trinksAt: new Date().toISOString(),
-              csvAt: meta.csvAt,
-              motivo: `API Trinks (${transacoesApi.length} comandas — fonte completa pra mês fechado).`,
-              dados: {
-                estabelecimento: null,
-                profissionais: Array.isArray(profissionaisApi) ? profissionaisApi : [],
-                servicos: [],
-                agendamentos: Array.isArray(agendamentosApi) ? agendamentosApi : [],
-                transacoes: transacoesApi,
-                clientes: [],
-                syncedAt: new Date().toISOString(),
-                mes,
-              },
-            });
-          }
-        } catch (err: any) {
-          log(`/api/mes/${mes}/dados API-first falhou, cai pro CSV: ${err.message}`, "trinks");
-        }
-      }
+      // v42: REMOVIDO o "API-first pra meses passados".
+      // Era a origem do timeout de ~12s: para um mês fechado com a Trinks em 429,
+      // o endpoint tentava a API antes do CSV e pendurava a tela inteira mesmo
+      // havendo CSV pronto. Agora mês fechado responde direto da cascata CSV
+      // abaixo, sem JAMAIS tocar na Trinks. (O dia corrente segue ao vivo via
+      // os endpoints dedicados de "hoje" e via mesService canônico acima.)
 
       // v39: cascata CSV (mês corrente OU API falhou)
       // 1. CSV CAIXA (relatório por comanda, breakdown PIX/cartão/dinheiro/pré-pago) — MAIS RICO
@@ -5142,6 +5133,29 @@ export async function registerRoutes(
             mes,
           },
         });
+      }
+
+      // v42: mês FECHADO nunca consulta a API Trinks (regra de janela-de-tempo).
+      // Se chegou aqui sem CSV, não há dado pro mês — devolve vazio na hora em
+      // vez de pendurar ~20s tentando a API (que era o bug original em meses
+      // fechados sem import, ex.: março/2026).
+      {
+        const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+        const mesCorrente = hojeSP.slice(0, 7);
+        if (mes < mesCorrente) {
+          log(`/api/mes/${mes}/dados mês fechado sem CSV — retorna vazio (API Trinks não é consultada)`, "mesService");
+          return res.json({
+            fonte: "nenhuma",
+            trinksAt: meta.trinksAt,
+            csvAt: meta.csvAt,
+            motivo: "Mês fechado sem CSV importado. A API Trinks não é consultada para meses fechados.",
+            dados: {
+              estabelecimento: null, profissionais: [], servicos: [],
+              agendamentos: [], transacoes: [], clientes: [],
+              syncedAt: meta.trinksAt || new Date().toISOString(), mes,
+            },
+          });
+        }
       }
 
       try {

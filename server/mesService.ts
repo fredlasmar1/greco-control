@@ -164,6 +164,29 @@ async function lerApiTrinks(
   } catch { return null; }
 }
 
+/**
+ * v42: lê a API Trinks com TIMEOUT CURTO e falha isolada.
+ * A Trinks NUNCA deve segurar o render do mês — se a API estiver lenta/429,
+ * resolvemos null em poucos segundos e o chamador cai pro CSV. O dia corrente
+ * ("agora") é a única janela que depende dela, e mesmo essa degrada graciosa.
+ */
+async function lerApiTrinksComTimeout(
+  mes: string,
+  trinksFetchAllRange: (path: string, params: Record<string, string>) => Promise<any[]>,
+  log?: (msg: string, source?: string) => void,
+  timeoutMs = 4000,
+): Promise<ResultadoFonte | null> {
+  try {
+    return await Promise.race([
+      lerApiTrinks(mes, trinksFetchAllRange),
+      new Promise<null>((resolve) => setTimeout(() => {
+        log?.(`[mesService] API Trinks ${mes} estourou timeout de ${timeoutMs}ms — usando CSV`, "mesService");
+        resolve(null);
+      }, timeoutMs)),
+    ]);
+  } catch { return null; }
+}
+
 // ─── Breakdown por forma de pagamento ──────────────────────────────────
 
 function calcularBreakdown(transacoes: any[]): BreakdownPagamento {
@@ -222,9 +245,20 @@ export async function getMesData(
     }
   }
 
-  // Coleta paralela de todas as fontes
+  // ── v42: regra de JANELA-DE-TEMPO (substitui o score "mais completa") ──
+  // As fontes não competem; cada uma governa a janela onde é melhor.
+  //   • Mês FECHADO  → CSV SEMPRE; API Trinks NUNCA é consultada (era a origem
+  //     do timeout de 12s quando a API dá 429).
+  //   • Mês CORRENTE → API governa o "agora" (tem o dia de hoje ao vivo); se
+  //     falhar/vier vazia, cai pro CSV importado (preenchimento provisório).
+  const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  const mesCorrente = hojeSP.slice(0, 7);
+  const ehMesFechado = mes < mesCorrente;
+  const ignorarApi = opts?.ignorarApi || ehMesFechado;
+
+  // Coleta paralela das fontes permitidas para a janela
   const [resApi, resCaixa, resFinanceiro, payloadCaixa, payloadFinanceiro] = await Promise.all([
-    opts?.ignorarApi ? Promise.resolve(null) : lerApiTrinks(mes, deps.trinksFetchAllRange),
+    ignorarApi ? Promise.resolve(null) : lerApiTrinksComTimeout(mes, deps.trinksFetchAllRange, deps.log),
     lerCsvCaixa(mes),
     lerCsvFinanceiro(mes),
     kvGet<any>(trinksImport.kvKeyFor("caixa", mes)),
@@ -253,24 +287,18 @@ export async function getMesData(
     },
   };
 
-  // Escolhe a mais completa.
-  // Critério: ranking por (faturamento ponderado 70% + comandas ponderada 30%).
-  // Em empate, ordem de preferência: API > CSV-Caixa > CSV-Financeiro.
-  const candidatos: ResultadoFonte[] = [resApi, resCaixa, resFinanceiro].filter((r): r is ResultadoFonte => !!r);
+  // ── Escolha por JANELA-DE-TEMPO + DOMÍNIO (sem score) ──
+  // Mês fechado: o faturamento oficial vem do CSV-FINANCEIRO ("Data Prevista de
+  //   Recebimento") — único líquido de troco e com breakdown de pagamento
+  //   (PIX/crédito/débito/dinheiro/depósito/voucher). CSV-Caixa é só fallback.
+  // Mês corrente: API ao vivo (tem o dia de hoje); se indisponível, CSV importado.
+  // A divergência entre fontes (ex.: critério de data) deixa de ser "quem vence"
+  // e passa a ser apenas NOTA DE AUDITORIA em `fontesAuditoria`.
   let escolhida: ResultadoFonte | null = null;
-  if (candidatos.length > 0) {
-    const maxFat = Math.max(...candidatos.map(c => c.faturamento));
-    const maxCom = Math.max(...candidatos.map(c => c.comandas));
-    const score = (c: ResultadoFonte) =>
-      (maxFat > 0 ? (c.faturamento / maxFat) * 0.7 : 0) +
-      (maxCom > 0 ? (c.comandas / maxCom) * 0.3 : 0);
-    const ordemPref: FonteEscolhida[] = ["api-trinks", "csv-caixa", "csv-financeiro"];
-    candidatos.sort((a, b) => {
-      const sa = score(a), sb = score(b);
-      if (Math.abs(sa - sb) > 0.001) return sb - sa;
-      return ordemPref.indexOf(a.fonte) - ordemPref.indexOf(b.fonte);
-    });
-    escolhida = candidatos[0];
+  if (ehMesFechado) {
+    escolhida = resFinanceiro || resCaixa || null;
+  } else {
+    escolhida = (resApi && resApi.comandas > 0) ? resApi : (resCaixa || resFinanceiro || null);
   }
 
   const data: MesData = escolhida ? {

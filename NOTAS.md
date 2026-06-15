@@ -8,6 +8,22 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v42 — Divisão de trabalho de fontes (CSV + Trinks) [concluído 15/06/2026]
+
+Substitui "qual fonte vence" (score) por **"cada fonte governa a janela/domínio onde é melhor"**, com degradação graciosa (Trinks cair NUNCA pendura o mês).
+
+- **`mesService.getMesData`**: removido o score `0.7×fat+0.3×comandas`. Regra nova:
+  - Mês **fechado** → CSV sempre; API Trinks **nunca** (`ignorarApi` forçado).
+  - **Domínio do faturamento** (fechado E corrente) → **CSV-Financeiro** (único líquido de troco + breakdown PIX/cartão/dinheiro/depósito/voucher); CSV-Caixa é fallback (pode vir incompleto — junho caixa R$20,6k vs financeiro R$41k); API só sem nenhum CSV.
+  - `lerApiTrinksComTimeout` — timeout curto (4s), falha isolada.
+- **`/api/mes/:mes/dados`**: removido o "API-first pra meses passados" (origem do timeout ~12s) + guarda que faz **mês fechado sem CSV retornar vazio na hora** (era 20s tentando a API, ex.: março).
+- **`comissaoCategoria.ts`**: `comissaoServicosRanking` — comissão R$ = `Total Serviços` × % da categoria, match por **apelido antes do hífen** (André VIP 50% · Pedro/Lucas/José Armando/Matheus Clássico 40% · César/Leonardo Express 50% · Débora/Ellen/Patrícia Assistente 40%). Profissional com serviços>0 sem categoria → `semCategoria` (aviso UI + log), **não** comissão zero silenciosa.
+- **Equipe (`MetasEquipePainel.tsx`)**: banner "N profissionais sem categoria".
+
+Validado em produção: maio/abril respondem `csv-financeiro` em ~1s com **0 chamadas Trinks** (`requestsThisMonth=0`); março (sem CSV) vazio em 0,6s. Regressão de comissão com ranking real de junho: **André R$5.584,50 · Armandinho R$2.357,20** ✓. LARISSA (R$1.555 serviços) sinalizada. Junho importado em prod (ranking + financeiro R$41.003,55).
+
+> Snapshots de pagamento já FECHADOS (`pagamentos.ts`) mantêm valores históricos por design (imutáveis); a comissão por categoria recalcula retroativo no caminho ao vivo (desempenho-import) a cada consulta.
+
 ### Mais recente vence — CSV vs Trinks [concluído]
 
 Regra: para cada mês, comparamos o timestamp de upload do CSV com o de sync Trinks. O **mais recente vence** e é a fonte usada em todo o sistema (Dashboard + Equipe). Badge discreto indica a fonte ativa.

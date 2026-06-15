@@ -294,11 +294,16 @@ export async function getMesData(
   // Mês corrente: API ao vivo (tem o dia de hoje); se indisponível, CSV importado.
   // A divergência entre fontes (ex.: critério de data) deixa de ser "quem vence"
   // e passa a ser apenas NOTA DE AUDITORIA em `fontesAuditoria`.
+  // DOMÍNIO: o faturamento do mês (e o breakdown de pagamento) vem do
+  // CSV-FINANCEIRO sempre que existir — fechado OU corrente. CSV-Caixa é
+  // fallback (pode vir incompleto, ex.: junho/2026 caixa = R$20,6k vs
+  // financeiro = R$41k). A API só entra quando NÃO há nenhum CSV; o "hoje ao
+  // vivo" fica nos endpoints dedicados de hoje, não neste agregado mensal.
   let escolhida: ResultadoFonte | null = null;
   if (ehMesFechado) {
     escolhida = resFinanceiro || resCaixa || null;
   } else {
-    escolhida = (resApi && resApi.comandas > 0) ? resApi : (resCaixa || resFinanceiro || null);
+    escolhida = resFinanceiro || resCaixa || ((resApi && resApi.comandas > 0) ? resApi : null);
   }
 
   const data: MesData = escolhida ? {

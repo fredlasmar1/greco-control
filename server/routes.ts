@@ -2735,14 +2735,17 @@ export async function registerRoutes(
       // (aviso na UI + log) pro Fred cadastrar.
       const normNomeImport = (s: string) =>
         String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
-      const comissaoPorNome = new Map<string, { categoria: string | null; pct: number; comissaoServicos: number; totalServicos: number }>();
+      const comissaoPorNome = new Map<string, { categoria: string | null; pct: number; comissaoServicos: number; totalServicos: number; naoComissionavel: boolean }>();
       const semCategoria: Array<{ nome: string; totalServicos: number }> = [];
       for (const p of (periodo.profissionais || [])) {
         const ts = Number(p.totalServicos || 0);
         const r = comissaoServicosRanking(p.profissional, ts);
         comissaoPorNome.set(normNomeImport(p.profissional), {
           categoria: r.categoria, pct: r.pct, comissaoServicos: r.comissao, totalServicos: ts,
+          naoComissionavel: r.naoComissionavel,
         });
+        // Banner = só NÃO-MAPEADO (cadastro faltando). Administrativo/não-comissionável
+        // (r.mapeado=true, r.naoComissionavel=true) sai daqui de propósito: R$ 0 é intencional.
         if (!r.mapeado && ts > 0) {
           semCategoria.push({ nome: p.profissional, totalServicos: ts });
           log(`[equipe/desempenho-import] ${mes}: "${p.profissional}" sem categoria de comissão (Total Serviços R$ ${ts.toFixed(2)}) — comissão NÃO calculada, cadastrar categoria`, "comissao");
@@ -2826,8 +2829,8 @@ export async function registerRoutes(
         return {
           profissionalId: id, nome,
           comissao: comInfo
-            ? { categoria: comInfo.categoria, pct: comInfo.pct, comissaoServicos: comInfo.comissaoServicos, totalServicos: comInfo.totalServicos, semCategoria: comInfo.categoria === null && comInfo.totalServicos > 0 }
-            : { categoria: null, pct: 0, comissaoServicos: 0, totalServicos: 0, semCategoria: false },
+            ? { categoria: comInfo.categoria, pct: comInfo.pct, comissaoServicos: comInfo.comissaoServicos, totalServicos: comInfo.totalServicos, naoComissionavel: comInfo.naoComissionavel, semCategoria: comInfo.categoria === null && !comInfo.naoComissionavel && comInfo.totalServicos > 0 }
+            : { categoria: null, pct: 0, comissaoServicos: 0, totalServicos: 0, naoComissionavel: false, semCategoria: false },
           meta: meta ? { metaReais: meta.metaReais, metaAtendimentos: meta.metaAtendimentos, telegramChatId: meta.telegramChatId, ativoEnvio: meta.ativoEnvio, pctServico: meta.pctServico || 0, pctProduto: meta.pctProduto || 0, pctPlano: meta.pctPlano || 0 } : null,
           metasCalculadas: metasCalc,
           dia: diaObj,

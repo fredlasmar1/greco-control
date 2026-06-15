@@ -41,6 +41,12 @@ Validado em produção: maio/abril respondem `csv-financeiro` em ~1s com **0 cha
   linhas de atendimento em 27/05 pagas em jun: +R$40 PIX Otávio, −R$12 troco).
   Obs: `/api/conciliacao/orfas` lê Trinks ao vivo (não o CSV de caixa).
 
+### v42.2 — Não-comissionável (administrativo) [concluído 15/06/2026]
+
+Distingue no código **"não-mapeado (alerta)"** de **"não-comissionável por definição (silencioso)"**. Novo `NAO_COMISSIONAVEL` em `comissaoCategoria.ts` + flag `naoComissionavel` em `ComissaoRankingResult` e `ehNaoComissionavel()`.
+- **Guilherme** (ex-barbeiro, hoje administrativo): comissão R$ 0 **intencional** em todos os meses, categoria "Administrativo", **fora** do banner de "sem categoria". Abril não recalcula (resíduo R$330 já acertado por fora; comissão dele sempre foi 0).
+- Banner de não-mapeados só pega `mapeado=false` (cadastro faltando). Admin tem `mapeado=true, naoComissionavel=true`.
+
 ### Mais recente vence — CSV vs Trinks [concluído]
 
 Regra: para cada mês, comparamos o timestamp de upload do CSV com o de sync Trinks. O **mais recente vence** e é a fonte usada em todo o sistema (Dashboard + Equipe). Badge discreto indica a fonte ativa.

@@ -129,6 +129,13 @@ const APELIDO_CATEGORIA: Record<string, CategoriaComissao> = {
   "larissa": "Assistente",
 };
 
+// Apelidos NÃO-COMISSIONÁVEIS por definição (administrativo / não atende mais).
+// Diferente de "não-mapeado": aqui a comissão é R$ 0 INTENCIONAL e SILENCIOSA —
+// não entra no banner de "sem categoria" (não é um cadastro faltando).
+//   - Guilherme: ex-barbeiro, hoje no administrativo. Os R$330 de serviço em
+//     abril são resíduo já acertado por fora; não comissiona em mês nenhum.
+const NAO_COMISSIONAVEL = new Set<string>(["guilherme"]);
+
 const PCT_CATEGORIA: Record<CategoriaComissao, number> = {
   VIP: COMISSAO_VIP_EXPRESS,        // 50%
   Express: COMISSAO_VIP_EXPRESS,    // 50%
@@ -158,27 +165,46 @@ export function pctDaCategoria(cat: CategoriaComissao): number {
   return PCT_CATEGORIA[cat];
 }
 
+/** Apelido é administrativo / não-comissionável por definição? */
+export function ehNaoComissionavel(profissional: string): boolean {
+  const ap = apelidoDoRanking(profissional);
+  if (!ap) return false;
+  if (NAO_COMISSIONAVEL.has(ap)) return true;
+  const token1 = ap.split(/\s+/)[0];
+  return !!token1 && NAO_COMISSIONAVEL.has(token1);
+}
+
 export interface ComissaoRankingResult {
-  categoria: CategoriaComissao | null;
+  categoria: CategoriaComissao | "Administrativo" | null;
   pct: number;          // fração (0.50 / 0.40 / 0)
   comissao: number;     // R$ = totalServicos × pct
   mapeado: boolean;     // false → chamador deve AVISAR (sem categoria)
+  naoComissionavel: boolean; // true → R$ 0 INTENCIONAL, NÃO avisar (administrativo)
 }
 
 /**
  * Comissão de serviços a partir do ranking:
  *   comissão R$ = `Total Serviços` × (% da categoria do apelido).
- * Retorna comissao=0 / mapeado=false quando o profissional não casa com o mapa.
+ *
+ * Três estados distintos:
+ *   - mapeado a categoria de barbeiro → comissão = TS × %.
+ *   - NÃO-comissionável por definição (administrativo) → comissão 0, mapeado=true,
+ *     naoComissionavel=true → silencioso (não entra no banner).
+ *   - não-mapeado (desconhecido) → comissão 0, mapeado=false → chamador AVISA.
  */
 export function comissaoServicosRanking(
   profissional: string,
   totalServicos: number,
 ): ComissaoRankingResult {
-  const cat = categoriaPorApelidoRanking(profissional);
   const ts = Math.max(0, Number(totalServicos) || 0);
-  if (!cat) return { categoria: null, pct: 0, comissao: 0, mapeado: false };
+  // Administrativo / não atende: R$ 0 intencional, sem alerta.
+  if (ehNaoComissionavel(profissional)) {
+    return { categoria: "Administrativo", pct: 0, comissao: 0, mapeado: true, naoComissionavel: true };
+  }
+  const cat = categoriaPorApelidoRanking(profissional);
+  if (!cat) return { categoria: null, pct: 0, comissao: 0, mapeado: false, naoComissionavel: false };
   const pct = pctDaCategoria(cat);
-  return { categoria: cat, pct, comissao: Math.round(ts * pct * 100) / 100, mapeado: true };
+  return { categoria: cat, pct, comissao: Math.round(ts * pct * 100) / 100, mapeado: true, naoComissionavel: false };
 }
 
 // Categoria textual (para logs/debug).

@@ -61,7 +61,15 @@ export function getModoFonte(): ModoFonte {
   return "csv-first";
 }
 
-/** Decide qual fonte vence para um mês. */
+/**
+ * ⚠️ NÃO É MAIS AUTORIDADE DE DECISÃO (v42.1).
+ *
+ * A fonte que representa o mês (Dashboard/Equipe/Auditoria) é decidida
+ * EXCLUSIVAMENTE por `mesService.getMesData`. Esta função foi rebaixada a
+ * HELPER DE METADADOS: serve para timestamps (csvAt/trinksAt) do badge e para
+ * gating de chamadas à API em sync-mes/cron (via `getModoFonte`). O campo
+ * `fonte` aqui é apenas informativo e não deve guiar render do mês.
+ */
 export async function resolverFonte(mes: string): Promise<ResolverFonteResult> {
   const [trinksMeta, csvInfo] = await Promise.all([
     getSyncMeta(mes),

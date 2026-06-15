@@ -123,6 +123,10 @@ const APELIDO_CATEGORIA: Record<string, CategoriaComissao> = {
   "debora": "Assistente",
   "ellen": "Assistente",
   "patricia": "Assistente",
+  // Larissa: secretária de manhã, atende como assistente à tarde. A comissão
+  // sai de `Total Serviços` (só a parte de atendimento, ~R$1.555 em jun/2026),
+  // nunca de `Valor Total` — vendas de produto/recepção dela não comissionam.
+  "larissa": "Assistente",
 };
 
 const PCT_CATEGORIA: Record<CategoriaComissao, number> = {

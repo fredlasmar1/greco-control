@@ -24,6 +24,23 @@ Validado em produção: maio/abril respondem `csv-financeiro` em ~1s com **0 cha
 
 > Snapshots de pagamento já FECHADOS (`pagamentos.ts`) mantêm valores históricos por design (imutáveis); a comissão por categoria recalcula retroativo no caminho ao vivo (desempenho-import) a cada consulta.
 
+### v42.1 — Follow-up (autoridade única + Larissa) [concluído 15/06/2026]
+
+- **Autoridade única de fonte**: a decisão de qual fonte representa o mês é
+  EXCLUSIVA do `mesService.getMesData`. O badge `/api/mes/:mes/fonte` agora deriva
+  a fonte do mesService (antes usava `resolverFonte`/csv-first em paralelo, podia
+  divergir do número). `fonteResolver.resolverFonte` rebaixada a helper de
+  metadados (timestamps) + gating de API em sync-mes/cron — sem poder de decisão.
+- **Larissa cadastrada** em `comissaoCategoria.ts` (apelido "larissa" → Assistente
+  40%). Comissão sai de `Total Serviços` (parte de assistente, ~R$1.555 jun), nunca
+  de `Valor Total`. Recálculo retroativo é automático (desempenho-import recomputa
+  do ranking a cada consulta); saiu do banner "sem categoria".
+- **Caixa de junho reimportado** completo: 437 comandas R$41.105,55 (antes 240/R$20,6k
+  incompleto). Conciliação jun: 0 órfãs.
+- **Rastreio jun**: exibido R$40.975,55 = financeiro bruto R$41.003,55 − R$28 (2
+  linhas de atendimento em 27/05 pagas em jun: +R$40 PIX Otávio, −R$12 troco).
+  Obs: `/api/conciliacao/orfas` lê Trinks ao vivo (não o CSV de caixa).
+
 ### Mais recente vence — CSV vs Trinks [concluído]
 
 Regra: para cada mês, comparamos o timestamp de upload do CSV com o de sync Trinks. O **mais recente vence** e é a fonte usada em todo o sistema (Dashboard + Equipe). Badge discreto indica a fonte ativa.

@@ -4877,17 +4877,32 @@ export async function registerRoutes(
     }
   });
 
-  // ─── GET /api/mes/:mes/fonte — meta da fonte vencedora (leve, legado) ──
-  // Apenas retorna { fonte, trinksAt, csvAt, motivo } para o frontend exibir badge
-  // sem precisar baixar todos os dados do mês.
+  // ─── GET /api/mes/:mes/fonte — badge da fonte do mês ──
+  // v42.1: a DECISÃO de qual fonte representa o mês é do mesService (autoridade
+  // ÚNICA). resolverFonte virou helper de metadados — usada aqui só para os
+  // timestamps (csvAt/trinksAt) do badge, SEM poder de decisão. Assim o badge
+  // nunca diverge do número exibido (antes podia: csv-first decidia em paralelo).
   app.get("/api/mes/:mes/fonte", async (req: Request, res: Response) => {
     try {
       const mes = String(req.params.mes || "").trim();
       if (!/^\d{4}-\d{2}$/.test(mes)) {
         return res.status(400).json({ error: "Mês inválido. Use YYYY-MM." });
       }
-      const meta = await resolverFonte(mes);
-      return res.json(meta);
+      const [data, ts] = await Promise.all([
+        getMesDataCanonical(mes, { trinksFetchAllRange, log }),
+        resolverFonte(mes), // só p/ timestamps
+      ]);
+      const fonteUi =
+        data.fonte === "api-trinks" ? "trinks" :
+        (data.fonte === "csv-caixa" || data.fonte === "csv-financeiro") ? "csv" :
+        "nenhuma";
+      return res.json({
+        fonte: fonteUi,
+        fonteDetalhada: data.fonte,
+        trinksAt: ts.trinksAt,
+        csvAt: ts.csvAt,
+        motivo: `Fonte do mês decidida pelo mesService: ${data.fonte}.`,
+      });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "Erro interno." });
     }

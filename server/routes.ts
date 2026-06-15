@@ -2624,6 +2624,8 @@ export async function registerRoutes(
       for (const p of persistidas) {
         if (p.mes) invalidarMesCacheCanonical(p.mes);
       }
+      // D2: limpa o cache do mapa de comissão por ranking (reimport reflete na hora).
+      _rankComissaoCache.clear();
       log(`Trinks import confirm: ${req.file.originalname} → ${persistidas.length} chave(s)`, "trinks-import");
       return res.json({ ok: true, importadas: persistidas });
     } catch (err: any) {
@@ -9270,6 +9272,43 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
 
   // Helper local: calcula linha de pagamento de um profissional para o mês.
   // Retorna estrutura pronta para a UI/PDF.
+  // ─── D2 (v42.3): comissão de SERVIÇOS canônica = ranking CSV × categoria ──
+  // Quando EXISTE ranking importado do mês, a comissão de serviços vem do ranking
+  // (regra v42 — reusa `comissaoServicosRanking`, NÃO duplica). Sem ranking →
+  // cálculo ao vivo (`baseComissaoServicos × pctServico`). Mesma filosofia de
+  // janela-de-tempo do mesService: a fonte congelada (CSV) assume assim que existe.
+  // Cache por mês, limpo no import confirm. Match nome→ranking por nome completo,
+  // apelido (antes do hífen) e resto (depois do hífen) — cobre o join metas↔ranking.
+  const _rankComissaoCache = new Map<string, { keys: Map<string, number>; temRanking: boolean }>();
+  const normRank = (s: any) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  async function getRankComissaoMap(mes: string): Promise<{ keys: Map<string, number>; temRanking: boolean }> {
+    const hit = _rankComissaoCache.get(mes);
+    if (hit) return hit;
+    const keys = new Map<string, number>();
+    let temRanking = false;
+    try {
+      const rk: any = await kvGet(trinksImport.kvKeyFor("ranking", mes));
+      const profs = rk?.periodos?.[0]?.profissionais || [];
+      if (Array.isArray(profs) && profs.length > 0) {
+        temRanking = true;
+        for (const p of profs) {
+          const r = comissaoServicosRanking(p.profissional, Number(p.totalServicos || 0));
+          const partes = String(p.profissional || "").split(/[-–—]/);
+          const full = normRank(p.profissional);
+          const apel = normRank(partes[0]);
+          const resto = normRank(partes.slice(1).join(" "));
+          // nomes completos (full/resto) são únicos; apelido só preenche se livre.
+          if (full && !keys.has(full)) keys.set(full, r.comissao);
+          if (resto && !keys.has(resto)) keys.set(resto, r.comissao);
+          if (apel && !keys.has(apel)) keys.set(apel, r.comissao);
+        }
+      }
+    } catch { /* sem ranking → cálculo ao vivo */ }
+    const out = { keys, temRanking };
+    _rankComissaoCache.set(mes, out);
+    return out;
+  }
+
   async function calcularLinhaPagamento(
     mes: string,
     profissionalId: string,
@@ -9309,7 +9348,19 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       ? Math.max(0, servicosLiquido - custoInsumos)
       : servicosLiquido;
 
-    const comissaoServicos = (baseComissaoServicos * pctServico) / 100;
+    // D2 (v42.3): se há ranking CSV do mês, comissão de serviços = ranking×categoria
+    // (fonte congelada). Senão, cálculo ao vivo. Só SERVIÇOS — produtos/plano/clube
+    // /bônus/salário seguem ao vivo (ver dívida D2-fase2 no NOTAS.md).
+    let comissaoServicos = (baseComissaoServicos * pctServico) / 100;
+    let comissaoServicosFonte: 'ranking-csv' | 'ao-vivo' = 'ao-vivo';
+    const _rankMap = await getRankComissaoMap(mes);
+    if (_rankMap.temRanking) {
+      const nomeLinha = normRank(profMes?.nome || meta?.nome || "");
+      const tok = nomeLinha.split(/\s+/)[0];
+      const val = _rankMap.keys.get(nomeLinha) ?? (tok ? _rankMap.keys.get(tok) : undefined);
+      if (val != null) { comissaoServicos = val; comissaoServicosFonte = 'ranking-csv'; }
+      // não-casou com ranking → mantém ao vivo (não força 0; evita zerar por falha de join)
+    }
     const comissaoProdutos = (produtosLiquidoComissionavel * pctProduto) / 100;
     const comissaoPlano = (planoReais * pctPlano) / 100;
     const comissaoClubeGreco = Number(clubeGreco?.comissaoRS || 0);
@@ -9351,6 +9402,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       // Componentes calculados
       calculos: {
         comissaoServicos,
+        comissaoServicosFonte, // 'ranking-csv' (mês com ranking) | 'ao-vivo'
         comissaoProdutos,
         comissaoPlano,
         comissaoClubeGreco,

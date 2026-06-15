@@ -47,6 +47,26 @@ Distingue no código **"não-mapeado (alerta)"** de **"não-comissionável por d
 - **Guilherme** (ex-barbeiro, hoje administrativo): comissão R$ 0 **intencional** em todos os meses, categoria "Administrativo", **fora** do banner de "sem categoria". Abril não recalcula (resíduo R$330 já acertado por fora; comissão dele sempre foi 0).
 - Banner de não-mapeados só pega `mapeado=false` (cadastro faltando). Admin tem `mapeado=true, naoComissionavel=true`.
 
+### v42.3 — D2: motor único de comissão de serviços [concluído 15/06/2026]
+
+Unifica a comissão de **serviços** numa fonte só. `calcularLinhaPagamento` agora usa
+`comissaoServicosRanking` (ranking CSV × categoria, regra v42 — **sem duplicar**)
+**sempre que existir ranking importado do mês** (gatilho = "tem ranking", cobre
+fechados E o corrente já exportado). Sem ranking → cálculo ao vivo
+(`baseComissaoServicos × pctServico`). Helper `getRankComissaoMap(mes)` (cache por
+mês, limpo no import confirm); join nome→ranking por nome completo/apelido/resto.
+Cobre os 5 call-sites (Pagamento, Lançamentos, recibo, folha, cron) de uma vez.
+
+Antes: Pagamento mostrava comissão R$ 0 em mês fechado (Trinks 429 → `servicosLiquido=0`),
+enquanto a Metas mostrava o valor real do ranking. Agora as 3 telas batem.
+`pctServico` individual de todos os barbeiros já = % da categoria (sem acordo
+individual a preservar); única exceção era Larissa (0%→40%, corrigido).
+
+> **DÍVIDA ABERTA — D2-fase2:** em mês fechado, a comissão de **produtos, plano,
+> Clube Greco, bônus e salário** ainda vem do **cálculo ao vivo** (zerada quando
+> Trinks 429). Falta migrar essas bases pro ranking/CSV. **Impacto conhecido:
+> junho tem R$ 2.554 em produtos cuja comissão NÃO entra na folha até resolver.**
+
 ### Mais recente vence — CSV vs Trinks [concluído]
 
 Regra: para cada mês, comparamos o timestamp de upload do CSV com o de sync Trinks. O **mais recente vence** e é a fonte usada em todo o sistema (Dashboard + Equipe). Badge discreto indica a fonte ativa.

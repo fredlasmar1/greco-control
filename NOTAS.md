@@ -8,96 +8,40 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
-### v42 — Divisão de trabalho de fontes (CSV + Trinks) [concluído 15/06/2026]
+### v42 — Unificação de fontes (handoff da sessão 15/06/2026) [concluído]
 
-Substitui "qual fonte vence" (score) por **"cada fonte governa a janela/domínio onde é melhor"**, com degradação graciosa (Trinks cair NUNCA pendura o mês).
+**Tema:** substituir "fontes concorrendo" por **divisão de trabalho** (cada fonte governa a janela/domínio onde é melhor), com degradação graciosa — Trinks em 429 nunca mais zera ou pendura uma tela. Entregue em commits incrementais (v42 → v42.5), todos no `main`, deployados e validados em produção.
 
-- **`mesService.getMesData`**: removido o score `0.7×fat+0.3×comandas`. Regra nova:
-  - Mês **fechado** → CSV sempre; API Trinks **nunca** (`ignorarApi` forçado).
-  - **Domínio do faturamento** (fechado E corrente) → **CSV-Financeiro** (único líquido de troco + breakdown PIX/cartão/dinheiro/depósito/voucher); CSV-Caixa é fallback (pode vir incompleto — junho caixa R$20,6k vs financeiro R$41k); API só sem nenhum CSV.
-  - `lerApiTrinksComTimeout` — timeout curto (4s), falha isolada.
-- **`/api/mes/:mes/dados`**: removido o "API-first pra meses passados" (origem do timeout ~12s) + guarda que faz **mês fechado sem CSV retornar vazio na hora** (era 20s tentando a API, ex.: março).
-- **`comissaoCategoria.ts`**: `comissaoServicosRanking` — comissão R$ = `Total Serviços` × % da categoria, match por **apelido antes do hífen** (André VIP 50% · Pedro/Lucas/José Armando/Matheus Clássico 40% · César/Leonardo Express 50% · Débora/Ellen/Patrícia Assistente 40%). Profissional com serviços>0 sem categoria → `semCategoria` (aviso UI + log), **não** comissão zero silenciosa.
-- **Equipe (`MetasEquipePainel.tsx`)**: banner "N profissionais sem categoria".
+**Commits / o que foi entregue (em ordem):**
 
-Validado em produção: maio/abril respondem `csv-financeiro` em ~1s com **0 chamadas Trinks** (`requestsThisMonth=0`); março (sem CSV) vazio em 0,6s. Regressão de comissão com ranking real de junho: **André R$5.584,50 · Armandinho R$2.357,20** ✓. LARISSA (R$1.555 serviços) sinalizada. Junho importado em prod (ranking + financeiro R$41.003,55).
+- **`5a7b73f` + `db3551e` — Núcleo:**
+  - `mesService.getMesData` (`server/mesService.ts:256-274`): trocado o score "mais completa" por **janela-de-tempo**. Mês fechado → CSV sempre, **API Trinks nunca** (era a origem do timeout ~12-20s). Faturamento do mês = **CSV-Financeiro** (fechado E corrente), caixa fallback.
+  - Removido o "API-first pra meses passados" em `/api/mes/:mes/dados` (`routes.ts`, antigo bloco ~4919-4962) + guarda "mês fechado sem CSV retorna vazio na hora" + timeout curto (4s, `lerApiTrinksComTimeout`) na API do dia corrente.
+  - Comissão por categoria (`server/comissaoCategoria.ts`): `comissaoServicosRanking` = apelido antes do hífen × `Total Serviços`. André VIP 50% · Pedro/Lucas/José Armando(Armandinho)/Matheus Clássico 40% · César/Leonardo Express 50% · Débora/Ellen/Patrícia Assistente 40%. Não-mapeado c/ serviços>0 → aviso `semCategoria`, nunca zero silencioso.
+  - `fonteResolver.ts` (resolverFonte): **rebaixado** — não decide mais a fonte *exibida* do mês (autoridade = `mesService.getMesData`/`getMesDataCanonical`). **Ressalva:** NÃO é código morto — segue fazendo *gating de chamadas à API* em sync-mes/cron e fornecendo timestamps de badge.
+  - Criado `ARQUITETURA.md`.
 
-> Snapshots de pagamento já FECHADOS (`pagamentos.ts`) mantêm valores históricos por design (imutáveis); a comissão por categoria recalcula retroativo no caminho ao vivo (desempenho-import) a cada consulta.
+- **`03e460e` (v42.2) — Não-comissionável:** `NAO_COMISSIONAVEL` + `ehNaoComissionavel()` em `comissaoCategoria.ts`. Guilherme (ex-barbeiro, hoje administrativo) = R$ 0 intencional, fora do banner. Distinção no código: "não-mapeado (alerta)" vs "não-comissionável (silencioso)".
 
-### v42.1 — Follow-up (autoridade única + Larissa) [concluído 15/06/2026]
+- **`c36b0ae` (v42.3 / D2) — Motor único de comissão de serviços:** `calcularLinhaPagamento` (`routes.ts:9273`) recebe override; `/api/pagamento/:mes` (serve Pagamento + Lançamentos + recibo + folha + cron) usa `comissaoServicosRanking` quando há ranking do mês, senão cálculo ao vivo. Helper `getRankComissaoMap` (cache por mês, limpo no import confirm). Antes zerava em 429.
 
-- **Autoridade única de fonte**: a decisão de qual fonte representa o mês é
-  EXCLUSIVA do `mesService.getMesData`. O badge `/api/mes/:mes/fonte` agora deriva
-  a fonte do mesService (antes usava `resolverFonte`/csv-first em paralelo, podia
-  divergir do número). `fonteResolver.resolverFonte` rebaixada a helper de
-  metadados (timestamps) + gating de API em sync-mes/cron — sem poder de decisão.
-- **Larissa cadastrada** em `comissaoCategoria.ts` (apelido "larissa" → Assistente
-  40%). Comissão sai de `Total Serviços` (parte de assistente, ~R$1.555 jun), nunca
-  de `Valor Total`. Recálculo retroativo é automático (desempenho-import recomputa
-  do ranking a cada consulta); saiu do banner "sem categoria".
-- **Caixa de junho reimportado** completo: 437 comandas R$41.105,55 (antes 240/R$20,6k
-  incompleto). Conciliação jun: 0 órfãs.
-- **Rastreio jun**: exibido R$40.975,55 = financeiro bruto R$41.003,55 − R$28 (2
-  linhas de atendimento em 27/05 pagas em jun: +R$40 PIX Otávio, −R$12 troco).
-  Obs: `/api/conciliacao/orfas` lê Trinks ao vivo (não o CSV de caixa).
+- **`c0729f8` (v42.4 / Bloco 1) — Equipe e Metas no ranking CSV:** helper `montarEquipeDeRanking` (dedup por id → resolveu o "André dobrado"); `/api/equipe/mes` usa ranking quando existe. Removido o **fallback demo-data** da Equipe (`Equipe.tsx`) e a **comissão fake `revenue×0.4`**. Metas puxa o mês de `/api/equipe/mes` (dia/semana seguem ao vivo). Badge de fonte (`comissaoServicosFonte`) + coluna Comissão. `/api/equipe/desempenho` NÃO foi tocado.
 
-### v42.2 — Não-comissionável (administrativo) [concluído 15/06/2026]
+- **`d107586` (v42.5 / D3) — MeuPainel:** `/api/meu-painel` (async) usa `montarEquipeDeRanking` p/ o mês do barbeiro (faturamento, clientes, comissão); dia/semana seguem ao vivo (`full_sync`). Novo campo `comissaoMes`. Corrige barbeiro vendo R$ 0 no próprio painel em 429 — última tela da família "429 → zero".
 
-Distingue no código **"não-mapeado (alerta)"** de **"não-comissionável por definição (silencioso)"**. Novo `NAO_COMISSIONAVEL` em `comissaoCategoria.ts` + flag `naoComissionavel` em `ComissaoRankingResult` e `ehNaoComissionavel()`.
-- **Guilherme** (ex-barbeiro, hoje administrativo): comissão R$ 0 **intencional** em todos os meses, categoria "Administrativo", **fora** do banner de "sem categoria". Abril não recalcula (resíduo R$330 já acertado por fora; comissão dele sempre foi 0).
-- Banner de não-mapeados só pega `mapeado=false` (cadastro faltando). Admin tem `mapeado=true, naoComissionavel=true`.
+**Autoridade canônica (resultado):** totais do mês → `mesService.getMesData`; por-profissional (comissão/desempenho) → ranking CSV × categoria (`montarEquipeDeRanking` / `comissaoServicosRanking`). Regra de gatilho: tem ranking do mês → ranking (congelado); sem ranking → ao vivo (preserva o dia corrente).
 
-### v42.3 — D2: motor único de comissão de serviços [concluído 15/06/2026]
+**Regressão validada em produção (junho):** André R$ 5.584,50 · Armandinho R$ 2.357,20 · Larissa R$ 622,10 batem em **Pagamento, Lançamentos, Metas, Equipe e MeuPainel**. Maio (sem ranking) segue ao vivo. Meses fechados respondem do CSV com **0 chamadas Trinks** (`requestsThisMonth=0`).
 
-Unifica a comissão de **serviços** numa fonte só. `calcularLinhaPagamento` agora usa
-`comissaoServicosRanking` (ranking CSV × categoria, regra v42 — **sem duplicar**)
-**sempre que existir ranking importado do mês** (gatilho = "tem ranking", cobre
-fechados E o corrente já exportado). Sem ranking → cálculo ao vivo
-(`baseComissaoServicos × pctServico`). Helper `getRankComissaoMap(mes)` (cache por
-mês, limpo no import confirm); join nome→ranking por nome completo/apelido/resto.
-Cobre os 5 call-sites (Pagamento, Lançamentos, recibo, folha, cron) de uma vez.
+**Dados importados em prod (junho):** ranking de profissionais + financeiro (R$ 41.003,55, "Data Prevista de Recebimento") + caixa reimportado completo (437 comandas, R$ 41.105,55, corrigindo caixa incompleto de R$ 20.602). Rastreio: exibido R$ 40.975,55 = financeiro bruto R$ 41.003,55 − R$ 28 (2 linhas de atendimento 27/05 pagas em jun).
 
-Antes: Pagamento mostrava comissão R$ 0 em mês fechado (Trinks 429 → `servicosLiquido=0`),
-enquanto a Metas mostrava o valor real do ranking. Agora as 3 telas batem.
-`pctServico` individual de todos os barbeiros já = % da categoria (sem acordo
-individual a preservar); única exceção era Larissa (0%→40%, corrigido).
+> **Pagamentos FECHADOS** (`pagamentos.ts`) mantêm snapshot histórico imutável por design; a comissão por categoria recalcula retroativo no caminho ao vivo a cada consulta.
 
-> **DÍVIDA ABERTA — D2-fase2:** em mês fechado, a comissão de **produtos, plano,
-> Clube Greco, bônus e salário** ainda vem do **cálculo ao vivo** (zerada quando
-> Trinks 429). Falta migrar essas bases pro ranking/CSV. **Impacto conhecido:
-> junho tem R$ 2.554 em produtos cuja comissão NÃO entra na folha até resolver.**
-
-### v42.4 — Bloco 1: Equipe/Metas no ranking CSV [concluído 15/06/2026]
-
-Estende o motor do D2 pras telas Equipe e Metas (itens #1+#2+#8 do raio-x).
-- **#1 (servidor):** novo helper `montarEquipeDeRanking(mes, metas)` — per-profissional
-  do mês a partir do **ranking CSV** (receita = `Valor Total`, comissão via
-  `comissaoServicosRanking`, **deduplicado por id** → some o "André dobrado"),
-  join nome→id por nome-após-hífen/apelido. `/api/equipe/mes/:mes` usa ranking
-  quando existe (`fonte:'ranking-csv'`), senão cálculo ao vivo (`'ao-vivo'`).
-  Metas passou a puxar o **mês** sempre de `/api/equipe/mes` (dia/semana seguem
-  ao vivo via `/api/equipe/desempenho` só no corrente). `/api/equipe/desempenho`
-  NÃO foi tocado.
-- **#2 (frontend):** removido o fallback **demo-data** da Equipe (`Equipe.tsx`) —
-  sem dado agora é estado "sem dados" honesto, nunca número fictício. Também
-  removida a comissão FAKE `revenue×0.4` → usa a comissão real (ranking×categoria).
-- **#8:** badge de fonte (CSV definitivo / ao vivo) na Equipe e na Metas + coluna
-  "Comissão" na Metas.
-
-Validado: junho `ranking-csv` R$39.197,55 (André sem duplicar; comissão 5.584,50 /
-Armandinho 2.357,20 / Larissa 622,10 — bate Pagamento/Metas); maio `ao-vivo`
-(preserva o caso sem ranking). Não tocado: D2-fase2, D3-MeuPainel, D4.
-
-### v42.5 — D3 MeuPainel no ranking CSV [concluído 15/06/2026]
-
-`/api/meu-painel` (agora async): o faturamento/clientes/comissão do **MÊS** do
-barbeiro vêm do ranking CSV quando existe (reusa `montarEquipeDeRanking`),
-`fonteMes:'ranking-csv'`. Dia/semana seguem do `full_sync` ao vivo (intradiário).
-Sem ranking → tudo ao vivo. Novo campo `comissaoMes` (o barbeiro passa a ver a
-comissão de serviços). Frontend: comissão + badge de fonte no painel.
-
-Antes: barbeiro via faturamento ZERO no próprio painel em 429 (full_sync vazio).
-Era a última tela da família "429 → zero" (Dashboard/Equipe/Metas/Pagamento já ok).
+**Pendências abertas (fila recomendada):**
+1. **D2-fase2** — comissão de produtos/plano/Clube/bônus/salário ainda vem do cálculo ao vivo (zera em 429). **Impacto: junho tem R$ 2.554 em produtos fora da folha.** Blinda a folha de vez — fazer primeiro.
+2. **Conciliação** (`/api/conciliacao/orfas`) lê Trinks ao vivo — trava se a API cair durante o fechamento. Atacar antes do fechamento de junho.
+3. **D4** — VendasProdutos e CaixaDia ainda leem Trinks ao vivo em dias passados.
+4. **UX** — exportar folha (#4), exportar DRE pro contador (#5), fechar mês inteiro de uma vez (#6), "vs mês anterior" nas demais abas (#7).
 
 ### Mais recente vence — CSV vs Trinks [concluído]
 

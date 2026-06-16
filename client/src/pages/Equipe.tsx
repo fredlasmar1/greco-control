@@ -54,6 +54,8 @@ interface ComputedBarber extends Barber {
   apelido?: string;
   paymentBreakdown?: Record<string, number>;
   topServices?: { name: string; count: number }[];
+  comissaoServicos?: number;          // v42.4: comissão real (ranking×categoria) — não revenue×0.4
+  comissaoServicosFonte?: "ranking-csv" | "ao-vivo";
 }
 
 // ─── Rank badge component ────────────────────────────────
@@ -281,11 +283,9 @@ export default function Equipe() {
   }, [selectedMes]);
 
   const computedBarbers = useMemo((): ComputedBarber[] => {
-    // Se não temos dados do endpoint, fallback pra demo (mês corrente) ou vazio
-    if (!equipeData) {
-      if (isMesCorrente && (!hasTrinksData || !trinks)) return demoBarbers as ComputedBarber[];
-      return [];
-    }
+    // v42.4 (#2): sem dado do endpoint → estado "sem dados" honesto. NUNCA demo
+    // data (mostrar número fictício como real era o pior caso).
+    if (!equipeData) return [];
     const profissionais = trinks?.profissionais || [];
     const profMap = new Map<string, any>(profissionais.map((p: any) => [String(p.id), p]));
 
@@ -310,6 +310,8 @@ export default function Equipe() {
         occupationRate: 0,
         paymentBreakdown: {}, // payment breakdown não vem do endpoint atual; expansion mostra zeros
         topServices: [],
+        comissaoServicos: Number(p.comissaoServicos || 0),
+        comissaoServicosFonte: p.comissaoServicosFonte || equipeData.fonte || "ao-vivo",
       } as ComputedBarber;
     });
   }, [equipeData, hasTrinksData, trinks, demoBarbers, isMesCorrente]);
@@ -341,9 +343,12 @@ export default function Equipe() {
           <p className="text-sm text-muted-foreground">
             {activeProfCount} barbeiro{activeProfCount !== 1 ? "s" : ""} ativo
             {activeProfCount !== 1 ? "s" : ""}
-            {hasTrinksData && (
-              <span className="text-primary ml-1">• Dados Trinks</span>
-            )}
+            {/* v42.4 (#8): fonte da comissão — definitivo (ranking CSV) vs provisório (ao vivo) */}
+            {equipeData?.fonte === "ranking-csv" ? (
+              <span className="text-emerald-400 ml-1">• Comissão definitiva (CSV)</span>
+            ) : equipeData?.fonte === "ao-vivo" ? (
+              <span className="text-amber-400 ml-1">• Provisório (ao vivo)</span>
+            ) : null}
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -601,7 +606,7 @@ export default function Equipe() {
                     totalRevenue > 0
                       ? (barber.revenue / totalRevenue) * 100
                       : 0;
-                  const commission = barber.revenue * 0.4;
+                  const commission = barber.comissaoServicos ?? 0;
                   const isExpanded = !!expanded[barber.id];
 
                   return (
@@ -686,7 +691,7 @@ export default function Equipe() {
         {computedBarbers.map((barber, index) => {
           const pct =
             totalRevenue > 0 ? (barber.revenue / totalRevenue) * 100 : 0;
-          const commission = barber.revenue * 0.4;
+          const commission = barber.comissaoServicos ?? 0;
           const isExpanded = !!expanded[barber.id];
 
           return (

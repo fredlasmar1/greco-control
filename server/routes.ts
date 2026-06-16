@@ -9309,6 +9309,71 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     return out;
   }
 
+  // ─── Bloco 1 (v42.4): per-profissional do mês a partir do RANKING CSV ──
+  // Fonte única e LIMPA (deduplicada por id) pra Equipe/Metas quando existe
+  // ranking do mês. Receita = `Valor Total` do ranking; comissão de serviços
+  // reusa `comissaoServicosRanking` (v42, sem duplicar). Join nome→id das metas
+  // por nome completo (após hífen) / apelido. Retorna null se não há ranking →
+  // chamador usa o cálculo ao vivo (preserva o dia corrente antes do export).
+  async function montarEquipeDeRanking(
+    mes: string,
+    metas: Record<string, any>,
+  ): Promise<null | { byId: Map<string, any>; totais: any }> {
+    let rk: any = null;
+    try { rk = await kvGet(trinksImport.kvKeyFor("ranking", mes)); } catch {}
+    const profs = rk?.periodos?.[0]?.profissionais;
+    if (!Array.isArray(profs) || profs.length === 0) return null;
+
+    // mapa norm(meta.nome) → id (+ primeiro token) pra resolver o id real
+    const metaPorNome = new Map<string, string>();
+    for (const mt of Object.values(metas) as any[]) {
+      const n = normRank(mt?.nome); if (!n) continue;
+      if (!metaPorNome.has(n)) metaPorNome.set(n, mt.profissionalId);
+      const tok = n.split(/\s+/)[0]; if (tok && !metaPorNome.has(tok)) metaPorNome.set(tok, mt.profissionalId);
+    }
+
+    const byId = new Map<string, any>();
+    const tot = { faturamento: 0, atendimentos: 0, servicosBruto: 0, servicosLiquido: 0, produtosBruto: 0, produtosLiquido: 0, planoReais: 0 };
+    for (const p of profs) {
+      const partes = String(p.profissional || "").split(/[-–—]/);
+      const apel = normRank(partes[0]);
+      const resto = normRank(partes.slice(1).join(" "));
+      const id = metaPorNome.get(resto) || metaPorNome.get(apel)
+        || metaPorNome.get((resto.split(/\s+/)[0] || "")) || `import:${apel || resto}`;
+      const r = comissaoServicosRanking(p.profissional, Number(p.totalServicos || 0));
+      const revTotal = Number(p.valorTotal || 0);
+      const serv = Number(p.totalServicos || 0);
+      const prod = Number(p.totalProdutos || 0);
+      const atend = Number(p.qtdAtendimentos || 0);
+      const ent = byId.get(id);
+      if (ent) {
+        // dois nomes do ranking → mesmo id cadastrado: soma (dedup do André dobrado)
+        ent.faturamento.total += revTotal; ent.faturamento.servicos += serv;
+        ent.faturamento.servicosBruto += serv; ent.faturamento.servicosLiquido += serv;
+        ent.faturamento.produtos += prod; ent.faturamento.produtosBruto += prod; ent.faturamento.produtosLiquido += prod;
+        ent.faturamento.avulso += revTotal;
+        ent.atendimentos.total += atend;
+        ent.comissaoServicos += r.comissao;
+        ent.ticketMedio = ent.atendimentos.total > 0 ? ent.faturamento.total / ent.atendimentos.total : 0;
+      } else {
+        byId.set(id, {
+          id, nome: p.profissional,
+          faturamento: { total: revTotal, servicos: serv, servicosBruto: serv, servicosLiquido: serv, plano: 0, produtos: prod, produtosBruto: prod, produtosLiquido: prod, avulso: revTotal },
+          atendimentos: { total: atend, servicos: Number(p.numServicosRealizados || 0), plano: 0, produtos: Number(p.unidadesProdutos || 0), avulso: atend },
+          ticketMedio: Number(p.ticketMedio || 0) || (atend > 0 ? revTotal / atend : 0),
+          taxaCartao: 0,
+          comissaoServicos: r.comissao,
+          categoria: r.categoria,
+          comissaoServicosFonte: "ranking-csv" as const,
+        });
+      }
+      tot.faturamento += revTotal; tot.atendimentos += atend;
+      tot.servicosBruto += serv; tot.servicosLiquido += serv;
+      tot.produtosBruto += prod; tot.produtosLiquido += prod;
+    }
+    return { byId, totais: tot };
+  }
+
   async function calcularLinhaPagamento(
     mes: string,
     profissionalId: string,
@@ -10587,42 +10652,73 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const hoje = ymdHoje();
       const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
 
-      const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
-
-      // Filtros: ex-funcionários (inativos) + IDs sintéticos sem nome real
       const inativos = await getProfsInativos();
-      const profsRanked = Object.values(periodo.porProfissional)
-        .map(p => ({
-          id: p.profissionalId,
-          nome: p.nome,
-          faturamento: {
-            total: p.total.reais,
-            servicos: p.servicos.reais,
-            servicosBruto: p.servicos.bruto,
-            servicosLiquido: p.servicos.liquido,
-            plano: p.plano.reais,
-            produtos: p.produtos.reais,
-            produtosBruto: p.produtos.bruto,
-            produtosLiquido: p.produtos.liquido,
-            avulso: p.avulso.reais,
-          },
-          atendimentos: {
-            total: p.total.count,
-            servicos: p.servicos.count,
-            plano: p.plano.count,
-            produtos: p.produtos.count,
-            avulso: p.avulso.count,
-          },
-          ticketMedio: p.total.count > 0 ? p.total.reais / p.total.count : 0,
-          taxaCartao: p.taxaCartao,
-        }))
-        .filter(p => !inativos.has(String(p.id)))
-        .filter(p => !String(p.nome || "").startsWith("Profissional "))
-        .filter(p => p.faturamento.total > 0 || p.atendimentos.total > 0)
-        .sort((a, b) => b.faturamento.total - a.faturamento.total);
+      const metasMes = await getAllMetas();
 
-      // v41: anexa auditoria de fontes — usuário vê os totais do mesService
-      // ao lado do total que vem de calcularPeriodoPorProfissional.
+      // Bloco 1 (v42.4): tem ranking do mês → fonte CONGELADA (ranking×categoria,
+      // deduplicada). Sem ranking → cálculo ao vivo (preserva o dia corrente).
+      const rankEquipe = await montarEquipeDeRanking(mes, metasMes);
+      const fonteEquipe: "ranking-csv" | "ao-vivo" = rankEquipe ? "ranking-csv" : "ao-vivo";
+
+      let profsRanked: any[];
+      let totaisOut: any;
+      let configOut: any = { taxaCartaoPct: 0 };
+
+      if (rankEquipe) {
+        profsRanked = Array.from(rankEquipe.byId.values())
+          .map(p => ({ ...p, comissaoServicosFonte: "ranking-csv" }))
+          .filter(p => !inativos.has(String(p.id)))
+          .filter(p => !String(p.nome || "").startsWith("Profissional "))
+          .filter(p => p.faturamento.total > 0 || p.atendimentos.total > 0)
+          .sort((a, b) => b.faturamento.total - a.faturamento.total);
+        const t = rankEquipe.totais;
+        totaisOut = {
+          faturamento: t.faturamento, atendimentos: t.atendimentos,
+          ticketMedio: t.atendimentos > 0 ? t.faturamento / t.atendimentos : 0,
+          profissionaisAtivos: profsRanked.length,
+          servicosBruto: t.servicosBruto, servicosLiquido: t.servicosLiquido,
+          produtosBruto: t.produtosBruto, produtosLiquido: t.produtosLiquido,
+          planoReais: t.planoReais,
+        };
+      } else {
+        const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
+        configOut = periodo.config;
+        profsRanked = Object.values(periodo.porProfissional)
+          .map(p => ({
+            id: p.profissionalId, nome: p.nome,
+            faturamento: {
+              total: p.total.reais, servicos: p.servicos.reais,
+              servicosBruto: p.servicos.bruto, servicosLiquido: p.servicos.liquido,
+              plano: p.plano.reais, produtos: p.produtos.reais,
+              produtosBruto: p.produtos.bruto, produtosLiquido: p.produtos.liquido,
+              avulso: p.avulso.reais,
+            },
+            atendimentos: {
+              total: p.total.count, servicos: p.servicos.count,
+              plano: p.plano.count, produtos: p.produtos.count, avulso: p.avulso.count,
+            },
+            ticketMedio: p.total.count > 0 ? p.total.reais / p.total.count : 0,
+            taxaCartao: p.taxaCartao,
+            comissaoServicos: 0, categoria: null, comissaoServicosFonte: "ao-vivo",
+          }))
+          .filter(p => !inativos.has(String(p.id)))
+          .filter(p => !String(p.nome || "").startsWith("Profissional "))
+          .filter(p => p.faturamento.total > 0 || p.atendimentos.total > 0)
+          .sort((a, b) => b.faturamento.total - a.faturamento.total);
+        totaisOut = {
+          faturamento: periodo.totais?.reais || 0,
+          atendimentos: periodo.totais?.count || 0,
+          ticketMedio: (periodo.totais?.count || 0) > 0 ? (periodo.totais?.reais || 0) / (periodo.totais!.count) : 0,
+          profissionaisAtivos: profsRanked.length,
+          servicosBruto: periodo.totais?.servicosBruto || 0,
+          servicosLiquido: periodo.totais?.servicosLiquido || 0,
+          produtosBruto: periodo.totais?.produtosBruto || 0,
+          produtosLiquido: periodo.totais?.produtosLiquido || 0,
+          planoReais: periodo.totais?.planoReais || 0,
+        };
+      }
+
+      // v41: anexa auditoria de fontes (informativo, lado a lado com o número exibido)
       const canonicoAudit = await getMesDataCanonical(mes, { trinksFetchAllRange, log })
         .then(c => ({ fonteEscolhida: c.fonte, faturamento: c.faturamento, comandas: c.comandas, fontesAuditoria: c.fontesAuditoria }))
         .catch(() => null);
@@ -10632,21 +10728,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         mes,
         dataInicio,
         dataFim,
-        totais: {
-          faturamento: periodo.totais?.reais || 0,
-          atendimentos: periodo.totais?.count || 0,
-          ticketMedio: (periodo.totais?.count || 0) > 0
-            ? (periodo.totais?.reais || 0) / (periodo.totais!.count)
-            : 0,
-          profissionaisAtivos: profsRanked.length,
-          servicosBruto: periodo.totais?.servicosBruto || 0,
-          servicosLiquido: periodo.totais?.servicosLiquido || 0,
-          produtosBruto: periodo.totais?.produtosBruto || 0,
-          produtosLiquido: periodo.totais?.produtosLiquido || 0,
-          planoReais: periodo.totais?.planoReais || 0,
-        },
+        fonte: fonteEquipe,
+        totais: totaisOut,
         profissionais: profsRanked,
-        config: periodo.config,
+        config: configOut,
         canonico: canonicoAudit,
         fetchedAt: new Date().toISOString(),
       });

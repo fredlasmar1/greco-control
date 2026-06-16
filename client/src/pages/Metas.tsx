@@ -43,12 +43,15 @@ interface DesempenhoResp {
 
 interface EquipeMesResp {
   ok: boolean;
+  fonte?: "ranking-csv" | "ao-vivo";
   totais: { faturamento: number; atendimentos: number; ticketMedio: number };
   profissionais: Array<{
     id: string;
     nome: string;
     faturamento: { total: number };
     atendimentos: { total: number };
+    comissaoServicos?: number;
+    comissaoServicosFonte?: "ranking-csv" | "ao-vivo";
   }>;
 }
 
@@ -140,19 +143,22 @@ export default function Metas() {
   useEffect(() => {
     let cancelled = false;
     setLoadingDados(true);
+    // v42.4 (#1): o MÊS vem SEMPRE de /api/equipe/mes (ranking-aware, fonte única —
+    // mesmo motor da folha/Pagamento). dia/semana ao vivo só no mês corrente.
+    const pMes = fetch(`${API_BASE}/api/equipe/mes/${selectedMes}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setEquipeMes(d); })
+      .catch(() => {});
+    let pDia: Promise<any> = Promise.resolve();
     if (isMesCorrente) {
-      fetch(`${API_BASE}/api/equipe/desempenho`)
+      pDia = fetch(`${API_BASE}/api/equipe/desempenho`)
         .then(r => r.json())
         .then(d => { if (!cancelled) setDesempenho(d); })
-        .catch(() => {})
-        .finally(() => { if (!cancelled) setLoadingDados(false); });
-    } else {
-      fetch(`${API_BASE}/api/equipe/mes/${selectedMes}`)
-        .then(r => r.json())
-        .then(d => { if (!cancelled) setEquipeMes(d); })
-        .catch(() => {})
-        .finally(() => { if (!cancelled) setLoadingDados(false); });
+        .catch(() => {});
+    } else if (!cancelled) {
+      setDesempenho(null);
     }
+    Promise.all([pMes, pDia]).finally(() => { if (!cancelled) setLoadingDados(false); });
     return () => { cancelled = true; };
   }, [selectedMes, isMesCorrente]);
 
@@ -188,9 +194,8 @@ export default function Metas() {
   };
 
   // ─── Cálculos derivados ──────────────────────────────────
-  const realizadoMes = isMesCorrente
-    ? (desempenho?.totais.mes.reais || 0)
-    : (equipeMes?.totais.faturamento || 0);
+  // v42.4: realizado do MÊS sempre do /api/equipe/mes (ranking quando existe).
+  const realizadoMes = equipeMes?.totais.faturamento || 0;
   const realizadoHoje = isMesCorrente ? (desempenho?.totais.dia.reais || 0) : 0;
   const realizadoSemana = isMesCorrente ? (desempenho?.totais.semana.reais || 0) : 0;
 
@@ -201,19 +206,14 @@ export default function Metas() {
 
   // Linhas de barbeiros (com meta + realizado)
   const linhasBarbeiros = useMemo(() => {
-    const fonte = isMesCorrente
-      ? (desempenho?.linhas || []).map(l => ({
-          id: l.profissionalId,
-          nome: l.nome,
-          meta: l.meta?.metaReais || metasBarbeiros[l.profissionalId] || 0,
-          realizado: l.mes?.reais || 0,
-        }))
-      : (equipeMes?.profissionais || []).map(p => ({
-          id: p.id,
-          nome: p.nome,
-          meta: metasBarbeiros[p.id] || 0,
-          realizado: p.faturamento.total,
-        }));
+    // v42.4: sempre do equipeMes (ranking-aware) — receita + comissão por barbeiro.
+    const fonte = (equipeMes?.profissionais || []).map(p => ({
+      id: p.id,
+      nome: p.nome,
+      meta: metasBarbeiros[p.id] || 0,
+      realizado: p.faturamento.total,
+      comissao: Number(p.comissaoServicos || 0),
+    }));
     return fonte
       .filter(l => l.meta > 0 || l.realizado > 0)
       .sort((a, b) => b.realizado - a.realizado);
@@ -349,6 +349,12 @@ export default function Metas() {
             <div className="flex items-center gap-2">
               <Users className="w-4 h-4 text-primary" />
               Meta por Barbeiro
+              {/* v42.4 (#8): fonte da comissão exibida */}
+              {equipeMes?.fonte === "ranking-csv" ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400">CSV definitivo</span>
+              ) : equipeMes?.fonte === "ao-vivo" ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400">ao vivo</span>
+              ) : null}
             </div>
             <span className="text-xs text-muted-foreground tabular-nums">
               Total: {formatCurrency(totalRealizadoBarbeiros)} / {formatCurrency(totalMetaBarbeiros)}
@@ -368,6 +374,7 @@ export default function Metas() {
                     <th className="text-left py-2 px-2 font-medium">Barbeiro</th>
                     <th className="text-right py-2 px-2 font-medium">Meta</th>
                     <th className="text-right py-2 px-2 font-medium">Realizado</th>
+                    <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Comissão</th>
                     <th className="text-right py-2 px-2 font-medium hidden sm:table-cell w-32">Progresso</th>
                     <th className="text-right py-2 px-2 font-medium">%</th>
                     <th className="w-16"></th>
@@ -394,6 +401,7 @@ export default function Metas() {
                           )}
                         </td>
                         <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(l.realizado)}</td>
+                        <td className="py-2 px-2 text-right tabular-nums hidden md:table-cell text-muted-foreground">{formatCurrency(l.comissao)}</td>
                         <td className="py-2 px-2 hidden sm:table-cell">
                           {l.meta > 0 && <ProgressBar pct={pct} />}
                         </td>

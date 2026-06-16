@@ -67,6 +67,27 @@ individual a preservar); única exceção era Larissa (0%→40%, corrigido).
 > Trinks 429). Falta migrar essas bases pro ranking/CSV. **Impacto conhecido:
 > junho tem R$ 2.554 em produtos cuja comissão NÃO entra na folha até resolver.**
 
+### v42.4 — Bloco 1: Equipe/Metas no ranking CSV [concluído 15/06/2026]
+
+Estende o motor do D2 pras telas Equipe e Metas (itens #1+#2+#8 do raio-x).
+- **#1 (servidor):** novo helper `montarEquipeDeRanking(mes, metas)` — per-profissional
+  do mês a partir do **ranking CSV** (receita = `Valor Total`, comissão via
+  `comissaoServicosRanking`, **deduplicado por id** → some o "André dobrado"),
+  join nome→id por nome-após-hífen/apelido. `/api/equipe/mes/:mes` usa ranking
+  quando existe (`fonte:'ranking-csv'`), senão cálculo ao vivo (`'ao-vivo'`).
+  Metas passou a puxar o **mês** sempre de `/api/equipe/mes` (dia/semana seguem
+  ao vivo via `/api/equipe/desempenho` só no corrente). `/api/equipe/desempenho`
+  NÃO foi tocado.
+- **#2 (frontend):** removido o fallback **demo-data** da Equipe (`Equipe.tsx`) —
+  sem dado agora é estado "sem dados" honesto, nunca número fictício. Também
+  removida a comissão FAKE `revenue×0.4` → usa a comissão real (ranking×categoria).
+- **#8:** badge de fonte (CSV definitivo / ao vivo) na Equipe e na Metas + coluna
+  "Comissão" na Metas.
+
+Validado: junho `ranking-csv` R$39.197,55 (André sem duplicar; comissão 5.584,50 /
+Armandinho 2.357,20 / Larissa 622,10 — bate Pagamento/Metas); maio `ao-vivo`
+(preserva o caso sem ranking). Não tocado: D2-fase2, D3-MeuPainel, D4.
+
 ### Mais recente vence — CSV vs Trinks [concluído]
 
 Regra: para cada mês, comparamos o timestamp de upload do CSV com o de sync Trinks. O **mais recente vence** e é a fonte usada em todo o sistema (Dashboard + Equipe). Badge discreto indica a fonte ativa.

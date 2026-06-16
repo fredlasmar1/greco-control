@@ -1640,7 +1640,7 @@ export async function registerRoutes(
   // ──────────────────────────────────────────────────────────────────
 
   // GET /api/meu-painel — dados do barbeiro logado
-  app.get("/api/meu-painel", (req: Request, res: Response) => {
+  app.get("/api/meu-painel", async (req: Request, res: Response) => {
     const user = getUserFromToken(extractToken(req));
     if (!user) return res.status(401).json({ error: "Não autenticado." });
     if (user.role !== "barbeiro") return res.status(403).json({ error: "Apenas barbeiros têm painel." });
@@ -1729,6 +1729,22 @@ export async function registerRoutes(
       minhaMeta = (minhaComm / totalComm) * metaGlobal;
     }
 
+    // D3 (v42.5): mês com ranking CSV → faturamento/clientes/comissão do barbeiro
+    // vêm do ranking (definitivo), reusando montarEquipeDeRanking. Dia/semana
+    // seguem ao vivo (intradiário). Sem ranking → tudo ao vivo, como antes.
+    let minhaComissao: number | null = null;
+    let fonteMes: "ranking-csv" | "ao-vivo" = "ao-vivo";
+    try {
+      const rankEquipe = await montarEquipeDeRanking(currentMonth, await getAllMetas());
+      const meu = rankEquipe?.byId.get(String(user.barberId));
+      if (meu) {
+        mesFat = meu.faturamento.total;
+        mesCli = meu.atendimentos.total;
+        minhaComissao = meu.comissaoServicos;
+        fonteMes = "ranking-csv";
+      }
+    } catch { /* sem ranking → mantém ao vivo */ }
+
     const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
     const dayOfMonth = today.getDate();
     const remainingDays = Math.max(1, daysInMonth - dayOfMonth + 1);
@@ -1742,6 +1758,8 @@ export async function registerRoutes(
       meta: minhaMeta,
       faturamento: { dia: diaFat, semana: semanaFat, mes: mesFat },
       clientes: { dia: diaCli, semana: semanaCli, mes: mesCli },
+      comissaoMes: minhaComissao,   // D3: comissão do mês (ranking×categoria) ou null se ao vivo
+      fonteMes,                     // 'ranking-csv' (definitivo) | 'ao-vivo' (provisório)
       restaFaturar,
       dailyNeeded,
       remainingDays,

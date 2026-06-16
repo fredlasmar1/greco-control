@@ -17,6 +17,8 @@ interface PainelData {
   meta: number;
   faturamento: { dia: number; semana: number; mes: number };
   clientes: { dia: number; semana: number; mes: number };
+  comissaoMes?: number | null;
+  fonteMes?: "ranking-csv" | "ao-vivo";
   restaFaturar: number;
   dailyNeeded: number;
   remainingDays: number;
@@ -121,9 +123,15 @@ export default function MeuPainel() {
         {/* Card principal: Meta do Mês */}
         <Card className="bg-gradient-to-br from-primary/20 via-primary/10 to-transparent border-primary/30 overflow-hidden relative">
           <CardContent className="p-5">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <Target className="w-4 h-4 text-primary" />
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Minha Meta do Mês</span>
+              {/* D3 (v42.5): fonte do número do mês */}
+              {data.fonteMes === "ranking-csv" ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400">definitivo</span>
+              ) : data.fonteMes === "ao-vivo" ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400">ao vivo</span>
+              ) : null}
             </div>
             <p className="text-3xl font-bold text-foreground mb-1">
               {formatCurrency(data.faturamento.mes)}
@@ -155,6 +163,13 @@ export default function MeuPainel() {
               <div className="mt-4 pt-4 border-t border-primary/20 flex items-center gap-2">
                 <Trophy className="w-5 h-5 text-amber-400" />
                 <span className="text-sm font-semibold text-emerald-400">Meta batida! Parabéns 🎉</span>
+              </div>
+            )}
+            {/* D3 (v42.5): comissão de serviços do mês (quando vem do ranking) */}
+            {data.comissaoMes != null && (
+              <div className="mt-4 pt-4 border-t border-primary/20 flex justify-between items-baseline">
+                <span className="text-xs text-muted-foreground">Sua comissão (serviços) no mês</span>
+                <span className="text-lg font-bold text-emerald-400">{formatCurrency(data.comissaoMes)}</span>
               </div>
             )}
           </CardContent>

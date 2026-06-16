@@ -88,6 +88,17 @@ Validado: junho `ranking-csv` R$39.197,55 (André sem duplicar; comissão 5.584,
 Armandinho 2.357,20 / Larissa 622,10 — bate Pagamento/Metas); maio `ao-vivo`
 (preserva o caso sem ranking). Não tocado: D2-fase2, D3-MeuPainel, D4.
 
+### v42.5 — D3 MeuPainel no ranking CSV [concluído 15/06/2026]
+
+`/api/meu-painel` (agora async): o faturamento/clientes/comissão do **MÊS** do
+barbeiro vêm do ranking CSV quando existe (reusa `montarEquipeDeRanking`),
+`fonteMes:'ranking-csv'`. Dia/semana seguem do `full_sync` ao vivo (intradiário).
+Sem ranking → tudo ao vivo. Novo campo `comissaoMes` (o barbeiro passa a ver a
+comissão de serviços). Frontend: comissão + badge de fonte no painel.
+
+Antes: barbeiro via faturamento ZERO no próprio painel em 429 (full_sync vazio).
+Era a última tela da família "429 → zero" (Dashboard/Equipe/Metas/Pagamento já ok).
+
 ### Mais recente vence — CSV vs Trinks [concluído]
 
 Regra: para cada mês, comparamos o timestamp de upload do CSV com o de sync Trinks. O **mais recente vence** e é a fonte usada em todo o sistema (Dashboard + Equipe). Badge discreto indica a fonte ativa.

@@ -33,6 +33,14 @@ export interface UseTrinksMonthResult {
   isMesCorrente: boolean;
   /** Mês corrente em SP (YYYY-MM) — útil para limites do seletor. */
   mesCorrente: string;
+  /** Fase 1: totais JÁ calculados pelo mesService (envelope), null se ausente (fallback). */
+  canonico: {
+    faturamento: number;
+    comandas: number;
+    breakdown: { pix: number; cartaoCredito: number; cartaoDebito: number; dinheiro: number; plano: number; voucher: number; outros: number } | null;
+    diasUteisDecorridos: number;
+    diasUteisTotal: number;
+  } | null;
 }
 
 export function useTrinksMonth(selectedMes: string): UseTrinksMonthResult {
@@ -46,6 +54,7 @@ export function useTrinksMonth(selectedMes: string): UseTrinksMonthResult {
   const [fonte, setFonte] = useState<FonteUI>("atual");
   const [trinksAt, setTrinksAt] = useState<string | null>(null);
   const [csvAt, setCsvAt] = useState<string | null>(null);
+  const [canonico, setCanonico] = useState<UseTrinksMonthResult["canonico"]>(null);
 
   // v37: SEMPRE busca o pacote completo via resolutor. Antes só fazia pra meses
   // passados — pro mês corrente dependia 100% da useTrinksStore que fica vazia
@@ -68,6 +77,7 @@ export function useTrinksMonth(selectedMes: string): UseTrinksMonthResult {
           setFonte("nenhuma");
           setTrinksAt(null);
           setCsvAt(null);
+          setCanonico(null);
           return;
         }
         setTrinksMes(j?.dados || null);
@@ -75,6 +85,18 @@ export function useTrinksMonth(selectedMes: string): UseTrinksMonthResult {
         setFonte(f === "csv" || f === "trinks" || f === "nenhuma" ? f : "atual");
         setTrinksAt(j?.trinksAt || null);
         setCsvAt(j?.csvAt || null);
+        // Fase 1: campos prontos do mesService (quando o envelope canônico os traz)
+        setCanonico(
+          typeof j?.faturamento === "number"
+            ? {
+                faturamento: j.faturamento,
+                comandas: Number(j.comandas || 0),
+                breakdown: j.breakdown || null,
+                diasUteisDecorridos: Number(j.diasUteisDecorridos || 0),
+                diasUteisTotal: Number(j.diasUteisTotal || 0),
+              }
+            : null,
+        );
       })
       .catch((e) => {
         if (canceled) return;
@@ -106,5 +128,6 @@ export function useTrinksMonth(selectedMes: string): UseTrinksMonthResult {
     csvAt,
     isMesCorrente,
     mesCorrente,
+    canonico,
   };
 }

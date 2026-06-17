@@ -4958,6 +4958,12 @@ export async function registerRoutes(
             canonical.fonte === "api-trinks" ? "trinks" :
             canonical.fonte === "csv-caixa" || canonical.fonte === "csv-financeiro" ? "csv" :
             "nenhuma";
+          // Fase 1: dias úteis (ter-sáb, TZ SP) p/ projeção no Dashboard.
+          const ultimoDiaMes = ultimoDiaDoMes(`${mes}-01`);
+          const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+          const fimDecorrido = mes < hojeSP.slice(0, 7) ? ultimoDiaMes : (hojeSP <= ultimoDiaMes ? hojeSP : ultimoDiaMes);
+          const diasUteisTotal = contarDiasUteis(`${mes}-01`, ultimoDiaMes);
+          const diasUteisDecorridos = contarDiasUteis(`${mes}-01`, fimDecorrido);
           return res.json({
             fonte: fonteUi,
             fonteDetalhada: canonical.fonte,
@@ -4965,6 +4971,12 @@ export async function registerRoutes(
             csvAt: canonical.fontesAuditoria.csvCaixa.geradoEm || canonical.fontesAuditoria.csvFinanceiro.geradoEm,
             motivo: `Fonte do mês: ${canonical.fonte} (${canonical.comandas} comandas, R$ ${canonical.faturamento.toFixed(2)}). Divergências entre fontes são nota de auditoria, não disputa.`,
             fontesAuditoria: canonical.fontesAuditoria,
+            // Fase 1: campos JÁ calculados pelo mesService, antes descartados.
+            faturamento: canonical.faturamento,
+            comandas: canonical.comandas,
+            breakdown: canonical.breakdown,
+            diasUteisDecorridos,
+            diasUteisTotal,
             dados: {
               estabelecimento: null,
               profissionais: [],
@@ -9351,7 +9363,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     }
 
     const byId = new Map<string, any>();
-    const tot = { faturamento: 0, atendimentos: 0, servicosBruto: 0, servicosLiquido: 0, produtosBruto: 0, produtosLiquido: 0, planoReais: 0 };
+    const tot = { faturamento: 0, atendimentos: 0, servicosBruto: 0, servicosLiquido: 0, produtosBruto: 0, produtosLiquido: 0, planoReais: 0, novosClientes: 0, clientesDistintos: 0, _retPond: 0 };
     for (const p of profs) {
       const partes = String(p.profissional || "").split(/[-–—]/);
       const apel = normRank(partes[0]);
@@ -9363,6 +9375,10 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const serv = Number(p.totalServicos || 0);
       const prod = Number(p.totalProdutos || 0);
       const atend = Number(p.qtdAtendimentos || 0);
+      // Fase 1: campos de cliente já parseados do ranking (antes descartados).
+      const novos = Number(p.novosClientes || 0);
+      const distintos = Number(p.clientesDistintos || 0);
+      const pctRet = Number(p.pctRetorno || 0);
       const ent = byId.get(id);
       if (ent) {
         // dois nomes do ranking → mesmo id cadastrado: soma (dedup do André dobrado)
@@ -9373,6 +9389,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         ent.atendimentos.total += atend;
         ent.comissaoServicos += r.comissao;
         ent.ticketMedio = ent.atendimentos.total > 0 ? ent.faturamento.total / ent.atendimentos.total : 0;
+        ent.novosClientes += novos; ent.clientesDistintos += distintos;
+        ent._retPond += pctRet * atend; // % retorno ponderado por atendimentos
+        ent.pctRetorno = ent.atendimentos.total > 0 ? ent._retPond / ent.atendimentos.total : 0;
       } else {
         byId.set(id, {
           id, nome: p.profissional,
@@ -9383,13 +9402,28 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
           comissaoServicos: r.comissao,
           categoria: r.categoria,
           comissaoServicosFonte: "ranking-csv" as const,
+          novosClientes: novos,
+          clientesDistintos: distintos,
+          pctRetorno: pctRet,
+          _retPond: pctRet * atend,
         });
       }
       tot.faturamento += revTotal; tot.atendimentos += atend;
       tot.servicosBruto += serv; tot.servicosLiquido += serv;
       tot.produtosBruto += prod; tot.produtosLiquido += prod;
+      tot.novosClientes += novos; tot.clientesDistintos += distintos;
+      tot._retPond += pctRet * atend;
     }
-    return { byId, totais: tot };
+    // limpa acumulador interno das linhas
+    for (const e of byId.values()) delete e._retPond;
+    const totaisOut = {
+      faturamento: tot.faturamento, atendimentos: tot.atendimentos,
+      servicosBruto: tot.servicosBruto, servicosLiquido: tot.servicosLiquido,
+      produtosBruto: tot.produtosBruto, produtosLiquido: tot.produtosLiquido, planoReais: tot.planoReais,
+      novosClientes: tot.novosClientes, clientesDistintos: tot.clientesDistintos,
+      pctRetornoMedio: tot.atendimentos > 0 ? tot._retPond / tot.atendimentos : 0,
+    };
+    return { byId, totais: totaisOut };
   }
 
   async function calcularLinhaPagamento(
@@ -10697,6 +10731,9 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           servicosBruto: t.servicosBruto, servicosLiquido: t.servicosLiquido,
           produtosBruto: t.produtosBruto, produtosLiquido: t.produtosLiquido,
           planoReais: t.planoReais,
+          // Fase 1: agregados de cliente p/ card de retenção
+          novosClientes: t.novosClientes, clientesDistintos: t.clientesDistintos,
+          pctRetornoMedio: t.pctRetornoMedio,
         };
       } else {
         const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);

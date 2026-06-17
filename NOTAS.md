@@ -8,6 +8,19 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v43 — Resumo Executivo do mês no Dashboard (17/06/2026) [concluído]
+
+**Tema:** bloco "Resumo do Mês" no topo do Dashboard, 100% alimentado pela fonte canônica (não quebra em 429). Entrega de quebra o item de UX #7 ("vs mês anterior").
+
+**O que foi entregue (3 arquivos):**
+- **`server/routes.ts`** — `/api/mes/:mes/dados` agora devolve os campos que o `mesService` já calculava e eram descartados: `faturamento`, `comandas`, `breakdown`, `diasUteisDecorridos`, `diasUteisTotal` (dias úteis ter-sáb via `contarDiasUteis`, TZ SP). `/api/equipe/mes` (`montarEquipeDeRanking`) ganhou agregados de cliente do ranking: `novosClientes`, `clientesDistintos`, `pctRetornoMedio` (retenção ponderada por atendimentos).
+- **`client/src/hooks/useTrinksMonth.ts`** — expõe os campos canônicos (`canonico`).
+- **`client/src/pages/Dashboard.tsx`** — bloco "Resumo do Mês": hero faturamento + projeção fim-do-mês vs meta (R$150k), cards (ticket / comandas-por-dia-útil / serviços-produtos / retenção+novos), top-5 profissionais e comparação **vs mês anterior** (faturamento e ticket). Hero usa `canonicoMes.faturamento` (caixa CSV); cards de produção usam o ranking.
+
+**Validado local c/ dados reais (junho/2026):** `/api/mes/2026-06/dados` → fonte `csv`, faturamento R$40.975,55, comandas 414, 12/21 dias úteis. `/api/equipe/mes/2026-06` → ticket R$73,82, serviços R$36.752,25, produtos R$2.445,30, 39 novos, retenção 92%. Regressão bate: **André comissão R$5.584,50 · Armandinho R$2.357,20**. Build verde (vite 4,27s + esbuild). 0 chamadas Trinks.
+
+**Pendências (inalteradas — fila do D2):** D2-fase2 (produtos/plano/bônus zeram em 429, R$2.554 jun fora da folha) segue sendo a nº1.
+
 ### v42 — Unificação de fontes (handoff da sessão 15/06/2026) [concluído]
 
 **Tema:** substituir "fontes concorrendo" por **divisão de trabalho** (cada fonte governa a janela/domínio onde é melhor), com degradação graciosa — Trinks em 429 nunca mais zera ou pendura uma tela. Entregue em commits incrementais (v42 → v42.5), todos no `main`, deployados e validados em produção.

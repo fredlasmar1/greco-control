@@ -668,6 +668,12 @@ export default function Dashboard() {
   // Timestamps para o badge (em ISO).
   const [fonteTrinksAt, setFonteTrinksAt] = useState<string | null>(null);
   const [fonteCsvAt, setFonteCsvAt] = useState<string | null>(null);
+  // Fase 1: totais JÁ calculados pelo mesService (envelope /api/mes/:mes/dados).
+  const [canonicoMes, setCanonicoMes] = useState<any>(null);
+  // Fase 1: dados de equipe (ranking-aware) p/ ticket/tipo/retenção/top profs.
+  const [equipeMesDash, setEquipeMesDash] = useState<any>(null);
+  // Fase 1: mês anterior p/ comparação (faturamento + ticket).
+  const [mesAnteriorCmp, setMesAnteriorCmp] = useState<{ faturamento: number; ticketMedio: number } | null>(null);
 
   // Também busca a meta da fonte para o mês corrente — alimenta o badge.
   useEffect(() => {
@@ -713,6 +719,13 @@ export default function Dashboard() {
           setFonteMes(j?.fonte === "csv" || j?.fonte === "trinks" || j?.fonte === "nenhuma" ? j.fonte : "atual");
           setFonteTrinksAt(j?.trinksAt || null);
           setFonteCsvAt(j?.csvAt || null);
+          // Fase 1: campos prontos do mesService (faturamento/comandas/breakdown/dias úteis)
+          setCanonicoMes(typeof j?.faturamento === "number" ? {
+            faturamento: j.faturamento, comandas: Number(j.comandas || 0),
+            breakdown: j.breakdown || null,
+            diasUteisDecorridos: Number(j.diasUteisDecorridos || 0),
+            diasUteisTotal: Number(j.diasUteisTotal || 0),
+          } : null);
         }
       })
       .catch((e) => {
@@ -723,6 +736,30 @@ export default function Dashboard() {
       .finally(() => { if (!canceled) setTrinksMesLoading(false); });
     return () => { canceled = true; };
   }, [selectedMes, isMesCorrente, API_BASE]);
+
+  // Fase 1: equipe (ranking-aware) do mês p/ ticket/tipo/retenção/top profs, +
+  // mês anterior p/ comparação. Reusa /api/equipe/mes e /api/mes/dados (sem
+  // recriar cálculo). Mês fechado vem do CSV congelado (não quebra em 429).
+  useEffect(() => {
+    let canceled = false;
+    setEquipeMesDash(null);
+    setMesAnteriorCmp(null);
+    fetch(`${API_BASE}/api/equipe/mes/${selectedMes}`)
+      .then((r) => r.json())
+      .then((d) => { if (!canceled && d?.ok) setEquipeMesDash(d); })
+      .catch(() => {});
+    const mesAnt = mesAdjacente(selectedMes, -1);
+    Promise.all([
+      fetch(`${API_BASE}/api/mes/${mesAnt}/dados`).then((r) => r.json()).catch(() => null),
+      fetch(`${API_BASE}/api/equipe/mes/${mesAnt}`).then((r) => r.json()).catch(() => null),
+    ]).then(([dadosAnt, eqAnt]) => {
+      if (canceled) return;
+      const fat = typeof dadosAnt?.faturamento === "number" ? dadosAnt.faturamento : (eqAnt?.totais?.faturamento || 0);
+      const tk = eqAnt?.totais?.ticketMedio || 0;
+      if (fat > 0 || tk > 0) setMesAnteriorCmp({ faturamento: fat, ticketMedio: tk });
+    });
+    return () => { canceled = true; };
+  }, [selectedMes, API_BASE]);
 
   // v35: prefere o que tem dado real. Em mês corrente, store pode estar vazia
   // (sync da API Trinks falhou por 429); nesse caso usa trinksMes do resolutor
@@ -795,10 +832,22 @@ export default function Dashboard() {
   }, [hasTrinksDataEffective, trinksEffective, periodStart, periodEnd]);
 
   // Calculate data from either Trinks (mês selecionado) or demo
-  const totals = useMemo(
+  const totalsBase = useMemo(
     () => (hasTrinksDataEffective ? getTrinksMonthTotals(trinksEffective) : getMonthTotals()),
     [hasTrinksDataEffective, trinksEffective]
   );
+  // Fase 1 (Parte A): prefere faturamento/comandas JÁ calculados pelo mesService
+  // (envelope). Recálculo client vira só fallback quando o campo vier ausente.
+  const totals = useMemo(() => {
+    if (canonicoMes && typeof canonicoMes.faturamento === "number") {
+      return {
+        ...totalsBase,
+        totalRevenue: canonicoMes.faturamento,
+        totalClients: canonicoMes.comandas || totalsBase.totalClients,
+      };
+    }
+    return totalsBase;
+  }, [totalsBase, canonicoMes]);
 
   const revenueSummary = useMemo(
     () =>
@@ -832,6 +881,28 @@ export default function Dashboard() {
 
   const target = 150000;
   const progressPercent = (totals.totalRevenue / target) * 100;
+
+  // ─── Fase 1: valores derivados do "Resumo do Mês" (fonte canônica) ───
+  const fatMes = (canonicoMes?.faturamento ?? totals.totalRevenue) || 0;
+  const comandasMes = (canonicoMes?.comandas ?? totals.totalClients) || 0;
+  const duDecorr = canonicoMes?.diasUteisDecorridos || 0;
+  const duTotal = canonicoMes?.diasUteisTotal || 0;
+  const projecaoMes = duDecorr > 0 ? (fatMes / duDecorr) * duTotal : fatMes;
+  const pctMeta = target > 0 ? (fatMes / target) * 100 : 0;
+  const pctProjMeta = target > 0 ? (projecaoMes / target) * 100 : 0;
+  const faltaMeta = Math.max(0, target - fatMes);
+  const eqTot = equipeMesDash?.totais || {};
+  const ticketMes = (eqTot.ticketMedio ?? (comandasMes > 0 ? fatMes / comandasMes : 0)) || 0;
+  const servicosMes = eqTot.servicosBruto || 0;
+  const produtosMes = eqTot.produtosBruto || 0;
+  const novosClientesMes = eqTot.novosClientes || 0;
+  const retornoMes = eqTot.pctRetornoMedio || 0;
+  const mediaComandasDiaUtil = duDecorr > 0 ? comandasMes / duDecorr : 0;
+  const topProfsMes = (equipeMesDash?.profissionais || []).slice(0, 5);
+  const varFatPct = mesAnteriorCmp && mesAnteriorCmp.faturamento > 0
+    ? ((fatMes - mesAnteriorCmp.faturamento) / mesAnteriorCmp.faturamento) * 100 : null;
+  const varTicketPct = mesAnteriorCmp && mesAnteriorCmp.ticketMedio > 0
+    ? ((ticketMes - mesAnteriorCmp.ticketMedio) / mesAnteriorCmp.ticketMedio) * 100 : null;
   const todayClients = hasTrinksDataEffective
     ? totals.todayClients
     : chartData[chartData.length - 1]?.clients || 0;
@@ -941,6 +1012,98 @@ export default function Dashboard() {
         <DashboardApiSummaryCard mes={selectedMes} />
         <DashboardImportSummaryCard mes={selectedMes} />
       </div>
+
+      {/* ───────── Fase 1: Resumo do Mês (fonte canônica) ───────── */}
+      {(canonicoMes || equipeMesDash) && (
+        <div className="space-y-4" data-testid="resumo-mes">
+          {/* Hero: faturamento + projeção vs meta */}
+          <Card className="bg-gradient-to-br from-primary/15 via-primary/5 to-transparent border-primary/30">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Target className="w-4 h-4 text-primary" />
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Faturamento do mês · meta {formatCurrency(target)}</span>
+                </div>
+                <FonteBadge fonte={fonteMes} trinksAt={fonteTrinksAt} csvAt={fonteCsvAt} />
+              </div>
+              <div className="flex items-end gap-3 flex-wrap">
+                <p className="text-3xl font-bold text-foreground" data-testid="resumo-faturamento">{formatCurrency(fatMes)}</p>
+                {varFatPct != null && (
+                  <span className={`text-xs font-semibold flex items-center gap-0.5 ${varFatPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {varFatPct >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                    {Math.abs(varFatPct).toFixed(1)}% vs mês anterior
+                  </span>
+                )}
+              </div>
+              <Progress value={Math.min(100, pctMeta)} className="h-2 my-2 bg-white/10 [&>div]:bg-primary" />
+              <div className="flex items-center justify-between text-xs flex-wrap gap-2">
+                <span className="font-semibold text-primary">{pctMeta.toFixed(1)}% da meta</span>
+                {faltaMeta > 0 && <span className="text-muted-foreground">Falta {formatCurrency(faltaMeta)}</span>}
+              </div>
+              {duTotal > 0 && (
+                <div className="mt-3 pt-3 border-t border-primary/20 flex items-center justify-between text-xs flex-wrap gap-2">
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    <TrendingUp className="w-3.5 h-3.5 text-primary" /> Projeção fim do mês ({duDecorr}/{duTotal} dias úteis)
+                  </span>
+                  <span className="font-bold text-foreground">{formatCurrency(projecaoMes)} <span className={`font-semibold ${pctProjMeta >= 100 ? "text-emerald-400" : "text-amber-400"}`}>({pctProjMeta.toFixed(0)}% da meta)</span></span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Cards de métricas */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Ticket médio */}
+            <Card className="bg-card border-card-border"><CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-1"><TrendingUp className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Ticket médio</span></div>
+              <p className="text-xl font-bold" data-testid="resumo-ticket">{formatCurrency(ticketMes)}</p>
+              {varTicketPct != null && (
+                <span className={`text-[11px] font-semibold ${varTicketPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>{varTicketPct >= 0 ? "▲" : "▼"} {Math.abs(varTicketPct).toFixed(1)}% vs mês ant.</span>
+              )}
+            </CardContent></Card>
+            {/* Comandas */}
+            <Card className="bg-card border-card-border"><CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-1"><BarChart3 className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Comandas</span></div>
+              <p className="text-xl font-bold" data-testid="resumo-comandas">{comandasMes}</p>
+              {mediaComandasDiaUtil > 0 && <span className="text-[11px] text-muted-foreground">{mediaComandasDiaUtil.toFixed(1)}/dia útil</span>}
+            </CardContent></Card>
+            {/* Receita por tipo (serviços/produtos) */}
+            <Card className="bg-card border-card-border"><CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-1"><Package className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Serviços / Produtos</span></div>
+              <p className="text-sm font-bold leading-tight">{formatCurrency(servicosMes)}<span className="text-[11px] font-normal text-muted-foreground"> serv.</span></p>
+              <p className="text-sm font-bold leading-tight">{formatCurrency(produtosMes)}<span className="text-[11px] font-normal text-muted-foreground"> prod.</span></p>
+            </CardContent></Card>
+            {/* Retenção + novos */}
+            <Card className="bg-card border-card-border"><CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-1"><Users className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Retenção</span></div>
+              <p className="text-xl font-bold" data-testid="resumo-retencao">{retornoMes.toFixed(0)}%</p>
+              <span className="text-[11px] text-muted-foreground">{novosClientesMes} novos clientes</span>
+            </CardContent></Card>
+          </div>
+
+          {/* Top 5 profissionais */}
+          {topProfsMes.length > 0 && (
+            <Card className="bg-card border-card-border"><CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-3"><Users className="w-4 h-4 text-primary" /><span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Top profissionais do mês</span></div>
+              <div className="space-y-2">
+                {topProfsMes.map((p: any, i: number) => (
+                  <div key={p.id} className="flex items-center justify-between gap-2 text-sm" data-testid={`resumo-topprof-${i}`}>
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
+                      <span className="truncate">{(p.nome || "").split(" - ").pop()}</span>
+                    </span>
+                    <span className="flex items-center gap-3 flex-shrink-0 tabular-nums">
+                      <span className="font-semibold">{formatCurrency(p.faturamento?.total || 0)}</span>
+                      <span className="text-[11px] text-muted-foreground hidden sm:inline">tkt {formatCurrency(p.ticketMedio || 0)}</span>
+                      <span className="text-[11px] text-muted-foreground hidden md:inline">ret {Number(p.pctRetorno || 0).toFixed(0)}%</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent></Card>
+          )}
+        </div>
+      )}
 
       {/* Revenue Highlight */}
       <div className={`grid gap-4 ${isMesCorrente ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1"}`}>

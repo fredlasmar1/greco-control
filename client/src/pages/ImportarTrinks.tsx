@@ -751,9 +751,14 @@ function PreviewClientes({ p }: { p: any }) {
             {formatDateBR(p.periodoInicio)} → {formatDateBR(p.periodoFim)}
           </span>
         </div>
+        <div className={`mb-2 text-[11px] rounded px-2 py-1 inline-block ${p.role === "base" ? "bg-amber-500/10 text-amber-400 border border-amber-500/30" : "bg-primary/10 text-primary border border-primary/30"}`}>
+          {p.role === "base"
+            ? "Janela longa → vira BASE DE SUMIDOS (alimenta o card de clientes sumidos)"
+            : "Janela do mês → alimenta os cards do mês (novos, recompra, ticket)"}
+        </div>
         <div className="grid grid-cols-2 gap-2 mb-2">
           <Stat label="Clientes" value={String(p.totalClientes ?? 0)} highlight />
-          <Stat label="Novos no mês" value={String(p.novosNoMes ?? 0)} />
+          <Stat label={p.role === "base" ? "Novos (período)" : "Novos no mês"} value={String(p.novosNoMes ?? 0)} />
         </div>
         {p.top5?.length > 0 && (
           <div className="space-y-0.5 text-xs">

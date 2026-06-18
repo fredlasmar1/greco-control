@@ -2554,7 +2554,9 @@ export async function registerRoutes(
         }
       } else {
         const s = trinksImport.summarize(payload, importadoEm);
-        const chave = trinksImport.kvKeyFor(payload.tipo, payload.mes);
+        const chave = payload.tipo === "clientes"
+          ? trinksImport.clientesKvKey(payload)
+          : trinksImport.kvKeyFor(payload.tipo, payload.mes);
         summaries.push({ ...s, chave, sobrescreve: idx[chave] || null });
       }
 
@@ -2587,6 +2589,7 @@ export async function registerRoutes(
         previewData.mes = payload.mes;
         previewData.periodoInicio = payload.periodoInicio;
         previewData.periodoFim = payload.periodoFim;
+        previewData.role = trinksImport.clientesEhBase(payload) ? "base" : "mensal";
         previewData.totalClientes = payload.totalClientes;
         previewData.novosNoMes = payload.rows.filter(r => r.novoCliente).length;
         // top 5 por gasto — sem expor contato (email/telefone)
@@ -2640,6 +2643,18 @@ export async function registerRoutes(
           idx[chave] = s;
           persistidas.push(s);
         }
+      } else if (payload.tipo === "clientes") {
+        const ehBase = trinksImport.clientesEhBase(payload);
+        const chave = trinksImport.clientesKvKey(payload);
+        await kvSet(chave, payload);
+        const s = trinksImport.summarize(payload, importadoEm);
+        if (ehBase) {
+          // Base de sumidos: não é "do mês"; rotula e tira do mapa mensal.
+          s.mes = "";
+          s.descricao = `Base de sumidos · ${payload.totalClientes} clientes · ${payload.periodoInicio} → ${payload.periodoFim}`;
+        }
+        idx[chave] = s;
+        persistidas.push(s);
       } else {
         const chave = trinksImport.kvKeyFor(payload.tipo, payload.mes);
         await kvSet(chave, payload);
@@ -2720,25 +2735,22 @@ export async function registerRoutes(
   });
 
   // GET /api/clientes/ranking/:mes — agregados de cliente do "Ranking de Clientes"
-  // (Fase 2). Lê o CSV persistido (trinks_import:clientes:YYYY-MM), nunca Trinks
-  // ao vivo. PRIVACIDADE: não devolve email/telefone (Dashboard roda em PC público).
+  // (Fase 2). Papéis separados: cards do mês (novos/recompra/ticket) vêm do export
+  // MENSAL (trinks_import:clientes:YYYY-MM); sumidos vêm da BASE de janela longa
+  // (trinks_import:clientes:base). Nunca Trinks ao vivo. PRIVACIDADE: sem email/telefone.
   app.get("/api/clientes/ranking/:mes", async (req: Request, res: Response) => {
     try {
       const mes = req.params.mes;
       if (!/^\d{4}-\d{2}$/.test(mes)) {
         return res.status(400).json({ ok: false, error: "Mês inválido. Use YYYY-MM." });
       }
-      const data = await kvGet<any>(trinksImport.kvKeyFor("clientes", mes));
-      if (!data || !Array.isArray(data.rows)) {
+      const mensal = await kvGet<any>(trinksImport.kvKeyFor("clientes", mes));
+      const base = await kvGet<any>(trinksImport.CLIENTES_BASE_KEY);
+      const temMensal = !!(mensal && Array.isArray(mensal.rows));
+      const temBase = !!(base && Array.isArray(base.rows));
+      if (!temMensal && !temBase) {
         return res.json({ ok: true, vazio: true, mes });
       }
-      const rows: any[] = data.rows;
-      const totalClientes = rows.length;
-      const novosNoMes = rows.filter(r => r.novoCliente).length;
-      const comRecompra = rows.filter(r => Number(r.visitasPeriodo) > 1).length;
-      const recompraPct = totalClientes > 0 ? (comRecompra / totalClientes) * 100 : 0;
-      const somaTotal = rows.reduce((s, r) => s + Number(r.total || 0), 0);
-      const ticketMedioClientes = totalClientes > 0 ? somaTotal / totalClientes : 0;
 
       // Sumidos: último atendimento > 60 dias atrás (TZ America/Sao_Paulo, vs hoje).
       const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
@@ -2747,27 +2759,41 @@ export async function registerRoutes(
         if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd || "")) return null;
         return Math.floor((hojeMs - Date.parse(`${ymd}T00:00:00Z`)) / 86_400_000);
       };
-      const sumidos = rows
-        .map(r => ({ nome: r.nome, dias: diasDesde(r.ultimoAtendimento) }))
-        .filter(x => x.dias !== null && (x.dias as number) > 60) as { nome: string; dias: number }[];
-      // "Mais recuperáveis primeiro": quem cruzou os 60d há menos tempo (menor dias).
-      sumidos.sort((a, b) => a.dias - b.dias);
 
-      return res.json({
-        ok: true,
-        mes,
-        geradoEm: data.geradoEm || "",
-        periodoInicio: data.periodoInicio || "",
-        periodoFim: data.periodoFim || "",
-        totalClientes,
-        novosNoMes,
-        recompraPct: Math.round(recompraPct * 10) / 10,
-        ticketMedioClientes: Math.round(ticketMedioClientes * 100) / 100,
-        clientesSumidos: {
+      const resp: any = { ok: true, mes, temMensal, temBase };
+
+      // ── Cards do mês (export mensal) ──
+      if (temMensal) {
+        const rows: any[] = mensal.rows;
+        const totalClientes = rows.length;
+        const comRecompra = rows.filter(r => Number(r.visitasPeriodo) > 1).length;
+        const somaTotal = rows.reduce((s, r) => s + Number(r.total || 0), 0);
+        resp.totalClientes = totalClientes;
+        resp.novosNoMes = rows.filter(r => r.novoCliente).length;
+        resp.recompraPct = totalClientes > 0 ? Math.round((comRecompra / totalClientes) * 1000) / 10 : 0;
+        resp.ticketMedioClientes = totalClientes > 0 ? Math.round((somaTotal / totalClientes) * 100) / 100 : 0;
+        resp.geradoEm = mensal.geradoEm || "";
+        resp.periodoInicio = mensal.periodoInicio || "";
+        resp.periodoFim = mensal.periodoFim || "";
+      }
+
+      // ── Sumidos: prefere a base (janela longa); fallback no mensal (≈0). ──
+      const fonteSumidos = temBase ? base : (temMensal ? mensal : null);
+      if (fonteSumidos) {
+        const sumidos = (fonteSumidos.rows as any[])
+          .map(r => ({ nome: r.nome, dias: diasDesde(r.ultimoAtendimento) }))
+          .filter(x => x.dias !== null && (x.dias as number) > 60) as { nome: string; dias: number }[];
+        sumidos.sort((a, b) => a.dias - b.dias); // mais recuperáveis primeiro
+        resp.clientesSumidos = {
           total: sumidos.length,
           lista: sumidos.slice(0, 20).map(x => ({ nome: x.nome, diasSemVir: x.dias })),
-        },
-      });
+          fonte: temBase ? "base" : "mensal",
+          baseGeradoEm: temBase ? (base.geradoEm || "") : "",
+          basePeriodo: temBase ? `${base.periodoInicio} → ${base.periodoFim}` : "",
+        };
+      }
+
+      return res.json(resp);
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }

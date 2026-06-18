@@ -14,7 +14,7 @@
 
 **O que foi entregue:**
 - **`server/trinksImport.ts`** — tipo `"clientes"` em `TrinksImportType`; interfaces `RankingClienteRow`/`ClientesPayload`; `parseClientes(text)` (preâmbulo «entre DD/MM e DD/MM» → mês; 14 colunas; `novoCliente`=Sim); detecção (assinatura "nome cliente"+"visitas com pagamento", sem colisão); roteamento em `parseTrinksCsv`; branch em `summarize`. Persistência reusa o fluxo genérico → chave `trinks_import:clientes:YYYY-MM`.
-- **`server/routes.ts`** — `GET /api/clientes/ranking/:mes` (agregados no servidor, **sem PII**): `totalClientes`, `novosNoMes`, `recompraPct` (visitas>1), `ticketMedioClientes` (soma/total), `clientesSumidos` (>60d vs hoje TZ SP, lista cap 20 ordenada **mais recuperáveis primeiro**). Mês fechado = CSV persistido, nunca Trinks ao vivo; sem CSV → `{vazio:true}`. Branch de preview p/ clientes (top5 por gasto, sem contato). Regex GET/DELETE `:tipo/:mes` agora aceita caixa|clientes.
+- **`server/routes.ts`** — `GET /api/clientes/ranking/:mes` (agregados no servidor, **sem PII**): cards do mês (`totalClientes`, `novosNoMes`, `recompraPct`, `ticketMedioClientes`) vêm do export MENSAL; `clientesSumidos` (>60d vs hoje TZ SP, cap 20, **mais recuperáveis 1º**) vem da BASE. Flags `temMensal`/`temBase` + `clientesSumidos.fonte`. Mês fechado = CSV persistido, nunca Trinks ao vivo; sem nenhum → `{vazio:true}`. Branch de preview p/ clientes (top5 por gasto + `role`, sem contato). Regex GET/DELETE `:tipo/:mes` aceita caixa|clientes.
 - **`client/.../Dashboard.tsx`** — fetch `/api/clientes/ranking/:mes` + 4 cards no bloco "Resumo do Mês": Clientes/novos, Recompra, ⚠ Sumidos (60+) com popover da lista, Ticket/cliente.
 - **`client/.../ImportarTrinks.tsx`** — tipo/label/ícone (UserPlus), `<PreviewClientes>`, coluna "Clientes" na Cobertura mensal (agora 4 tipos: financeiro/dre/ranking/clientes), textos-guia.
 
@@ -22,7 +22,9 @@
 
 **Validado local c/ dados reais (junho, arquivo `~/Downloads/...rankingDeClientes.csv`):** preview→confirm→endpoint OK. 348 clientes · 32 novos · recompra 15,8% · ticket/cliente R$117,71. Build verde (vite 3,98s).
 
-> **⚠ NOTA DE USO — sumidos depende da janela do export:** o "Ranking de Clientes" só lista quem teve visita paga NO período. Export de 2 semanas → todos recentes → `sumidos≈0` (correto, não é bug). Pra o card de sumidos ter valor, exportar o ranking com janela longa (últimos 6–12 meses).
+**Papéis separados (decisão do dono 18/06):** o "Ranking de Clientes" mistura 2 conceitos que não cabem num CSV só. **Export MENSAL** (janela ≤35 dias) → chave `clientes:YYYY-MM` (pelo mês FINAL) → cards do mês (novos/recompra/ticket, significado mensal). **Export LONGO** (janela >35 dias) → chave dedicada `clientes:base` → fonte do card de sumidos (clientes que sumiram há +60d, vs hoje). Roteamento automático por `clientesEhBase()`/`clientesKvKey()` em trinksImport.ts. O endpoint lê os dois e devolve `temMensal`/`temBase`/`clientesSumidos.fonte`. **Fluxo do dono:** subir 1 export mensal (cards do mês) + 1 export longo periódico (base de sumidos). Validado 18/06: mensal jun 348/32/15,8% + base Jan–Jun → 460 sumidos.
+
+> **Refinos futuros (não-bloqueantes):** a base traz duplicatas do Trinks (mesmo cliente 2×) e clientes marcados "(Inativo)" no nome — inflam levemente os sumidos. Dedup/filtro de inativos = melhoria futura (o grecometas tem máquina de dedup; este app não).
 
 ### v43 — Resumo Executivo do mês no Dashboard (17/06/2026) [concluído]
 

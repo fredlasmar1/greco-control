@@ -847,7 +847,9 @@ export function parseClientes(text: string): ClientesPayload {
     });
   }
 
-  const mes = mesDoPeriodo(periodoInicio);
+  // Mês pelo FIM do período: um export "01/05–31/05" → maio; um export longo
+  // "01/01–17/06" → junho (e será roteado como base, não como mês — ver clientesKvKey).
+  const mes = mesDoPeriodo(periodoFim) || mesDoPeriodo(periodoInicio);
   return {
     tipo: "clientes",
     mes,
@@ -857,6 +859,22 @@ export function parseClientes(text: string): ClientesPayload {
     totalClientes: rows.length,
     rows,
   };
+}
+
+// Chave dedicada do "base de sumidos" (export de janela longa).
+export const CLIENTES_BASE_KEY = "trinks_import:clientes:base";
+
+/** Export longo (> 35 dias) = base de sumidos; curto (≤ mês) = cards do mês. */
+export function clientesEhBase(payload: ClientesPayload): boolean {
+  const ini = Date.parse(`${payload.periodoInicio}T00:00:00Z`);
+  const fim = Date.parse(`${payload.periodoFim}T00:00:00Z`);
+  if (!Number.isFinite(ini) || !Number.isFinite(fim)) return false;
+  return (fim - ini) / 86_400_000 > 35;
+}
+
+/** Roteia o payload de clientes: base (janela longa) ou mensal (chave do mês). */
+export function clientesKvKey(payload: ClientesPayload): string {
+  return clientesEhBase(payload) ? CLIENTES_BASE_KEY : kvKeyFor("clientes", payload.mes);
 }
 
 export function parseTrinksCsv(buf: Buffer): TrinksImportPayload {

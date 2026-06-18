@@ -6,6 +6,9 @@ import { log } from "./index";
 
 // Tipos contábeis — fixos (a app define) — usados pra agregar no DRE e ratear na Precificação.
 export type ExpenseTipo =
+  // ── ENTRADAS ──
+  | 'faturamento'   // venda (serviço/produto/Clube) — entra como receita do mês
+  // ── SAÍDAS ──
   | 'fixo'          // aluguel, internet, software (não varia com volume)
   | 'variavel'      // produtos, embalagem (varia com volume)
   | 'recorrente'    // assinaturas mensais (subset de fixo, mas exibido separado)
@@ -15,7 +18,18 @@ export type ExpenseTipo =
   | 'imposto'       // simples/iss/inss (% sobre faturamento)
   | 'insumo'        // ficha técnica de serviço (matéria-prima direta)
   | 'investimento'  // capex (não entra no resultado operacional)
+  // ── NEUTRO (aparece e fica justificado, mas NÃO conta no resultado) ──
+  | 'neutro'        // reposição/retirada de caixa, transferência própria, estorno, aporte/empréstimo
   | 'outros';
+
+// Tipos que são ENTRADA (faturamento). O resto (menos 'neutro') é saída.
+export const TIPOS_ENTRADA: ExpenseTipo[] = ['faturamento'];
+export const TIPOS_NEUTROS: ExpenseTipo[] = ['neutro'];
+export function tipoConta(tipo: ExpenseTipo): 'entrada' | 'saida' | 'neutro' {
+  if (TIPOS_ENTRADA.includes(tipo)) return 'entrada';
+  if (TIPOS_NEUTROS.includes(tipo)) return 'neutro';
+  return 'saida';
+}
 
 export interface ExpenseCategoria {
   id: string;
@@ -62,6 +76,17 @@ const SEED_CATS: Omit<ExpenseCategoria, "id" | "criadoEm">[] = [
   { nome: "Impostos",           tipo: "imposto",      cor: "#eab308", ativa: true, ordem: 60 },
   { nome: "Funcionários",       tipo: "fixo",         cor: "#84cc16", ativa: true, ordem: 13 },
   { nome: "Investimento (CapEx)",tipo:"investimento", cor: "#6366f1", ativa: true, ordem: 70 },
+  // ── ENTRADAS (faturamento) ──
+  { nome: "Faturamento Serviço", tipo: "faturamento", cor: "#10b981", ativa: true, ordem: 1 },
+  { nome: "Faturamento Produto", tipo: "faturamento", cor: "#22c55e", ativa: true, ordem: 2 },
+  { nome: "Faturamento Clube",   tipo: "faturamento", cor: "#0ea5e9", ativa: true, ordem: 3 },
+  { nome: "Outras entradas",     tipo: "faturamento", cor: "#34d399", ativa: true, ordem: 4 },
+  // ── NEUTROS (não contam no resultado) ──
+  { nome: "Reposição de caixa",  tipo: "neutro", cor: "#94a3b8", ativa: true, ordem: 80 },
+  { nome: "Retirada de caixa",   tipo: "neutro", cor: "#94a3b8", ativa: true, ordem: 81 },
+  { nome: "Transferência própria",tipo:"neutro", cor: "#94a3b8", ativa: true, ordem: 82 },
+  { nome: "Estorno",             tipo: "neutro", cor: "#94a3b8", ativa: true, ordem: 83 },
+  { nome: "Aporte / Empréstimo", tipo: "neutro", cor: "#94a3b8", ativa: true, ordem: 84 },
   { nome: "Transferência interna",tipo:"outros",       cor: "#94a3b8", ativa: true, ordem: 90 },
   { nome: "Outros",             tipo: "outros",       cor: "#64748b", ativa: true, ordem: 99 },
 ];
@@ -119,6 +144,17 @@ async function ensureSeed(): Promise<{ cats: ExpenseCategoria[]; regras: Expense
     cats = SEED_CATS.map(c => ({ ...c, id: rid("cat"), criadoEm: now }));
     await kvSet(KV_CATS, cats);
     log(`expense_categorias seed: ${cats.length} categorias criadas`, "expense");
+  } else {
+    // Merge idempotente: adiciona categorias do seed que ainda não existem (por nome).
+    // Garante que instalações antigas (prod) ganhem as novas de entrada/neutro.
+    const nomes = new Set(cats.map(c => c.nome.toLowerCase()));
+    const faltantes = SEED_CATS.filter(c => !nomes.has(c.nome.toLowerCase()));
+    if (faltantes.length > 0) {
+      const now = new Date().toISOString();
+      cats = [...cats, ...faltantes.map(c => ({ ...c, id: rid("cat"), criadoEm: now }))];
+      await kvSet(KV_CATS, cats);
+      log(`expense_categorias merge: +${faltantes.length} categorias novas (entrada/neutro)`, "expense");
+    }
   }
 
   if (regras.length === 0) {

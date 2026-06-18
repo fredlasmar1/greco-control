@@ -8,6 +8,15 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v49 — Reconstrução de Lançamentos (livro editável Itaú) — EM ANDAMENTO (18/06/2026)
+
+**Visão do dono:** Lançamentos = lista editável de TODAS as entradas/saídas do Itaú, onde cada linha é **categorizada + justificada** (todas as categorias e regras à mão, pra entrada E saída). Ex.: "peguei dinheiro do caixa e repus" → categoria **neutra** + justificativa, não distorce o fechamento. No fim, **compara com a Trinks (API+CSV)**. Motivo: as 4-blocos+5-abas viraram um labirinto.
+
+**Fase 1 (modelo, commit pendente) [feita]:** `expenseCategorias.ts` — novos `ExpenseTipo` **`faturamento`** (entrada) e **`neutro`** (não conta). Helpers `tipoConta()`/`TIPOS_ENTRADA`/`TIPOS_NEUTROS`. Seed novas categorias: Faturamento Serviço/Produto/Clube, Outras entradas, Reposição/Retirada de caixa, Transferência própria, Estorno, Aporte/Empréstimo. **Merge idempotente** em `ensureSeed` (prod ganha as novas no boot sem apagar). justificativa já tem endpoint (`PUT /api/expenses/bank/:id/justificativa`).
+
+**Fase 2 (pendente):** reescrever `Lancamentos.tsx` = lista única editável (data·descrição·valor·categoria[entrada+saída]·justificativa·👁 conta-no-mês) + regras visíveis + resumo (Entrou/Saiu/Neutro/Sobra).
+**Fase 3 (pendente):** rodapé comparação extrato×Trinks (API+CSV).
+
 ### v48 — Modelo de contas: só Itaú conta; InfinitePay=observação; Santander removido (18/06/2026) [concluído]
 
 **Regra de negócio (dono):** **Itaú = único extrato** que conta pro fechamento + conciliação Trinks. **InfinitePay = só observação** do Clube (acompanhamento de adimplência) — **NÃO entra na contabilidade**, e o extrato dele é importado na aba **Assinaturas**. **Santander = removido.**

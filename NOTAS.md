@@ -8,6 +8,22 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v46 — Lançamentos reorganizado em 4 blocos + conferência Itaú (Etapa 2) (18/06/2026) [concluído]
+
+**Tema:** Etapa 2 do trabalho de Lançamentos (Etapa 1 = v45, blindagem). Reestrutura `Lancamentos.tsx` (aba "Visão do Mês") em 4 blocos claros, baseados no fluxo real do dono (Itaú = conta-funil única; InfinitePay só Clube, não soma no caixa).
+
+**Blocos (frontend `client/src/pages/Lancamentos.tsx`):**
+1. **O que entrou** — breakdown canônico de `/api/mes/:mes/dados` (crédito/débito/pix/dinheiro/**Clube**=plano, origem InfinitePay) + total. Blindado (v45).
+2. **O que saiu** — `SumarioDespesas` (feed blindado) + card faturado/saídas/**sobra**.
+3. **Conferência** — esperado × caiu no Itaú (novo endpoint), semáforo ±R$100, detalhe sob demanda, Clube "a caminho".
+4. **InfinitePay** — adimplência do Clube via `/api/assinaturas/matriz-pagamentos?ate=mes&meses=1` (pago/atrasado/a-vencer); aviso "já contado no Bloco 1". Sem parser de extrato InfinitePay (decisão do dono).
+
+**Endpoint novo (`server/routes.ts`): `GET /api/lancamentos/conferencia/:mes`** — esperado (breakdown canônico) vs caiu no Itaú, por forma **PIX · Cartão(créd+déb) · Dinheiro** (extrato Itaú não separa créd/déb). **Conta Itaú auto-detectada** (nome ~/itaú/ → destino de conta `transito` → única conta banco/única). Entradas de assinatura/Clube/InfinitePay → linha **Clube** (não Cartão). Clube status **a_caminho** (neutro) até `lancamentos_clube_dias` (kv, default 15), depois **pendente**; nunca vermelho de erro. Retorna `linhas`, `clube`, `detalhe` (por forma, pra expandir), `contaItau`, `temMensal`. Tolerância ±R$100.
+
+**Validado local (prod data, junho):** Bloco1 total 40.975,55; Conferência → Itaú auto-detectado, Clube verde (caiu 3.113 vs esp 2.961); Bloco4 42 pago/0 atraso/15 a-vencer. Build verde.
+
+**⚠ Bloco 3 precisa do EXTRATO do Itaú importado** pra casar PIX/Cartão/Dinheiro — em prod só havia lançamentos de Clube, então essas linhas ficam vermelhas (caiu 0) até o dono subir o extrato do Itaú em Conciliação Bancária. Mecanismo correto; falta o dado.
+
 ### v45 — Lançamentos blindado contra 429 (D2-fase2, Etapa 1) (18/06/2026) [concluído]
 
 **Tema:** as linhas AUTO de Lançamentos (faturamento/comissão/material) liam o `full_sync` da Trinks AO VIVO e ZERAVAM em 429. Agora vêm da fonte canônica v42. (Etapa 1 de 2; Etapa 2 = reorganizar a tela em 4 blocos, ainda pendente.)

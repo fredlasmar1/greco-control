@@ -6910,6 +6910,106 @@ Regras CRÍTICAS:
     return res.json(allEntries);
   });
 
+  // GET /api/lancamentos/conferencia/:mes — Etapa 2 (Bloco 3): esperado (faturamento
+  // canônico) vs caiu no Itaú (extrato da conta-funil), por forma de pagamento.
+  // Granularidade do extrato: PIX · Cartão (créd+déb juntos) · Dinheiro. Clube Greco
+  // (InfinitePay→Itaú) é linha à parte com status "a caminho" (não soma como erro).
+  app.get("/api/lancamentos/conferencia/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ ok: false, error: "Mês inválido. Use YYYY-MM." });
+      }
+      const TOL = 100;
+
+      // 1) Esperado — breakdown canônico (não zera em 429 se há CSV).
+      let md: any = null;
+      try { md = await getMesDataCanonical(mes, { trinksFetchAllRange, log }); } catch { md = null; }
+      const b = md?.breakdown || { pix: 0, cartaoCredito: 0, cartaoDebito: 0, dinheiro: 0, plano: 0, voucher: 0, outros: 0 };
+      const esperado = { pix: b.pix || 0, cartao: (b.cartaoCredito || 0) + (b.cartaoDebito || 0), dinheiro: b.dinheiro || 0 };
+      const clubeEsperado = b.plano || 0;
+
+      // 2) Conta-funil Itaú — auto-detect: nome contém "itaú/itau" → destino de conta
+      //    de trânsito → única conta banco → única conta.
+      const ativas = contasConsolidacao.filter(c => c.ativa !== false);
+      let contaItau = ativas.find(c => /ita[uú]/i.test(c.nome || ""));
+      if (!contaItau) {
+        const trans = ativas.find(c => c.transito && c.contaDestinoId);
+        if (trans) contaItau = ativas.find(c => c.id === trans!.contaDestinoId);
+      }
+      if (!contaItau) {
+        const bancos = ativas.filter(c => c.tipo === "banco");
+        if (bancos.length === 1) contaItau = bancos[0];
+        else if (ativas.length === 1) contaItau = ativas[0];
+      }
+
+      // 3) Caiu no Itaú — entradas da conta-funil no mês, classificadas por forma.
+      const classifica = (t: any): "pix" | "cartao" | "dinheiro" | "outros" => {
+        const tipo = (t.tipo || "").toLowerCase();
+        if (tipo === "pix") return "pix";
+        if (/cred|deb/.test(tipo)) return "cartao";
+        const d = (t.description || "").toLowerCase();
+        if (d.includes("pix")) return "pix";
+        if (/maquin|cart|cred|deb|antecip/.test(d)) return "cartao";
+        if (/deposit|dep dinh/.test(d)) return "dinheiro";
+        return "outros";
+      };
+      const caiu = { pix: 0, cartao: 0, dinheiro: 0 };
+      const detalhe: Record<string, Array<{ date: string; description: string; amount: number }>> = { pix: [], cartao: [], dinheiro: [], clube: [] };
+      let clubeCaiu = 0;
+      const txItau = contaItau
+        ? transacoesBanco.filter(t => t.contaId === contaItau!.id && t.date.startsWith(mes) && t.amount > 0 && t.incluidoNoFluxo !== false)
+        : [];
+      for (const t of txItau) {
+        const linha = { date: t.date, description: t.description, amount: t.amount };
+        // Clube = transferência interna (InfinitePay→Itaú) OU recebimento de
+        // assinatura/Clube (não é venda no cartão — vai pra linha do Clube).
+        const desc = (t.description || "").toLowerCase();
+        if (t.transferenciaParId || (t.tipo || "").toLowerCase() === "transferencia"
+            || /assinatura|clube|infinitepay|infinite pay/.test(desc)) {
+          clubeCaiu += t.amount; detalhe.clube.push(linha); continue;
+        }
+        const f = classifica(t);
+        if (f === "outros") continue;
+        caiu[f] += t.amount;
+        detalhe[f].push(linha);
+      }
+
+      const statusDe = (esp: number, real: number): "verde" | "amarelo" | "vermelho" => {
+        const dif = real - esp;
+        if (Math.abs(dif) <= TOL) return "verde";
+        return dif < 0 ? "vermelho" : "amarelo"; // faltou=vermelho, sobrou=amarelo
+      };
+      const mk = (forma: string, esp: number, real: number) => ({ forma, esperado: esp, caiu: real, diferenca: real - esp, status: statusDe(esp, real) });
+      const linhas = [
+        mk("PIX", esperado.pix, caiu.pix),
+        mk("Cartão", esperado.cartao, caiu.cartao),
+        mk("Dinheiro", esperado.dinheiro, caiu.dinheiro),
+      ];
+
+      // 4) Clube Greco — "a caminho" (neutro) até o limiar; nunca vermelho de erro.
+      const diasThreshold = Number((await kvGet("lancamentos_clube_dias")) || 15) || 15;
+      const fimMes = ultimoDiaDoMes(`${mes}-01`);
+      const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+      const fimRef = hojeSP < fimMes ? hojeSP : fimMes;
+      const diasDesde = Math.floor((Date.parse(`${hojeSP}T00:00:00Z`) - Date.parse(`${fimRef}T00:00:00Z`)) / 86_400_000);
+      let clubeStatus: "verde" | "a_caminho" | "pendente";
+      if (clubeCaiu >= clubeEsperado - TOL) clubeStatus = "verde";
+      else if (diasDesde <= diasThreshold) clubeStatus = "a_caminho";
+      else clubeStatus = "pendente";
+      const clube = { esperado: clubeEsperado, caiu: clubeCaiu, diferenca: clubeCaiu - clubeEsperado, status: clubeStatus, diasThreshold, diasDesde };
+
+      return res.json({
+        ok: true, mes,
+        fonteEsperado: md?.fonte || null,
+        contaItau: contaItau ? { id: contaItau.id, nome: contaItau.nome } : null,
+        linhas, clube, detalhe,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   // ── ETAPA 1 (blindagem 429): linhas AUTO de Lançamentos via FONTE CANÔNICA v42 ──
   // Antes, receita/comissão/material liam o full_sync da Trinks AO VIVO e ZERAVAM em
   // 429. Agora: faturamento ← mesService (mês fechado=CSV, nunca Trinks; corrente=API

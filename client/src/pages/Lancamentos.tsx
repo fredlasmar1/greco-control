@@ -5,6 +5,7 @@ import { useTrinksMonth } from "@/hooks/useTrinksMonth";
 import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import Consolidacao from "@/pages/Consolidacao";
+import Conciliacao from "@/pages/Conciliacao";
 import { formatCurrency } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -432,8 +433,9 @@ export default function Lancamentos() {
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="visao" data-testid="tab-visao">Visão do Mês</TabsTrigger>
+          <TabsTrigger value="conciliacao" data-testid="tab-conciliacao">Banco / Importar extrato</TabsTrigger>
           <TabsTrigger value="extrato" data-testid="tab-extrato">Extrato detalhado</TabsTrigger>
-          <TabsTrigger value="conciliacao" data-testid="tab-conciliacao">Conciliação Bancária</TabsTrigger>
+          <TabsTrigger value="orfas" data-testid="tab-orfas">Conciliação Trinks</TabsTrigger>
           <TabsTrigger value="categorias" data-testid="tab-categorias">Categorias & Regras</TabsTrigger>
         </TabsList>
 
@@ -598,6 +600,17 @@ export default function Lancamentos() {
                     );
                   })()}
                   <div className="text-[10px] text-muted-foreground px-1">Tolerância ±{formatCurrency(100)}. Clique numa linha amarela/vermelha pra ver as transações.</div>
+                  {conf.linhas.every((l: any) => l.caiu === 0) && (
+                    <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 flex items-center justify-between gap-2 mt-1">
+                      <div className="text-xs">
+                        <p className="font-medium">Nada caiu no Itaú ainda neste mês</p>
+                        <p className="text-muted-foreground text-[10px]">Importe o extrato do Itaú pra conferir contra o esperado.</p>
+                      </div>
+                      <Button type="button" size="sm" onClick={() => setActiveTab("conciliacao" as any)} data-testid="conf-importar-itau">
+                        <Upload className="w-4 h-4 mr-1.5" /> Importar extrato do Itaú
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -662,6 +675,10 @@ export default function Lancamentos() {
 
         <TabsContent value="conciliacao" className="mt-0">
           <Consolidacao embedded />
+        </TabsContent>
+
+        <TabsContent value="orfas" className="mt-0">
+          <Conciliacao />
         </TabsContent>
 
         <TabsContent value="categorias" className="mt-0">

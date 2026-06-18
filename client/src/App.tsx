@@ -69,9 +69,9 @@ function AdminRoutes() {
           <Route path="/precificacao" component={Precificacao} />
           <Route path="/financeiro" component={Financeiro} />
           <Route path="/estoque" component={Estoque} />
-          {/* /consolidacao foi unificada em /lancamentos (aba interna 'Conciliação') */}
+          {/* /consolidacao e /conciliacao unificadas em /lancamentos (abas internas) */}
           <Route path="/consolidacao">{() => <RedirectTo to="/lancamentos" />}</Route>
-          <Route path="/conciliacao" component={Conciliacao} />
+          <Route path="/conciliacao">{() => <RedirectTo to="/lancamentos" />}</Route>
           <Route path="/pagamento" component={Pagamento} />
           <Route path="/assinaturas" component={Assinaturas} />
           <Route path="/fechamento" component={Fechamento} />

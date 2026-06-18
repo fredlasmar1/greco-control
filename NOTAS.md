@@ -8,6 +8,19 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v47 — Unifica navegação: Conciliação vira sub-aba de Lançamentos (18/06/2026) [concluído]
+
+**Problema (dono):** dois itens de menu confusos — "Conciliação" (topo, `/conciliacao` = `Conciliacao.tsx`, ÓRFÃS do Trinks, NÃO importa extrato) vs a sub-aba "Conciliação Bancária" dentro de Lançamentos (`Consolidacao.tsx`, onde importa extrato). Dono procurou o extrato do Itaú no menu errado.
+
+**Diagnóstico:** o extrato do Itaú NUNCA foi importado (conta ITAÚ tinha só 2 tx em junho; 30 tx estão na conta INFINITEPAY = Clube). Por isso o Bloco 3 zerado. Contas em prod: SANTANDER(transito), ITAÚ(destino), INFINITEPAY(transito).
+
+**O que mudou (só frontend):**
+- Removido o item de menu "/conciliacao" (`AppLayout.tsx`); rota `/conciliacao` agora redireciona pra `/lancamentos` (`App.tsx`), igual `/consolidacao`.
+- `Lancamentos.tsx`: a página de órfãs (`Conciliacao`) virou sub-aba **"Conciliação Trinks"**. Sub-aba do banco renomeada "Conciliação Bancária" → **"Banco / Importar extrato"**. CTA **"Importar extrato do Itaú"** no Bloco 3 quando nada caiu no mês (leva pra aba do banco).
+- Abas de Lançamentos agora: Visão do Mês · Banco/Importar extrato · Extrato detalhado · Conciliação Trinks · Categorias & Regras.
+
+**Ação do dono:** importar o extrato do Itaú em Lançamentos → "Banco / Importar extrato" → conta ITAÚ. Aí o Bloco 3 casa.
+
 ### v46 — Lançamentos reorganizado em 4 blocos + conferência Itaú (Etapa 2) (18/06/2026) [concluído]
 
 **Tema:** Etapa 2 do trabalho de Lançamentos (Etapa 1 = v45, blindagem). Reestrutura `Lancamentos.tsx` (aba "Visão do Mês") em 4 blocos claros, baseados no fluxo real do dono (Itaú = conta-funil única; InfinitePay só Clube, não soma no caixa).

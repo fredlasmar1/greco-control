@@ -40,7 +40,6 @@ const navItems = [
   { path: "/precificacao", label: "Serviços & Precificação", icon: Scissors },
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
   { path: "/estoque", label: "Estoque", icon: Package },
-  { path: "/conciliacao", label: "Conciliação", icon: GitMerge },
   { path: "/pagamento", label: "Pagamento", icon: Wallet },
   { path: "/assinaturas", label: "Assinaturas", icon: Crown },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },

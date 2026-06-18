@@ -8,6 +8,19 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v45 — Lançamentos blindado contra 429 (D2-fase2, Etapa 1) (18/06/2026) [concluído]
+
+**Tema:** as linhas AUTO de Lançamentos (faturamento/comissão/material) liam o `full_sync` da Trinks AO VIVO e ZERAVAM em 429. Agora vêm da fonte canônica v42. (Etapa 1 de 2; Etapa 2 = reorganizar a tela em 4 blocos, ainda pendente.)
+
+**O que foi entregue (só `server/routes.ts`):**
+- Helper único **`construirEntradasAuto(mes)`** (reusado por `GET /api/financeiro` e `computeTotaisDoMes`): receita ← `getMesDataCanonical` (mês fechado=CSV, nunca Trinks; corrente=API c/ fallback); comissão ← `montarEquipeDeRanking` (dedup por id, mesmo motor do Pagamento — **NÃO** somar `getRankComissaoMap.keys`, que tem 3 chaves/prof e triplica); material só com agendamentos ao vivo, senão omite c/ nota (nunca fake).
+- `GET /api/financeiro` virou **async** e respeita **`?mes=`** (corrigido bug do `now` que ignorava o mês).
+- **Preservada** a granularidade diária da receita no `Financeiro.tsx` (shape de `mesService.transacoes` é compatível). **Mudança de comportamento:** comissão no razão vira 1 linha mensal (ranking) em vez de diária.
+
+**Validado local (Trinks em 429):** junho → faturamento R$40.975,55 + comissão R$16.372,40 (= idêntico ao `/api/pagamento`; contém André 5.584,50 / Armandinho 2.357,20), não zera. Maio (sem ranking) → receita CSV 87.900,99, comissão ao vivo. Build verde.
+
+**Pendente:** Etapa 2 — reorganizar `Lancamentos.tsx` em 4 blocos (Entrou/Saiu/Conferência Itaú/InfinitePay). Conferência por forma = PIX·Cartão(créd+déb)·Dinheiro (extrato Itaú não separa créd/déb); Clube Greco = "a caminho" (não erro), InfinitePay não soma no caixa (só adimplência).
+
 ### v44 — Ranking de Clientes: parser + endpoint + cards (18/06/2026) [concluído]
 
 **Tema:** dar vida ao CSV "Ranking de Clientes" (até então NÃO importado — `detectTrinksType` o rejeitava) e adicionar os cards de cliente no Dashboard. Continuação da Fase 1/v43.

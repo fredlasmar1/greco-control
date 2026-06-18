@@ -6890,219 +6890,106 @@ Regras CRÍTICAS:
 
   // ─── GET /api/financeiro — Return all entries for current month
   // Combines manual entries with auto-generated Trinks revenue entries
-  app.get("/api/financeiro", (_req: Request, res: Response) => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const monthPrefix = `${year}-${month}`;
-    const monthEntries = financeEntries.filter(e => e.date.startsWith(monthPrefix));
+  app.get("/api/financeiro", async (req: Request, res: Response) => {
+    // Etapa 1: respeita ?mes=YYYY-MM (default = mês corrente SP). Antes usava `now`
+    // e IGNORAVA o mês. Linhas AUTO (faturamento/comissão/material) vêm da fonte
+    // canônica via construirEntradasAuto — blindado contra 429 (não zera mais).
+    const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const mesQ = String(req.query.mes || "");
+    const mes = /^\d{4}-\d{2}$/.test(mesQ) ? mesQ : hojeSP.slice(0, 7);
+    const monthEntries = financeEntries.filter(e => e.date.startsWith(mes));
 
-    // Auto-generate revenue entries from Trinks sync data
-    const trinksRevenue: FinanceEntry[] = [];
-    const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
-    if (syncCache) {
-      const transacoes = syncCache.transacoes || [];
-      // Group transacoes by day
-      const dailyMap: Record<string, { revenue: number; count: number; pix: number; cartao: number; dinheiro: number; outros: number }> = {};
+    const { entries: autoEntries } = await construirEntradasAuto(mes);
 
-      transacoes.forEach((t: any) => {
-        const raw = t.dataHora || t.dataReferencia || t.data || "";
-        const date = typeof raw === "string" ? raw.split("T")[0] : "";
-        if (!date || !date.startsWith(monthPrefix)) return;
-
-        if (!dailyMap[date]) dailyMap[date] = { revenue: 0, count: 0, pix: 0, cartao: 0, dinheiro: 0, outros: 0 };
-        dailyMap[date].revenue += Number(t.totalPagar || 0);
-        dailyMap[date].count += 1;
-
-        (t.formasPagamentos || []).forEach((fp: any) => {
-          const nome = (fp.nome || "").toLowerCase();
-          const val = Number(fp.valor || 0);
-          if (nome.includes("pix")) dailyMap[date].pix += val;
-          else if (nome.includes("créd") || nome.includes("cred") || nome.includes("déb") || nome.includes("deb") || nome.includes("cart")) dailyMap[date].cartao += val;
-          else if (nome.includes("dinhe") || nome.includes("espécie")) dailyMap[date].dinheiro += val;
-          else dailyMap[date].outros += val;
-        });
-      });
-
-      Object.entries(dailyMap).forEach(([date, data]) => {
-        const paymentParts: string[] = [];
-        if (data.pix > 0) paymentParts.push(`Pix: R$${data.pix.toFixed(0)}`);
-        if (data.cartao > 0) paymentParts.push(`Cartão: R$${data.cartao.toFixed(0)}`);
-        if (data.dinheiro > 0) paymentParts.push(`Dinheiro: R$${data.dinheiro.toFixed(0)}`);
-        if (data.outros > 0) paymentParts.push(`Outros: R$${data.outros.toFixed(0)}`);
-
-        trinksRevenue.push({
-          id: `trinks-rev-${date}`,
-          date,
-          description: `Faturamento Trinks (${data.count} transações)`,
-          amount: data.revenue,
-          category: "receita",
-          subcategory: "Trinks",
-          recurrent: false,
-          notes: paymentParts.join(" | "),
-          createdAt: date + "T23:59:59.000Z",
-        });
-      });
-    }
-
-    // Auto-generate commission entries per professional from agendamentos
-    const trinksCommissions: FinanceEntry[] = [];
-    const trinksMaterialCosts: FinanceEntry[] = [];
-
-    if (syncCache) {
-      const agendamentos = syncCache.agendamentos || [];
-
-      // v24: comissão POR CATEGORIA do serviço (50% VIP/Express, 40% resto).
-      // Agregamos por (profissional, dia, categoria) para mostrar nos detalhes
-      // do lançamento diário quanto saiu como 40% e quanto como 50%.
-      type ProfDiaCat = { name: string; revenue: number; count: number; pct: number };
-      const profDayCatMap: Record<string, ProfDiaCat> = {};
-
-      agendamentos.forEach((a: any) => {
-        const statusName = (a.status?.nome || "").toLowerCase();
-        if (statusName !== "finalizado") return;
-        const raw = a.dataHoraInicio || "";
-        const date = typeof raw === "string" ? raw.split("T")[0] : "";
-        if (!date || !date.startsWith(monthPrefix)) return;
-
-        const profName = a.profissional?.nome || "Profissional";
-        const profId = a.profissional?.id || "unknown";
-        const servicoNome = a.servico?.nome
-          || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "")
-          || "";
-        const pct = getComissaoPctDoServico(servicoNome, profName);
-        const key = `${date}_${profId}_${pct}`;
-        if (!profDayCatMap[key]) profDayCatMap[key] = { name: profName, revenue: 0, count: 0, pct };
-        profDayCatMap[key].revenue += Number(a.valor || 0);
-        profDayCatMap[key].count += 1;
-      });
-
-      // Agrupa as comissões por dia (somando todos profissionais e categorias).
-      // Mantém breakdown nos detalhes para auditoria.
-      const commissionByDay: Record<string, { total: number; details: string[] }> = {};
-
-      Object.entries(profDayCatMap).forEach(([key, data]) => {
-        const date = key.split("_")[0];
-        const commission = data.revenue * data.pct;
-        if (commission <= 0) return;
-
-        if (!commissionByDay[date]) commissionByDay[date] = { total: 0, details: [] };
-        commissionByDay[date].total += commission;
-        const firstName = data.name.split(" ")[0];
-        const pctLabel = Math.round(data.pct * 100);
-        commissionByDay[date].details.push(`${firstName} ${pctLabel}%: R$${commission.toFixed(0)} (${data.count} atend.)`);
-      });
-
-      Object.entries(commissionByDay).forEach(([date, data]) => {
-        trinksCommissions.push({
-          id: `trinks-comm-${date}`,
-          date,
-          description: `Comissões do dia`,
-          amount: -data.total,
-          category: "variavel",
-          subcategory: "Comissões",
-          recurrent: false,
-          notes: data.details.join(" | "),
-          createdAt: date + "T23:59:58.000Z",
-        });
-      });
-
-      // Auto-generate material cost entries from service cost sheets
-      if (serviceCosts.length > 0) {
-        // Build a map of service cost per service ID
-        const costMap: Record<string, number> = {};
-        serviceCosts.forEach(sc => {
-          const total = (sc.items || []).reduce((s: number, item: any) =>
-            s + (Number(item.quantity) || 0) * (Number(item.unitCost) || 0), 0);
-          if (total > 0) costMap[sc.serviceId] = total;
-        });
-
-        if (Object.keys(costMap).length > 0) {
-          // Group material costs by day from agendamentos
-          const materialByDay: Record<string, { total: number; count: number }> = {};
-
-          agendamentos.forEach((a: any) => {
-            const statusName = (a.status?.nome || "").toLowerCase();
-            if (statusName !== "finalizado") return;
-            const raw = a.dataHoraInicio || "";
-            const date = typeof raw === "string" ? raw.split("T")[0] : "";
-            if (!date || !date.startsWith(monthPrefix)) return;
-
-            const svcId = String(a.servico?.id || "");
-            const cost = costMap[svcId];
-            if (cost && cost > 0) {
-              if (!materialByDay[date]) materialByDay[date] = { total: 0, count: 0 };
-              materialByDay[date].total += cost;
-              materialByDay[date].count += 1;
-            }
-          });
-
-          Object.entries(materialByDay).forEach(([date, data]) => {
-            trinksMaterialCosts.push({
-              id: `trinks-mat-${date}`,
-              date,
-              description: `Custo de material (${data.count} serviços)`,
-              amount: -data.total,
-              category: "variavel",
-              subcategory: "Material",
-              recurrent: false,
-              notes: "Calculado a partir das fichas técnicas de precificação",
-              createdAt: date + "T23:59:57.000Z",
-            });
-          });
-        }
-      }
-    }
-
-    // Combine manual entries + Trinks revenue + commissions + material costs
-    const allEntries = [...monthEntries, ...trinksRevenue, ...trinksCommissions, ...trinksMaterialCosts];
+    const allEntries = [...monthEntries, ...autoEntries];
     // Sort by date descending, then by createdAt descending
     allEntries.sort((a, b) => {
       if (b.date !== a.date) return b.date.localeCompare(a.date);
-      return b.createdAt.localeCompare(a.createdAt);
+      return (b.createdAt || "").localeCompare(a.createdAt || "");
     });
     return res.json(allEntries);
   });
 
-  // Helper interno: calcula totais agregados por categoria para um mês YYYY-MM.
-  // Reusado pelo endpoint /api/financeiro/totais/:mes e pelo cálculo de custo fixo/min.
-  async function computeTotaisDoMes(mes: string) {
-    // 1) Lançamentos manuais do mês
-    const manuais = financeEntries.filter(e => e.date.startsWith(mes));
+  // ── ETAPA 1 (blindagem 429): linhas AUTO de Lançamentos via FONTE CANÔNICA v42 ──
+  // Antes, receita/comissão/material liam o full_sync da Trinks AO VIVO e ZERAVAM em
+  // 429. Agora: faturamento ← mesService (mês fechado=CSV, nunca Trinks; corrente=API
+  // c/ fallback CSV); comissão ← ranking×categoria (getRankComissaoMap, mesmo motor do
+  // Pagamento/v42) quando há ranking, senão ao vivo; material só com agendamentos ao
+  // vivo, senão omite com nota (nunca número fake). Reusado por GET /api/financeiro e
+  // computeTotaisDoMes — fonte única, sem duplicar regra.
+  async function construirEntradasAuto(mes: string): Promise<{ entries: FinanceEntry[]; notas: string[] }> {
+    const entries: FinanceEntry[] = [];
+    const notas: string[] = [];
 
-    // 2) Lançamentos auto-gerados (Trinks): receita do dia + comissões + material
-    const auto: FinanceEntry[] = [];
-    const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
-    if (syncCache) {
-      const transacoes = syncCache.transacoes || [];
-      const dailyRev: Record<string, number> = {};
-      transacoes.forEach((t: any) => {
-        const raw = t.dataHora || t.dataReferencia || t.data || "";
-        const date = typeof raw === "string" ? raw.split("T")[0] : "";
-        if (!date || !date.startsWith(mes)) return;
-        dailyRev[date] = (dailyRev[date] || 0) + Number(t.totalPagar || 0);
+    let md: any = null;
+    try { md = await getMesDataCanonical(mes, { trinksFetchAllRange, log }); } catch { md = null; }
+    const transacoes: any[] = Array.isArray(md?.transacoes) ? md.transacoes : [];
+    const agendamentos: any[] = Array.isArray(md?.agendamentos) ? md.agendamentos : [];
+    const fonteLabel = md?.fonte === "api-trinks" ? "Trinks (ao vivo)"
+      : md?.fonte === "csv-caixa" ? "CSV Caixa"
+      : md?.fonte === "csv-financeiro" ? "CSV Financeiro" : "Trinks";
+
+    // 1) Receita por dia (shape de mesService = compatível com o antigo full_sync).
+    const dailyMap: Record<string, { revenue: number; count: number; pix: number; cartao: number; dinheiro: number; outros: number }> = {};
+    transacoes.forEach((t: any) => {
+      const raw = t.dataHora || t.dataReferencia || t.data || "";
+      const date = typeof raw === "string" ? raw.split("T")[0] : "";
+      if (!date || !date.startsWith(mes)) return;
+      if (!dailyMap[date]) dailyMap[date] = { revenue: 0, count: 0, pix: 0, cartao: 0, dinheiro: 0, outros: 0 };
+      dailyMap[date].revenue += Number(t.totalPagar || 0);
+      dailyMap[date].count += 1;
+      (t.formasPagamentos || []).forEach((fp: any) => {
+        const nome = (fp.nome || "").toLowerCase();
+        const val = Number(fp.valor || 0);
+        if (nome.includes("pix")) dailyMap[date].pix += val;
+        else if (/créd|cred|déb|deb|cart/.test(nome)) dailyMap[date].cartao += val;
+        else if (/dinhe|espéc|espec/.test(nome)) dailyMap[date].dinheiro += val;
+        else dailyMap[date].outros += val;
       });
-      Object.entries(dailyRev).forEach(([date, val]) => {
-        auto.push({
-          id: `trinks-rev-${date}`, date, description: "Faturamento Trinks",
-          amount: val, category: "receita", recurrent: false, createdAt: date + "T23:59:59.000Z",
+    });
+    Object.entries(dailyMap).forEach(([date, data]) => {
+      const parts: string[] = [];
+      if (data.pix > 0) parts.push(`Pix: R$${data.pix.toFixed(0)}`);
+      if (data.cartao > 0) parts.push(`Cartão: R$${data.cartao.toFixed(0)}`);
+      if (data.dinheiro > 0) parts.push(`Dinheiro: R$${data.dinheiro.toFixed(0)}`);
+      if (data.outros > 0) parts.push(`Outros: R$${data.outros.toFixed(0)}`);
+      entries.push({
+        id: `trinks-rev-${date}`, date,
+        description: `Faturamento (${data.count} transações)`,
+        amount: data.revenue, category: "receita", subcategory: fonteLabel,
+        recurrent: false, notes: parts.join(" | "), createdAt: date + "T23:59:59.000Z",
+      });
+    });
+
+    // 2) Comissão: ranking (blindado) quando existe; senão ao vivo (agendamentos da API).
+    // Usa montarEquipeDeRanking (dedup por id — mesma visão do Pagamento/v42); NÃO
+    // somar getRankComissaoMap.keys (mapa de lookup, 3 chaves por prof → triplicaria).
+    const equipeRank = await montarEquipeDeRanking(mes, await getAllMetas());
+    if (equipeRank) {
+      let totalComiss = 0;
+      for (const e of equipeRank.byId.values()) totalComiss += Number(e.comissaoServicos || 0);
+      if (totalComiss > 0) {
+        const ultimoDia = ultimoDiaDoMes(`${mes}-01`);
+        entries.push({
+          id: `rank-comm-${mes}`, date: ultimoDia,
+          description: "Comissões do mês (ranking)",
+          amount: -totalComiss, category: "variavel", subcategory: "Comissões",
+          recurrent: false, notes: "Fonte: ranking×categoria (v42) — blindado contra 429",
+          createdAt: ultimoDia + "T23:59:58.000Z",
         });
-      });
-
-      // Comissões + material — v24: comissão por categoria (50% VIP/Express, 40% resto)
-      const agendamentos = syncCache.agendamentos || [];
+      }
+    } else {
+      // Sem ranking → cálculo ao vivo por dia (preserva mês corrente; vazio em 429).
       const profDayCatMap: Record<string, { revenue: number; pct: number }> = {};
       agendamentos.forEach((a: any) => {
-        const statusName = (a.status?.nome || "").toLowerCase();
-        if (statusName !== "finalizado") return;
+        if ((a.status?.nome || "").toLowerCase() !== "finalizado") return;
         const raw = a.dataHoraInicio || "";
         const date = typeof raw === "string" ? raw.split("T")[0] : "";
         if (!date || !date.startsWith(mes)) return;
         const profName = a.profissional?.nome || "";
         const profId = a.profissional?.id || "unknown";
         const servicoNome = a.servico?.nome
-          || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "")
-          || "";
+          || (Array.isArray(a.servicos) ? a.servicos.map((s: any) => s.nome).filter(Boolean).join(", ") : "") || "";
         const pct = getComissaoPctDoServico(servicoNome, profName);
         const key = `${date}_${profId}_${pct}`;
         if (!profDayCatMap[key]) profDayCatMap[key] = { revenue: 0, pct };
@@ -7115,13 +7002,20 @@ Regras CRÍTICAS:
         if (c > 0) commissionByDay[date] = (commissionByDay[date] || 0) + c;
       });
       Object.entries(commissionByDay).forEach(([date, total]) => {
-        auto.push({
+        entries.push({
           id: `trinks-comm-${date}`, date, description: "Comissões do dia",
-          amount: -total, category: "variavel", recurrent: false, createdAt: date + "T23:59:58.000Z",
+          amount: -total, category: "variavel", subcategory: "Comissões",
+          recurrent: false, createdAt: date + "T23:59:58.000Z",
         });
       });
+      if (agendamentos.length === 0) {
+        notas.push("Comissões: sem ranking do mês e sem dados ao vivo (Trinks indisponível) — importe o ranking do mês.");
+      }
+    }
 
-      if (serviceCosts.length > 0) {
+    // 3) Material: só com agendamentos ao vivo (fichas técnicas). Senão omite com nota.
+    if (serviceCosts.length > 0) {
+      if (agendamentos.length > 0) {
         const costMap: Record<string, number> = {};
         serviceCosts.forEach(sc => {
           const total = (sc.items || []).reduce((s: number, item: any) =>
@@ -7129,26 +7023,45 @@ Regras CRÍTICAS:
           if (total > 0) costMap[sc.serviceId] = total;
         });
         if (Object.keys(costMap).length > 0) {
-          const materialByDay: Record<string, number> = {};
+          const materialByDay: Record<string, { total: number; count: number }> = {};
           agendamentos.forEach((a: any) => {
-            const statusName = (a.status?.nome || "").toLowerCase();
-            if (statusName !== "finalizado") return;
+            if ((a.status?.nome || "").toLowerCase() !== "finalizado") return;
             const raw = a.dataHoraInicio || "";
             const date = typeof raw === "string" ? raw.split("T")[0] : "";
             if (!date || !date.startsWith(mes)) return;
-            const svcId = String(a.servico?.id || "");
-            const cost = costMap[svcId];
-            if (cost && cost > 0) materialByDay[date] = (materialByDay[date] || 0) + cost;
+            const cost = costMap[String(a.servico?.id || "")];
+            if (cost && cost > 0) {
+              if (!materialByDay[date]) materialByDay[date] = { total: 0, count: 0 };
+              materialByDay[date].total += cost;
+              materialByDay[date].count += 1;
+            }
           });
-          Object.entries(materialByDay).forEach(([date, total]) => {
-            auto.push({
-              id: `trinks-mat-${date}`, date, description: "Custo de material",
-              amount: -total, category: "variavel", recurrent: false, createdAt: date + "T23:59:57.000Z",
+          Object.entries(materialByDay).forEach(([date, data]) => {
+            entries.push({
+              id: `trinks-mat-${date}`, date,
+              description: `Custo de material (${data.count} serviços)`,
+              amount: -data.total, category: "variavel", subcategory: "Material",
+              recurrent: false, notes: "Calculado a partir das fichas técnicas de precificação",
+              createdAt: date + "T23:59:57.000Z",
             });
           });
         }
+      } else {
+        notas.push("Custo de material: sem dados de agendamentos ao vivo (Trinks indisponível) — linha omitida.");
       }
     }
+
+    return { entries, notas };
+  }
+
+  // Helper interno: calcula totais agregados por categoria para um mês YYYY-MM.
+  // Reusado pelo endpoint /api/financeiro/totais/:mes e pelo cálculo de custo fixo/min.
+  async function computeTotaisDoMes(mes: string) {
+    // 1) Lançamentos manuais do mês
+    const manuais = financeEntries.filter(e => e.date.startsWith(mes));
+
+    // 2) Lançamentos auto-gerados via fonte canônica (blindado contra 429 — Etapa 1).
+    const { entries: auto } = await construirEntradasAuto(mes);
 
     // 3) Soma por categoria. Lançamentos têm sinal: receitas positivas, despesas negativas.
     // Aqui retornamos o VALOR ABSOLUTO somado por categoria (mais útil pro custo fixo/min).

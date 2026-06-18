@@ -8,6 +8,22 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v44 — Ranking de Clientes: parser + endpoint + cards (18/06/2026) [concluído]
+
+**Tema:** dar vida ao CSV "Ranking de Clientes" (até então NÃO importado — `detectTrinksType` o rejeitava) e adicionar os cards de cliente no Dashboard. Continuação da Fase 1/v43.
+
+**O que foi entregue:**
+- **`server/trinksImport.ts`** — tipo `"clientes"` em `TrinksImportType`; interfaces `RankingClienteRow`/`ClientesPayload`; `parseClientes(text)` (preâmbulo «entre DD/MM e DD/MM» → mês; 14 colunas; `novoCliente`=Sim); detecção (assinatura "nome cliente"+"visitas com pagamento", sem colisão); roteamento em `parseTrinksCsv`; branch em `summarize`. Persistência reusa o fluxo genérico → chave `trinks_import:clientes:YYYY-MM`.
+- **`server/routes.ts`** — `GET /api/clientes/ranking/:mes` (agregados no servidor, **sem PII**): `totalClientes`, `novosNoMes`, `recompraPct` (visitas>1), `ticketMedioClientes` (soma/total), `clientesSumidos` (>60d vs hoje TZ SP, lista cap 20 ordenada **mais recuperáveis primeiro**). Mês fechado = CSV persistido, nunca Trinks ao vivo; sem CSV → `{vazio:true}`. Branch de preview p/ clientes (top5 por gasto, sem contato). Regex GET/DELETE `:tipo/:mes` agora aceita caixa|clientes.
+- **`client/.../Dashboard.tsx`** — fetch `/api/clientes/ranking/:mes` + 4 cards no bloco "Resumo do Mês": Clientes/novos, Recompra, ⚠ Sumidos (60+) com popover da lista, Ticket/cliente.
+- **`client/.../ImportarTrinks.tsx`** — tipo/label/ícone (UserPlus), `<PreviewClientes>`, coluna "Clientes" na Cobertura mensal (agora 4 tipos: financeiro/dre/ranking/clientes), textos-guia.
+
+**Decisões do dono:** (1) endpoint NÃO expõe email/telefone (Dashboard roda em PC público; contato fica no kv); (2) sumidos ordenados por mais recuperáveis (menor dias 1º); (3) Clientes entra na matriz de Cobertura.
+
+**Validado local c/ dados reais (junho, arquivo `~/Downloads/...rankingDeClientes.csv`):** preview→confirm→endpoint OK. 348 clientes · 32 novos · recompra 15,8% · ticket/cliente R$117,71. Build verde (vite 3,98s).
+
+> **⚠ NOTA DE USO — sumidos depende da janela do export:** o "Ranking de Clientes" só lista quem teve visita paga NO período. Export de 2 semanas → todos recentes → `sumidos≈0` (correto, não é bug). Pra o card de sumidos ter valor, exportar o ranking com janela longa (últimos 6–12 meses).
+
 ### v43 — Resumo Executivo do mês no Dashboard (17/06/2026) [concluído]
 
 **Tema:** bloco "Resumo do Mês" no topo do Dashboard, 100% alimentado pela fonte canônica (não quebra em 429). Entrega de quebra o item de UX #7 ("vs mês anterior").

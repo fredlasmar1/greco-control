@@ -12,7 +12,7 @@
 
 // ─── Tipos públicos ───────────────────────────────────────────────────────────
 
-export type TrinksImportType = "financeiro" | "dre" | "ranking" | "caixa";
+export type TrinksImportType = "financeiro" | "dre" | "ranking" | "caixa" | "clientes";
 
 export interface FinanceiroRow {
   data: string;                  // YYYY-MM-DD (Data Atendimento/Venda)
@@ -147,7 +147,39 @@ export interface CaixaPayload {
   resumoPorDia: Record<string, { total: number; servico: number; produtos: number; comandas: number }>;
 }
 
-export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload | CaixaPayload;
+// ─── Clientes (Ranking de Clientes — Fase 2) ────────────────────────────────
+// Relatório "Ranking de Clientes" do Trinks: 1 linha por cliente, com gasto no
+// período (serviços/produtos/pacotes/total), nº de visitas pagas, último
+// atendimento e dados de cadastro. Liga cliente → consumo, NÃO cliente → barbeiro.
+
+export interface RankingClienteRow {
+  posicao: number;
+  nome: string;
+  email: string;
+  telefones: string;
+  dataNascimento: string;         // YYYY-MM-DD ("" se vazio)
+  dataCadastro: string;           // YYYY-MM-DD ("" se vazio)
+  novoCliente: boolean;
+  ultimoAtendimento: string;      // YYYY-MM-DD ("" se vazio)
+  visitasPeriodo: number;
+  servicos: number;
+  produtos: number;
+  pacotes: number;
+  total: number;
+  ticketMedio: number;
+}
+
+export interface ClientesPayload {
+  tipo: "clientes";
+  mes: string;                    // derivado do período (data inicial)
+  periodoInicio: string;
+  periodoFim: string;
+  geradoEm: string;
+  totalClientes: number;
+  rows: RankingClienteRow[];
+}
+
+export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload | CaixaPayload | ClientesPayload;
 
 // ─── Utilidades ──────────────────────────────────────────────────────────────
 
@@ -261,6 +293,14 @@ export function detectTrinksType(text: string): TrinksImportType | null {
   const all = splitLines(text);
   const head = all.slice(0, 15).join("\n").toLowerCase();
   const full = all.join("\n").toLowerCase();
+
+  // Clientes (Fase 2): cabeçalho "Posição;Nome Cliente;...;Visitas com pagamento
+  // no período;...". Assinatura exclusiva — não colide com o ranking de
+  // profissionais (que tem "Profissional" + "Quantidade de Atendimentos").
+  if (head.includes("posição") && head.includes("nome cliente") &&
+      head.includes("visitas com pagamento")) {
+    return "clientes";
+  }
 
   // Ranking: tem cabeçalho com "Posição;Profissional;Função;Quantidade de Atendimentos"
   if (head.includes("posição") && head.includes("profissional") &&
@@ -755,15 +795,80 @@ export function parseCaixa(text: string): CaixaPayload {
 
 // ─── Parser unificado ────────────────────────────────────────────────────────
 
+// ─── Parser: Clientes (Ranking de Clientes — Fase 2) ─────────────────────────
+// Preâmbulo: «"Atendimentos/Vendas entre 01/06/2026 e 14/06/2026"» (→ período/mês)
+// + «"Relatório gerado em DD/MM/YYYY às HH:MM"». Header de 14 colunas. 1 linha/cliente.
+
+export function parseClientes(text: string): ClientesPayload {
+  const lines = splitLines(text);
+
+  let periodoInicio = "";
+  let periodoFim = "";
+  let geradoEm = "";
+  // Preâmbulo (primeiras linhas antes do header)
+  for (const line of lines.slice(0, 10)) {
+    const per = line.match(/entre\s+(\d{2}\/\d{2}\/\d{4})\s+e\s+(\d{2}\/\d{2}\/\d{4})/i);
+    if (per) { periodoInicio = parseDateBR(per[1]); periodoFim = parseDateBR(per[2]); }
+    const ger = line.match(/Relat[oó]rio gerado em\s+(.+?)["\s]*$/i);
+    if (ger) geradoEm = ger[1].trim();
+  }
+
+  const headerIdx = lines.findIndex(l => {
+    const lo = l.toLowerCase();
+    return lo.includes("posição") && lo.includes("nome cliente") && lo.includes("visitas com pagamento");
+  });
+  if (headerIdx < 0) throw new Error("Cabeçalho do Ranking de Clientes não encontrado.");
+
+  const rows: RankingClienteRow[] = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.trim()) continue;
+    const c = parseCsvLine(l);
+    if (c.length < 14) continue;
+    const pos = parseInt((c[0] || "").trim(), 10);
+    if (!Number.isFinite(pos)) continue;           // pula linhas de total/rótulo
+    const nome = (c[1] || "").trim();
+    if (!nome) continue;
+    rows.push({
+      posicao: pos,
+      nome,
+      email: (c[2] || "").trim(),
+      telefones: (c[3] || "").trim(),
+      dataNascimento: parseDateBR((c[4] || "").trim()),
+      dataCadastro: parseDateBR((c[5] || "").trim()),
+      novoCliente: /^s/i.test((c[6] || "").trim()),  // "Sim" → true, "Não" → false
+      ultimoAtendimento: parseDateBR((c[7] || "").trim()),
+      visitasPeriodo: parseBR(c[8]),
+      servicos: parseBR(c[9]),
+      produtos: parseBR(c[10]),
+      pacotes: parseBR(c[11]),
+      total: parseBR(c[12]),
+      ticketMedio: parseBR(c[13]),
+    });
+  }
+
+  const mes = mesDoPeriodo(periodoInicio);
+  return {
+    tipo: "clientes",
+    mes,
+    periodoInicio,
+    periodoFim,
+    geradoEm,
+    totalClientes: rows.length,
+    rows,
+  };
+}
+
 export function parseTrinksCsv(buf: Buffer): TrinksImportPayload {
   const text = decodeCsvBuffer(buf);
   const tipo = detectTrinksType(text);
   if (!tipo) {
-    throw new Error("Tipo de relatório não reconhecido. Esperado: financeiro, DRE, ranking ou caixa.");
+    throw new Error("Tipo de relatório não reconhecido. Esperado: financeiro, DRE, ranking, caixa ou clientes.");
   }
   if (tipo === "financeiro") return parseFinanceiro(text);
   if (tipo === "dre") return parseDRE(text);
   if (tipo === "caixa") return parseCaixa(text);
+  if (tipo === "clientes") return parseClientes(text);
   return parseRanking(text);
 }
 
@@ -964,6 +1069,19 @@ export function summarize(payload: TrinksImportPayload, importadoEm: string, mes
       geradoEm: payload.geradoEm,
       importadoEm,
       descricao: `Caixa · ${payload.totalLinhas} comandas · R$ ${payload.totalValor.toFixed(2).replace(".", ",")} (serv R$ ${payload.totalServico.toFixed(2)} · prod R$ ${payload.totalProdutos.toFixed(2)})`,
+    };
+  }
+  if (payload.tipo === "clientes") {
+    const novos = payload.rows.filter(r => r.novoCliente).length;
+    const totalReais = payload.rows.reduce((s, r) => s + r.total, 0);
+    return {
+      tipo: "clientes",
+      mes: payload.mes,
+      totalValor: totalReais,
+      totalLinhas: payload.totalClientes,
+      geradoEm: payload.geradoEm,
+      importadoEm,
+      descricao: `Clientes · ${payload.totalClientes} clientes · ${novos} novos · R$ ${totalReais.toFixed(2).replace(".", ",")}`,
     };
   }
   // ranking — pode ter múltiplos meses; chamamos summarize por período fora

@@ -29,11 +29,12 @@ import {
   Users,
   RefreshCw,
   Banknote,
+  UserPlus,
 } from "lucide-react";
 
 // ─── Tipos espelhando o backend (server/trinksImport.ts) ─────────────────────
 
-type TipoImport = "financeiro" | "dre" | "ranking" | "caixa";
+type TipoImport = "financeiro" | "dre" | "ranking" | "caixa" | "clientes";
 
 interface ImportItem {
   chave: string;
@@ -69,6 +70,7 @@ const TIPO_LABELS: Record<TipoImport, string> = {
   dre: "DRE",
   ranking: "Ranking de Profissionais",
   caixa: "Caixa (Pagamentos por Comanda)",
+  clientes: "Ranking de Clientes",
 };
 
 const TIPO_ICONS: Record<TipoImport, any> = {
@@ -76,6 +78,7 @@ const TIPO_ICONS: Record<TipoImport, any> = {
   dre: TrendingUp,
   ranking: Users,
   caixa: Banknote,
+  clientes: UserPlus,
 };
 
 function mesLabel(mes: string): string {
@@ -230,7 +233,8 @@ export default function ImportarTrinks() {
           <strong className="text-foreground mx-1">Caixa por comanda</strong>·
           <strong className="text-foreground mx-1">Financeiro</strong>·
           <strong className="text-foreground mx-1">DRE</strong>·
-          <strong className="text-foreground mx-1">Ranking de Profissionais</strong>.
+          <strong className="text-foreground mx-1">Ranking de Profissionais</strong>·
+          <strong className="text-foreground mx-1">Ranking de Clientes</strong>.
           O sistema detecta o tipo automaticamente. Para preencher o caixa do dia
           (faturamento por forma de pagamento) quando a API da Trinks está fora,
           use o relatório <strong className="text-foreground">Caixa por comanda</strong>.
@@ -325,7 +329,7 @@ export default function ImportarTrinks() {
 
       {/* Cobertura mensal: matriz de quais tipos estão importados por mês */}
       {items.length > 0 && (() => {
-        const TIPOS = ["financeiro", "dre", "ranking"] as const;
+        const TIPOS = ["financeiro", "dre", "ranking", "clientes"] as const;
         // Conjunto de mes-tipo já importados
         const present = new Set(items.map(i => `${i.mes}|${i.tipo}`));
         // Lista os últimos 6 meses (mês atual recuando)
@@ -359,6 +363,7 @@ export default function ImportarTrinks() {
                       <th className="text-center py-2 px-2 font-medium">Financeiro</th>
                       <th className="text-center py-2 px-2 font-medium">DRE</th>
                       <th className="text-center py-2 px-2 font-medium">Ranking</th>
+                      <th className="text-center py-2 px-2 font-medium">Clientes</th>
                       <th className="text-right py-2 px-2 font-medium">Status</th>
                     </tr>
                   </thead>
@@ -369,11 +374,11 @@ export default function ImportarTrinks() {
                       const completos = tipos.filter(Boolean).length;
                       const status = isAtual
                         ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-muted bg-muted/30 text-muted-foreground">em curso</span>
-                        : completos === 3
+                        : completos === TIPOS.length
                           ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400">completo</span>
                           : completos === 0
                             ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-red-400">vazio</span>
-                            : <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400">parcial ({completos}/3)</span>;
+                            : <span className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400">parcial ({completos}/{TIPOS.length})</span>;
                       return (
                         <tr key={mes} className="border-b border-border/50">
                           <td className="py-2 px-2 font-medium">{mesLabel(mes)}</td>
@@ -480,13 +485,14 @@ export default function ImportarTrinks() {
       <div className="text-xs text-muted-foreground bg-muted/30 rounded-md p-3 border border-border">
         <p className="font-medium text-foreground mb-1">Como exportar da Trinks</p>
         <p>
-          No painel da Trinks, vá em <strong>Relatórios</strong> e exporte em CSV. Os 3 relatórios
+          No painel da Trinks, vá em <strong>Relatórios</strong> e exporte em CSV. Os relatórios
           que o sistema reconhece são:
         </p>
         <ul className="mt-1 ml-4 list-disc space-y-0.5">
           <li><strong>Relatório Financeiro</strong> (receitas/recebimentos detalhados por dia, forma de pagamento e cliente)</li>
           <li><strong>DRE</strong> (demonstração mensal de receitas vs despesas com totais por categoria)</li>
           <li><strong>Ranking de Profissionais — Comparativo</strong> (atendimentos, ticket médio e valor total por profissional, em 2 períodos lado a lado)</li>
+          <li><strong>Ranking de Clientes</strong> (gasto, visitas e último atendimento por cliente — alimenta os cards de cliente, recompra e sumidos)</li>
         </ul>
         <p className="mt-1">
           Ao reimportar o mesmo período, o anterior é <strong>sobrescrito</strong> (você verá um aviso antes de confirmar).
@@ -583,6 +589,7 @@ function PreviewBlock({
       {tipo === "financeiro" && <PreviewFinanceiro p={preview.preview} />}
       {tipo === "dre" && <PreviewDRE p={preview.preview} />}
       {tipo === "ranking" && <PreviewRanking p={preview.preview} />}
+      {tipo === "clientes" && <PreviewClientes p={preview.preview} />}
 
       {/* Resumo das chaves a salvar */}
       <div className="rounded-md border border-border bg-muted/30 p-3">
@@ -729,6 +736,36 @@ function PreviewRanking({ p }: { p: any }) {
             )}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function PreviewClientes({ p }: { p: any }) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-border bg-card/50 p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium">{mesLabel(p.mes)}</span>
+          <span className="text-xs text-muted-foreground font-mono">
+            {formatDateBR(p.periodoInicio)} → {formatDateBR(p.periodoFim)}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <Stat label="Clientes" value={String(p.totalClientes ?? 0)} highlight />
+          <Stat label="Novos no mês" value={String(p.novosNoMes ?? 0)} />
+        </div>
+        {p.top5?.length > 0 && (
+          <div className="space-y-0.5 text-xs">
+            <p className="font-medium text-muted-foreground mb-1">Top 5 por gasto</p>
+            {p.top5.map((c: any, i: number) => (
+              <div key={i} className="flex items-center justify-between">
+                <span className="truncate">{c.nome} <span className="text-muted-foreground">· {c.visitasPeriodo}x</span></span>
+                <span className="font-mono">{formatCurrency(c.total)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

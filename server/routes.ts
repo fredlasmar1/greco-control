@@ -2583,6 +2583,18 @@ export async function registerRoutes(
           qtdProfissionais: p.profissionais.length,
           top3: p.profissionais.slice(0, 3),
         }));
+      } else if (payload.tipo === "clientes") {
+        previewData.mes = payload.mes;
+        previewData.periodoInicio = payload.periodoInicio;
+        previewData.periodoFim = payload.periodoFim;
+        previewData.totalClientes = payload.totalClientes;
+        previewData.novosNoMes = payload.rows.filter(r => r.novoCliente).length;
+        // top 5 por gasto — sem expor contato (email/telefone)
+        previewData.top5 = payload.rows
+          .slice()
+          .sort((a, b) => b.total - a.total)
+          .slice(0, 5)
+          .map(r => ({ nome: r.nome, total: r.total, visitasPeriodo: r.visitasPeriodo }));
       }
 
       log(`Trinks import preview: ${req.file.originalname} → ${payload.tipo} (${summaries.length} chave(s))`, "trinks-import");
@@ -2673,8 +2685,8 @@ export async function registerRoutes(
     try {
       const tipo = req.params.tipo as TrinksImportType;
       const mes = req.params.mes;
-      if (!/^(financeiro|dre|ranking)$/.test(tipo)) {
-        return res.status(400).json({ error: "Tipo inválido. Use: financeiro | dre | ranking." });
+      if (!/^(financeiro|dre|ranking|caixa|clientes)$/.test(tipo)) {
+        return res.status(400).json({ error: "Tipo inválido. Use: financeiro | dre | ranking | caixa | clientes." });
       }
       if (!/^\d{4}-\d{2}$/.test(mes)) {
         return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM." });
@@ -2692,7 +2704,7 @@ export async function registerRoutes(
     try {
       const tipo = req.params.tipo as TrinksImportType;
       const mes = req.params.mes;
-      if (!/^(financeiro|dre|ranking)$/.test(tipo) || !/^\d{4}-\d{2}$/.test(mes)) {
+      if (!/^(financeiro|dre|ranking|caixa|clientes)$/.test(tipo) || !/^\d{4}-\d{2}$/.test(mes)) {
         return res.status(400).json({ error: "Parâmetros inválidos." });
       }
       const chave = trinksImport.kvKeyFor(tipo, mes);
@@ -2704,6 +2716,60 @@ export async function registerRoutes(
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // GET /api/clientes/ranking/:mes — agregados de cliente do "Ranking de Clientes"
+  // (Fase 2). Lê o CSV persistido (trinks_import:clientes:YYYY-MM), nunca Trinks
+  // ao vivo. PRIVACIDADE: não devolve email/telefone (Dashboard roda em PC público).
+  app.get("/api/clientes/ranking/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = req.params.mes;
+      if (!/^\d{4}-\d{2}$/.test(mes)) {
+        return res.status(400).json({ ok: false, error: "Mês inválido. Use YYYY-MM." });
+      }
+      const data = await kvGet<any>(trinksImport.kvKeyFor("clientes", mes));
+      if (!data || !Array.isArray(data.rows)) {
+        return res.json({ ok: true, vazio: true, mes });
+      }
+      const rows: any[] = data.rows;
+      const totalClientes = rows.length;
+      const novosNoMes = rows.filter(r => r.novoCliente).length;
+      const comRecompra = rows.filter(r => Number(r.visitasPeriodo) > 1).length;
+      const recompraPct = totalClientes > 0 ? (comRecompra / totalClientes) * 100 : 0;
+      const somaTotal = rows.reduce((s, r) => s + Number(r.total || 0), 0);
+      const ticketMedioClientes = totalClientes > 0 ? somaTotal / totalClientes : 0;
+
+      // Sumidos: último atendimento > 60 dias atrás (TZ America/Sao_Paulo, vs hoje).
+      const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+      const hojeMs = Date.parse(`${hojeSP}T00:00:00Z`);
+      const diasDesde = (ymd: string): number | null => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd || "")) return null;
+        return Math.floor((hojeMs - Date.parse(`${ymd}T00:00:00Z`)) / 86_400_000);
+      };
+      const sumidos = rows
+        .map(r => ({ nome: r.nome, dias: diasDesde(r.ultimoAtendimento) }))
+        .filter(x => x.dias !== null && (x.dias as number) > 60) as { nome: string; dias: number }[];
+      // "Mais recuperáveis primeiro": quem cruzou os 60d há menos tempo (menor dias).
+      sumidos.sort((a, b) => a.dias - b.dias);
+
+      return res.json({
+        ok: true,
+        mes,
+        geradoEm: data.geradoEm || "",
+        periodoInicio: data.periodoInicio || "",
+        periodoFim: data.periodoFim || "",
+        totalClientes,
+        novosNoMes,
+        recompraPct: Math.round(recompraPct * 10) / 10,
+        ticketMedioClientes: Math.round(ticketMedioClientes * 100) / 100,
+        clientesSumidos: {
+          total: sumidos.length,
+          lista: sumidos.slice(0, 20).map(x => ({ nome: x.nome, diasSemVir: x.dias })),
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }
   });
 

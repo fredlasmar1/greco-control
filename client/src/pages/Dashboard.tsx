@@ -56,6 +56,9 @@ import {
   Send,
   Bell,
   Package,
+  UserPlus,
+  Repeat,
+  UserMinus,
 } from "lucide-react";
 import {
   LineChart,
@@ -674,6 +677,8 @@ export default function Dashboard() {
   const [equipeMesDash, setEquipeMesDash] = useState<any>(null);
   // Fase 1: mês anterior p/ comparação (faturamento + ticket).
   const [mesAnteriorCmp, setMesAnteriorCmp] = useState<{ faturamento: number; ticketMedio: number } | null>(null);
+  // Fase 2: agregados de cliente do "Ranking de Clientes" (sem PII).
+  const [clientesMes, setClientesMes] = useState<any>(null);
 
   // Também busca a meta da fonte para o mês corrente — alimenta o badge.
   useEffect(() => {
@@ -758,6 +763,18 @@ export default function Dashboard() {
       const tk = eqAnt?.totais?.ticketMedio || 0;
       if (fat > 0 || tk > 0) setMesAnteriorCmp({ faturamento: fat, ticketMedio: tk });
     });
+    return () => { canceled = true; };
+  }, [selectedMes, API_BASE]);
+
+  // Fase 2: agregados de cliente (ranking de clientes importado). Mês fechado =
+  // CSV persistido, nunca Trinks ao vivo. Sem CSV → null (cards não renderizam).
+  useEffect(() => {
+    let canceled = false;
+    setClientesMes(null);
+    fetch(`${API_BASE}/api/clientes/ranking/${selectedMes}`)
+      .then((r) => r.json())
+      .then((d) => { if (!canceled && d?.ok && !d.vazio) setClientesMes(d); })
+      .catch(() => {});
     return () => { canceled = true; };
   }, [selectedMes, API_BASE]);
 
@@ -1080,6 +1097,55 @@ export default function Dashboard() {
               <span className="text-[11px] text-muted-foreground">{novosClientesMes} novos clientes</span>
             </CardContent></Card>
           </div>
+
+          {/* ── Fase 2: cards de cliente (Ranking de Clientes importado) ── */}
+          {clientesMes && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="resumo-clientes">
+              {/* Clientes ativos / novos no mês */}
+              <Card className="bg-card border-card-border"><CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-1"><UserPlus className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Clientes no mês</span></div>
+                <p className="text-xl font-bold" data-testid="clientes-total">{clientesMes.totalClientes}</p>
+                <span className="text-[11px] text-muted-foreground">{clientesMes.novosNoMes} novos</span>
+              </CardContent></Card>
+              {/* Recompra */}
+              <Card className="bg-card border-card-border"><CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-1"><Repeat className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Recompra</span></div>
+                <p className="text-xl font-bold" data-testid="clientes-recompra">{Number(clientesMes.recompraPct || 0).toFixed(1)}%</p>
+                <span className="text-[11px] text-muted-foreground">veio + de 1 vez no período</span>
+              </CardContent></Card>
+              {/* Clientes sumidos (60+ dias) — card de alerta */}
+              <Card className="bg-card border-amber-500/30"><CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-1"><AlertTriangle className="w-4 h-4 text-amber-400" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Sumidos (60+ dias)</span></div>
+                <p className="text-xl font-bold text-amber-400" data-testid="clientes-sumidos">{clientesMes.clientesSumidos?.total || 0}</p>
+                {(clientesMes.clientesSumidos?.lista?.length || 0) > 0 ? (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="text-[11px] text-primary underline underline-offset-2" data-testid="clientes-sumidos-ver">ver lista</button>
+                    </PopoverTrigger>
+                    <PopoverContent align="start" className="w-72 max-h-80 overflow-y-auto">
+                      <p className="text-xs font-semibold mb-2 flex items-center gap-1"><UserMinus className="w-3.5 h-3.5 text-amber-400" /> Mais recuperáveis primeiro</p>
+                      <div className="space-y-1">
+                        {clientesMes.clientesSumidos.lista.map((c: any, i: number) => (
+                          <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="truncate">{c.nome}</span>
+                            <span className="text-muted-foreground tabular-nums flex-shrink-0">{c.diasSemVir}d</span>
+                          </div>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                ) : (
+                  <span className="text-[11px] text-muted-foreground">nenhum</span>
+                )}
+              </CardContent></Card>
+              {/* Ticket médio por cliente */}
+              <Card className="bg-card border-card-border"><CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-1"><Target className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Ticket / cliente</span></div>
+                <p className="text-xl font-bold" data-testid="clientes-ticket">{formatCurrency(clientesMes.ticketMedioClientes || 0)}</p>
+                <span className="text-[11px] text-muted-foreground">gasto médio por cliente</span>
+              </CardContent></Card>
+            </div>
+          )}
 
           {/* Top 5 profissionais */}
           {topProfsMes.length > 0 && (

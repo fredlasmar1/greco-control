@@ -279,8 +279,13 @@ export default function Consolidacao({ embedded = false }: ConsolidacaoProps = {
         fetch(`${API_BASE}/api/consolidacao/contas`).then(r => r.json()),
         fetch(`${API_BASE}/api/consolidacao/transacoes?mes=${selectedMes}`).then(r => r.json()),
       ]);
-      setContas(Array.isArray(rContas) ? rContas : []);
-      setTransacoes(Array.isArray(rTx) ? rTx : []);
+      // Contas de observação (InfinitePay) não entram na contabilidade — só o
+      // Itaú conta aqui. Elas são geridas na aba Assinaturas.
+      const todas = Array.isArray(rContas) ? rContas : [];
+      const contabeis = todas.filter((c: any) => !c.observacao);
+      const idsObs = new Set(todas.filter((c: any) => c.observacao).map((c: any) => c.id));
+      setContas(contabeis);
+      setTransacoes(Array.isArray(rTx) ? rTx.filter((t: any) => !idsObs.has(t.contaId)) : []);
     } catch {}
   };
 

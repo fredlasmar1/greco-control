@@ -241,6 +241,10 @@ interface ContaConsolidacao {
   // O valor conta como recebido mas as entradas da conta destino (que vieram daqui) são excluídas
   transito?: boolean;
   contaDestinoId?: string; // ID da conta pra onde transfere (se transito=true)
+  // Conta de OBSERVAÇÃO (ex: InfinitePay): serve só pra acompanhar pagamento do
+  // Clube nas Assinaturas. NÃO entra na contabilidade (caixa/DRE/conferência) nem
+  // na lista da Conciliação Bancária. Só o Itaú conta pro fechamento.
+  observacao?: boolean;
   ativa: boolean;
   createdAt: string;
 }
@@ -5674,7 +5678,7 @@ export async function registerRoutes(
       id, nome, tipo, meios,
       taxaDebito, taxaCredito, taxaPix, taxaAntecipacao,
       diasLiquidacaoDebito, diasLiquidacaoCredito, ativa,
-      transito, contaDestinoId,
+      transito, contaDestinoId, observacao,
     } = req.body;
     if (!nome || !tipo) {
       return res.status(400).json({ error: "nome e tipo são obrigatórios" });
@@ -5704,6 +5708,7 @@ export async function registerRoutes(
           diasLiquidacaoCredito: num(diasLiquidacaoCredito) ?? 30,
           transito: !!transito,
           contaDestinoId: transito && contaDestinoId ? String(contaDestinoId) : undefined,
+          observacao: !!observacao,
           ativa: ativa !== false,
         };
         saveContasConsolidacao();
@@ -5722,6 +5727,7 @@ export async function registerRoutes(
       diasLiquidacaoCredito: num(diasLiquidacaoCredito) ?? 30,
       transito: !!transito,
       contaDestinoId: transito && contaDestinoId ? String(contaDestinoId) : undefined,
+      observacao: !!observacao,
       ativa: ativa !== false,
       createdAt: new Date().toISOString(),
     };
@@ -6931,7 +6937,8 @@ Regras CRÍTICAS:
 
       // 2) Conta-funil Itaú — auto-detect: nome contém "itaú/itau" → destino de conta
       //    de trânsito → única conta banco → única conta.
-      const ativas = contasConsolidacao.filter(c => c.ativa !== false);
+      // Só contas contábeis (exclui observação tipo InfinitePay).
+      const ativas = contasConsolidacao.filter(c => c.ativa !== false && !c.observacao);
       let contaItau = ativas.find(c => /ita[uú]/i.test(c.nome || ""));
       if (!contaItau) {
         const trans = ativas.find(c => c.transito && c.contaDestinoId);
@@ -7191,7 +7198,10 @@ Regras CRÍTICAS:
     try {
       const cats: ExpenseCategoria[] = await listExpenseCategorias();
       const catMap = new Map(cats.map(c => [c.id, c]));
+      // Contas de observação (InfinitePay) não entram na contabilidade.
+      const contasObs = new Set(contasConsolidacao.filter(c => c.observacao).map(c => c.id));
       for (const t of transacoesBanco) {
+        if (contasObs.has(t.contaId)) continue;
         if (t.amount >= 0) continue;
         if (t.incluidoNoFluxo === false) continue;
         if (t.transferenciaParId) continue;     // transferência interna não conta

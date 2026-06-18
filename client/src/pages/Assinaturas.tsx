@@ -172,6 +172,42 @@ export default function Assinaturas() {
     } finally { setAplicandoSugestoes(false); }
   };
 
+  // Importa o extrato InfinitePay direto aqui (conta de observação, fora da
+  // contabilidade). Sobe o arquivo pra conta InfinitePay e atualiza as sugestões.
+  const ipFileInput = useRef<HTMLInputElement>(null);
+  const [importandoIP, setImportandoIP] = useState(false);
+  const importarInfinitePay = async (file: File) => {
+    setImportandoIP(true);
+    try {
+      const contas = await fetch(`${API_BASE}/api/consolidacao/contas`).then(r => r.json());
+      const arr = Array.isArray(contas) ? contas : [];
+      const ip = arr.find((c: any) => c.observacao) || arr.find((c: any) => /infinite/i.test(c.nome || ""));
+      if (!ip) {
+        toast({ title: "Conta InfinitePay não encontrada", description: "Cadastre a conta InfinitePay (observação) na Conciliação Bancária.", variant: "destructive" });
+        return;
+      }
+      const mesAtual = new Date().toISOString().slice(0, 7);
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("contaId", ip.id);
+      fd.append("mes", mesAtual);
+      const res = await fetch(`${API_BASE}/api/consolidacao/upload-ia`, { method: "POST", body: fd });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        toast({ title: "Falha ao importar", description: e.error || "Erro no upload.", variant: "destructive" });
+        return;
+      }
+      const d = await res.json();
+      toast({ title: `Extrato InfinitePay importado`, description: `${d.transacoes?.length ?? d.count ?? 0} transações. Veja as sugestões de pagamento abaixo.` });
+      loadData();
+    } catch (e: any) {
+      toast({ title: "Erro", description: e?.message || "Falha ao importar.", variant: "destructive" });
+    } finally {
+      setImportandoIP(false);
+      if (ipFileInput.current) ipFileInput.current.value = "";
+    }
+  };
+
   const filtered = useMemo(() => {
     let list = clientes;
     if (filtro !== "todos") list = list.filter(c => c.paymentStatus === filtro);
@@ -208,8 +244,9 @@ export default function Assinaturas() {
           <p className="text-sm text-muted-foreground">Gestão de assinaturas e contratos</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => setLocation("/consolidacao")} title="Ver extrato InfinitePay">
-            <Banknote className="w-3.5 h-3.5 mr-1.5" /> Extrato InfinitePay
+          <input ref={ipFileInput} type="file" accept=".csv,.txt,.xlsx,.xls,.pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importarInfinitePay(f); }} />
+          <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => ipFileInput.current?.click()} disabled={importandoIP} title="Importar extrato InfinitePay (só observação do Clube, não entra na contabilidade)">
+            <Upload className="w-3.5 h-3.5 mr-1.5" /> {importandoIP ? "Importando…" : "Importar extrato InfinitePay"}
           </Button>
           <Button size="sm" variant="outline" className="text-xs h-8" onClick={() => setShowBulk(true)} title="Atribuir vendedor a vários assinantes de uma vez">
             <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Atribuir vendedor em lote

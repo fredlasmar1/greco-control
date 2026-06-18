@@ -8,6 +8,17 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v48 — Modelo de contas: só Itaú conta; InfinitePay=observação; Santander removido (18/06/2026) [concluído]
+
+**Regra de negócio (dono):** **Itaú = único extrato** que conta pro fechamento + conciliação Trinks. **InfinitePay = só observação** do Clube (acompanhamento de adimplência) — **NÃO entra na contabilidade**, e o extrato dele é importado na aba **Assinaturas**. **Santander = removido.**
+
+**O que mudou:**
+- `ContaConsolidacao` ganhou flag **`observacao?: boolean`** (POST /api/consolidacao/contas trata). Contas observação são **excluídas** de: conferência (funil), `computeTotaisDoMes` (despesas), e da tela do Banco (`Consolidacao.tsx` filtra contas+transações de observação → só mostra Itaú).
+- **Assinaturas (`Assinaturas.tsx`):** o botão "Extrato InfinitePay" (que ia pra /consolidacao) virou **"Importar extrato InfinitePay"** in-place: sobe o CSV pra conta InfinitePay (observação) via `/api/consolidacao/upload-ia` + atualiza `sugestoes-extrato` (auto-match dos mensalistas). Import saiu de Lançamentos.
+- **Dados (prod):** Santander deletado; InfinitePay marcado `observacao=true` (mantidas as 30 tx de Clube, que alimentam o auto-match das Assinaturas).
+
+**Resultado:** Lançamentos/Conciliação só vê o **Itaú**. InfinitePay vive em Assinaturas, fora da contabilidade.
+
 ### v47 — Unifica navegação: Conciliação vira sub-aba de Lançamentos (18/06/2026) [concluído]
 
 **Problema (dono):** dois itens de menu confusos — "Conciliação" (topo, `/conciliacao` = `Conciliacao.tsx`, ÓRFÃS do Trinks, NÃO importa extrato) vs a sub-aba "Conciliação Bancária" dentro de Lançamentos (`Consolidacao.tsx`, onde importa extrato). Dono procurou o extrato do Itaú no menu errado.

@@ -15,7 +15,7 @@
 **Parte 1 (ocupação real) [feita]:** `GET /api/precificacao/contexto/:mes` devolve `comandas`, `ocupacaoRealEstimada` (minutos usados ÷ disponíveis; agenda real se houver duração, senão comandas×50min) e `baseOcupacao`. `Precificacao.tsx`: ao lado do campo Ocupação mostra "Real estimada: X% [usar]" + aviso quando em 50% (chute) + preview ao vivo do custo/min ao mexer (antes de salvar). **Validado jun: real 18,7% vs chute 50%** → custo/min hoje subestimado ~2,7×, margens infladas. (Notado: totalFixas jun = R$60, quase nada categorizado → furo nº2.)
 
 **Parte 2 (feita):** contexto devolve `qtdLancamentosFixos` (conta extrato categoria fixo/recorrente, exclui observação, + manuais 'fixo'). `Precificacao.tsx`: mostra "você marcou N lançamentos como fixo" + alerta amber quando ≤2 ("parece faltar fixa — aluguel/energia/água/internet/contador/sistemas; margem inflada") + Link "Categorizar fixas →" pra /lancamentos. Validado jun: 1 fixo (R$60) → alerta dispara.
-**Parte 3 (pendente):** marcar serviços sem ficha técnica ("⚠ sem ficha — margem pode estar inflada") + resumo.
+**Parte 3 (feita):** `Precificacao.tsx` (frontend, usa `analysis` client-side já existente): selo de 2 níveis por serviço — `itemCount===0` → "⚠ sem ficha" (vermelho), `itemCount>0 && totalCost===0` → "⚠ ficha R$0?" (amber); banner topo "X de Y serviços sem ficha técnica — margem não confiável" (gate `summary.withoutCost>0`). Sem backend novo.
 **Parte 4 (pendente):** tela de resultado clara por serviço (custo total/margem real R$/%/sugerido) + destacar margem negativa + badge confiável vs estimada.
 
 ### v49 — Reconstrução de Lançamentos (livro editável Itaú) [concluído] (18/06/2026)

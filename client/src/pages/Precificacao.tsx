@@ -994,6 +994,16 @@ export default function Precificacao() {
         </Card>
       </div>
 
+      {/* Parte 3: banner de confiabilidade da margem */}
+      {summary.withoutCost > 0 && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2 text-xs" data-testid="banner-sem-ficha">
+          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <strong className="text-amber-400">{summary.withoutCost} de {services.length} serviços sem ficha técnica</strong> — a margem deles <strong>não é confiável</strong> (sem custo de material, o lucro aparece inflado). Preencha a ficha de cada um pra ver a margem real.
+          </div>
+        </div>
+      )}
+
       {/* Chart */}
       {chartData.length > 0 && (
         <Card className="bg-card border-card-border">
@@ -1057,10 +1067,12 @@ export default function Precificacao() {
                     </div>
                     <div className="flex items-center gap-3 mt-0.5">
                       <span className="text-xs text-muted-foreground">{item.duration}min</span>
-                      {item.itemCount > 0 ? (
-                        <span className="text-[10px] text-primary">{item.itemCount} itens na ficha</span>
+                      {item.itemCount === 0 ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30" data-testid={`sem-ficha-${item.id}`}>⚠ sem ficha — margem pode estar inflada</span>
+                      ) : item.totalCost === 0 ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30" data-testid={`ficha-zero-${item.id}`}>⚠ ficha R$0? confira</span>
                       ) : (
-                        <span className="text-[10px] text-amber-400">Sem ficha técnica</span>
+                        <span className="text-[10px] text-primary">{item.itemCount} itens na ficha</span>
                       )}
                     </div>
                   </div>

@@ -8,6 +8,16 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v50 — Precificação confiável: tapar os 3 furos da margem (18/06/2026) — EM ANDAMENTO
+
+**Diagnóstico:** margem por serviço distorcida por 3 dados frágeis (motor de cálculo está certo): (1) ocupação chute 50% → contamina custoFixoPorMinuto; (2) totalFixas depende de categorização manual (incompleta → margem inflada); (3) ficha técnica vazia → custo material 0 → margem inflada. Objetivo: alimentar com dado real + DENUNCIAR quando incompleto, nunca margem confiante sobre base furada.
+
+**Parte 1 (ocupação real) [feita]:** `GET /api/precificacao/contexto/:mes` devolve `comandas`, `ocupacaoRealEstimada` (minutos usados ÷ disponíveis; agenda real se houver duração, senão comandas×50min) e `baseOcupacao`. `Precificacao.tsx`: ao lado do campo Ocupação mostra "Real estimada: X% [usar]" + aviso quando em 50% (chute) + preview ao vivo do custo/min ao mexer (antes de salvar). **Validado jun: real 18,7% vs chute 50%** → custo/min hoje subestimado ~2,7×, margens infladas. (Notado: totalFixas jun = R$60, quase nada categorizado → furo nº2.)
+
+**Parte 2 (pendente):** denunciar fixas incompletas no topo (de onde vem totalFixas, N despesas marcadas fixo, link p/ Lançamentos).
+**Parte 3 (pendente):** marcar serviços sem ficha técnica ("⚠ sem ficha — margem pode estar inflada") + resumo.
+**Parte 4 (pendente):** tela de resultado clara por serviço (custo total/margem real R$/%/sugerido) + destacar margem negativa + badge confiável vs estimada.
+
 ### v49 — Reconstrução de Lançamentos (livro editável Itaú) [concluído] (18/06/2026)
 
 **Visão do dono:** Lançamentos = lista editável de TODAS as entradas/saídas do Itaú, onde cada linha é **categorizada + justificada** (todas as categorias e regras à mão, pra entrada E saída). Ex.: "peguei dinheiro do caixa e repus" → categoria **neutra** + justificativa, não distorce o fechamento. No fim, **compara com a Trinks (API+CSV)**. Motivo: as 4-blocos+5-abas viraram um labirinto.

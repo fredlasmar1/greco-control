@@ -83,6 +83,9 @@ interface PrecificacaoContexto {
   totalFixas: number;
   minutosProdutivosMes: number;
   custoFixoPorMinuto: number;
+  comandas?: number;
+  ocupacaoRealEstimada?: number;
+  baseOcupacao?: string;
 }
 
 // v24: Helpers de detecção (espelham backend)
@@ -866,11 +869,29 @@ export default function Precificacao() {
                 type="number" min={0} max={100}
                 value={opLocal?.ocupacaoPct ?? ""}
                 onChange={e => opLocal && setOpLocal({ ...opLocal, ocupacaoPct: Number(e.target.value) || 0 })}
-                className="h-8 text-sm"
+                className={`h-8 text-sm ${opLocal?.ocupacaoPct === 50 ? "border-amber-500/50" : ""}`}
                 data-testid="input-ocupacao"
               />
+              {(contexto?.ocupacaoRealEstimada || 0) > 0 && (
+                <div className="mt-1 text-[10px] flex items-center gap-1.5 flex-wrap" data-testid="ocupacao-real">
+                  <span className="text-muted-foreground">Real estimada: <strong className="text-primary">{contexto!.ocupacaoRealEstimada}%</strong></span>
+                  <button
+                    type="button"
+                    className="text-primary underline underline-offset-2"
+                    onClick={() => opLocal && setOpLocal({ ...opLocal, ocupacaoPct: Math.round(contexto!.ocupacaoRealEstimada!) })}
+                    data-testid="btn-usar-ocupacao-real"
+                  >usar</button>
+                </div>
+              )}
+              {contexto?.baseOcupacao && <div className="text-[9px] text-muted-foreground/70 mt-0.5">{contexto.baseOcupacao}</div>}
             </div>
           </div>
+          {opLocal?.ocupacaoPct === 50 && (
+            <div className="text-[11px] text-amber-400 flex items-center gap-1.5">
+              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+              Ocupação em 50% (chute padrão) — ajuste com a sua real, ela afeta a margem de TODOS os serviços.
+            </div>
+          )}
           <div className="flex items-center justify-between flex-wrap gap-3 pt-2 border-t border-border/50">
             <div className="text-xs space-y-0.5">
               <div>
@@ -884,6 +905,18 @@ export default function Precificacao() {
               </div>
               <div>
                 Custo fixo por minuto: <strong className="text-primary">{formatCurrency(contexto?.custoFixoPorMinuto || 0)}/min</strong>
+                {(() => {
+                  if (!opLocal || !contexto) return null;
+                  const minDisp = opLocal.cadeiras * opLocal.horasDia * 60 * opLocal.diasMes * (opLocal.ocupacaoPct / 100);
+                  const cfmPreview = minDisp > 0 ? (contexto.totalFixas / minDisp) : 0;
+                  const mudou = Math.abs(cfmPreview - (contexto.custoFixoPorMinuto || 0)) > 0.001;
+                  if (!mudou) return null;
+                  return (
+                    <span className="ml-1 text-amber-400" data-testid="cfm-preview">
+                      → {formatCurrency(cfmPreview)}/min (prévia, salve pra aplicar)
+                    </span>
+                  );
+                })()}
               </div>
             </div>
             <Button

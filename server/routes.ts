@@ -7438,6 +7438,31 @@ Regras CRÍTICAS:
         diasMes: cfg.diasMes,
         ocupacaoPct: cfg.ocupacaoPct,
       });
+
+      // Parte 1: ocupação REAL estimada (pra comparar com o chute manual).
+      // minutos usados ÷ minutos disponíveis. Usa duração real da agenda quando
+      // houver; senão comandas × 50min (média assumida, igual grecometas).
+      let comandas = 0, ocupacaoRealEstimada = 0, baseOcupacao = "sem dados";
+      try {
+        const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log });
+        comandas = Number(md?.comandas || 0);
+        const ags: any[] = Array.isArray(md?.agendamentos) ? md.agendamentos : [];
+        const finalizados = ags.filter(a => (a.status?.nome || "").toLowerCase() === "finalizado");
+        const durOf = (a: any) => Number(a.duracaoEmMinutos || a.duracao || a.servico?.duracao || 0) || 0;
+        const temDuracao = finalizados.some(a => durOf(a) > 0);
+        const AVG_DUR = 50;
+        const minutosDisponiveis = cfg.cadeiras * cfg.horasDia * 60 * cfg.diasMes;
+        let minutosUsados = 0;
+        if (temDuracao) {
+          minutosUsados = finalizados.reduce((s, a) => s + durOf(a), 0);
+          baseOcupacao = "agenda real";
+        } else if (comandas > 0) {
+          minutosUsados = comandas * AVG_DUR;
+          baseOcupacao = `estimada (${comandas} comandas × ${AVG_DUR}min)`;
+        }
+        ocupacaoRealEstimada = minutosDisponiveis > 0 ? Math.round((minutosUsados / minutosDisponiveis) * 1000) / 10 : 0;
+      } catch { /* sem dados → mantém 0 */ }
+
       return res.json({
         ok: true,
         mes,
@@ -7450,6 +7475,9 @@ Regras CRÍTICAS:
         totalFixas: totais.totalFixas,
         minutosProdutivosMes: cfm.minutosProdutivosMes,
         custoFixoPorMinuto: cfm.custoFixoPorMinuto,
+        comandas,
+        ocupacaoRealEstimada,
+        baseOcupacao,
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });

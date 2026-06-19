@@ -331,6 +331,16 @@ export default function Lancamentos() {
     return () => { cancelled = true; };
   }, [selectedMes, reloadKey]);
 
+  // ── v49: resumo do livro do Itaú (Entrou/Saiu/Neutro + comparação Trinks) ──
+  const [resumo, setResumo] = useState<any>(null);
+  const carregarResumo = () => {
+    fetch(`${API_BASE}/api/lancamentos/resumo/${selectedMes}`)
+      .then(r => r.json())
+      .then(d => { if (d?.ok) setResumo(d); })
+      .catch(() => {});
+  };
+  useEffect(() => { setResumo(null); carregarResumo(); /* eslint-disable-next-line */ }, [selectedMes, reloadKey]);
+
   // ── Etapa 2 Bloco 4: adimplência do Clube no mês (matriz de pagamentos;
   //    status por mês: pago/atrasado/pendente). NÃO soma no caixa. ──
   const [clubeAssin, setClubeAssin] = useState<any[] | null>(null);
@@ -434,244 +444,58 @@ export default function Lancamentos() {
         <TabsList className="mb-4">
           <TabsTrigger value="visao" data-testid="tab-visao">Visão do Mês</TabsTrigger>
           <TabsTrigger value="conciliacao" data-testid="tab-conciliacao">Banco / Importar extrato</TabsTrigger>
-          <TabsTrigger value="extrato" data-testid="tab-extrato">Extrato detalhado</TabsTrigger>
           <TabsTrigger value="orfas" data-testid="tab-orfas">Conciliação Trinks</TabsTrigger>
           <TabsTrigger value="categorias" data-testid="tab-categorias">Categorias & Regras</TabsTrigger>
         </TabsList>
 
         <TabsContent value="visao" className="space-y-5 mt-0">
 
-          {/* ═══ BLOCO 1 — O QUE ENTROU (faturamento) ═══ */}
-          <Card className="border-emerald-500/30">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-emerald-400" />
-                1. O que entrou
-                <span className="ml-auto text-base font-bold tabular-nums text-emerald-400" data-testid="entrou-total">{formatCurrency(totalEntrou)}</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
-                {[
-                  { lbl: "💳 Crédito", v: entrou.credito },
-                  { lbl: "💳 Débito", v: entrou.debito },
-                  { lbl: "📲 PIX", v: entrou.pix },
-                  { lbl: "💵 Dinheiro", v: entrou.dinheiro, amber: true },
-                ].map((c, i) => (
-                  <div key={i} className={`rounded border p-2 ${c.amber ? "border-amber-500/40 bg-amber-500/10" : "border-card-border/50 bg-background/30"}`} data-testid={`entrou-forma-${i}`}>
-                    <div className={`text-[10px] ${c.amber ? "text-amber-300" : "text-muted-foreground"}`}>{c.lbl}</div>
-                    <div className={`tabular-nums font-semibold ${c.amber ? "text-amber-400" : ""}`}>{formatCurrency(c.v)}</div>
-                    <div className="text-[9px] text-muted-foreground">{totalEntrou > 0 ? `${((c.v / totalEntrou) * 100).toFixed(1)}%` : ""}</div>
+          {/* ═══ RESUMO DO MÊS — livro do Itaú categorizado ═══ */}
+          {resumo && (
+            <>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <Card className="border-emerald-500/30"><CardContent className="p-4">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Entrou (faturamento)</div>
+                  <p className="text-xl font-bold text-emerald-400" data-testid="resumo-entrou">{formatCurrency(resumo.entrou?.total || 0)}</p>
+                </CardContent></Card>
+                <Card className="border-red-500/30"><CardContent className="p-4">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Saiu (despesas)</div>
+                  <p className="text-xl font-bold text-red-400" data-testid="resumo-saiu">{formatCurrency(resumo.saiu?.total || 0)}</p>
+                </CardContent></Card>
+                <Card className={(resumo.sobra || 0) >= 0 ? "border-emerald-500/30" : "border-red-500/30"}><CardContent className="p-4">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Sobra</div>
+                  <p className={`text-xl font-bold ${(resumo.sobra || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`} data-testid="resumo-sobra">{formatCurrency(resumo.sobra || 0)}</p>
+                </CardContent></Card>
+                <Card className={((resumo.aClassificarEntrada || 0) + (resumo.aClassificarSaida || 0)) > 0 ? "border-amber-500/40" : "border-card-border"}><CardContent className="p-4">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wide">A classificar</div>
+                  <p className="text-xl font-bold text-amber-400" data-testid="resumo-classificar">{formatCurrency((resumo.aClassificarEntrada || 0) + (resumo.aClassificarSaida || 0))}</p>
+                  {(resumo.neutro?.total || 0) > 0 && <span className="text-[10px] text-muted-foreground">neutro (não conta): {formatCurrency(resumo.neutro.total)}</span>}
+                </CardContent></Card>
+              </div>
+
+              {resumo.trinks && (
+                <Card className="bg-card border-card-border"><CardContent className="p-4">
+                  <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Faturamento: marcado no extrato × Trinks</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div><div className="text-[10px] text-muted-foreground">Extrato (faturamento)</div><div className="font-bold tabular-nums text-emerald-400">{formatCurrency(resumo.entrou?.total || 0)}</div></div>
+                    <div><div className="text-[10px] text-muted-foreground">Trinks (canônico)</div><div className="font-bold tabular-nums">{formatCurrency(resumo.trinks.canonico || 0)}</div></div>
+                    <div><div className="text-[10px] text-muted-foreground">Trinks API</div><div className="tabular-nums">{formatCurrency(resumo.trinks.api || 0)}</div></div>
+                    <div><div className="text-[10px] text-muted-foreground">Trinks CSV</div><div className="tabular-nums">{formatCurrency(resumo.trinks.csvFinanceiro || resumo.trinks.csvCaixa || 0)}</div></div>
                   </div>
-                ))}
-                {/* Clube Greco — origem InfinitePay */}
-                <div className="rounded border border-primary/40 bg-primary/10 p-2" data-testid="entrou-clube">
-                  <div className="text-[10px] text-primary flex items-center gap-1">🔵 Clube Greco</div>
-                  <div className="tabular-nums font-semibold text-primary">{formatCurrency(entrou.clube)}</div>
-                  <div className="text-[9px] text-muted-foreground">via InfinitePay</div>
-                </div>
-              </div>
-              <div className="text-[11px] text-muted-foreground mt-2">
-                Fonte canônica: {canonico?.fonte === "csv" ? "CSV importado" : canonico?.fonte === "trinks" ? "Trinks ao vivo" : (fonte === "csv" ? "CSV importado" : "Trinks")}
-                {" "}· blindado contra 429 (não zera).
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* ═══ BLOCO 2 — O QUE SAIU (despesas) ═══ */}
-          <SumarioDespesas
-            mes={selectedMes}
-            comissoesCalc={comissoes.total}
-            bonusCalc={0}
-            taxaCartaoCalc={comissoes.taxaCartao}
-            onChange={setTotalDespesasDin}
-            refreshKey={refreshKey}
-          />
-          <Card className={resultado >= 0 ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/30 bg-red-500/5"}>
-            <CardContent className="p-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Faturado</div>
-                  <div className="text-lg font-bold tabular-nums text-emerald-400">{formatCurrency(totalEntrou)}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Total de saídas</div>
-                  <div className="text-lg font-bold tabular-nums text-red-400" data-testid="saiu-total">{formatCurrency(totalDespesas)}</div>
-                </div>
-                <div className="sm:border-l sm:border-border sm:pl-3">
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Sobra</div>
-                  <div className={`text-xl font-bold tabular-nums ${(totalEntrou - totalDespesas) >= 0 ? "text-emerald-400" : "text-red-400"}`} data-testid="sobra">
-                    {formatCurrency(totalEntrou - totalDespesas)}
-                  </div>
-                  <div className="text-xs text-muted-foreground">{totalEntrou > 0 ? `${(((totalEntrou - totalDespesas) / totalEntrou) * 100).toFixed(1)}% margem` : ""}</div>
-                </div>
-              </div>
-              {(banco.transferenciaInterna > 0 || banco.saidasIgnoradas > 0) && (
-                <div className="text-[10px] italic text-muted-foreground space-x-3 mt-2">
-                  {banco.transferenciaInterna > 0 && <span>Transf. interna excluída: {formatCurrency(banco.transferenciaInterna)}</span>}
-                  {banco.saidasIgnoradas > 0 && <span>Saídas ignoradas: {formatCurrency(banco.saidasIgnoradas)}</span>}
-                </div>
+                  <div className="text-[11px] mt-2">Diferença extrato − Trinks: <strong className={Math.abs(resumo.diffFaturamentoVsTrinks || 0) <= 100 ? "text-emerald-400" : "text-amber-400"}>{formatCurrency(resumo.diffFaturamentoVsTrinks || 0)}</strong></div>
+                </CardContent></Card>
               )}
-            </CardContent>
-          </Card>
-
-          {/* ═══ BLOCO 3 — CONFERÊNCIA (esperado × caiu no Itaú) ═══ */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-primary" />
-                3. Conferência — esperado × caiu no Itaú
-                {conf?.contaItau && <span className="text-[10px] font-normal text-muted-foreground">({conf.contaItau.nome})</span>}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {!conf ? (
-                <div className="text-xs text-muted-foreground">Carregando conferência…</div>
-              ) : !conf.contaItau ? (
-                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                  <div>Conta Itaú não identificada. Importe o extrato e nomeie a conta com "Itaú" em <strong>Conciliação Bancária</strong>.</div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {/* Cabeçalho */}
-                  <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 text-[10px] uppercase tracking-wide text-muted-foreground px-1">
-                    <span>Forma</span><span className="text-right">Esperado</span><span className="text-right">Caiu</span><span className="text-right">Dif.</span>
-                  </div>
-                  {conf.linhas.map((l: any) => {
-                    const formaKey = l.forma === "PIX" ? "pix" : l.forma === "Cartão" ? "cartao" : "dinheiro";
-                    const cor = l.status === "verde" ? "text-emerald-400" : l.status === "amarelo" ? "text-amber-400" : "text-red-400";
-                    const dot = l.status === "verde" ? "bg-emerald-400" : l.status === "amarelo" ? "bg-amber-400" : "bg-red-400";
-                    const detalhe = (conf.detalhe?.[formaKey] || []) as any[];
-                    const aberto = confAberto === formaKey;
-                    const podeAbrir = l.status !== "verde" && detalhe.length > 0;
-                    return (
-                      <div key={l.forma} className="rounded border border-card-border/50 bg-background/30">
-                        <button
-                          type="button"
-                          disabled={!podeAbrir}
-                          onClick={() => setConfAberto(aberto ? null : formaKey)}
-                          className={`w-full grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center p-2 text-xs ${podeAbrir ? "cursor-pointer hover:bg-muted/30" : ""}`}
-                          data-testid={`conf-linha-${formaKey}`}
-                        >
-                          <span className="flex items-center gap-2 text-left">
-                            <span className={`w-2 h-2 rounded-full ${dot}`} />
-                            {l.forma}
-                            {podeAbrir && <span className="text-[9px] text-muted-foreground">{aberto ? "▲" : "▼ ver"}</span>}
-                          </span>
-                          <span className="text-right tabular-nums">{formatCurrency(l.esperado)}</span>
-                          <span className="text-right tabular-nums">{formatCurrency(l.caiu)}</span>
-                          <span className={`text-right tabular-nums font-semibold ${cor}`}>{l.diferenca >= 0 ? "+" : ""}{formatCurrency(l.diferenca)}</span>
-                        </button>
-                        {aberto && (
-                          <div className="border-t border-card-border/50 p-2 space-y-1" data-testid={`conf-detalhe-${formaKey}`}>
-                            {detalhe.length === 0 ? (
-                              <div className="text-[10px] text-muted-foreground">Sem transações no Itaú para esta forma.</div>
-                            ) : detalhe.map((t: any, i: number) => (
-                              <div key={i} className="flex items-center justify-between gap-2 text-[10px]">
-                                <span className="truncate text-muted-foreground">{t.date} · {t.description}</span>
-                                <span className="tabular-nums flex-shrink-0">{formatCurrency(t.amount)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {/* Clube Greco — a caminho */}
-                  {conf.clube && conf.clube.esperado > 0 && (() => {
-                    const cl = conf.clube;
-                    const map: any = {
-                      verde: { cor: "text-emerald-400", dot: "bg-emerald-400", lbl: "conferido" },
-                      a_caminho: { cor: "text-sky-400", dot: "bg-sky-400", lbl: "a caminho" },
-                      pendente: { cor: "text-amber-400", dot: "bg-amber-400", lbl: `pendente (+${cl.diasThreshold}d)` },
-                    };
-                    const s = map[cl.status] || map.a_caminho;
-                    return (
-                      <div className="rounded border border-primary/30 bg-primary/5 grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center p-2 text-xs" data-testid="conf-clube">
-                        <span className="flex items-center gap-2">
-                          <span className={`w-2 h-2 rounded-full ${s.dot}`} />
-                          🔵 Clube (InfinitePay→Itaú) <span className={`text-[9px] ${s.cor}`}>{s.lbl}</span>
-                        </span>
-                        <span className="text-right tabular-nums">{formatCurrency(cl.esperado)}</span>
-                        <span className="text-right tabular-nums">{formatCurrency(cl.caiu)}</span>
-                        <span className={`text-right tabular-nums font-semibold ${s.cor}`}>{cl.diferenca >= 0 ? "+" : ""}{formatCurrency(cl.diferenca)}</span>
-                      </div>
-                    );
-                  })()}
-                  <div className="text-[10px] text-muted-foreground px-1">Tolerância ±{formatCurrency(100)}. Clique numa linha amarela/vermelha pra ver as transações.</div>
-                  {conf.linhas.every((l: any) => l.caiu === 0) && (
-                    <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 flex items-center justify-between gap-2 mt-1">
-                      <div className="text-xs">
-                        <p className="font-medium">Nada caiu no Itaú ainda neste mês</p>
-                        <p className="text-muted-foreground text-[10px]">Importe o extrato do Itaú pra conferir contra o esperado.</p>
-                      </div>
-                      <Button type="button" size="sm" onClick={() => setActiveTab("conciliacao" as any)} data-testid="conf-importar-itau">
-                        <Upload className="w-4 h-4 mr-1.5" /> Importar extrato do Itaú
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* ═══ BLOCO 4 — INFINITEPAY (adimplência do Clube; não soma no caixa) ═══ */}
-          <Card className="border-sky-500/20">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Tag className="w-4 h-4 text-sky-400" />
-                4. InfinitePay — adimplência do Clube
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2">
-                  <div className="text-[10px] text-muted-foreground">Em dia</div>
-                  <div className="text-lg font-bold tabular-nums text-emerald-400" data-testid="clube-emdia">{clubeStats.emDia}</div>
-                </div>
-                <div className="rounded border border-red-500/30 bg-red-500/5 p-2">
-                  <div className="text-[10px] text-muted-foreground">Em atraso</div>
-                  <div className="text-lg font-bold tabular-nums text-red-400" data-testid="clube-atraso">{clubeStats.atraso}</div>
-                </div>
-                <div className="rounded border border-card-border/50 bg-background/30 p-2">
-                  <div className="text-[10px] text-muted-foreground">Recebido no mês</div>
-                  <div className="text-lg font-bold tabular-nums" data-testid="clube-recebido">{formatCurrency(entrou.clube)}</div>
-                </div>
-              </div>
-              {clubeStats.aVencer > 0 && (
-                <div className="text-[10px] text-muted-foreground mt-2">{clubeStats.aVencer} ainda a vencer no mês (dentro do prazo).</div>
-              )}
-              <div className="text-[10px] text-muted-foreground mt-1 flex items-start gap-1">
-                <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                Este valor já está contado no Bloco 1 (Clube Greco). Aqui é só o controle de quem pagou.
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* CTA pra abrir Extrato detalhado quando há saídas */}
-          {bankTx.filter(t => t.amount < 0).length > 0 && (
-            <div className="rounded-md border border-card-border/40 bg-background/30 p-3 flex items-center justify-between gap-2">
-              <div className="text-xs">
-                <p className="font-medium">Categorize linha-a-linha</p>
-                <p className="text-muted-foreground text-[10px]">
-                  Filtre por banco, marque transferências internas manualmente, e edite categoria de cada lançamento.
-                </p>
-              </div>
-              <Button type="button" size="sm" onClick={() => setActiveTab("extrato" as any)}>
-                Abrir Extrato detalhado
-              </Button>
-            </div>
+            </>
           )}
 
-        </TabsContent>
-
-        <TabsContent value="extrato" className="mt-0">
+          {/* ═══ LIVRO DO ITAÚ — editável (categoria + justificativa + 👁 conta-no-mês) ═══ */}
           <ExtratoDetalhado
             mes={selectedMes}
-            onChanged={() => { setReloadKey(k => k + 1); setRefreshKey(k => k + 1); }}
+            onChanged={() => { setReloadKey(k => k + 1); setRefreshKey(k => k + 1); carregarResumo(); }}
           />
+
         </TabsContent>
+
 
         <TabsContent value="conciliacao" className="mt-0">
           <Consolidacao embedded />

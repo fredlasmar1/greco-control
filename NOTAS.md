@@ -8,14 +8,14 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
-### v49 — Reconstrução de Lançamentos (livro editável Itaú) — EM ANDAMENTO (18/06/2026)
+### v49 — Reconstrução de Lançamentos (livro editável Itaú) [concluído] (18/06/2026)
 
 **Visão do dono:** Lançamentos = lista editável de TODAS as entradas/saídas do Itaú, onde cada linha é **categorizada + justificada** (todas as categorias e regras à mão, pra entrada E saída). Ex.: "peguei dinheiro do caixa e repus" → categoria **neutra** + justificativa, não distorce o fechamento. No fim, **compara com a Trinks (API+CSV)**. Motivo: as 4-blocos+5-abas viraram um labirinto.
 
 **Fase 1 (modelo, commit pendente) [feita]:** `expenseCategorias.ts` — novos `ExpenseTipo` **`faturamento`** (entrada) e **`neutro`** (não conta). Helpers `tipoConta()`/`TIPOS_ENTRADA`/`TIPOS_NEUTROS`. Seed novas categorias: Faturamento Serviço/Produto/Clube, Outras entradas, Reposição/Retirada de caixa, Transferência própria, Estorno, Aporte/Empréstimo. **Merge idempotente** em `ensureSeed` (prod ganha as novas no boot sem apagar). justificativa já tem endpoint (`PUT /api/expenses/bank/:id/justificativa`).
 
-**Fase 2 (pendente):** reescrever `Lancamentos.tsx` = lista única editável (data·descrição·valor·categoria[entrada+saída]·justificativa·👁 conta-no-mês) + regras visíveis + resumo (Entrou/Saiu/Neutro/Sobra).
-**Fase 3 (pendente):** rodapé comparação extrato×Trinks (API+CSV).
+**Fase 2 (feita):** `ExtratoDetalhado.tsx` agora deixa categorizar **ENTRADAS** também (antes só saída mostrava dropdown; lista filtrada por `tipoContaCli`: entrada→faturamento+neutro, saída→despesa+neutro) + campo **justificativa** inline (PUT `/api/expenses/bank/:id/justificativa`) + filtro padrão "todas". `Lancamentos.tsx` reescrito: aba "Visão do Mês" = **resumo** (Entrou/Saiu/Sobra/A classificar + neutro) + **comparação Trinks** (extrato × canônico/API/CSV) + **`ExtratoDetalhado` embutido** (o livro editável). Removidos os 4 blocos antigos, a aba "Extrato detalhado" separada (virou a Visão) e o entulho. Abas agora: Visão · Banco/Importar extrato · Conciliação Trinks · Categorias & Regras.
+**Fase 3 (feita):** endpoint **`GET /api/lancamentos/resumo/:mes`** agrega o Itaú por `tipoConta` (entrada/saída/neutro), `incluidoNoFluxo` respeitado, devolve entrou/saiu(porTipo)/neutro/aClassificar/sobra + `trinks{canonico,api,csvCaixa,csvFinanceiro}` + diff. Validado local: categorizar entrada (PIX 135→Faturamento Serviço) reflete no resumo; justificativa salva; auto-rules já classificam saídas (IOF→imposto). **v49 [concluído].**
 
 ### v48 — Modelo de contas: só Itaú conta; InfinitePay=observação; Santander removido (18/06/2026) [concluído]
 

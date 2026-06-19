@@ -67,6 +67,7 @@ import {
   deleteRegra as deleteExpenseRegra,
   classificarDescricao,
   bumpRegrasAplicadas,
+  tipoConta,
   type ExpenseCategoria,
   type ExpenseRegra,
   type ExpenseTipo,
@@ -6914,6 +6915,73 @@ Regras CRÍTICAS:
       return (b.createdAt || "").localeCompare(a.createdAt || "");
     });
     return res.json(allEntries);
+  });
+
+  // GET /api/lancamentos/resumo/:mes — v49: livro do Itaú categorizado.
+  // Agrega o extrato do Itaú por tipo de categoria: ENTRADA (faturamento) /
+  // SAÍDA (despesas por tipo) / NEUTRO (caixa/transferência/estorno — não conta).
+  // No fim compara o faturamento marcado × Trinks (API + CSV). Só o Itaú conta.
+  app.get("/api/lancamentos/resumo/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "Mês inválido." });
+
+      // conta-funil Itaú (exclui observação)
+      const ativas = contasConsolidacao.filter(c => c.ativa !== false && !c.observacao);
+      let itau = ativas.find(c => /ita[uú]/i.test(c.nome || ""));
+      if (!itau) { const t = ativas.find(c => c.transito && c.contaDestinoId); if (t) itau = ativas.find(c => c.id === t!.contaDestinoId); }
+      if (!itau) { const b = ativas.filter(c => c.tipo === "banco"); if (b.length === 1) itau = b[0]; else if (ativas.length === 1) itau = ativas[0]; }
+
+      const cats = await listExpenseCategorias();
+      const catMap = new Map(cats.map(c => [c.id, c]));
+      const tx = itau ? transacoesBanco.filter(t => t.contaId === itau!.id && t.date.startsWith(mes) && t.incluidoNoFluxo !== false) : [];
+
+      const entrou = { total: 0, porCategoria: {} as Record<string, number> };
+      const saiu = { total: 0, porTipo: {} as Record<string, number> };
+      const neutro = { total: 0 };
+      let aClassificarEntrada = 0, aClassificarSaida = 0;
+
+      for (const t of tx) {
+        const cat = t.categoriaId ? catMap.get(t.categoriaId) : null;
+        const v = Number(t.amount || 0);
+        if (!cat) {
+          if (v > 0) aClassificarEntrada += v; else aClassificarSaida += Math.abs(v);
+          continue;
+        }
+        const tc = tipoConta(cat.tipo);
+        if (tc === "entrada") { entrou.total += Math.abs(v); entrou.porCategoria[cat.nome] = (entrou.porCategoria[cat.nome] || 0) + Math.abs(v); }
+        else if (tc === "neutro") { neutro.total += Math.abs(v); }
+        else { saiu.total += Math.abs(v); saiu.porTipo[cat.tipo] = (saiu.porTipo[cat.tipo] || 0) + Math.abs(v); }
+      }
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+
+      // Trinks (API + CSV) p/ comparação
+      let md: any = null;
+      try { md = await getMesDataCanonical(mes, { trinksFetchAllRange, log }); } catch {}
+      const fa = md?.fontesAuditoria || {};
+      const trinks = {
+        canonico: r2(md?.faturamento || 0),
+        fonte: md?.fonte || null,
+        api: r2(fa.apiTrinks?.faturamento || 0),
+        csvCaixa: r2(fa.csvCaixa?.faturamento || 0),
+        csvFinanceiro: r2(fa.csvFinanceiro?.faturamento || 0),
+      };
+
+      return res.json({
+        ok: true, mes,
+        contaItau: itau ? { id: itau.id, nome: itau.nome } : null,
+        entrou: { total: r2(entrou.total), porCategoria: Object.fromEntries(Object.entries(entrou.porCategoria).map(([k, v]) => [k, r2(v)])) },
+        saiu: { total: r2(saiu.total), porTipo: Object.fromEntries(Object.entries(saiu.porTipo).map(([k, v]) => [k, r2(v)])) },
+        neutro: { total: r2(neutro.total) },
+        aClassificarEntrada: r2(aClassificarEntrada),
+        aClassificarSaida: r2(aClassificarSaida),
+        sobra: r2(entrou.total - saiu.total),
+        trinks,
+        diffFaturamentoVsTrinks: r2(entrou.total - (md?.faturamento || 0)),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
   });
 
   // GET /api/lancamentos/conferencia/:mes — Etapa 2 (Bloco 3): esperado (faturamento

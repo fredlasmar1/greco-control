@@ -24,6 +24,14 @@ interface Tx {
   transferenciaParId?: string;
   transferenciaConfianca?: number;
   regraIdAplicada?: string;
+  justificativa?: string;
+}
+
+// Comportamento contábil do tipo da categoria (espelha o server tipoConta).
+function tipoContaCli(tipo?: string): "entrada" | "saida" | "neutro" {
+  if (tipo === "faturamento") return "entrada";
+  if (tipo === "neutro") return "neutro";
+  return "saida";
 }
 
 interface Conta { id: string; nome: string; transito?: boolean; contaDestinoId?: string }
@@ -45,7 +53,7 @@ export default function ExtratoDetalhado({ mes, onChanged }: Props) {
   const [loading, setLoading] = useState(false);
 
   const [filtroConta, setFiltroConta] = useState<string>("__todas");
-  const [filtroTipo, setFiltroTipo] = useState<"todas" | "entradas" | "saidas">("saidas");
+  const [filtroTipo, setFiltroTipo] = useState<"todas" | "entradas" | "saidas">("todas");
   const [filtroCat, setFiltroCat] = useState<string>("__todas"); // "__todas" | "_sem" | catId
   const [filtroSoNaoPareadas, setFiltroSoNaoPareadas] = useState(false);
   const [busca, setBusca] = useState("");
@@ -107,6 +115,26 @@ export default function ExtratoDetalhado({ mes, onChanged }: Props) {
       body: JSON.stringify({ categoriaId: novaCatId }),
     });
     setTxs(prev => prev.map(t => t.id === tx.id ? { ...t, categoriaId: novaCatId || undefined, regraIdAplicada: undefined } : t));
+    onChanged?.();
+  }
+
+  // Categorias oferecidas por linha: entrada → faturamento + neutro; saída → despesa + neutro.
+  function catsParaLinha(amount: number): Cat[] {
+    const querEntrada = amount >= 0;
+    return cats.filter(c => {
+      const tc = tipoContaCli(c.tipo);
+      if (tc === "neutro") return true;
+      return querEntrada ? tc === "entrada" : tc === "saida";
+    });
+  }
+
+  async function salvarJustificativa(tx: Tx, texto: string) {
+    await fetch(`/api/expenses/bank/${tx.id}/justificativa`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ justificativa: texto }),
+    });
+    setTxs(prev => prev.map(t => t.id === tx.id ? { ...t, justificativa: texto } : t));
     onChanged?.();
   }
 
@@ -291,27 +319,33 @@ export default function ExtratoDetalhado({ mes, onChanged }: Props) {
                           ↔ Transf. interna {t.transferenciaConfianca ? `(${Math.round(t.transferenciaConfianca * 100)}%)` : ""}
                         </Badge>
                       )}
+                      <input
+                        type="text"
+                        defaultValue={t.justificativa || ""}
+                        placeholder="+ justificativa…"
+                        title="Justificativa / nota (ex.: repus o dinheiro do caixa)"
+                        className="mt-1 w-full max-w-[280px] bg-transparent border-b border-border/40 focus:border-primary/60 outline-none text-[10px] text-muted-foreground placeholder:text-muted-foreground/50 py-0.5"
+                        onBlur={(e) => { const v = e.target.value.trim(); if (v !== (t.justificativa || "")) salvarJustificativa(t, v); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                      />
                     </td>
                     <td className="py-2 px-2">
-                      {t.amount < 0 ? (
-                        <Select value={t.categoriaId || "__sem"} onValueChange={v => setCategoria(t, v === "__sem" ? null : v)}>
-                          <SelectTrigger className="h-6 text-[10px] w-[150px]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__sem"><span className="text-muted-foreground">— Sem categoria —</span></SelectItem>
-                            {cats.map(c => (
-                              <SelectItem key={c.id} value={c.id}>
-                                <span className="flex items-center gap-1.5">
-                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.cor }} />{c.nome}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground italic">— entrada —</span>
-                      )}
+                      <Select value={t.categoriaId || "__sem"} onValueChange={v => setCategoria(t, v === "__sem" ? null : v)}>
+                        <SelectTrigger className={`h-6 text-[10px] w-[160px] ${!t.categoriaId ? "border-amber-500/50 text-amber-400" : ""}`}>
+                          <SelectValue placeholder="classificar…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__sem"><span className="text-muted-foreground">— Sem categoria —</span></SelectItem>
+                          {catsParaLinha(t.amount).map(c => (
+                            <SelectItem key={c.id} value={c.id}>
+                              <span className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.cor }} />{c.nome}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {cat && tipoContaCli(cat.tipo) === "neutro" && <div className="text-[9px] text-slate-400 mt-0.5">não conta no resultado</div>}
                       {cat && t.regraIdAplicada && <div className="text-[9px] text-cyan-400/70 mt-0.5">por regra</div>}
                     </td>
                     <td className={`py-2 px-2 text-right tabular-nums font-medium whitespace-nowrap ${t.amount < 0 ? "text-red-400" : "text-emerald-400"}`}>

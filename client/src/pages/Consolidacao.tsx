@@ -272,12 +272,16 @@ export default function Consolidacao({ embedded = false }: ConsolidacaoProps = {
 
   const [contas, setContas] = useState<Conta[]>([]);
   const [transacoes, setTransacoes] = useState<TransacaoBanco[]>([]);
+  // Categorias editáveis (mesma lista de Categorias & Regras) — pra o dropdown
+  // de "Gastos do Mês" oferecer TODAS as opções, não o enum legado.
+  const [catsExpense, setCatsExpense] = useState<Array<{ id: string; nome: string; tipo: string; cor: string }>>([]);
 
   const loadData = async () => {
     try {
-      const [rContas, rTx] = await Promise.all([
+      const [rContas, rTx, rCats] = await Promise.all([
         fetch(`${API_BASE}/api/consolidacao/contas`).then(r => r.json()),
         fetch(`${API_BASE}/api/consolidacao/transacoes?mes=${selectedMes}`).then(r => r.json()),
+        fetch(`${API_BASE}/api/expense-categorias`).then(r => r.json()),
       ]);
       // Contas de observação (InfinitePay) não entram na contabilidade — só o
       // Itaú conta aqui. Elas são geridas na aba Assinaturas.
@@ -286,26 +290,25 @@ export default function Consolidacao({ embedded = false }: ConsolidacaoProps = {
       const idsObs = new Set(todas.filter((c: any) => c.observacao).map((c: any) => c.id));
       setContas(contabeis);
       setTransacoes(Array.isArray(rTx) ? rTx.filter((t: any) => !idsObs.has(t.contaId)) : []);
+      // categorias oferecidas pra SAÍDA: despesas + neutras (ex.: retirada de
+      // caixa). Exclui só faturamento (que é entrada). Mesma lógica do extrato.
+      const cats = (rCats?.categorias || []).filter((c: any) => c.tipo !== "faturamento");
+      setCatsExpense(cats);
     } catch {}
   };
 
   useEffect(() => { loadData(); }, [selectedMes]);
 
   // Atualiza categoria de uma transação (e opcionalmente aprende o padrão)
-  const atualizarCategoria = async (txId: string, categoria: CategoriaGasto | null, aprenderRegra = false) => {
+  // v49: categoriza pelo sistema editável (ExpenseCategoria / categoriaId).
+  const atualizarCategoria = async (txId: string, categoriaId: string | null) => {
     try {
-      const res = await fetch(`${API_BASE}/api/consolidacao/transacoes/${txId}/categoria`, {
+      const res = await fetch(`${API_BASE}/api/expenses/bank/${txId}/categoria`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoria, aprenderRegra }),
+        body: JSON.stringify({ categoriaId }),
       });
-      const data = await res.json();
-      if (res.ok) {
-        if (data.aplicadaEm > 0) {
-          toast({ title: "Padrão aprendido!", description: `Aplicado em outras ${data.aplicadaEm} transação${data.aplicadaEm > 1 ? "ões" : ""}.` });
-        }
-        loadData();
-      }
+      if (res.ok) loadData();
     } catch {}
   };
 
@@ -393,24 +396,26 @@ export default function Consolidacao({ embedded = false }: ConsolidacaoProps = {
       .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
   }, [transacoes]);
 
+  const catsExpenseMap = useMemo(() => new Map(catsExpense.map(c => [c.id, c])), [catsExpense]);
   const gastosPorCategoria = useMemo(() => {
-    const m: Record<string, { total: number; count: number }> = {};
+    const m: Record<string, { total: number; count: number; nome: string; cor: string }> = {};
     let semCategoria = 0;
     let semCategoriaCount = 0;
     gastos.forEach(g => {
-      const cat = g.categoria || "_sem_";
-      if (cat === "_sem_") {
+      const catId = (g as any).categoriaId as string | undefined;
+      const cat = catId ? catsExpenseMap.get(catId) : null;
+      if (!cat) {
         semCategoria += Math.abs(g.amount);
         semCategoriaCount++;
       } else {
-        if (!m[cat]) m[cat] = { total: 0, count: 0 };
-        m[cat].total += Math.abs(g.amount);
-        m[cat].count++;
+        if (!m[cat.id]) m[cat.id] = { total: 0, count: 0, nome: cat.nome, cor: cat.cor };
+        m[cat.id].total += Math.abs(g.amount);
+        m[cat.id].count++;
       }
     });
     const totalGastos = Object.values(m).reduce((s, v) => s + v.total, 0) + semCategoria;
     return { porCategoria: m, semCategoria, semCategoriaCount, total: totalGastos };
-  }, [gastos]);
+  }, [gastos, catsExpenseMap]);
 
   // ─── Discrepâncias Trinks vs Banco ───────────────────
   const discrepancias = useMemo(() => {
@@ -608,16 +613,13 @@ export default function Consolidacao({ embedded = false }: ConsolidacaoProps = {
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mb-4">
               {Object.entries(gastosPorCategoria.porCategoria)
                 .sort((a, b) => b[1].total - a[1].total)
-                .map(([cat, v]) => {
-                  const info = CATEGORIAS_INFO[cat as CategoriaGasto];
-                  if (!info) return null;
-                  const Icon = info.icon;
+                .map(([catId, v]) => {
                   return (
-                    <Card key={cat} className="bg-card border-card-border">
+                    <Card key={catId} className="bg-card border-card-border">
                       <CardContent className="p-3">
                         <div className="flex items-center gap-2 mb-1">
-                          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide truncate">{info.label}</span>
+                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: v.cor }} />
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide truncate">{v.nome}</span>
                         </div>
                         <p className="text-sm font-bold truncate">{formatCurrency(v.total)}</p>
                         <p className="text-[10px] text-muted-foreground">{v.count} transação{v.count > 1 ? "ões" : ""}</p>
@@ -667,8 +669,9 @@ export default function Consolidacao({ embedded = false }: ConsolidacaoProps = {
                         </td>
                         <td className="p-2.5">
                           <CategoriaSelector
-                            value={g.categoria}
-                            onChange={(cat, aprender) => atualizarCategoria(g.id, cat, aprender)}
+                            value={(g as any).categoriaId || null}
+                            cats={catsExpense}
+                            onChange={(catId) => atualizarCategoria(g.id, catId)}
                           />
                         </td>
                       </tr>
@@ -1305,22 +1308,22 @@ function ContaCard({ conta, totalTx, onReload, mes, onChangeMes, todasContas = [
 }
 
 
-// ─── Seletor de categoria com aprendizado ─────────────────
-function CategoriaSelector({ value, onChange }: {
-  value?: CategoriaGasto;
-  onChange: (cat: CategoriaGasto | null, aprenderRegra: boolean) => void;
+// ─── Seletor de categoria (v49: lista editável de Categorias & Regras) ─────────
+function CategoriaSelector({ value, cats, onChange }: {
+  value?: string | null;
+  cats: Array<{ id: string; nome: string; tipo: string; cor: string }>;
+  onChange: (categoriaId: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const info = value ? CATEGORIAS_INFO[value] : null;
-  const Icon = info?.icon;
+  const atual = value ? cats.find(c => c.id === value) : null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        {value && info && Icon ? (
-          <button className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-[10px] border ${info.color} hover:opacity-80 transition`}>
-            <Icon className="w-3 h-3" />
-            <span>{info.label}</span>
+        {atual ? (
+          <button className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[10px] border border-border hover:opacity-80 transition">
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: atual.cor }} />
+            <span>{atual.nome}</span>
           </button>
         ) : (
           <button className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[10px] border border-dashed border-amber-500/40 text-amber-400 bg-amber-500/5 hover:bg-amber-500/10 transition">
@@ -1332,37 +1335,27 @@ function CategoriaSelector({ value, onChange }: {
       <DialogContent className="bg-card border-card-border max-w-md">
         <DialogHeader><DialogTitle className="text-base">Categorizar gasto</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">Escolha a categoria que melhor representa este gasto.</p>
-          <div className="grid grid-cols-2 gap-2">
-            {(Object.keys(CATEGORIAS_INFO) as CategoriaGasto[]).map(cat => {
-              const i = CATEGORIAS_INFO[cat];
-              const I = i.icon;
-              const selected = value === cat;
+          <p className="text-xs text-muted-foreground">Todas as categorias da lista de <strong>Categorias &amp; Regras</strong>.</p>
+          <div className="grid grid-cols-2 gap-2 max-h-80 overflow-auto">
+            {cats.map(c => {
+              const selected = value === c.id;
               return (
                 <button
-                  key={cat}
-                  onClick={() => { onChange(cat, true); setOpen(false); }}
-                  className={`flex items-center gap-2 p-2.5 rounded-md border text-left transition ${selected ? i.color : "border-border hover:bg-muted/30"}`}
+                  key={c.id}
+                  onClick={() => { onChange(c.id); setOpen(false); }}
+                  className={`flex items-center gap-2 p-2.5 rounded-md border text-left transition ${selected ? "border-primary bg-primary/10" : "border-border hover:bg-muted/30"}`}
                 >
-                  <I className="w-4 h-4 flex-shrink-0" />
-                  <span className="text-xs font-medium">{i.label}</span>
+                  <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: c.cor }} />
+                  <span className="text-xs font-medium truncate">{c.nome}</span>
                 </button>
               );
             })}
           </div>
           {value && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full text-xs"
-              onClick={() => { onChange(null, false); setOpen(false); }}
-            >
+            <Button variant="outline" size="sm" className="w-full text-xs" onClick={() => { onChange(null); setOpen(false); }}>
               Remover categoria
             </Button>
           )}
-          <p className="text-[10px] text-muted-foreground text-center pt-2 border-t border-border">
-            ✨ O sistema aprende com sua escolha e categoriza transações similares automaticamente
-          </p>
         </div>
       </DialogContent>
     </Dialog>

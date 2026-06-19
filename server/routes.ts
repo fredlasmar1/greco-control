@@ -7463,6 +7463,24 @@ Regras CRÍTICAS:
         ocupacaoRealEstimada = minutosDisponiveis > 0 ? Math.round((minutosUsados / minutosDisponiveis) * 1000) / 10 : 0;
       } catch { /* sem dados → mantém 0 */ }
 
+      // Parte 2: quantos lançamentos compõem o totalFixas (pra denunciar fixas
+      // incompletas). Conta extrato (categoria tipo fixo/recorrente, exclui
+      // observação) + lançamentos manuais 'fixo' do mês.
+      let qtdLancamentosFixos = 0;
+      try {
+        const cats = await listExpenseCategorias();
+        const catMap = new Map(cats.map(c => [c.id, c]));
+        const contasObs = new Set(contasConsolidacao.filter(c => c.observacao).map(c => c.id));
+        for (const t of transacoesBanco) {
+          if (contasObs.has(t.contaId)) continue;
+          if (t.amount >= 0 || t.incluidoNoFluxo === false || t.transferenciaParId) continue;
+          if (!t.date.startsWith(mes) || !t.categoriaId) continue;
+          const cat = catMap.get(t.categoriaId);
+          if (cat && (cat.tipo === "fixo" || cat.tipo === "recorrente")) qtdLancamentosFixos++;
+        }
+        qtdLancamentosFixos += financeEntries.filter(e => e.date.startsWith(mes) && e.category === "fixo").length;
+      } catch { /* ignora */ }
+
       return res.json({
         ok: true,
         mes,
@@ -7478,6 +7496,7 @@ Regras CRÍTICAS:
         comandas,
         ocupacaoRealEstimada,
         baseOcupacao,
+        qtdLancamentosFixos,
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });

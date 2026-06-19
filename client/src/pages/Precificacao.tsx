@@ -86,6 +86,7 @@ interface PrecificacaoContexto {
   comandas?: number;
   ocupacaoRealEstimada?: number;
   baseOcupacao?: string;
+  qtdLancamentosFixos?: number;
 }
 
 // v24: Helpers de detecção (espelham backend)
@@ -896,10 +897,17 @@ export default function Precificacao() {
             <div className="text-xs space-y-0.5">
               <div>
                 Despesas fixas do mês: <strong className="text-red-400">{formatCurrency(contexto?.totalFixas || 0)}</strong>
-                {(contexto?.totalFixas || 0) === 0 && (
-                  <span className="text-muted-foreground ml-1">(cadastre em Financeiro)</span>
-                )}
+                <span className="text-muted-foreground ml-1">· você marcou <strong>{contexto?.qtdLancamentosFixos ?? 0}</strong> lançamento{(contexto?.qtdLancamentosFixos ?? 0) === 1 ? "" : "s"} como fixo</span>
               </div>
+              {(contexto?.qtdLancamentosFixos ?? 0) <= 2 && (
+                <div className="text-[11px] text-amber-400 flex items-start gap-1.5 max-w-md" data-testid="alerta-fixas">
+                  <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                  <span>
+                    Parece faltar despesa fixa — confira aluguel, energia, água, internet, contador, sistemas. Com fixas incompletas, o custo por minuto fica baixo e a <strong>margem aparece inflada</strong>.
+                    <Link href="/lancamentos" className="text-primary underline underline-offset-2 ml-1">Categorizar fixas →</Link>
+                  </span>
+                </div>
+              )}
               <div>
                 Minutos produtivos/mês: <strong>{(contexto?.minutosProdutivosMes || 0).toLocaleString("pt-BR")}</strong>
               </div>

@@ -47,6 +47,7 @@ const navItems = [
   { path: "/duplicados", label: "Duplicados", icon: UserX },
   { path: "/importar-trinks", label: "Importar Trinks", icon: FileUp },
   { path: "/trinks-auditoria", label: "Auditoria Trinks", icon: Activity },
+  { path: "/contas-mensais", label: "Contas Mensais", icon: Wallet },
   { path: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 

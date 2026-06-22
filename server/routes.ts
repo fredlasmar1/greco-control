@@ -20,6 +20,16 @@ import type {
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
+import {
+  listarContas as listarContasMensais,
+  criarConta as criarContaMensal,
+  atualizarConta as atualizarContaMensal,
+  deletarConta as deletarContaMensal,
+  bootstrapContasIniciais,
+  contasParaAvisarHoje,
+  pagamentosEquipeParaAvisarHoje,
+} from "./contasMensais";
+import type { PagamentoHojeItem } from "./telegram";
 import { registrarEventoTrinks, comOrigem, resumoUltimosDias, lerUltimosDias } from "./trinksAuditLog";
 import * as cron from "node-cron";
 import {
@@ -1484,6 +1494,13 @@ export async function registerRoutes(
     log(`Erro ao carregar do DB (usando dados dos arquivos): ${err.message}`, "db");
   }
 
+  // ─── Bootstrap das contas mensais (cadastra 6 iniciais se kv vazio) ─────
+  try {
+    await bootstrapContasIniciais();
+  } catch (err: any) {
+    log(`[contasMensais] bootstrap falhou: ${err.message}`, "db");
+  }
+
   // ──────────────────────────────────────────────────────────────────
   // AUTH ROUTES
   // ──────────────────────────────────────────────────────────────────
@@ -1912,7 +1929,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-05-25-snapshot-csv",
+      build: "2026-06-21-matinal-unica",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -9023,19 +9040,129 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     return res.json(r);
   });
 
+  // ─── /api/contas-mensais — CRUD das despesas recorrentes ─────────────────
+  // Listadas na mensagem matinal do Telegram quando vencem hoje (ou hoje é o
+  // último dia útil antes do vencimento real).
+  app.get("/api/contas-mensais", async (_req: Request, res: Response) => {
+    try {
+      const contas = await listarContasMensais();
+      return res.json(contas);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "erro ao listar contas" });
+    }
+  });
+
+  app.post("/api/contas-mensais", async (req: Request, res: Response) => {
+    try {
+      const { nome, diaVencimento, valor, observacao } = req.body || {};
+      if (!nome || typeof nome !== "string" || !nome.trim()) {
+        return res.status(400).json({ error: "Nome é obrigatório." });
+      }
+      const dia = Number(diaVencimento);
+      if (!Number.isFinite(dia) || dia < 1 || dia > 31) {
+        return res.status(400).json({ error: "Dia de vencimento deve estar entre 1 e 31." });
+      }
+      const valorNum = valor === "" || valor === null || valor === undefined ? null : Number(valor);
+      if (valorNum !== null && !Number.isFinite(valorNum)) {
+        return res.status(400).json({ error: "Valor inválido." });
+      }
+      const nova = await criarContaMensal({
+        nome: String(nome),
+        diaVencimento: dia,
+        valor: valorNum,
+        observacao: typeof observacao === "string" ? observacao : undefined,
+      });
+      return res.status(201).json(nova);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "erro ao criar conta" });
+    }
+  });
+
+  app.put("/api/contas-mensais/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { nome, diaVencimento, valor, observacao, ativa } = req.body || {};
+      const patch: any = {};
+      if (typeof nome === "string" && nome.trim()) patch.nome = nome.trim();
+      if (diaVencimento !== undefined) {
+        const dia = Number(diaVencimento);
+        if (!Number.isFinite(dia) || dia < 1 || dia > 31) {
+          return res.status(400).json({ error: "Dia de vencimento deve estar entre 1 e 31." });
+        }
+        patch.diaVencimento = dia;
+      }
+      if (valor !== undefined) {
+        const valorNum = valor === "" || valor === null ? null : Number(valor);
+        if (valorNum !== null && !Number.isFinite(valorNum)) {
+          return res.status(400).json({ error: "Valor inválido." });
+        }
+        patch.valor = valorNum;
+      }
+      if (observacao !== undefined) {
+        patch.observacao = typeof observacao === "string" ? observacao : undefined;
+      }
+      if (typeof ativa === "boolean") patch.ativa = ativa;
+
+      const atualizada = await atualizarContaMensal(id, patch);
+      if (!atualizada) return res.status(404).json({ error: "Conta não encontrada." });
+      return res.json(atualizada);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "erro ao atualizar conta" });
+    }
+  });
+
+  app.delete("/api/contas-mensais/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const ok = await deletarContaMensal(id);
+      if (!ok) return res.status(404).json({ error: "Conta não encontrada." });
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "erro ao deletar conta" });
+    }
+  });
+
+  // ─── Helper: monta lista de pagamentos a avisar HOJE ─────────────────────
+  async function montarPagamentosHoje(): Promise<PagamentoHojeItem[]> {
+    const itens: PagamentoHojeItem[] = [];
+    try {
+      const contas = await contasParaAvisarHoje();
+      for (const c of contas) {
+        itens.push({
+          tipo: "conta",
+          nome: c.nome,
+          valor: c.valor,
+          observacao: c.observacao,
+        });
+      }
+      const equipe = pagamentosEquipeParaAvisarHoje();
+      for (const e of equipe) {
+        itens.push({
+          tipo: "equipe",
+          nome: e.tipo === "comissao-mensal" ? "Fechamento mensal (dia 01)" : "Vale dos barbeiros (dia 15)",
+          observacao: e.descricao,
+        });
+      }
+    } catch (err: any) {
+      log(`[pagamentosHoje] erro: ${err?.message}`, "telegram");
+    }
+    return itens;
+  }
+
   // POST /api/telegram/resumo-manha — monta e envia resumo matinal agora
-  // Inclui FECHAMENTO de ontem + PREVISÃO de hoje + (opcional) previsão de amanhã.
-  // (Bloco de produtos sem giro foi removido a pedido do usuário.)
+  // Única mensagem diária do Greco Control (08h ter-sáb).
+  // Inclui: fechamento ontem + previsão hoje (serviços + Clube Greco) + pagamentos.
   app.post("/api/telegram/resumo-manha", async (_req: Request, res: Response) => {
     try {
-      const [hoje, ontem, amanhaData] = await Promise.all([
+      const [hoje, ontem, amanhaData, pagamentos] = await Promise.all([
         calcularHojeCompleto(),
         calcularOntemFechado().catch(() => null),
         calcularAmanha().catch(() => null),
+        montarPagamentosHoje(),
       ]);
-      const msg = montarResumoManha(hoje, amanhaData, ontem);
+      const msg = montarResumoManha(hoje, amanhaData, ontem, pagamentos);
       const r = await enviarMensagem(msg);
-      return res.json({ ...r, enviado: r.ok });
+      return res.json({ ...r, enviado: r.ok, pagamentos });
     } catch (err: any) {
       // Fallback: avisa no Telegram que o sistema está vivo mas a Trinks falhou
       const isRate = err?.status === 429 || /limite|429|rate/i.test(err?.message || "");
@@ -11288,42 +11415,45 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       // O cache de agendamentos/transacoes do dia (e do dia anterior) já está quente,
       // então cada profissional reaproveita via trinksFetchAllRange (zero fetches Trinks adicionais).
       cron.schedule("0 8 * * 2-6", async () => { await comOrigem("cron-manha", async () => {
-        log("[cron] disparando resumo da manhã...", "telegram");
+        log("[cron] disparando resumo da manhã (única mensagem do dia)...", "telegram");
         try {
-          const [hoje, ontem, amanhaData] = await Promise.all([
+          const [hoje, ontem, amanhaData, pagamentos] = await Promise.all([
             calcularHojeCompleto(),
             calcularOntemFechado().catch(() => null),
             calcularAmanha().catch(() => null),
+            montarPagamentosHoje(),
           ]);
-          const msg = montarResumoManha(hoje, amanhaData, ontem);
+          const msg = montarResumoManha(hoje, amanhaData, ontem, pagamentos);
           const r = await enviarMensagem(msg);
-          log(`[cron] resumo manhã: ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
+          log(`[cron] resumo manhã: ${r.ok ? "OK" : "FALHOU: " + r.error} (${pagamentos.length} pagamentos)`, "telegram");
         } catch (err: any) {
           log(`[cron] erro resumo manhã: ${err.message}`, "telegram");
-          // Fallback: avisa que o sistema está vivo mas a Trinks falhou
+          // Fallback: avisa que o sistema está vivo mas a Trinks falhou.
+          // Pagamentos ainda são avisados separadamente para não perder a info.
           try {
             const isRate = err?.status === 429 || /limite|429|rate/i.test(err?.message || "");
             const motivo = isRate
               ? "limite de requisições da Trinks excedido"
               : `falha ao consultar Trinks (${err?.message || "erro desconhecido"})`;
-            const aviso = `⚠️ *Resumo da manhã indisponível*\n\nNão foi possível gerar o resumo agora: ${motivo}.\n\nO sistema continua rodando — vou tentar novamente nos próximos disparos. Se quiser, abra o Dashboard para conferir os números do CSV.`;
+            const pagamentos = await montarPagamentosHoje();
+            let aviso = `⚠️ *Resumo da manhã indisponível*\n\nNão foi possível gerar o resumo agora: ${motivo}.\n\nAbra o Dashboard para ver os números do CSV.`;
+            if (pagamentos.length > 0) {
+              aviso += `\n\n💸 *Pagamentos de hoje:*\n`;
+              for (const p of pagamentos) {
+                aviso += `· ${p.nome}${p.valor ? " — R$ " + p.valor.toFixed(2) : ""}\n`;
+              }
+            }
             await enviarMensagem(aviso);
-            log("[cron] aviso de falha (manhã) enviado", "telegram");
+            log("[cron] aviso de falha (manhã) + pagamentos enviado", "telegram");
           } catch (e2: any) {
             log(`[cron] falha também no aviso de manhã: ${e2?.message}`, "telegram");
           }
         }
-        // Em seguida, matinal individual (cache já quente — evita fetches duplicados)
-        try {
-          log("[cron] disparando resumo matinal individual (encadeado)...", "telegram");
-          await dispararIndividualParaTodos("matinal");
-        } catch (err: any) {
-          log(`[cron] erro matinal individual encadeado: ${err.message}`, "telegram");
-        }
+        // Mensagens individuais aos barbeiros foram desativadas em 21/06/2026.
       }); }, { timezone: "America/Sao_Paulo" });
 
-      // Noite: 20:00 ter-sab
-      cron.schedule("0 20 * * 2-6", async () => { await comOrigem("cron-noite", async () => {
+      // Noite: 20:00 ter-sab — DESATIVADO em 21/06/2026 (só mensagem matinal fica)
+      if (false) cron.schedule("0 20 * * 2-6", async () => { await comOrigem("cron-noite", async () => {
         log("[cron] disparando resumo da noite...", "telegram");
         try {
           const hoje = await calcularHojeCompleto();
@@ -11388,14 +11518,16 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       // (evita 2 crons disparando ao mesmo tempo e disputando o rate limit Trinks).
 
       // Semanal individual: sábado 21h
-      cron.schedule("0 21 * * 6", async () => { await comOrigem("cron-semanal", async () => {
+      // Semanal sáb 21h — DESATIVADO em 21/06/2026
+      if (false) cron.schedule("0 21 * * 6", async () => { await comOrigem("cron-semanal", async () => {
         log("[cron] disparando resumo semanal individual (Equipe)...", "telegram");
         await dispararIndividualParaTodos("semanal");
       }); }, { timezone: "America/Sao_Paulo" });
 
       // Mensal individual: 28-31 do mês às 21h, ter-sáb,
       // e só dispara se hoje for o último dia útil do mês.
-      cron.schedule("0 21 28-31 * 2-6", async () => {
+      // Mensal último dia útil 21h — DESATIVADO em 21/06/2026
+      if (false) cron.schedule("0 21 28-31 * 2-6", async () => {
         const hoje = ymdHoje();
         const ultimo = ultimoDiaDoMes(hoje);
         // Avançar dia a dia a partir de hoje até o último dia do mês:
@@ -11417,7 +11549,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
 
       // Alerta diário de estoque baixo: ter-sáb 09h00 (após o resumo da manhã)
       // Envia uma mensagem consolidada com produtos abaixo do mínimo cadastrado.
-      cron.schedule("0 9 * * 2-6", async () => { await comOrigem("cron-estoque", async () => {
+      // Alerta estoque 09h — DESATIVADO em 21/06/2026 (só matinal 8h fica)
+      if (false) cron.schedule("0 9 * * 2-6", async () => { await comOrigem("cron-estoque", async () => {
         try {
           const resumo = await calcularEstoqueResumo();
           const ruptura = (resumo?.produtos || []).filter((p: any) => p.nivel === "ruptura");
@@ -11486,7 +11619,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       // Em modo csv-first, o sistema depende do upload diário do relatório Trinks.
       // Este cron lembra o usuário antes do fechamento das 20h, para garantir que
       // o resumo da noite tenha dados frescos.
-      cron.schedule("0 19 * * 2-6", async () => {
+      // Lembrete CSV 19h — DESATIVADO em 21/06/2026
+      if (false) cron.schedule("0 19 * * 2-6", async () => {
         try {
           // Só envia se estamos em modo csv-first
           if (getModoFonte() !== "csv-first") {

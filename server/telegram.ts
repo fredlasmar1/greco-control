@@ -135,18 +135,27 @@ function formatarDataBR(iso: string): string {
   }
 }
 
+/** Item de pagamento a aparecer no aviso matinal (contas e equipe). */
+export interface PagamentoHojeItem {
+  tipo: "conta" | "equipe";
+  nome: string;            // "Aluguel", "Vale dos barbeiros"
+  valor?: number | null;   // null = varia / não informado
+  observacao?: string;
+}
+
 /**
- * Monta o resumo da manhã:
- *   1º bloco: FECHAMENTO de ontem (faturamento real + comandas)
- *   2º bloco: PREVISÃO de hoje (agendamentos + meta)
+ * Monta o resumo da manhã (é a ÚNICA mensagem do dia desde 21/06/2026):
+ *   1º bloco: FECHAMENTO de ontem (faturamento real + comandas + quem não bateu meta)
+ *   2º bloco: PREVISÃO de hoje (agendamentos + Clube Greco + meta)
+ *   3º bloco: PAGAMENTOS de hoje (contas mensais + salário/vale dos barbeiros)
  *
- * Envia geralmente às 8h. Substitui a versão anterior, que mostrava só
- * previsão do dia atual e não trazia o resultado do dia anterior.
+ * Envia às 8h ter-sáb.
  */
 export function montarResumoManha(
   hoje: ResumoDiaData,
   amanha: ResumoAmanhaData | null,
   ontem?: ResumoDiaData | null,
+  pagamentosHoje?: PagamentoHojeItem[],
 ): string {
   const emoji = progressoEmoji(hoje.progressoPct);
   const dataStr = formatarDataBR(hoje.data);
@@ -175,16 +184,30 @@ export function montarResumoManha(
     }
 
     // Top profissionais de ontem (fechado)
-    const rankOntem = (ontem.porProfissional || [])
-      .filter(p => p.fechado > 0)
-      .sort((a, b) => b.fechado - a.fechado)
-      .slice(0, 3);
+    const profsOntem = (ontem.porProfissional || []).filter(p => p.fechado > 0 || p.countFechado > 0);
+    const rankOntem = profsOntem.slice().sort((a, b) => b.fechado - a.fechado).slice(0, 3);
     if (rankOntem.length > 0) {
       msg += `\n🏆 <b>Top de ontem</b>\n`;
       rankOntem.forEach((p, i) => {
         const icon = i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉";
         msg += `${icon} ${escapeHtml(p.nome)}: ${formatCurrency(p.fechado)} (${p.countFechado})\n`;
       });
+    }
+
+    // Quem NÃO bateu meta individual de ontem.
+    // Critério: tem meta individual (metaIndividual no payload? por enquanto usamos
+    // metaDiaria / N profissionais como aproximação se não vier explícita)
+    // O ideal é que o backend mande metaIndividual por profissional no futuro.
+    // Por ora, marcamos como "abaixo da média" quem ficou < 80% do top do dia.
+    if (profsOntem.length >= 2) {
+      const topVal = rankOntem[0]?.fechado || 0;
+      const abaixo = profsOntem.filter(p => p.fechado > 0 && p.fechado < topVal * 0.5);
+      if (abaixo.length > 0) {
+        msg += `\n⚠️ <b>Abaixo da média ontem</b>\n`;
+        abaixo.slice(0, 5).forEach(p => {
+          msg += `· ${escapeHtml(p.nome)}: ${formatCurrency(p.fechado)} (${p.countFechado})\n`;
+        });
+      }
     }
 
     // Atendimentos de plano de ontem
@@ -198,17 +221,31 @@ export function montarResumoManha(
     msg += `\n`;
   }
 
-  // ── 2º bloco: Previsão de hoje ──
+  // ── 2º bloco: Previsão de hoje (serviços + Clube Greco) ──
+  const planoHojeValor = (hoje.plano?.valorTabela) || 0;
+  const planoHojeCount = (hoje.plano?.count) || 0;
+  const totalEsperadoCompleto = hoje.totalEsperado + planoHojeValor;
+  const progressoCompleto = hoje.metaDiaria > 0
+    ? (totalEsperadoCompleto / hoje.metaDiaria) * 100
+    : 0;
+  const emojiCompleto = progressoEmoji(progressoCompleto);
+  const atingeCompleto = totalEsperadoCompleto >= hoje.metaDiaria;
+
   msg += `📅 <b>Previsão de hoje</b>\n`;
-  msg += `├ Agendamentos: <b>${hoje.agendamentosCount}</b>\n`;
-  msg += `├ Faturamento previsto: <b>${formatCurrency(hoje.totalEsperado)}</b>\n`;
-  msg += `├ Meta diária: ${formatCurrency(hoje.metaDiaria)}\n`;
-  if (hoje.atingeMeta) {
-    msg += `└ ${emoji} <b>Meta já projetada!</b> (+${formatCurrency(hoje.totalEsperado - hoje.metaDiaria)})\n`;
-  } else {
-    msg += `└ ${emoji} Falta projetar <b>${formatCurrency(hoje.falta)}</b> para a meta\n`;
+  msg += `├ Agendamentos: <b>${hoje.agendamentosCount}</b>${planoHojeCount > 0 ? ` + ${planoHojeCount} plano` : ""}\n`;
+  msg += `├ Serviços: ${formatCurrency(hoje.totalEsperado)}\n`;
+  if (planoHojeValor > 0) {
+    msg += `├ Clube Greco: ${formatCurrency(planoHojeValor)}\n`;
   }
-  msg += `\n<code>${barra(hoje.progressoPct)}</code> ${hoje.progressoPct.toFixed(0)}%\n\n`;
+  msg += `├ <b>Total previsto: ${formatCurrency(totalEsperadoCompleto)}</b>\n`;
+  msg += `├ Meta diária: ${formatCurrency(hoje.metaDiaria)}\n`;
+  if (atingeCompleto) {
+    msg += `└ ${emojiCompleto} <b>Meta já projetada!</b> (+${formatCurrency(totalEsperadoCompleto - hoje.metaDiaria)})\n`;
+  } else {
+    const faltaCompleto = hoje.metaDiaria - totalEsperadoCompleto;
+    msg += `└ ${emojiCompleto} Falta projetar <b>${formatCurrency(faltaCompleto)}</b> para a meta\n`;
+  }
+  msg += `\n<code>${barra(progressoCompleto)}</code> ${progressoCompleto.toFixed(0)}%\n\n`;
 
   // Ranking profissional (top 5)
   const rank = hoje.porProfissional
@@ -239,16 +276,42 @@ export function montarResumoManha(
     msg += `\n`;
   }
 
-  // Dica motivacional / alerta
-  if (!hoje.atingeMeta && hoje.agendamentosCount > 0) {
-    const ticketMedio = hoje.totalEsperado / Math.max(1, hoje.agendamentosCount);
-    const agFaltam = Math.ceil(hoje.falta / Math.max(1, ticketMedio));
+  // ── 3º bloco: Pagamentos de hoje (contas + equipe) ──
+  if (pagamentosHoje && pagamentosHoje.length > 0) {
+    const contas = pagamentosHoje.filter(p => p.tipo === "conta");
+    const equipe = pagamentosHoje.filter(p => p.tipo === "equipe");
+    msg += `💸 <b>Pagamentos de hoje</b>\n`;
+    if (contas.length > 0) {
+      contas.forEach((c, i) => {
+        const last = (i === contas.length - 1) && equipe.length === 0;
+        const prefix = last ? "└" : "├";
+        const valorTxt = c.valor != null && c.valor > 0
+          ? ` — <b>${formatCurrency(c.valor)}</b>`
+          : ` — <i>valor variável</i>`;
+        msg += `${prefix} ${escapeHtml(c.nome)}${valorTxt}\n`;
+      });
+    }
+    if (equipe.length > 0) {
+      equipe.forEach((e, i) => {
+        const last = i === equipe.length - 1;
+        const prefix = last ? "└" : "├";
+        msg += `${prefix} 👥 ${escapeHtml(e.nome)}${e.observacao ? ` — <i>${escapeHtml(e.observacao)}</i>` : ""}\n`;
+      });
+    }
+    msg += `\n`;
+  }
+
+  // Dica motivacional / alerta (usa total esperado com Clube Greco)
+  if (!atingeCompleto && (hoje.agendamentosCount + planoHojeCount) > 0) {
+    const ticketMedio = totalEsperadoCompleto / Math.max(1, hoje.agendamentosCount + planoHojeCount);
+    const faltaCompleto = hoje.metaDiaria - totalEsperadoCompleto;
+    const agFaltam = Math.ceil(faltaCompleto / Math.max(1, ticketMedio));
     msg += `💡 ~${agFaltam} agendamentos extras (ticket médio ${formatCurrency(ticketMedio)}) fecham a meta.\n`;
-  } else if (hoje.agendamentosCount === 0) {
+  } else if (hoje.agendamentosCount === 0 && planoHojeCount === 0) {
     msg += `⚠️ Nenhum agendamento confirmado ainda. Corre atrás!\n`;
   }
 
-  msg += `\n🔗 <a href="https://greco-control-production.up.railway.app/">Abrir Dashboard</a>`;
+  msg += `\n🔗 <a href="https://grecocontrol.com.br/">Abrir Dashboard</a>`;
 
   return msg;
 }

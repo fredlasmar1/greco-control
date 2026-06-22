@@ -722,6 +722,19 @@ export default function Precificacao() {
     return { totalRevenue, totalCost, totalCommission, totalProfit, criticalCount, withoutCost };
   }, [analysis]);
 
+  // Parte 4: confiança da margem + lista de prejuízo.
+  // Margem só é confiável se: serviço tem ficha (itens + custo>0) E as fixas do
+  // mês estão ok (>2 lançamentos) E a ocupação não está no chute padrão (50%).
+  const fixasOk = (contexto?.qtdLancamentosFixos ?? 0) > 2;
+  const ocupacaoOk = (contexto?.operacional?.ocupacaoPct ?? 50) !== 50;
+  const baseConfiavel = fixasOk && ocupacaoOk;
+  const margemConfiavel = (item: any) => baseConfiavel && item.itemCount > 0 && item.totalCost > 0;
+  // Prejuízo / margem crítica: só serviços COM ficha (margem dos sem-ficha não vale).
+  const prejuizo = useMemo(
+    () => analysis.filter(a => a.itemCount > 0 && a.margin < 15).sort((a, b) => a.margin - b.margin),
+    [analysis]
+  );
+
   // Chart
   const chartData = analysis
     .filter(a => a.usage > 0 && a.itemCount > 0)
@@ -1004,6 +1017,38 @@ export default function Precificacao() {
         </div>
       )}
 
+      {/* Parte 4: bloco "Dando prejuízo / margem crítica" no topo */}
+      {prejuizo.length > 0 && (
+        <Card className="border-red-500/40 bg-red-500/5" data-testid="bloco-prejuizo">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2 text-red-400">
+              <AlertTriangle className="w-4 h-4" />
+              Dando prejuízo ou margem crítica ({prejuizo.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1.5">
+            <p className="text-[11px] text-muted-foreground -mt-1 mb-1">Serviços com ficha cuja margem real está negativa ou abaixo de 15% — atacar primeiro.</p>
+            {prejuizo.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setExpanded(prev => ({ ...prev, [item.id]: true }))}
+                className="w-full flex items-center justify-between gap-2 text-xs p-2 rounded border border-red-500/20 bg-card hover:bg-muted/20 text-left"
+                data-testid={`prejuizo-${item.id}`}
+              >
+                <span className="truncate flex-1">{item.name}</span>
+                <span className="flex items-center gap-3 flex-shrink-0 tabular-nums">
+                  <span className="text-muted-foreground hidden sm:inline">{formatCurrency(item.price)}</span>
+                  <span className={item.netProfit < 0 ? "text-red-500 font-semibold" : "text-red-400"}>{formatCurrency(item.netProfit)}/serv.</span>
+                  <span className={`font-bold ${item.margin < 0 ? "text-red-500" : "text-red-400"}`}>{formatPercent(item.margin)}</span>
+                  {item.precoSugerido != null && <span className="text-primary hidden md:inline">→ {formatCurrency(item.precoSugerido)}</span>}
+                </span>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Chart */}
       {chartData.length > 0 && (
         <Card className="bg-card border-card-border">
@@ -1064,6 +1109,11 @@ export default function Precificacao() {
                       <Badge variant="outline" className="text-[9px] px-1.5 border-border">
                         {item.category}
                       </Badge>
+                      {margemConfiavel(item) ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 whitespace-nowrap" data-testid={`conf-${item.id}`}>● margem confiável</span>
+                      ) : (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 whitespace-nowrap" data-testid={`conf-${item.id}`} title="Falta dado: ficha vazia, fixas incompletas ou ocupação no chute (50%)">● margem estimada</span>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 mt-0.5">
                       <span className="text-xs text-muted-foreground">{item.duration}min</span>

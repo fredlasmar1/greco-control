@@ -16,7 +16,7 @@
 
 **Parte 2 (feita):** contexto devolve `qtdLancamentosFixos` (conta extrato categoria fixo/recorrente, exclui observação, + manuais 'fixo'). `Precificacao.tsx`: mostra "você marcou N lançamentos como fixo" + alerta amber quando ≤2 ("parece faltar fixa — aluguel/energia/água/internet/contador/sistemas; margem inflada") + Link "Categorizar fixas →" pra /lancamentos. Validado jun: 1 fixo (R$60) → alerta dispara.
 **Parte 3 (feita):** `Precificacao.tsx` (frontend, usa `analysis` client-side já existente): selo de 2 níveis por serviço — `itemCount===0` → "⚠ sem ficha" (vermelho), `itemCount>0 && totalCost===0` → "⚠ ficha R$0?" (amber); banner topo "X de Y serviços sem ficha técnica — margem não confiável" (gate `summary.withoutCost>0`). Sem backend novo.
-**Parte 4 (pendente):** tela de resultado clara por serviço (custo total/margem real R$/%/sugerido) + destacar margem negativa + badge confiável vs estimada.
+**Parte 4 (feita):** `Precificacao.tsx` (frontend): bloco "Dando prejuízo ou margem crítica (N)" no topo — serviços COM ficha e margem<15%, ordenados crescente, clicáveis (abre o detalhe), mostram preço/lucro-por-serviço/margem%/sugerido. Badge de confiança por linha: "● margem confiável" (verde) quando `baseConfiavel` (fixas>2 lançamentos E ocupação≠50%) E ficha (itens+custo>0); senão "● margem estimada" (amber, com tooltip do que falta). Sem backend novo. **v50 [concluído] — 4 partes no ar.**
 
 ### v49 — Reconstrução de Lançamentos (livro editável Itaú) [concluído] (18/06/2026)
 

@@ -7520,6 +7520,105 @@ Regras CRÍTICAS:
     }
   });
 
+  // ─── GET /api/viabilidade/:mes — Motor de Viabilidade Fase A (margem real ao vivo)
+  // Junta as fontes que já fluem pro sistema (NÃO duplica): receita (mesService),
+  // variável (comissão v42 + taxa cartão + material das fichas + variável do extrato),
+  // fixo (computeTotaisDoMes). Cascata receita → margem contribuição → resultado.
+  // + Guia de fixas: transações do Itaú que parecem fixas e ainda não foram
+  // categorizadas, pra destravar o totalFixas (hoje furado).
+  app.get("/api/viabilidade/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "Mês inválido. Use YYYY-MM." });
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+
+      const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log });
+      const { entries, notas } = await construirEntradasAuto(mes);
+      const totais = await computeTotaisDoMes(mes);
+      const cfg = await getConfigFin();
+
+      const receita = Number(md?.faturamento || 0);
+      const b = md?.breakdown || {};
+      // Componentes da variável (detalhe pra cascata) — reusam construirEntradasAuto.
+      const comissao = entries.filter(e => e.subcategory === "Comissões").reduce((s, e) => s + Math.abs(Number(e.amount || 0)), 0);
+      const material = entries.filter(e => e.subcategory === "Material").reduce((s, e) => s + Math.abs(Number(e.amount || 0)), 0);
+      const taxaCartao = ((Number(b.cartaoCredito || 0) + Number(b.cartaoDebito || 0)) * Number(cfg.taxaCartaoPct || 0)) / 100;
+      // O que sobra de totalVariaveis (que já inclui comissão+material) é o extrato variável/imposto.
+      const variavelExtrato = Math.max(0, Number(totais.totalVariaveis || 0) - comissao - material);
+      const variavelTotal = comissao + material + taxaCartao + variavelExtrato;
+
+      const margemContribuicao = receita - variavelTotal;
+      const fixo = Number(totais.totalFixas || 0);
+      const resultado = margemContribuicao - fixo;
+      const margemRealPct = receita > 0 ? (resultado / receita) * 100 : 0;
+
+      // ── Guia de fixas: transações do Itaú que parecem fixas e estão sem categoria ──
+      const cats = await listExpenseCategorias();
+      const catMap = new Map(cats.map(c => [c.id, c]));
+      const contasObs = new Set(contasConsolidacao.filter(c => c.observacao).map(c => c.id));
+      const KW_FIXA = /aluguel|energia|enel|cemig|equatorial|luz|[aá]gua|saneago|internet|vivo|claro|tim|oi |contador|honor[aá]rio|cont[aá]bil|sistema|software|trinks|seguro|iptu|condom[ií]nio|sal[aá]rio|pr[oó].?labore/i;
+      const candidatasFixas: Array<{ id: string; date: string; description: string; valor: number }> = [];
+      for (const t of transacoesBanco) {
+        if (contasObs.has(t.contaId)) continue;
+        if (t.amount >= 0 || t.incluidoNoFluxo === false || t.transferenciaParId) continue;
+        if (!t.date.startsWith(mes)) continue;
+        const cat = t.categoriaId ? catMap.get(t.categoriaId) : null;
+        const semCatOuOutros = !cat || cat.tipo === "outros";
+        if (semCatOuOutros && KW_FIXA.test(t.description || "")) {
+          candidatasFixas.push({ id: t.id, date: t.date, description: t.description, valor: r2(Math.abs(t.amount)) });
+        }
+      }
+      candidatasFixas.sort((a, b2) => b2.valor - a.valor);
+
+      // Checklist do que toda barbearia costuma ter como fixa — marca o que já tem
+      // lançamento categorizado como fixo/recorrente no mês (por keyword na descrição).
+      const fixasCategorizadas = transacoesBanco.filter(t => {
+        if (contasObs.has(t.contaId) || t.amount >= 0 || t.incluidoNoFluxo === false) return false;
+        if (!t.date.startsWith(mes) || !t.categoriaId) return false;
+        const c = catMap.get(t.categoriaId);
+        return c && (c.tipo === "fixo" || c.tipo === "recorrente");
+      });
+      const temKw = (re: RegExp) => fixasCategorizadas.some(t => re.test(t.description || ""));
+      const checklist = [
+        { item: "Aluguel", ok: temKw(/aluguel|condom[ií]nio|iptu/i) },
+        { item: "Energia", ok: temKw(/energia|enel|cemig|equatorial|luz/i) },
+        { item: "Água", ok: temKw(/[aá]gua|saneago/i) },
+        { item: "Internet/Telefone", ok: temKw(/internet|vivo|claro|tim|oi /i) },
+        { item: "Contador", ok: temKw(/contador|honor[aá]rio|cont[aá]bil/i) },
+        { item: "Sistemas/Software", ok: temKw(/sistema|software|trinks/i) },
+        { item: "Salários/Pró-labore", ok: temKw(/sal[aá]rio|pr[oó].?labore|folha/i) },
+      ];
+      // Implausível: fixas < 5% da receita (heurística do prompt).
+      const fixasImplausivel = receita > 0 && fixo < receita * 0.05;
+
+      return res.json({
+        ok: true, mes,
+        receita: r2(receita),
+        fonteReceita: md?.fonte || null,
+        variavel: {
+          total: r2(variavelTotal),
+          comissao: r2(comissao),
+          taxaCartao: r2(taxaCartao),
+          material: r2(material),
+          outrosExtrato: r2(variavelExtrato),
+        },
+        margemContribuicao: r2(margemContribuicao),
+        fixo: r2(fixo),
+        resultado: r2(resultado),
+        margemRealPct: r2(margemRealPct),
+        guiaFixas: {
+          implausivel: fixasImplausivel,
+          totalFixasAtual: r2(fixo),
+          candidatas: candidatasFixas.slice(0, 30),
+          checklist,
+        },
+        avisos: notas,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   // ─── POST /api/precificacao/calcular — v24
   // Recebe lista de servicos e retorna calculo expandido para cada um.
   // Body: { mes: "YYYY-MM", servicos: [{ id, nome, categoria, preco, duracao }, ...] }

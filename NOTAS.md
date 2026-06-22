@@ -8,7 +8,15 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
-### v50 — Precificação confiável: tapar os 3 furos da margem (18/06/2026) — EM ANDAMENTO
+### v51 — Motor de Viabilidade Fase A (margem real ao vivo + guia de fixas) (22/06/2026) [concluído]
+
+**Queixa do dono:** abas não conversam (receita no Dashboard, variável no Lançamentos, fixo no Financeiro, margem na Precificação). Quer o sistema CALCULAR a viabilidade do que já flui, ao vivo — não foto digitada.
+
+**A1 (feito):** **`GET /api/viabilidade/:mes`** — cascata receita → (−)variável → margem contribuição → (−)fixo → resultado + margem real %. Reusa (NÃO duplica): receita=`getMesDataCanonical`; variável=`construirEntradasAuto` (comissão ranking v42 + material fichas) + taxa cartão (`cfg.taxaCartaoPct`×breakdown cartão) + extrato variável (`computeTotaisDoMes.totalVariaveis`−comissão−material); fixo=`computeTotaisDoMes.totalFixas`. **Guia de fixas:** detecta totalFixas<5% receita (implausível) → lista transações do Itaú com keyword fixa (aluguel/energia/água/internet/contador/sistema/seguro…) sem categoria/“outros” pra classificar inline (`PUT /api/expenses/bank/:id/categoria` → recalcula ao vivo) + checklist (Aluguel/Energia/Água/Internet/Contador/Sistemas/Salários, marca o que já tem fixo categorizado). Aba nova **`/viabilidade`** (`Viabilidade.tsx`, menu icon Calculator). **Validado jun:** receita 40.975,55 − variável 21.100 (comissão 16.372 + taxa 880 + material 0 + extrato 3.848) = margem contrib 19.875 − fixo 60 = resultado 19.815/48,4% (otimista pq fixo=R$60, é o que o guia ataca). Material 0 (fichas vazias). Receita sem pacote separado até dono reimportar Caixa completo.
+
+**A2 (pendente):** 5 linhas de margem por categoria — **Express / Clássico / Estética / VIP / Produtos**. Decisões do dono: Express/Clássico/VIP via ranking (profissional); **Estética via relatório Trinks POR SERVIÇO** (dono vai subir — precisa parser novo do formato); Produtos do Caixa; Pacote DENTRO de serviço (não é linha). Bloqueado até o dono subir o relatório por serviço (e reimportar Caixa completo p/ receita real ~R$63 mil c/ pacotes). Eixos: VIP/Express/Clássico são por profissional em `comissaoCategoria.ts`; "Estética" NÃO existe lá (só keyword de margem) → vem do relatório por serviço.
+
+### v50 — Precificação confiável: tapar os 3 furos da margem (18/06/2026) [concluído]
 
 **Diagnóstico:** margem por serviço distorcida por 3 dados frágeis (motor de cálculo está certo): (1) ocupação chute 50% → contamina custoFixoPorMinuto; (2) totalFixas depende de categorização manual (incompleta → margem inflada); (3) ficha técnica vazia → custo material 0 → margem inflada. Objetivo: alimentar com dado real + DENUNCIAR quando incompleto, nunca margem confiante sobre base furada.
 

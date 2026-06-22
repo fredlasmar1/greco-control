@@ -38,6 +38,7 @@ const navItems = [
   { path: "/equipe", label: "Equipe", icon: Users },
   { path: "/vendas-produtos", label: "Vendas Produtos", icon: TrendingUp },
   { path: "/precificacao", label: "Serviços & Precificação", icon: Scissors },
+  { path: "/viabilidade", label: "Viabilidade", icon: Calculator },
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
   { path: "/estoque", label: "Estoque", icon: Package },
   { path: "/pagamento", label: "Pagamento", icon: Wallet },

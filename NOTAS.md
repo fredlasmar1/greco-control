@@ -8,6 +8,16 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v56 — Calculadora de Preço guiada + custo completo (taxa cartão + imposto) (23/06/2026) [concluído]
+
+**Pedido do dono:** sistema que ajude a chegar no preço base com TODOS os custos (fixos, variáveis, barbeiro, assistente, produtos do serviço) + margem. **Diagnóstico:** o motor (v50 `calcularMargemServico`) já fazia ficha+custo-fixo+comissão→preço, mas faltavam 2 variáveis: **taxa de cartão** e **imposto**.
+
+**Backend:** `ConfigFinanceira.impostoPct` (novo, dono edita; clamp 0..100). `calcularMargemServico` ganhou `taxaCartaoPct`+`impostoPct`: custo = produtos+fixo+comissão(barbeiro+assistente)+**taxaCartaoValor**+**impostoValor**; `precoSugerido = (ficha+custoFixo) / (1 − comissão% − taxa% − imposto% − margem%)`. PUT `/api/config/financeira` aceita impostoPct; `/api/precificacao/calcular` e `/contexto` passam/expõem taxaCartaoPct+impostoPct.
+
+**Frontend (`Precificacao.tsx`):** `analysis` client-side replica a fórmula com taxa+imposto. Nova aba **"Calculadora de Preço"** (agora a 1ª/default): campo imposto% editável (PUT config), seletor de serviço → decomposição passo a passo (produtos·fixo·comissão barbeiro·assistente·taxa·imposto = custo total) + **slider de margem** → preço base; compara com preço atual; avisa ficha vazia.
+
+**Validado:** Corte+Barba R$90 → taxa 3,15 + imposto 5,40 no custo (total 45,06), fórmula correta. Build verde. **Preço sugerido só fica realista após categorizar as fixas** (hoje totalFixas=R$60 → custo fixo ~0).
+
 ### v55 — Blindagem anti-vazamento: fechamento-mes + Conselheiro csv-first (23/06/2026) [concluído]
 
 **Varredura completa do consumo Trinks (pedido do dono: o que precisa ao vivo vs CSV).** Resultado:

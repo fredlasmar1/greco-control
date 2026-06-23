@@ -7797,6 +7797,8 @@ Regras CRÍTICAS:
         ocupacaoRealEstimada,
         baseOcupacao,
         qtdLancamentosFixos,
+        taxaCartaoPct: cfg.taxaCartaoPct,  // v56
+        impostoPct: cfg.impostoPct,        // v56
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
@@ -7953,6 +7955,8 @@ Regras CRÍTICAS:
           comissaoPct,
           comissaoAssistentePct,
           margemDesejadaPct,
+          taxaCartaoPct: cfg.taxaCartaoPct,  // v56
+          impostoPct: cfg.impostoPct,        // v56
         });
 
         return {
@@ -7982,6 +7986,8 @@ Regras CRÍTICAS:
             diasMes: cfg.diasMes,
             ocupacaoPct: cfg.ocupacaoPct,
           },
+          taxaCartaoPct: cfg.taxaCartaoPct,  // v56
+          impostoPct: cfg.impostoPct,        // v56
         },
         servicos: result,
       });
@@ -9639,6 +9645,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       if (body.horasDia !== undefined) patch.horasDia = Number(body.horasDia);
       if (body.diasMes !== undefined) patch.diasMes = Number(body.diasMes);
       if (body.ocupacaoPct !== undefined) patch.ocupacaoPct = Number(body.ocupacaoPct);
+      if (body.impostoPct !== undefined) patch.impostoPct = Number(body.impostoPct);
       const cfg = await setConfigFin(patch);
       // Invalida cache de equipe (por período + completo) pra refletir nova taxa imediatamente
       try {

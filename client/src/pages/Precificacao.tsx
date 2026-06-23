@@ -87,6 +87,8 @@ interface PrecificacaoContexto {
   ocupacaoRealEstimada?: number;
   baseOcupacao?: string;
   qtdLancamentosFixos?: number;
+  taxaCartaoPct?: number;
+  impostoPct?: number;
 }
 
 // v24: Helpers de detecção (espelham backend)
@@ -665,7 +667,9 @@ export default function Precificacao() {
         ? sc.margemDesejadaPct
         : margemDesejadaPadrao(s.category, s.name);
 
-      // Fórmulas v24
+      // Fórmulas v24 + v56 (taxa de cartão + imposto entram no custo)
+      const taxaCartaoPct = contexto?.taxaCartaoPct || 0;
+      const impostoPct = contexto?.impostoPct || 0;
       const custoFixoRateado = s.duration * cfm;
       // v24 Etapa 5: em modo simulação, comissão = (preço − ficha) × % (trava custo antes da comissão)
       // No modo padrão, comissão = preço × % (sobre o preço cheio)
@@ -673,15 +677,17 @@ export default function Precificacao() {
       const commissionBarbeiro = baseComissao * (comissaoPct / 100);
       const commissionAssistente = baseComissao * (comissaoAssistentePct / 100);
       const commissionValue = commissionBarbeiro + commissionAssistente;
-      const custoTotal = totalCost + custoFixoRateado + commissionValue;
+      const taxaCartaoValor = s.price * (taxaCartaoPct / 100);
+      const impostoValor = s.price * (impostoPct / 100);
+      const custoTotal = totalCost + custoFixoRateado + commissionValue + taxaCartaoValor + impostoValor;
       const netProfit = s.price - custoTotal;
       const margin = s.price > 0 ? (netProfit / s.price) * 100 : 0;
 
-      // Preço sugerido baseado em margem desejada
-      const denom = 1 - (comissaoTotalPct / 100) - (margemDesejadaPct / 100);
+      // Preço sugerido: cobre comissão + taxa + imposto + margem
+      const denom = 1 - (comissaoTotalPct / 100) - (taxaCartaoPct / 100) - (impostoPct / 100) - (margemDesejadaPct / 100);
       const precoSugerido = denom > 0 ? (totalCost + custoFixoRateado) / denom : null;
       const precoSugeridoErro = denom <= 0
-        ? `Comissão total (${comissaoTotalPct}%) + margem (${margemDesejadaPct}%) ≥ 100%`
+        ? `Comissão (${comissaoTotalPct}%) + taxa (${taxaCartaoPct}%) + imposto (${impostoPct}%) + margem (${margemDesejadaPct}%) ≥ 100%`
         : null;
 
       return {
@@ -695,6 +701,8 @@ export default function Precificacao() {
         commissionValue,
         commissionBarbeiro,
         commissionAssistente,
+        taxaCartaoValor,
+        impostoValor,
         custoTotal,
         netProfit,
         margin,
@@ -821,12 +829,17 @@ export default function Precificacao() {
         </div>
       </div>
 
-      <Tabs defaultValue="ficha-servicos" className="w-full">
+      <Tabs defaultValue="calculadora" className="w-full">
         <TabsList className="mb-4">
+          <TabsTrigger value="calculadora" data-testid="tab-calculadora">Calculadora de Preço</TabsTrigger>
           <TabsTrigger value="catalogo" data-testid="tab-catalogo">Catálogo</TabsTrigger>
           <TabsTrigger value="ficha-servicos" data-testid="tab-ficha-servicos">Ficha de Serviços</TabsTrigger>
           <TabsTrigger value="custos-produtos" data-testid="tab-custos-produtos">Custos de Produtos</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="calculadora" className="mt-0">
+          <CalculadoraPreco analysis={analysis} contexto={contexto} onImpostoSalvo={() => qClient.invalidateQueries({ queryKey: ["/api/precificacao/contexto"] })} apiBase={(globalThis as any).__API_BASE__ || ""} />
+        </TabsContent>
 
         <TabsContent value="catalogo" className="mt-0">
           <Servicos embedded />
@@ -1304,6 +1317,122 @@ export default function Precificacao() {
       </div>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// ─── v56: Calculadora de Preço guiada ────────────────────────────────────────
+// Decomposição passo a passo de UM serviço até o preço base: produtos + custo
+// fixo + comissão (barbeiro/assistente) + taxa cartão + imposto = custo total;
+// + margem (slider) = preço base que cobre tudo. Reusa o `analysis` (já com taxa
+// e imposto na fórmula) — não duplica cálculo.
+function CalculadoraPreco({ analysis, contexto, onImpostoSalvo, apiBase }: {
+  analysis: any[];
+  contexto: any;
+  onImpostoSalvo: () => void;
+  apiBase: string;
+}) {
+  const [servId, setServId] = useState<string>("");
+  const [margem, setMargem] = useState<number | null>(null);
+  const [impostoStr, setImpostoStr] = useState<string>("");
+  const [salvandoImp, setSalvandoImp] = useState(false);
+
+  const serv = analysis.find(s => s.id === servId) || null;
+  const taxaPct = contexto?.taxaCartaoPct || 0;
+  const impostoPct = contexto?.impostoPct || 0;
+  useEffect(() => { setImpostoStr(String(impostoPct)); }, [impostoPct]);
+  // margem efetiva: a do slider (se mexeu) ou a desejada do serviço
+  const margemEf = margem ?? (serv?.margemDesejadaPct ?? 30);
+
+  // recalcula o preço base com a margem do slider (mesma fórmula do server)
+  const precoBase = (() => {
+    if (!serv) return null;
+    const denom = 1 - (serv.comissaoTotalPct / 100) - (taxaPct / 100) - (impostoPct / 100) - (margemEf / 100);
+    if (denom <= 0) return null;
+    return (serv.totalCost + serv.custoFixoRateado) / denom;
+  })();
+
+  const salvarImposto = async () => {
+    setSalvandoImp(true);
+    try {
+      await fetch(`${apiBase}/api/config/financeira`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ impostoPct: Number(impostoStr.replace(",", ".")) || 0 }),
+      });
+      onImpostoSalvo();
+    } finally { setSalvandoImp(false); }
+  };
+
+  const linha = (lbl: string, val: number, sub?: string) => (
+    <div className="flex items-center justify-between py-1.5 border-b border-border/30 text-sm">
+      <span className="text-muted-foreground">{lbl}{sub && <span className="text-[10px] ml-1">{sub}</span>}</span>
+      <span className="tabular-nums">{formatCurrency(val)}</span>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4 max-w-[640px]">
+      {/* imposto editável */}
+      <Card className="bg-card border-card-border"><CardContent className="p-3 flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground">Imposto sobre faturamento (Simples):</span>
+        <Input type="number" min={0} max={100} value={impostoStr} onChange={e => setImpostoStr(e.target.value)} className="h-7 w-20 text-sm" data-testid="input-imposto" />
+        <span className="text-xs text-muted-foreground">%</span>
+        <Button size="sm" className="h-7 text-xs" disabled={salvandoImp} onClick={salvarImposto} data-testid="btn-salvar-imposto"><Save className="w-3 h-3 mr-1" />Salvar</Button>
+        <span className="text-[11px] text-muted-foreground ml-auto">Taxa de cartão: {taxaPct}% (em Configurações)</span>
+      </CardContent></Card>
+
+      {/* seletor de serviço */}
+      <Select value={servId} onValueChange={(v) => { setServId(v); setMargem(null); }}>
+        <SelectTrigger className="h-9" data-testid="calc-select-servico"><SelectValue placeholder="Escolha um serviço para calcular o preço…" /></SelectTrigger>
+        <SelectContent>
+          {analysis.map(s => <SelectItem key={s.id} value={s.id}>{s.name} · {s.duration}min · {formatCurrency(s.price)}</SelectItem>)}
+        </SelectContent>
+      </Select>
+
+      {serv && (
+        <Card className="bg-card border-card-border">
+          <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Calculator className="w-4 h-4 text-primary" /> {serv.name} <span className="text-[11px] text-muted-foreground font-normal">({serv.duration} min)</span></CardTitle></CardHeader>
+          <CardContent>
+            {/* decomposição do custo */}
+            {linha("Produtos usados (ficha)", serv.totalCost, serv.itemCount === 0 ? "⚠ sem ficha" : `${serv.itemCount} itens`)}
+            {linha("Custo fixo (estrutura rateada)", serv.custoFixoRateado, `${serv.duration}min × custo/min`)}
+            {linha(`Comissão barbeiro (${serv.comissaoPct}%)`, serv.commissionBarbeiro)}
+            {serv.comissaoAssistentePct > 0 && linha(`Comissão assistente (${serv.comissaoAssistentePct}%)`, serv.commissionAssistente)}
+            {linha(`Taxa de cartão (${taxaPct}%)`, serv.taxaCartaoValor)}
+            {linha(`Imposto (${impostoPct}%)`, serv.impostoValor)}
+            <div className="flex items-center justify-between py-2 mt-1 border-t border-border font-semibold">
+              <span>Custo total</span>
+              <span className="tabular-nums text-red-400" data-testid="calc-custo-total">{formatCurrency(serv.custoTotal)}</span>
+            </div>
+
+            {/* slider de margem */}
+            <div className="mt-3 pt-3 border-t border-border/50">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm">Sua margem de lucro</span>
+                <span className="text-sm font-bold text-primary" data-testid="calc-margem-valor">{margemEf.toFixed(0)}%</span>
+              </div>
+              <input type="range" min={0} max={80} step={1} value={margemEf} onChange={e => setMargem(Number(e.target.value))} className="w-full accent-primary" data-testid="calc-slider-margem" />
+            </div>
+
+            {/* preço base */}
+            <div className="mt-3 rounded-lg bg-primary/10 border border-primary/30 p-3 flex items-center justify-between">
+              <div>
+                <div className="text-[11px] text-muted-foreground uppercase tracking-wide">Preço base sugerido</div>
+                <div className="text-[10px] text-muted-foreground">cobre todos os custos + sua margem de {margemEf.toFixed(0)}%</div>
+              </div>
+              <div className="text-2xl font-bold text-primary tabular-nums" data-testid="calc-preco-base">{precoBase != null ? formatCurrency(precoBase) : "—"}</div>
+            </div>
+            {precoBase != null && (
+              <div className="text-[11px] text-muted-foreground mt-2">
+                Preço atual: <strong>{formatCurrency(serv.price)}</strong>
+                {serv.price > 0 && precoBase > serv.price && <span className="text-amber-400"> · abaixo do sugerido (R$ {formatCurrency(precoBase - serv.price)} a menos)</span>}
+                {serv.price > 0 && precoBase <= serv.price && <span className="text-emerald-400"> · acima do mínimo ✓</span>}
+              </div>
+            )}
+            {serv.itemCount === 0 && <div className="text-[11px] text-amber-400 mt-1">⚠ Sem ficha técnica — preencha os produtos do serviço (aba Ficha de Serviços) pro custo de material entrar.</div>}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

@@ -16,6 +16,10 @@ export interface ConfigFinanceira {
   diasMes: number;        // dias úteis no mês (ter-sáb ~22). Default 22.
   ocupacaoPct: number;    // % média de ocupação esperada. 0..100. Default 50.
 
+  // v56: imposto sobre faturamento (Simples Nacional) — % do preço, entra no
+  // custo do serviço junto com taxa de cartão. 0..100. Default 0 (dono informa).
+  impostoPct: number;
+
   atualizadoEm: string;
 }
 
@@ -27,6 +31,7 @@ const DEFAULT: ConfigFinanceira = {
   horasDia: 12,
   diasMes: 22,
   ocupacaoPct: 50,
+  impostoPct: 0,
   atualizadoEm: new Date(0).toISOString(),
 };
 
@@ -51,6 +56,7 @@ export async function getConfig(): Promise<ConfigFinanceira> {
       horasDia: clampPos(data.horasDia ?? DEFAULT.horasDia, DEFAULT.horasDia),
       diasMes: clampPos(data.diasMes ?? DEFAULT.diasMes, DEFAULT.diasMes),
       ocupacaoPct: clampPct(data.ocupacaoPct ?? DEFAULT.ocupacaoPct, DEFAULT.ocupacaoPct),
+      impostoPct: clampPct(data.impostoPct ?? 0, 0),
       atualizadoEm: data.atualizadoEm || DEFAULT.atualizadoEm,
     };
   } catch (err: any) {
@@ -77,6 +83,9 @@ export async function setConfig(input: Partial<ConfigFinanceira>): Promise<Confi
     ocupacaoPct: input.ocupacaoPct !== undefined
       ? clampPct(input.ocupacaoPct, atual.ocupacaoPct)
       : atual.ocupacaoPct,
+    impostoPct: input.impostoPct !== undefined
+      ? clampPct(input.impostoPct, atual.impostoPct)
+      : atual.impostoPct,
     atualizadoEm: new Date().toISOString(),
   };
   await kvSet(KV_KEY, novo);

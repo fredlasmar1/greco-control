@@ -6816,19 +6816,53 @@ Regras CRÍTICAS:
       while (d1.getUTCDay() === 0 || d1.getUTCDay() === 6) d1.setUTCDate(d1.getUTCDate() + 1);
       const dataMais1 = d1.toISOString().slice(0, 10);
 
-      // ── Vendido no dia (CSV Financeiro, por forma) ──
+      // ── Vendido no dia (por forma) — API Trinks ao vivo PRIMEIRO, CSV de reserva ──
       const vend = { credito: 0, debito: 0, pix: 0, dinheiro: 0, plano: 0, outros: 0 };
-      const finPayload: any = await kvGet(trinksImport.kvKeyFor("financeiro", mes));
-      const finRows: any[] = Array.isArray(finPayload?.rows) ? finPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
-      for (const r of finRows) {
-        const f = `${r.tipoFormaPagamento || ""} ${r.formaPagamento || ""}`.toLowerCase();
-        const v = Number(r.valorPago || r.valorReceber || 0);
+      const classificaForma = (nome: string, v: number) => {
+        const f = (nome || "").toLowerCase();
         if (f.includes("pix")) vend.pix += v;
         else if (f.includes("créd") || f.includes("cred")) vend.credito += v;
         else if (f.includes("déb") || f.includes("deb")) vend.debito += v;
         else if (f.includes("dinhe") || f.includes("vista") || f.includes("espéc") || f.includes("espec")) vend.dinheiro += v;
         else if (f.includes("depós") || f.includes("depos") || f.includes("pré") || f.includes("pre-") || f.includes("plano") || f.includes("assinatura") || f.includes("saldo")) vend.plano += v;
         else vend.outros += v;
+      };
+      let fonteVenda: "trinks" | "csv" | null = null;
+      let trinks429 = false;
+      let qtdVendas = 0;
+
+      // 1) tenta API Trinks ao vivo (timeout 6s; se 429/vazia, cai no CSV).
+      try {
+        const dFimApi = new Date(data + "T12:00:00Z"); dFimApi.setUTCDate(dFimApi.getUTCDate() + 1);
+        const transApi: any = await Promise.race([
+          trinksFetchAll("transacoes", { dataInicio: data, dataFim: dFimApi.toISOString().slice(0, 10) }),
+          new Promise((resolve) => setTimeout(() => resolve("__timeout__"), 6000)),
+        ]);
+        if (transApi === "__timeout__") { trinks429 = true; }
+        else {
+          const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
+          for (const t of arr) {
+            const raw = t.dataHora || t.dataReferencia || t.data || "";
+            const d = typeof raw === "string" ? raw.split("T")[0] : "";
+            if (d !== data) continue;
+            qtdVendas++;
+            for (const fp of (t.formasPagamentos || t.formasPagamento || [])) classificaForma(String(fp.nome || ""), Number(fp.valor || 0));
+          }
+          if (qtdVendas > 0) fonteVenda = "trinks";
+        }
+      } catch (e: any) {
+        if (e?.status === 429 || /limit|429/i.test(e?.message || "")) trinks429 = true;
+      }
+
+      // 2) fallback CSV Financeiro (se API não trouxe nada).
+      const finPayload: any = await kvGet(trinksImport.kvKeyFor("financeiro", mes));
+      const finRows: any[] = Array.isArray(finPayload?.rows) ? finPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
+      if (fonteVenda !== "trinks" && finRows.length > 0) {
+        for (const r of finRows) {
+          classificaForma(`${r.tipoFormaPagamento || ""} ${r.formaPagamento || ""}`, Number(r.valorPago || r.valorReceber || 0));
+        }
+        fonteVenda = "csv";
+        qtdVendas = finRows.length;
       }
 
       // ── Vendido por tipo (CSV Caixa, informativo) ──
@@ -6866,13 +6900,13 @@ Regras CRÍTICAS:
         linhaConf("PIX", vend.pix, 0, caiuPix),
       ];
       const todasBatem = linhas.every(l => l.bate);
-      const temVenda = finRows.length > 0;
+      const temVenda = fonteVenda !== null;
 
       const fechamento = await kvGet<any>(`caixa_conferencia:${data}`);
 
       return res.json({
         ok: true, data, dataMais1,
-        temVenda, fonteVenda: temVenda ? "csv-financeiro" : null,
+        temVenda, fonteVenda, trinks429, qtdVendas,
         vendido: { credito: r2(vend.credito), debito: r2(vend.debito), pix: r2(vend.pix), dinheiro: r2(vend.dinheiro), plano: r2(vend.plano), outros: r2(vend.outros) },
         porTipo: { servico: r2(tipo.servico), produto: r2(tipo.produto), pacote: r2(tipo.pacote) },
         linhas, todasBatem, taxaPct, tolerancia: TOL,

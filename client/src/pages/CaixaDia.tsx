@@ -13,6 +13,7 @@ const API_BASE = (globalThis as any).__API_BASE__ || "";
 interface Linha { forma: string; vendido: number; taxaPct: number; esperadoLiquido: number; caiu: number; diferenca: number; bate: boolean; }
 interface Resp {
   ok: boolean; data: string; dataMais1: string; temVenda: boolean;
+  fonteVenda: "trinks" | "csv" | null; trinks429: boolean; qtdVendas: number;
   vendido: { credito: number; debito: number; pix: number; dinheiro: number; plano: number; outros: number };
   porTipo: { servico: number; produto: number; pacote: number };
   linhas: Linha[]; todasBatem: boolean; taxaPct: number; tolerancia: number;
@@ -89,6 +90,18 @@ export default function CaixaDia() {
 
       {resp && resp.temVenda && (
         <>
+          {/* badge de fonte / aviso 429 */}
+          <div className="flex items-center gap-2 text-[11px]" data-testid="caixa-fonte">
+            {resp.fonteVenda === "trinks" ? (
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">● Trinks ao vivo</span>
+            ) : (
+              <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">● CSV importado</span>
+            )}
+            {resp.trinks429 && resp.fonteVenda === "csv" && (
+              <span className="text-amber-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Trinks indisponível (429) agora — usando o CSV importado.</span>
+            )}
+          </div>
+
           {/* Vendido no dia — por forma */}
           <Card className="bg-card border-card-border">
             <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="w-4 h-4 text-emerald-400" /> Vendido no dia</CardTitle></CardHeader>

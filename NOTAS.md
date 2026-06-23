@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v53.1 — Caixa do Dia híbrido (API Trinks ao vivo → CSV reserva) + aviso 429 (22/06/2026) [concluído]
+
+**Pedido do dono:** caixa do dia deveria usar a API Trinks ao vivo; e o medidor "não avisou" que os tokens acabaram. **Diagnóstico:** o 429 NÃO é a nossa cota (58/4500 OK) — é o limite da CONTA Trinks (externo, compartilhado, << 4500). O contador conta certo; o "4500" é enganoso. O aviso de 429 JÁ EXISTE na aba Auditoria Trinks (card "Rate Limit (429)" via `trinksAuditLog`), só estava escondido. Conserto = surfaçar o status onde o dado é usado.
+
+**Feito:** `GET /api/caixa-dia/conferencia/:data` agora tenta **API Trinks ao vivo primeiro** (transacoes, timeout 6s) e cai no **CSV Financeiro** se 429/vazio. Retorna `fonteVenda`('trinks'|'csv'), `trinks429`, `qtdVendas`. `CaixaDia.tsx`: badge "● Trinks ao vivo" (verde) / "● CSV importado" (âmbar) + aviso "⚠ Trinks indisponível (429) — usando CSV" quando fallback. Validado: Trinks em 429 → caiu no CSV, marcou aviso, crédito 11/06 segue 1.449.
+
 ### v53 — Caixa do Dia → Conferência D+1 (cartão/PIX vendido vs caiu no Itaú) (22/06/2026) [concluído]
 
 **Pedido do dono:** conferir vendas do dia X vs o que caiu no banco em X+1, por forma (créd/déb/pix), com botão "caixa bate / não bate" + justificativa. Substituiu o caixa físico (dinheiro) antigo.

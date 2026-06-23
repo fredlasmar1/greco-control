@@ -8,6 +8,22 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v53 — Caixa do Dia → Conferência D+1 (cartão/PIX vendido vs caiu no Itaú) (22/06/2026) [concluído]
+
+**Pedido do dono:** conferir vendas do dia X vs o que caiu no banco em X+1, por forma (créd/déb/pix), com botão "caixa bate / não bate" + justificativa. Substituiu o caixa físico (dinheiro) antigo.
+
+**Regras do dono:** (1) esperado DESCONTA taxa da maquininha (cfg.taxaCartaoPct 3,5%; PIX sem taxa); (2) Crédito/Débito caem **D+1 ÚTIL** (pula sáb/dom), PIX no mesmo dia; (3) só Cartão+PIX (Dinheiro/Planos fora — não têm D+1).
+
+**Backend (`routes.ts`):**
+- `GET /api/caixa-dia/conferencia/:data` — vendido por forma (CSV Financeiro `tipoFormaPagamento`) + por tipo (CSV Caixa serviço/produto/pacote); esperado líquido=venda×(1−taxa); caiu no Itaú: REDE …AT=crédito / …DB=débito no dia útil seguinte, PIX (RECEB/QR) no mesmo dia; status bate se |dif|≤R$50; exclui contas observação.
+- `POST /api/caixa-dia/conferencia/:data` — salva `{status:'bate'|'nao_bate', justificativa}` em kv `caixa_conferencia:DATA`.
+- D+1 útil: pula fds (getUTCDay 0/6). **Limite conhecido: fim de semana acumula** (sex+sáb liquidam juntas na segunda → "não bate", sinalizado na UI pra justificar).
+- Endpoints antigos de caixa físico (`/api/caixa-dia/:data`, `/fechar`) ficaram órfãos (não removidos — alteração mínima).
+
+**Frontend (`CaixaDia.tsx` reescrito):** seletor de dia, vendido por forma+tipo, tabela conferência (forma·vendido·esperado líq·caiu·dif·🟢/🔴) c/ aviso de fds, veredito + botões "Caixa bate"/"não bate" + justificativa.
+
+**Validado (dados reais):** 11/06 (qui→sex) Crédito vend 1.449→esperado 1.398→caiu 1.399 dif **R$1,18 🟢**, Débito dif R$25 🟢, PIX +100 🔴. Mecânica D+1 correta. **Dia 18 (caso do dono) é qui→sex, funciona limpo — mas CSV Financeiro em prod só vai até 13/06, dono reimporta.** Build verde.
+
 ### v52 — Lançamentos: sub-abas Entradas / Saídas (Fixa/Variável → totalFixas) (22/06/2026) [concluído]
 
 **Objetivo:** separar Entradas de Saídas, e Saídas em Fixas/Variáveis — o que alimenta o `totalFixas` da Viabilidade (hoje R$60 furado). Decisões do dono: override manual vence a categoria; herda da categoria automaticamente.

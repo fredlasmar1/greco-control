@@ -6797,6 +6797,111 @@ Regras CRÍTICAS:
     }
   });
 
+  // ─── v53: Caixa do Dia — Conferência D+1 (cartão/PIX vendido vs caiu no Itaú)
+  // Vende dia X → cartão cai dia X+1 (REDE AT=crédito, DB=débito), PIX cai dia X.
+  // Esperado líquido = venda − taxa (maquininha). "bate" se |dif| ≤ tolerância.
+  app.get("/api/caixa-dia/conferencia/:data", async (req: Request, res: Response) => {
+    try {
+      const data = String(req.params.data);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ ok: false, error: "data inválida (YYYY-MM-DD)" });
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const mes = data.slice(0, 7);
+      const cfg = await getConfigFin();
+      const taxaPct = Number(cfg.taxaCartaoPct || 0);
+      const TOL = 50; // tolerância R$
+
+      // dia seguinte ÚTIL (D+1) pra liquidação de cartão — pula sáb/dom
+      // (venda de sexta liquida na segunda). getUTCDay: 0=dom, 6=sáb.
+      const d1 = new Date(data + "T12:00:00Z"); d1.setUTCDate(d1.getUTCDate() + 1);
+      while (d1.getUTCDay() === 0 || d1.getUTCDay() === 6) d1.setUTCDate(d1.getUTCDate() + 1);
+      const dataMais1 = d1.toISOString().slice(0, 10);
+
+      // ── Vendido no dia (CSV Financeiro, por forma) ──
+      const vend = { credito: 0, debito: 0, pix: 0, dinheiro: 0, plano: 0, outros: 0 };
+      const finPayload: any = await kvGet(trinksImport.kvKeyFor("financeiro", mes));
+      const finRows: any[] = Array.isArray(finPayload?.rows) ? finPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
+      for (const r of finRows) {
+        const f = `${r.tipoFormaPagamento || ""} ${r.formaPagamento || ""}`.toLowerCase();
+        const v = Number(r.valorPago || r.valorReceber || 0);
+        if (f.includes("pix")) vend.pix += v;
+        else if (f.includes("créd") || f.includes("cred")) vend.credito += v;
+        else if (f.includes("déb") || f.includes("deb")) vend.debito += v;
+        else if (f.includes("dinhe") || f.includes("vista") || f.includes("espéc") || f.includes("espec")) vend.dinheiro += v;
+        else if (f.includes("depós") || f.includes("depos") || f.includes("pré") || f.includes("pre-") || f.includes("plano") || f.includes("assinatura") || f.includes("saldo")) vend.plano += v;
+        else vend.outros += v;
+      }
+
+      // ── Vendido por tipo (CSV Caixa, informativo) ──
+      const tipo = { servico: 0, produto: 0, pacote: 0 };
+      const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+      const caixaRows: any[] = Array.isArray(caixaPayload?.rows) ? caixaPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
+      for (const r of caixaRows) {
+        tipo.servico += Number(r.totalServico || 0);
+        tipo.produto += Number(r.totalProdutos || 0);
+        tipo.pacote += Number(r.totalPacotes || 0);
+      }
+
+      // ── Caiu no Itaú ──
+      const contasObs = new Set(contasConsolidacao.filter(c => c.observacao).map(c => c.id));
+      let caiuCredito = 0, caiuDebito = 0, caiuPix = 0;
+      for (const t of transacoesBanco) {
+        if (contasObs.has(t.contaId) || Number(t.amount) <= 0 || t.incluidoNoFluxo === false) continue;
+        const up = (t.description || "").toUpperCase();
+        if (t.date === dataMais1 && up.includes("REDE")) {
+          if (/\bAT\d|AT0|VISA AT|MAST AT|ELO AT|AMEX AT/.test(up) || up.includes(" AT")) caiuCredito += t.amount;
+          else if (/\bDB\d|DB0|VISA DB|MAST DB|ELO DB| DB/.test(up)) caiuDebito += t.amount;
+        }
+        if (t.date === data && up.includes("PIX") && (up.includes("RECEB") || up.includes("QR"))) caiuPix += t.amount;
+      }
+
+      // ── Esperado líquido (desconta taxa do cartão) ──
+      const linhaConf = (forma: string, vendido: number, taxa: number, caiu: number) => {
+        const esperadoLiq = r2(vendido * (1 - taxa / 100));
+        const dif = r2(caiu - esperadoLiq);
+        return { forma, vendido: r2(vendido), taxaPct: taxa, esperadoLiquido: esperadoLiq, caiu: r2(caiu), diferenca: dif, bate: Math.abs(dif) <= TOL };
+      };
+      const linhas = [
+        linhaConf("Crédito", vend.credito, taxaPct, caiuCredito),
+        linhaConf("Débito", vend.debito, taxaPct, caiuDebito),
+        linhaConf("PIX", vend.pix, 0, caiuPix),
+      ];
+      const todasBatem = linhas.every(l => l.bate);
+      const temVenda = finRows.length > 0;
+
+      const fechamento = await kvGet<any>(`caixa_conferencia:${data}`);
+
+      return res.json({
+        ok: true, data, dataMais1,
+        temVenda, fonteVenda: temVenda ? "csv-financeiro" : null,
+        vendido: { credito: r2(vend.credito), debito: r2(vend.debito), pix: r2(vend.pix), dinheiro: r2(vend.dinheiro), plano: r2(vend.plano), outros: r2(vend.outros) },
+        porTipo: { servico: r2(tipo.servico), produto: r2(tipo.produto), pacote: r2(tipo.pacote) },
+        linhas, todasBatem, taxaPct, tolerancia: TOL,
+        fechamento: fechamento || null,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
+  // POST /api/caixa-dia/conferencia/:data — salva "bate / não bate" + justificativa
+  app.post("/api/caixa-dia/conferencia/:data", async (req: Request, res: Response) => {
+    try {
+      const data = String(req.params.data);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ ok: false, error: "data inválida" });
+      const status = req.body?.status;
+      if (status !== "bate" && status !== "nao_bate") return res.status(400).json({ ok: false, error: "status deve ser 'bate' ou 'nao_bate'" });
+      const reg = {
+        data, status,
+        justificativa: req.body?.justificativa ? String(req.body.justificativa).slice(0, 500) : "",
+        fechadoEm: new Date().toISOString(),
+      };
+      await kvSet(`caixa_conferencia:${data}`, reg);
+      return res.json({ ok: true, fechamento: reg });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   // DELETE /api/caixa-dia/:data — reabre o dia (apaga fechamento)
   app.delete("/api/caixa-dia/:data", async (req: Request, res: Response) => {
     try {

@@ -197,7 +197,7 @@ export default function Lancamentos() {
 
   const { trinks, hasTrinksData, loading, error, fonte, trinksAt, csvAt } = useTrinksMonth(selectedMes);
 
-  const [activeTab, setActiveTab] = useState<"visao" | "conciliacao">("visao");
+  const [activeTab, setActiveTab] = useState<"entradas" | "saidas" | "visao" | "conciliacao">("entradas");
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => setReloadKey(k => k + 1);
 
@@ -331,6 +331,23 @@ export default function Lancamentos() {
     return () => { cancelled = true; };
   }, [selectedMes, reloadKey]);
 
+  // ── v52: saídas unificadas (manual + extrato) com Fixa/Variável ──
+  const [saidas, setSaidas] = useState<any>(null);
+  const carregarSaidas = () => {
+    fetch(`${API_BASE}/api/lancamentos/saidas/${selectedMes}`)
+      .then(r => r.json())
+      .then(d => { if (d?.ok) setSaidas(d); })
+      .catch(() => {});
+  };
+  useEffect(() => { setSaidas(null); carregarSaidas(); /* eslint-disable-next-line */ }, [selectedMes, reloadKey]);
+  const setTipoDespesa = async (id: string, tipoDespesa: "fixa" | "variavel" | null) => {
+    await fetch(`${API_BASE}/api/lancamentos/despesa/${id}/tipo`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tipoDespesa }),
+    });
+    setReloadKey(k => k + 1); // recalcula saídas + viabilidade
+  };
+
   // ── v49: resumo do livro do Itaú (Entrou/Saiu/Neutro + comparação Trinks) ──
   const [resumo, setResumo] = useState<any>(null);
   const carregarResumo = () => {
@@ -442,11 +459,91 @@ export default function Lancamentos() {
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
         <TabsList className="mb-4">
+          <TabsTrigger value="entradas" data-testid="tab-entradas">Entradas</TabsTrigger>
+          <TabsTrigger value="saidas" data-testid="tab-saidas">Saídas</TabsTrigger>
           <TabsTrigger value="visao" data-testid="tab-visao">Visão do Mês</TabsTrigger>
           <TabsTrigger value="conciliacao" data-testid="tab-conciliacao">Banco / Importar extrato</TabsTrigger>
           <TabsTrigger value="orfas" data-testid="tab-orfas">Conciliação Trinks</TabsTrigger>
           <TabsTrigger value="categorias" data-testid="tab-categorias">Categorias & Regras</TabsTrigger>
         </TabsList>
+
+        {/* ═══ ENTRADAS (faturamento — fonte canônica, zero digitação) ═══ */}
+        <TabsContent value="entradas" className="space-y-4 mt-0">
+          <Card className="border-emerald-500/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-emerald-400" /> Entradas do mês
+                <span className="ml-auto text-base font-bold tabular-nums text-emerald-400" data-testid="entradas-total">{formatCurrency(totalEntrou)}</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+                {[
+                  { lbl: "💳 Crédito", v: entrou.credito },
+                  { lbl: "💳 Débito", v: entrou.debito },
+                  { lbl: "📲 PIX", v: entrou.pix },
+                  { lbl: "💵 Dinheiro", v: entrou.dinheiro, amber: true },
+                  { lbl: "🔵 Clube", v: entrou.clube, primary: true },
+                ].map((c, i) => (
+                  <div key={i} className={`rounded border p-2 ${c.amber ? "border-amber-500/40 bg-amber-500/10" : c.primary ? "border-primary/40 bg-primary/10" : "border-card-border/50 bg-background/30"}`} data-testid={`entradas-forma-${i}`}>
+                    <div className={`text-[10px] ${c.amber ? "text-amber-300" : c.primary ? "text-primary" : "text-muted-foreground"}`}>{c.lbl}</div>
+                    <div className={`tabular-nums font-semibold ${c.amber ? "text-amber-400" : c.primary ? "text-primary" : ""}`}>{formatCurrency(c.v)}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-2">Fonte canônica (mesma da Viabilidade) · blindado contra 429 · sem digitação.</div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ═══ SAÍDAS (Fixas / Variáveis / A classificar) ═══ */}
+        <TabsContent value="saidas" className="space-y-4 mt-0">
+          {!saidas ? (
+            <div className="text-sm text-muted-foreground py-6 text-center">Carregando saídas…</div>
+          ) : (() => {
+            const linha = (i: any) => (
+              <div key={i.id} className={`flex items-center justify-between gap-2 text-xs p-2 rounded border ${!i.efetivo ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-card"}`} data-testid={`saida-${i.id}`}>
+                <span className="flex-1 min-w-0">
+                  <span className="text-muted-foreground">{i.date.slice(8)}/{i.date.slice(5,7)}</span> {i.description}
+                  <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-muted/40 text-muted-foreground">{i.origem}</span>
+                  {i.categoria && <span className="ml-1 text-[9px] text-muted-foreground/70">· {i.categoria}</span>}
+                  {i.conflito && <span className="ml-1 text-[9px] text-amber-400" title="o toggle diverge da categoria">override</span>}
+                </span>
+                <span className="tabular-nums text-red-400 flex-shrink-0">{formatCurrency(i.valor)}</span>
+                <div className="flex gap-0.5 flex-shrink-0">
+                  <button type="button" onClick={() => setTipoDespesa(i.id, i.efetivo === "fixa" ? null : "fixa")}
+                    className={`text-[10px] px-2 py-1 rounded border ${i.efetivo === "fixa" ? "border-sky-500/50 bg-sky-500/15 text-sky-400" : "border-border text-muted-foreground hover:bg-muted/30"}`}
+                    data-testid={`btn-fixa-${i.id}`}>Fixa</button>
+                  <button type="button" onClick={() => setTipoDespesa(i.id, i.efetivo === "variavel" ? null : "variavel")}
+                    className={`text-[10px] px-2 py-1 rounded border ${i.efetivo === "variavel" ? "border-orange-500/50 bg-orange-500/15 text-orange-400" : "border-border text-muted-foreground hover:bg-muted/30"}`}
+                    data-testid={`btn-var-${i.id}`}>Variável</button>
+                </div>
+              </div>
+            );
+            const fixas = saidas.itens.filter((i: any) => i.efetivo === "fixa");
+            const vars = saidas.itens.filter((i: any) => i.efetivo === "variavel");
+            const aClass = saidas.itens.filter((i: any) => !i.efetivo);
+            return (
+              <>
+                {/* resumo */}
+                <div className="grid grid-cols-3 gap-2">
+                  <Card className="border-sky-500/30"><CardContent className="p-3"><div className="text-[10px] text-muted-foreground uppercase">Fixas</div><div className="text-lg font-bold text-sky-400 tabular-nums" data-testid="saidas-fixas">{formatCurrency(saidas.totalFixas)}</div></CardContent></Card>
+                  <Card className="border-orange-500/30"><CardContent className="p-3"><div className="text-[10px] text-muted-foreground uppercase">Variáveis</div><div className="text-lg font-bold text-orange-400 tabular-nums" data-testid="saidas-variaveis">{formatCurrency(saidas.totalVariaveis)}</div></CardContent></Card>
+                  <Card className="border-card-border"><CardContent className="p-3"><div className="text-[10px] text-muted-foreground uppercase">Total saídas</div><div className="text-lg font-bold tabular-nums" data-testid="saidas-total">{formatCurrency(saidas.total)}</div></CardContent></Card>
+                </div>
+
+                {aClass.length > 0 && (
+                  <Card className="border-amber-500/40 bg-amber-500/5">
+                    <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-amber-400"><AlertCircle className="w-4 h-4" /> A classificar ({aClass.length}) · {formatCurrency(saidas.totalAClassificar)}</CardTitle></CardHeader>
+                    <CardContent className="space-y-1"><p className="text-[11px] text-muted-foreground -mt-1 mb-1">Marque Fixa ou Variável — sem isso não entram no resultado da Viabilidade.</p>{aClass.map(linha)}</CardContent>
+                  </Card>
+                )}
+                <Card><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-sky-400">Despesas Fixas · {formatCurrency(saidas.totalFixas)}</CardTitle></CardHeader><CardContent className="space-y-1">{fixas.length ? fixas.map(linha) : <p className="text-xs text-muted-foreground">Nenhuma despesa fixa marcada.</p>}</CardContent></Card>
+                <Card><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-orange-400">Despesas Variáveis · {formatCurrency(saidas.totalVariaveis)}</CardTitle></CardHeader><CardContent className="space-y-1">{vars.length ? vars.map(linha) : <p className="text-xs text-muted-foreground">Nenhuma despesa variável marcada.</p>}</CardContent></Card>
+              </>
+            );
+          })()}
+        </TabsContent>
 
         <TabsContent value="visao" className="space-y-5 mt-0">
 

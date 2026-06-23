@@ -157,6 +157,8 @@ interface FinanceEntry {
   // v27: categorização nova (substitui category/subcategory quando preenchida)
   categoriaId?: string;
   subcategoriaNova?: string;
+  // v52: override manual fixa/variável (vence a categoria no cálculo do totalFixas).
+  tipoDespesa?: 'fixa' | 'variavel';
 }
 
 // Diretório de dados persistente. No Railway, configurar um Volume montado em /data.
@@ -290,6 +292,8 @@ interface TransacaoBanco {
   // entre meses e aparece como tooltip/badge nas próximas análises.
   justificativa?: string;
   justificadoEm?: string; // ISO timestamp
+  // v52: override manual fixa/variável (vence a categoria no cálculo do totalFixas).
+  tipoDespesa?: 'fixa' | 'variavel';
   // Quando preenchido, indica que esta transação foi gerada (ou vinculada
   // manualmente) a partir de uma mensalidade de assinatura. Permite desfazer
   // o pagamento e remover a entrada correspondente sem ambiguidade.
@@ -7263,6 +7267,10 @@ Regras CRÍTICAS:
 
     todos.forEach(e => {
       const v = Math.abs(Number(e.amount) || 0);
+      // v52: override manual fixa/variável vence a category (só pra despesas).
+      const ov = (e as any).tipoDespesa;
+      if (ov === "fixa") { totalFixas += v; return; }
+      if (ov === "variavel") { totalVariaveis += v; return; }
       switch (e.category) {
         case "fixo": totalFixas += v; break;
         case "variavel": totalVariaveis += v; break;
@@ -7291,10 +7299,14 @@ Regras CRÍTICAS:
         if (t.incluidoNoFluxo === false) continue;
         if (t.transferenciaParId) continue;     // transferência interna não conta
         if (!t.date.startsWith(mes)) continue;
+        const v = Math.abs(t.amount);
+        // v52: override manual fixa/variável vence a categoria — e funciona MESMO
+        // SEM categoria (é o que destrava o totalFixas do guia de fixas).
+        if (t.tipoDespesa === "fixa") { totalFixas += v; continue; }
+        if (t.tipoDespesa === "variavel") { totalVariaveis += v; continue; }
         if (!t.categoriaId) continue;
         const cat = catMap.get(t.categoriaId);
         if (!cat) continue;
-        const v = Math.abs(t.amount);
         switch (cat.tipo) {
           case "fixo":
           case "recorrente":
@@ -7332,6 +7344,99 @@ Regras CRÍTICAS:
       return res.status(400).json({ error: "Mês inválido. Use formato YYYY-MM" });
     }
     return res.json(await computeTotaisDoMes(mes));
+  });
+
+  // ─── v52: PATCH /api/lancamentos/despesa/:id/tipo — toggle Fixa/Variável
+  // Grava o override tipoDespesa numa despesa (manual ou do extrato). null limpa.
+  app.patch("/api/lancamentos/despesa/:id/tipo", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const tipo = req.body?.tipoDespesa;
+      if (tipo !== "fixa" && tipo !== "variavel" && tipo !== null) {
+        return res.status(400).json({ error: "tipoDespesa deve ser 'fixa', 'variavel' ou null." });
+      }
+      const fe = financeEntries.find(e => e.id === id);
+      if (fe) {
+        if (tipo === null) delete (fe as any).tipoDespesa; else fe.tipoDespesa = tipo;
+        saveFinanceEntries();
+        return res.json({ ok: true, origem: "manual", id, tipoDespesa: tipo });
+      }
+      const tx = transacoesBanco.find(t => t.id === id);
+      if (tx) {
+        if (tipo === null) delete tx.tipoDespesa; else tx.tipoDespesa = tipo;
+        saveTransacoesBanco();
+        return res.json({ ok: true, origem: "extrato", id, tipoDespesa: tipo });
+      }
+      return res.status(404).json({ error: "Despesa não encontrada." });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Erro interno." });
+    }
+  });
+
+  // ─── v52: GET /api/lancamentos/saidas/:mes — saídas unificadas (manual + extrato)
+  // Cada despesa com tipo EFETIVO (override tipoDespesa, senão herdado da categoria).
+  app.get("/api/lancamentos/saidas/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "Mês inválido." });
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const cats = await listExpenseCategorias();
+      const catMap = new Map(cats.map(c => [c.id, c]));
+      const contasObs = new Set(contasConsolidacao.filter(c => c.observacao).map(c => c.id));
+
+      // herda fixa/variável do tipo da categoria (mesma regra do computeTotaisDoMes).
+      const herdado = (tipoCat?: string): "fixa" | "variavel" | null => {
+        if (tipoCat === "fixo" || tipoCat === "recorrente") return "fixa";
+        if (tipoCat === "variavel" || tipoCat === "imposto") return "variavel";
+        return null;
+      };
+
+      const itens: any[] = [];
+
+      // manuais (financeEntries) — só despesas (amount < 0)
+      for (const e of financeEntries) {
+        if (!e.date.startsWith(mes) || Number(e.amount) >= 0) continue;
+        const cat = e.categoriaId ? catMap.get(e.categoriaId) : null;
+        const catNome = cat?.nome || (e.category === "fixo" ? "Fixo" : e.category === "variavel" ? "Variável" : e.category);
+        const herd = e.tipoDespesa ?? (cat ? herdado(cat.tipo) : (e.category === "fixo" ? "fixa" : e.category === "variavel" ? "variavel" : null));
+        itens.push({
+          id: e.id, origem: "manual", date: e.date, description: e.description,
+          valor: r2(Math.abs(Number(e.amount))), categoria: catNome,
+          tipoDespesa: e.tipoDespesa || null,
+          efetivo: herd, override: !!e.tipoDespesa,
+          conflito: !!e.tipoDespesa && cat ? herdado(cat.tipo) && herdado(cat.tipo) !== e.tipoDespesa : false,
+        });
+      }
+      // extrato (transacoesBanco) — despesas, exclui observação/transferência
+      for (const t of transacoesBanco) {
+        if (contasObs.has(t.contaId) || Number(t.amount) >= 0) continue;
+        if (t.incluidoNoFluxo === false || t.transferenciaParId) continue;
+        if (!t.date.startsWith(mes)) continue;
+        const cat = t.categoriaId ? catMap.get(t.categoriaId) : null;
+        const herd = t.tipoDespesa ?? (cat ? herdado(cat.tipo) : null);
+        itens.push({
+          id: t.id, origem: "extrato", date: t.date, description: t.description,
+          valor: r2(Math.abs(Number(t.amount))), categoria: cat?.nome || null,
+          tipoDespesa: t.tipoDespesa || null,
+          efetivo: herd, override: !!t.tipoDespesa,
+          conflito: !!t.tipoDespesa && cat ? herdado(cat.tipo) && herdado(cat.tipo) !== t.tipoDespesa : false,
+        });
+      }
+      itens.sort((a, b) => b.valor - a.valor);
+
+      const soma = (f: (i: any) => boolean) => r2(itens.filter(f).reduce((s, i) => s + i.valor, 0));
+      return res.json({
+        ok: true, mes,
+        itens,
+        totalFixas: soma(i => i.efetivo === "fixa"),
+        totalVariaveis: soma(i => i.efetivo === "variavel"),
+        totalAClassificar: soma(i => !i.efetivo),
+        qtdAClassificar: itens.filter(i => !i.efetivo).length,
+        total: soma(() => true),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
   });
 
   // ─── GET /api/financeiro/comissoes-debug/:mes — v24

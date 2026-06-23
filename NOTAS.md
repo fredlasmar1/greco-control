@@ -8,6 +8,20 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v52 — Lançamentos: sub-abas Entradas / Saídas (Fixa/Variável → totalFixas) (22/06/2026) [concluído]
+
+**Objetivo:** separar Entradas de Saídas, e Saídas em Fixas/Variáveis — o que alimenta o `totalFixas` da Viabilidade (hoje R$60 furado). Decisões do dono: override manual vence a categoria; herda da categoria automaticamente.
+
+**Backend (`routes.ts`):**
+- Campo **`tipoDespesa?: 'fixa'|'variavel'`** em `TransacaoBanco` + `FinanceEntry` (aditivo).
+- `computeTotaisDoMes`: override `tipoDespesa` vence a category/categoria; **funciona MESMO SEM categoria** (uma despesa do extrato sem categoria marcada "fixa" entra no totalFixas — é o que destrava o R$60). Sem override → herda (regra atual).
+- **`PATCH /api/lancamentos/despesa/:id/tipo`** `{tipoDespesa}` — acha em financeEntries OU transacoesBanco, persiste.
+- **`GET /api/lancamentos/saidas/:mes`** — unificado (manual + extrato), cada item com `efetivo` (override ou herdado), `override`, `conflito` + somas totalFixas/totalVariaveis/totalAClassificar.
+
+**Frontend (`Lancamentos.tsx`):** 2 sub-abas novas (as 4 antigas preservadas): **Entradas** (faturamento+breakdown canônico, zero digitação) e **Saídas** (resumo Fixas/Variáveis/Total + bloco "⚠ A classificar" no topo + listas, cada linha c/ botões Fixa/Variável, origem, badge override). Marcar → PATCH → recalcula saídas+viabilidade (reloadKey).
+
+**Validado:** marcar SANEAGO(503)+Seguro(305) como fixa → viabilidade fixo R$60→868,11, margem 48,4%→46,4%; reverte certo. **Jun: 65/70 saídas "a classificar" (R$87 mil) — trabalho do dono pra margem virar real.** Build verde.
+
 ### v51 — Motor de Viabilidade Fase A (margem real ao vivo + guia de fixas) (22/06/2026) [concluído]
 
 **Queixa do dono:** abas não conversam (receita no Dashboard, variável no Lançamentos, fixo no Financeiro, margem na Precificação). Quer o sistema CALCULAR a viabilidade do que já flui, ao vivo — não foto digitada.

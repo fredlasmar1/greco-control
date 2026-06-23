@@ -6493,12 +6493,8 @@ Regras CRÍTICAS:
       // ── 1) Trinks: breakdown por meio (puxa via API, com cache)
       let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, descontoProf: 0, outros: 0, qtd: 0 };
       try {
-        const dataIni = `${mes}-01`;
-        const [ano, m] = mes.split("-").map(Number);
-        const ultimoDia = new Date(ano, m, 0).getDate();
-        const dataFim = `${mes}-${String(ultimoDia + 1).padStart(2, "0")}`; // semi-aberto
-        const transApi: any = await trinksFetchAll("transacoes", { dataInicio: dataIni, dataFim });
-        const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
+        // v55: csv-first — mês fechado vem do CSV (0 API).
+        const arr: any[] = await transacoesMesCsvFirst(mes);
         for (const t of arr) {
           const raw = t.dataHora || t.dataReferencia || t.data || "";
           const date = typeof raw === "string" ? raw.split("T")[0] : "";
@@ -7284,6 +7280,17 @@ Regras CRÍTICAS:
   // Pagamento/v42) quando há ranking, senão ao vivo; material só com agendamentos ao
   // vivo, senão omite com nota (nunca número fake). Reusado por GET /api/financeiro e
   // computeTotaisDoMes — fonte única, sem duplicar regra.
+  // v55: transações de um mês com csv-first (anti-vazamento de cota Trinks).
+  // Reusa o mesService canônico: mês fechado → CSV (0 API); corrente → API c/
+  // fallback CSV + cache. Substitui os trinksFetchAll("transacoes", {mês}) que
+  // batiam a API ao vivo mesmo em mês fechado (Pagamento/Conciliação/etc).
+  async function transacoesMesCsvFirst(mes: string): Promise<any[]> {
+    try {
+      const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log });
+      return Array.isArray(md?.transacoes) ? md.transacoes : [];
+    } catch { return []; }
+  }
+
   async function construirEntradasAuto(mes: string): Promise<{ entries: FinanceEntry[]; notas: string[] }> {
     const entries: FinanceEntry[] = [];
     const notas: string[] = [];
@@ -12089,9 +12096,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const ultimoDia = new Date(y, m, 0).getDate();
       const dataInicio = `${mes}-01`;
       const dataFim = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
-      // Trinks /v1/transacoes usa [dataInicio, dataFim) — sem +1 perde o último dia
-      const transFim = ymdAddDays(dataFim, 1);
-      const transacoes = await trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim });
+      // v55: csv-first — só faturamento/formas (CSV tem); mês fechado = 0 API.
+      const transacoes = await transacoesMesCsvFirst(mes);
       if (!Array.isArray(transacoes) || transacoes.length === 0) return null;
 
       let total = 0, pix = 0, cartao = 0, dinheiro = 0, outros = 0;

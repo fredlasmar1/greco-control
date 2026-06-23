@@ -8,6 +8,15 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v55 — Blindagem anti-vazamento: fechamento-mes + Conselheiro csv-first (23/06/2026) [concluído]
+
+**Varredura completa do consumo Trinks (pedido do dono: o que precisa ao vivo vs CSV).** Resultado:
+- **AO VIVO (justifica token):** Dashboard hoje/hoje-completo/amanhã (dia corrente; já throttle 2h v54), Caixa do Dia dia recente sem CSV (já csv-first v54).
+- **VAZAMENTOS confirmados (mês fechado batendo API à toa):** `/api/fechamento-mes` (aba Pagamento — MAIOR uso) e Conselheiro `calcularFaturamentoTrinksMes`. O vazamento que eu suspeitei no `/api/mes/dados` NÃO existia (já blindado por mesService+guard mês fechado).
+- **NÃO blindáveis (precisam detalhe item×profissional que só a API tem):** conciliação órfãs/status, vendas-produtos (`t.servicos[]`/`t.produtos[]`). CSV não carrega isso. Economia deles = cache 2h (v54).
+
+**Feito:** helper **`transacoesMesCsvFirst(mes)`** (reusa `getMesDataCanonical` — mês fechado=CSV 0 API, corrente=API c/ fallback+cache). Aplicado em `/api/fechamento-mes` e `calcularFaturamentoTrinksMes`. Validado: fechamento-mes jun → fonte csv-financeiro 40.975,55, 0 chamada bem-sucedida à API. Build verde.
+
 ### v54 — Economia de cota Trinks + fatia mensal + contador no Dashboard (22/06/2026) [concluído]
 
 **Contexto:** conta Trinks tem ~5000 req/mês TOTAL, COMPARTILHADAS com o grecometas. O greco-control estava com teto 4500 (quase tudo) e a auditoria real mostrou **26.865 requisições no mês / 9.405 recusadas (429)** — sufocava o grecometas. Causa do teto não segurar: `requestsThisMonth` mora em CACHE_FILE no disco, que o Railway (sem volume) apaga a cada deploy → zera → 4500 nunca atinge. Auditoria persistente (kv/Postgres) é a real.

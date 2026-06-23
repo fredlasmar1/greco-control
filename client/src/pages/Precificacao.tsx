@@ -523,6 +523,8 @@ export default function Precificacao() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // v24 Etapa 5: modo simulação (toggle 'travar custo antes da comissão') — só visualização, não persiste
   const [modoSimulacao, setModoSimulacao] = useState<boolean>(false);
+  // v58: margem-alvo única pra a aba "Reajuste de Preços" (default 30%, editável)
+  const [margemAlvo, setMargemAlvo] = useState<number>(30);
 
   // Fetch saved costs from server
   const { data: savedCosts = [] } = useQuery<ServiceCostData[]>({
@@ -832,6 +834,7 @@ export default function Precificacao() {
       <Tabs defaultValue="calculadora" className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="calculadora" data-testid="tab-calculadora">Calculadora de Preço</TabsTrigger>
+          <TabsTrigger value="reajuste" data-testid="tab-reajuste">Reajuste de Preços</TabsTrigger>
           <TabsTrigger value="catalogo" data-testid="tab-catalogo">Catálogo</TabsTrigger>
           <TabsTrigger value="ficha-servicos" data-testid="tab-ficha-servicos">Ficha de Serviços</TabsTrigger>
           <TabsTrigger value="custos-produtos" data-testid="tab-custos-produtos">Custos de Produtos</TabsTrigger>
@@ -839,6 +842,10 @@ export default function Precificacao() {
 
         <TabsContent value="calculadora" className="mt-0">
           <CalculadoraPreco analysis={analysis} contexto={contexto} onImpostoSalvo={() => qClient.invalidateQueries({ queryKey: ["/api/precificacao/contexto"] })} apiBase={(globalThis as any).__API_BASE__ || ""} />
+        </TabsContent>
+
+        <TabsContent value="reajuste" className="mt-0">
+          <ReajustePrecos analysis={analysis} contexto={contexto} margemAlvo={margemAlvo} setMargemAlvo={setMargemAlvo} />
         </TabsContent>
 
         <TabsContent value="catalogo" className="mt-0">
@@ -1433,6 +1440,94 @@ function CalculadoraPreco({ analysis, contexto, onImpostoSalvo, apiBase }: {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ─── v58: Reajuste de Preços — raio-X de TODOS os serviços ────────────────────
+// O dono define o preço; o sistema diz se cada serviço lucra ou dá prejuízo
+// (custo × preço atual) e qual o preço pra atingir a margem-alvo (default 30%).
+// Custo e preço-alvo já incluem comissão + taxa de cartão + imposto (v56).
+function ReajustePrecos({ analysis, contexto, margemAlvo, setMargemAlvo }: {
+  analysis: any[];
+  contexto: any;
+  margemAlvo: number;
+  setMargemAlvo: (n: number) => void;
+}) {
+  const taxaPct = contexto?.taxaCartaoPct || 0;
+  const impostoPct = contexto?.impostoPct || 0;
+
+  const linhas = useMemo(() => {
+    return analysis.map(s => {
+      // preço pra atingir a margem-alvo (mesma fórmula do motor v56)
+      const denom = 1 - (s.comissaoTotalPct / 100) - (taxaPct / 100) - (impostoPct / 100) - (margemAlvo / 100);
+      const precoAlvo = denom > 0 ? (s.totalCost + s.custoFixoRateado) / denom : null;
+      const reajuste = precoAlvo != null ? precoAlvo - s.price : null;
+      return { ...s, precoAlvo, reajuste };
+    }).sort((a, b) => a.margin - b.margin); // pior (prejuízo) primeiro
+  }, [analysis, taxaPct, impostoPct, margemAlvo]);
+
+  const prejuizo = linhas.filter(l => l.margin < 0).length;
+  const abaixoAlvo = linhas.filter(l => l.margin >= 0 && l.margin < margemAlvo).length;
+
+  return (
+    <div className="space-y-4 max-w-[920px]">
+      {/* alvo editável + resumo */}
+      <Card className="bg-card border-card-border"><CardContent className="p-3 flex items-center gap-3 flex-wrap">
+        <span className="text-sm">Margem-alvo:</span>
+        <Input type="number" min={0} max={90} value={margemAlvo} onChange={e => setMargemAlvo(Math.max(0, Math.min(90, Number(e.target.value) || 0)))} className="h-8 w-20 text-sm" data-testid="input-margem-alvo" />
+        <span className="text-sm text-muted-foreground">%</span>
+        <div className="ml-auto flex gap-3 text-xs">
+          {prejuizo > 0 && <span className="text-red-400 font-medium" data-testid="resumo-prejuizo">🔴 {prejuizo} no prejuízo</span>}
+          {abaixoAlvo > 0 && <span className="text-amber-400" data-testid="resumo-abaixo">🟡 {abaixoAlvo} abaixo de {margemAlvo}%</span>}
+        </div>
+      </CardContent></Card>
+
+      <Card className="bg-card border-card-border">
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="border-b border-border text-[10px] uppercase text-muted-foreground">
+              <tr>
+                <th className="text-left p-2.5">Serviço</th>
+                <th className="text-right p-2.5">Preço atual</th>
+                <th className="text-right p-2.5">Custo</th>
+                <th className="text-right p-2.5">Margem hoje</th>
+                <th className="text-right p-2.5">Preço p/ {margemAlvo}%</th>
+                <th className="text-right p-2.5">Reajuste</th>
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.map(l => {
+                const cor = l.margin < 0 ? "text-red-400" : l.margin < margemAlvo ? "text-amber-400" : "text-emerald-400";
+                const semFicha = l.itemCount === 0;
+                return (
+                  <tr key={l.id} className="border-b border-border/30 hover:bg-muted/20" data-testid={`reaj-${l.id}`}>
+                    <td className="p-2.5">
+                      <div className="truncate max-w-[200px]" title={l.name}>{l.name}</div>
+                      <div className="text-[9px] text-muted-foreground">{l.duration}min{semFicha && <span className="text-amber-400"> · ⚠ sem ficha</span>}</div>
+                    </td>
+                    <td className="p-2.5 text-right tabular-nums">{formatCurrency(l.price)}</td>
+                    <td className="p-2.5 text-right tabular-nums text-muted-foreground">{formatCurrency(l.custoTotal)}</td>
+                    <td className={`p-2.5 text-right tabular-nums font-semibold ${cor}`}>
+                      {l.margin < 0 ? "🔴 " : ""}{formatPercent(l.margin)}
+                    </td>
+                    <td className="p-2.5 text-right tabular-nums text-primary">{l.precoAlvo != null ? formatCurrency(l.precoAlvo) : "—"}</td>
+                    <td className={`p-2.5 text-right tabular-nums font-medium ${l.reajuste != null && l.reajuste > 0 ? "text-amber-400" : "text-muted-foreground"}`}>
+                      {l.reajuste != null ? (l.reajuste > 0 ? "+" : "") + formatCurrency(l.reajuste) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <div className="text-[11px] text-muted-foreground space-y-0.5">
+        <p>● Custo = produtos (ficha) + custo fixo rateado + comissão + taxa de cartão ({taxaPct}%) + imposto ({impostoPct}%).</p>
+        <p>● "Preço p/ {margemAlvo}%" é quanto cobrar pra sobrar {margemAlvo}% depois de tudo. Reajuste = quanto subir do preço atual.</p>
+        <p className="text-amber-400">⚠ Serviços "sem ficha" têm custo de material zerado — o custo real é maior, então o reajuste pode ser ainda mais necessário. Preencha as fichas e categorize as fixas pra o custo ficar exato.</p>
+      </div>
     </div>
   );
 }

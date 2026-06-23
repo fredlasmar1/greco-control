@@ -8,6 +8,14 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v58 — Reajuste de Preços: raio-X lucro/prejuízo + preço pra margem 30% (23/06/2026) [concluído]
+
+**Ideia do dono:** o preço dos serviços ELE define; o sistema só diz se cada um lucra ou dá prejuízo (custo × preço atual) e qual preço pra atingir margem-alvo (30%). Inverte o problema (não caçar custo perfeito; usar o preço existente). "Serviço é chute no escuro hoje."
+
+**Feito (frontend puro, reusa `analysis` v56 com taxa+imposto):** state `margemAlvo` (default 30, editável). Nova aba **"Reajuste de Preços"** (`ReajustePrecos` em Precificacao.tsx): tabela de TODOS os serviços ordenada por margem crescente (prejuízo no topo): Serviço · Preço atual · Custo · Margem hoje (🔴/🟡/🟢) · Preço p/ alvo% · Reajuste(+R$). Resumo "N no prejuízo · N abaixo de X%". Preço-alvo = (ficha+fixo)/(1−comissão%−taxa%−imposto%−alvo%). Ressalva na tela: sem ficha → custo subestimado.
+
+(v57 = A2 margem por categoria na Viabilidade — Express 45,5%/Clássico 55,5%/VIP 45,5%/Produtos 96,5%; registrado na memória do projeto.)
+
 ### v56 — Calculadora de Preço guiada + custo completo (taxa cartão + imposto) (23/06/2026) [concluído]
 
 **Pedido do dono:** sistema que ajude a chegar no preço base com TODOS os custos (fixos, variáveis, barbeiro, assistente, produtos do serviço) + margem. **Diagnóstico:** o motor (v50 `calcularMargemServico`) já fazia ficha+custo-fixo+comissão→preço, mas faltavam 2 variáveis: **taxa de cartão** e **imposto**.

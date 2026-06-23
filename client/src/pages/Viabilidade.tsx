@@ -10,7 +10,7 @@ import { MonthSelector } from "@/components/MonthSelector";
 import { useTrinksMonth } from "@/hooks/useTrinksMonth";
 import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 import { formatCurrency } from "@/lib/demoData";
-import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, Wallet, ArrowDown } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, Wallet, ArrowDown, Calculator } from "lucide-react";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
@@ -177,13 +177,56 @@ export default function Viabilidade() {
             </Card>
           )}
 
-          {/* Placeholder A2 — margem por categoria */}
-          <Card className="bg-card border-card-border border-dashed">
-            <CardContent className="p-4 text-xs text-muted-foreground flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-              <span><strong>Margem por categoria (Express / Clássico / Estética / VIP / Produtos)</strong> entra na Fase B, quando você subir o relatório da Trinks por serviço.</span>
-            </CardContent>
-          </Card>
+          {/* A2 — margem por categoria */}
+          {data.categorias && (() => {
+            const cats = data.categorias;
+            const semaforo = (pct: number) => pct < 0 ? "text-red-400" : pct < 10 ? "text-amber-400" : "text-emerald-400";
+            const dot = (pct: number) => pct < 0 ? "bg-red-400" : pct < 10 ? "bg-amber-400" : "bg-emerald-400";
+            return (
+              <div className="space-y-3" data-testid="margem-categorias">
+                <h3 className="text-sm font-semibold flex items-center gap-2"><Calculator className="w-4 h-4 text-primary" /> Margem por categoria</h3>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  {cats.linhas.map((l: any) => (
+                    <Card key={l.nome} className="bg-card border-card-border" data-testid={`cat-${l.nome}`}>
+                      <CardContent className="p-3">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className={`w-2 h-2 rounded-full ${dot(l.margemPct)}`} />
+                          <span className="text-xs font-medium">{l.nome}</span>
+                        </div>
+                        <div className={`text-lg font-bold ${semaforo(l.margemPct)}`}>{l.margemPct.toFixed(1)}%</div>
+                        <div className="text-[10px] text-muted-foreground">margem {formatCurrency(l.margemReal)}</div>
+                        <div className="mt-1.5 pt-1.5 border-t border-border/40 space-y-0.5 text-[10px] text-muted-foreground">
+                          <div className="flex justify-between"><span>Receita</span><span className="tabular-nums">{formatCurrency(l.receita)}</span></div>
+                          <div className="flex justify-between"><span>Ticket</span><span className="tabular-nums">{formatCurrency(l.ticketMedio)}</span></div>
+                          <div className="flex justify-between"><span>Comissão</span><span className="tabular-nums">−{formatCurrency(l.comissao)}</span></div>
+                          <div className="flex justify-between"><span>Custo fixo</span><span className="tabular-nums">−{formatCurrency(l.custoFixoRateado)}</span></div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                  {/* Produtos */}
+                  <Card className="bg-card border-card-border" data-testid="cat-Produtos">
+                    <CardContent className="p-3">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className={`w-2 h-2 rounded-full ${dot(cats.produtos.margemPct)}`} />
+                        <span className="text-xs font-medium">Produtos</span>
+                      </div>
+                      <div className={`text-lg font-bold ${semaforo(cats.produtos.margemPct)}`}>{cats.produtos.margemPct.toFixed(1)}%</div>
+                      <div className="text-[10px] text-muted-foreground">margem {formatCurrency(cats.produtos.margemReal)}</div>
+                      <div className="mt-1.5 pt-1.5 border-t border-border/40 text-[10px] text-muted-foreground">
+                        <div className="flex justify-between"><span>Receita</span><span className="tabular-nums">{formatCurrency(cats.produtos.receita)}</span></div>
+                        <div className="text-[9px] text-amber-400/80 mt-1">⚠ {cats.produtos.nota}</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+                <div className="text-[10px] text-muted-foreground space-y-0.5">
+                  <p>● {cats.avisoFixoRateado}.</p>
+                  {cats.esteticaPendente && <p className="text-amber-400">⚠ Estética ainda não separada — precisa do relatório Trinks por serviço (a estética que os barbeiros fazem está embutida na categoria deles). Serviço sem categoria (assistentes/não-mapeados): {formatCurrency(cats.semCategoriaServico)}.</p>}
+                </div>
+              </div>
+            );
+          })()}
         </>
       )}
     </div>

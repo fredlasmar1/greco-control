@@ -95,6 +95,7 @@ import {
   getMargemDesejadaDefault,
   calcularMargemServico,
   comissaoServicosRanking,
+  categoriaPorApelidoRanking,
 } from "./comissaoCategoria";
 import {
   getOverrides,
@@ -7291,6 +7292,70 @@ Regras CRÍTICAS:
     } catch { return []; }
   }
 
+  // A2: margem por categoria (Express/Clássico/VIP + Produtos) do ranking de
+  // profissionais. Estética PENDENTE (precisa do relatório por serviço). Custo
+  // fixo do mês é rateado por participação na receita de serviço; taxa+imposto da config.
+  async function calcularCategoriasMargem(mes: string): Promise<any | null> {
+    try {
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const rk: any = await kvGet(trinksImport.kvKeyFor("ranking", mes));
+      const profs = rk?.periodos?.[0]?.profissionais;
+      if (!Array.isArray(profs) || profs.length === 0) return null;
+      const cfg = await getConfigFin();
+      const totais = await computeTotaisDoMes(mes);
+      const taxa = Number(cfg.taxaCartaoPct || 0) / 100;
+      const imp = Number(cfg.impostoPct || 0) / 100;
+      const acc: Record<string, { receita: number; comissao: number; atend: number }> = {
+        Express: { receita: 0, comissao: 0, atend: 0 },
+        Classico: { receita: 0, comissao: 0, atend: 0 },
+        VIP: { receita: 0, comissao: 0, atend: 0 },
+      };
+      let produtosReceita = 0, semCategoria = 0;
+      for (const p of profs) {
+        const cat = categoriaPorApelidoRanking(p.profissional);
+        const serv = Number(p.totalServicos || 0);
+        produtosReceita += Number(p.totalProdutos || 0);
+        if (cat === "VIP" || cat === "Express" || cat === "Classico") {
+          acc[cat].receita += serv;
+          acc[cat].comissao += comissaoServicosRanking(p.profissional, serv).comissao;
+          acc[cat].atend += Number(p.qtdAtendimentos || 0);
+        } else {
+          semCategoria += serv;
+        }
+      }
+      const receitaServTotal = acc.Express.receita + acc.Classico.receita + acc.VIP.receita + semCategoria;
+      const fixoTotal = Number(totais.totalFixas || 0);
+      const linhaCat = (nome: string, a: { receita: number; comissao: number; atend: number }) => {
+        const receita = a.receita;
+        const taxaV = receita * taxa, impV = receita * imp;
+        const fixoV = receitaServTotal > 0 ? fixoTotal * (receita / receitaServTotal) : 0;
+        const custo = a.comissao + taxaV + impV + fixoV;
+        const margem = receita - custo;
+        return {
+          nome, receita: r2(receita), atendimentos: a.atend,
+          ticketMedio: a.atend > 0 ? r2(receita / a.atend) : 0,
+          comissao: r2(a.comissao), taxaCartao: r2(taxaV), imposto: r2(impV), custoFixoRateado: r2(fixoV),
+          custoTotal: r2(custo), margemReal: r2(margem),
+          margemPct: receita > 0 ? r2((margem / receita) * 100) : 0,
+        };
+      };
+      const prodTaxa = produtosReceita * taxa, prodImp = produtosReceita * imp;
+      return {
+        linhas: [linhaCat("Express", acc.Express), linhaCat("Clássico", acc.Classico), linhaCat("VIP", acc.VIP)],
+        produtos: {
+          nome: "Produtos", receita: r2(produtosReceita),
+          taxaCartao: r2(prodTaxa), imposto: r2(prodImp),
+          margemReal: r2(produtosReceita - prodTaxa - prodImp),
+          margemPct: produtosReceita > 0 ? r2(((produtosReceita - prodTaxa - prodImp) / produtosReceita) * 100) : 0,
+          nota: "sem custo de mercadoria nem comissão de produto descontados",
+        },
+        esteticaPendente: true,
+        semCategoriaServico: r2(semCategoria),
+        avisoFixoRateado: "custo fixo rateado por participação na receita de serviço",
+      };
+    } catch { return null; }
+  }
+
   async function construirEntradasAuto(mes: string): Promise<{ entries: FinanceEntry[]; notas: string[] }> {
     const entries: FinanceEntry[] = [];
     const notas: string[] = [];
@@ -7898,6 +7963,7 @@ Regras CRÍTICAS:
           checklist,
         },
         avisos: notas,
+        categorias: await calcularCategoriasMargem(mes),  // A2
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });

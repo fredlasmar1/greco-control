@@ -525,12 +525,34 @@ export default function Lancamentos() {
             const aClass = saidas.itens.filter((i: any) => !i.efetivo);
             return (
               <>
-                {/* resumo */}
-                <div className="grid grid-cols-3 gap-2">
-                  <Card className="border-sky-500/30"><CardContent className="p-3"><div className="text-[10px] text-muted-foreground uppercase">Fixas</div><div className="text-lg font-bold text-sky-400 tabular-nums" data-testid="saidas-fixas">{formatCurrency(saidas.totalFixas)}</div></CardContent></Card>
-                  <Card className="border-orange-500/30"><CardContent className="p-3"><div className="text-[10px] text-muted-foreground uppercase">Variáveis</div><div className="text-lg font-bold text-orange-400 tabular-nums" data-testid="saidas-variaveis">{formatCurrency(saidas.totalVariaveis)}</div></CardContent></Card>
-                  <Card className="border-card-border"><CardContent className="p-3"><div className="text-[10px] text-muted-foreground uppercase">Total saídas</div><div className="text-lg font-bold tabular-nums" data-testid="saidas-total">{formatCurrency(saidas.total)}</div></CardContent></Card>
-                </div>
+                {/* resumo destacado: Fixo + Variável + A classificar = Total */}
+                <Card className="bg-card border-card-border">
+                  <CardContent className="p-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-3" data-testid="saidas-fixas-card">
+                        <div className="text-[11px] text-sky-300 uppercase tracking-wide font-medium">● Despesas Fixas</div>
+                        <div className="text-2xl font-bold text-sky-400 tabular-nums" data-testid="saidas-fixas">{formatCurrency(saidas.totalFixas)}</div>
+                        <div className="text-[10px] text-muted-foreground">{saidas.itens.filter((i:any)=>i.efetivo==="fixa").length} lançamentos</div>
+                      </div>
+                      <div className="rounded-lg border border-orange-500/40 bg-orange-500/10 p-3" data-testid="saidas-variaveis-card">
+                        <div className="text-[11px] text-orange-300 uppercase tracking-wide font-medium">● Despesas Variáveis</div>
+                        <div className="text-2xl font-bold text-orange-400 tabular-nums" data-testid="saidas-variaveis">{formatCurrency(saidas.totalVariaveis)}</div>
+                        <div className="text-[10px] text-muted-foreground">{saidas.itens.filter((i:any)=>i.efetivo==="variavel").length} lançamentos</div>
+                      </div>
+                      <div className={`rounded-lg border p-3 col-span-2 sm:col-span-1 ${saidas.totalAClassificar > 0 ? "border-amber-500/40 bg-amber-500/10" : "border-border bg-background/30"}`} data-testid="saidas-aclassificar-card">
+                        <div className={`text-[11px] uppercase tracking-wide font-medium ${saidas.totalAClassificar > 0 ? "text-amber-300" : "text-muted-foreground"}`}>⚠ A classificar</div>
+                        <div className={`text-2xl font-bold tabular-nums ${saidas.totalAClassificar > 0 ? "text-amber-400" : "text-muted-foreground"}`} data-testid="saidas-aclassificar">{formatCurrency(saidas.totalAClassificar)}</div>
+                        <div className="text-[10px] text-muted-foreground">{saidas.qtdAClassificar} lançamentos</div>
+                      </div>
+                    </div>
+                    {/* soma total de todas as saídas */}
+                    <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
+                      <span className="text-sm font-medium text-muted-foreground">Fixas + Variáveis + A classificar =</span>
+                      <span className="text-2xl font-bold tabular-nums text-red-400" data-testid="saidas-total">{formatCurrency(saidas.total)}</span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground text-right">total de saídas do mês</div>
+                  </CardContent>
+                </Card>
 
                 {aClass.length > 0 && (
                   <Card className="border-amber-500/40 bg-amber-500/5">

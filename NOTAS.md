@@ -8,6 +8,16 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v54 — Economia de cota Trinks + fatia mensal + contador no Dashboard (22/06/2026) [concluído]
+
+**Contexto:** conta Trinks tem ~5000 req/mês TOTAL, COMPARTILHADAS com o grecometas. O greco-control estava com teto 4500 (quase tudo) e a auditoria real mostrou **26.865 requisições no mês / 9.405 recusadas (429)** — sufocava o grecometas. Causa do teto não segurar: `requestsThisMonth` mora em CACHE_FILE no disco, que o Railway (sem volume) apaga a cada deploy → zera → 4500 nunca atinge. Auditoria persistente (kv/Postgres) é a real.
+
+**Economias (`routes.ts`):** crons 4→2 (mantidos Telegram 08h + snapshot 23h30 csv-first; **desligados** pré-fetch 03h `if(false)` + refino 6h `if(false)`); `CACHE_TTLS` transacoes/agendamentos/lancamentos 30min→**2h**, full_sync 15min→1h; `DASH_FETCH_THROTTLE_MS` 60s→**2h** (Dashboard.tsx — parava de martelar a cada foco); **Caixa do Dia csv-first** (conferencia/:data usa CSV do dia se existir = 0 API; só toca API em dia sem CSV).
+
+**Fatia mensal (decisão dono: 2500=metade; NÃO bloqueia, só alerta forte):** `TRINKS_FATIA_MENSAL = env TRINKS_MONTHLY_BUDGET || 2500`. `MAX_REQUESTS_PER_MONTH=4500` fica como teto absoluto de segurança. `GET /api/trinks/contador` (novo) devolve hoje/mês ok+429 (de `trinksAuditLog`), `fatiaMensal`, `consumoMes` (=total req do mês), `fatiaEstourada`, `trinks429Agora` (circuitOpenUntil).
+
+**Contador no Dashboard (`Dashboard.tsx`):** widget "consumo / 2500 (X%)" + hoje ok/recusadas; vermelho "Fatia estourada — consumindo cota do grecometas" quando passa; âmbar quando Trinks recusando agora. Validado: 26.865/2500 → vermelho. Economias derrubam o consumo daqui pra frente. Build verde.
+
 ### v53.1 — Caixa do Dia híbrido (API Trinks ao vivo → CSV reserva) + aviso 429 (22/06/2026) [concluído]
 
 **Pedido do dono:** caixa do dia deveria usar a API Trinks ao vivo; e o medidor "não avisou" que os tokens acabaram. **Diagnóstico:** o 429 NÃO é a nossa cota (58/4500 OK) — é o limite da CONTA Trinks (externo, compartilhado, << 4500). O contador conta certo; o "4500" é enganoso. O aviso de 429 JÁ EXISTE na aba Auditoria Trinks (card "Rate Limit (429)" via `trinksAuditLog`), só estava escondido. Conserto = surfaçar o status onde o dado é usado.

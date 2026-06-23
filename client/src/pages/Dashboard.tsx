@@ -451,7 +451,7 @@ interface AmanhaData {
 // Evita refazer fetches dos endpoints leves /trinks/hoje, /hoje-completo, /amanha
 // quando o usuário navega para outra aba e volta em poucos minutos.
 // O backend já cacheia esses endpoints, mas isso elimina até a ida ao backend.
-const DASH_FETCH_THROTTLE_MS = 60 * 1000; // 60s — reduzido de 3min pra dado mais fresco
+const DASH_FETCH_THROTTLE_MS = 2 * 60 * 60 * 1000; // v54: 2h — economia de cota Trinks (era 60s; martelava a API a cada foco/visita)
 const dashFetchCache: Record<string, { payload: any; ts: number }> = {};
 // v34: helper pra invalidar todo o cache do Dashboard (usado pelo botão Atualizar)
 function invalidateDashFetchCache() {
@@ -677,6 +677,14 @@ export default function Dashboard() {
   const [equipeMesDash, setEquipeMesDash] = useState<any>(null);
   // Fase 1: mês anterior p/ comparação (faturamento + ticket).
   const [mesAnteriorCmp, setMesAnteriorCmp] = useState<{ faturamento: number; ticketMedio: number } | null>(null);
+  // v54: contador de consumo da Trinks (auditoria real — chamadas/429).
+  const [trinksContador, setTrinksContador] = useState<any>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/trinks/contador`).then(r => r.json()).then(d => { if (!cancelled && d?.ok) setTrinksContador(d); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [API_BASE]);
+
   // Fase 2: agregados de cliente do "Ranking de Clientes" (sem PII).
   const [clientesMes, setClientesMes] = useState<any>(null);
 
@@ -1028,6 +1036,25 @@ export default function Dashboard() {
       <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
         <DashboardApiSummaryCard mes={selectedMes} />
         <DashboardImportSummaryCard mes={selectedMes} />
+
+        {/* v54: contador de consumo da Trinks (real) + fatia mensal (5000÷2 sistemas) */}
+        {trinksContador && (() => {
+          const estourou = trinksContador.fatiaEstourada;
+          const pct = trinksContador.fatiaMensal > 0 ? Math.round((trinksContador.consumoMes / trinksContador.fatiaMensal) * 100) : 0;
+          return (
+            <div className={`rounded-md border p-2.5 text-[11px] ${estourou ? "border-red-500/50 bg-red-500/10" : trinksContador.trinks429Agora ? "border-amber-500/40 bg-amber-500/5" : "border-card-border bg-card"}`} data-testid="trinks-contador">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${estourou ? "bg-red-400" : trinksContador.trinks429Agora ? "bg-amber-400" : "bg-emerald-400"}`} />
+                <span className="text-muted-foreground">API Trinks · fatia do mês</span>
+                <span className={`font-bold ${estourou ? "text-red-400" : "text-foreground"}`}>{trinksContador.consumoMes.toLocaleString("pt-BR")} / {trinksContador.fatiaMensal.toLocaleString("pt-BR")}</span>
+                <span className={estourou ? "text-red-400" : "text-muted-foreground"}>({pct}%)</span>
+                <span className="text-muted-foreground hidden sm:inline">· hoje {trinksContador.hoje.ok} ok{trinksContador.hoje.rate429 > 0 && ` · ${trinksContador.hoje.rate429} recusadas`}</span>
+              </div>
+              {estourou && <div className="text-red-400 mt-1 font-medium">⚠ Fatia estourada — consumindo a cota do grecometas. Reduza o uso da Trinks (use CSV).</div>}
+              {!estourou && trinksContador.trinks429Agora && <div className="text-amber-400 mt-1">⚠ Trinks recusando agora — usando CSV.</div>}
+            </div>
+          );
+        })()}
       </div>
 
       {/* ───────── Fase 1: Resumo do Mês (fonte canônica) ───────── */}

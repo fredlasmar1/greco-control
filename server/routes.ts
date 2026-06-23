@@ -895,8 +895,12 @@ const rateLimiter: RateLimiterState = {
 };
 
 const MAX_REQUESTS_PER_MINUTE = 40;  // safe margin under 60
-const MAX_REQUESTS_PER_MONTH = 4500; // safe margin under 5000
+const MAX_REQUESTS_PER_MONTH = 4500; // teto absoluto de segurança (hard-stop)
 const MIN_DELAY_BETWEEN_REQUESTS_MS = 1200; // ~50 req/min max pace
+// v54: a conta Trinks tem ~5000 req/mês TOTAL, COMPARTILHADAS com o grecometas.
+// Esta é a FATIA do Greco Control (metade). Não bloqueia (decisão do dono) — só
+// alerta forte no widget quando o consumo real do mês passar dela.
+const TRINKS_FATIA_MENSAL = Number(process.env.TRINKS_MONTHLY_BUDGET || 2500);
 
 let lastRequestTime = 0;
 
@@ -1059,10 +1063,10 @@ const CACHE_TTLS: Record<string, number> = {
   "profissionais": 24 * 60 * 60 * 1000,        // 24h
   "servicos": 24 * 60 * 60 * 1000,             // 24h
   "clientes": 6 * 60 * 60 * 1000,              // 6h
-  "agendamentos": 30 * 60 * 1000,              // 30min
-  "transacoes": 30 * 60 * 1000,                // 30min
-  "lancamentos": 30 * 60 * 1000,               // 30min
-  "full_sync": 15 * 60 * 1000,                 // 15min
+  "agendamentos": 2 * 60 * 60 * 1000,          // 2h (v54: economia de cota)
+  "transacoes": 2 * 60 * 60 * 1000,            // 2h (v54: economia de cota)
+  "lancamentos": 2 * 60 * 60 * 1000,           // 2h (v54: economia de cota)
+  "full_sync": 60 * 60 * 1000,                 // 1h (v54: era 15min)
 };
 
 function getCached(key: string): any | null {
@@ -1884,6 +1888,33 @@ export async function registerRoutes(
       maxPerMinute: MAX_REQUESTS_PER_MINUTE,
       totalRequestsSession: rateLimiter.totalRequestsSession,
     });
+  });
+
+  // ─── GET /api/trinks/contador — v54: widget do Dashboard.
+  // Consumo REAL da Trinks (auditoria persistente): hoje e mês, com 429.
+  // Honesto: mostra chamadas OK e recusadas (429) — o limite real é da conta Trinks.
+  app.get("/api/trinks/contador", async (_req: Request, res: Response) => {
+    try {
+      const hojeBuckets = await lerUltimosDias(1);
+      const h = hojeBuckets[hojeBuckets.length - 1] || { total: 0, ok: 0, rate429: 0, erros: 0 };
+      const mes = await resumoUltimosDias(31);
+      const trinks429Agora = circuitOpenUntil > Date.now();
+      return res.json({
+        ok: true,
+        hoje: { ok: h.ok, rate429: h.rate429, erros: h.erros, total: h.total },
+        mes: { ok: mes.totais.ok, rate429: mes.totais.rate429, erros: mes.totais.erros, total: mes.totais.total },
+        trinks429Agora,
+        // v54: fatia mensal do Greco Control (metade dos ~5000 da conta, resto = grecometas).
+        // Consumo real = total de requisições do mês (auditoria persistente).
+        fatiaMensal: TRINKS_FATIA_MENSAL,
+        consumoMes: mes.totais.total,
+        fatiaEstourada: mes.totais.total > TRINKS_FATIA_MENSAL,
+        // contador interno (nossa contagem em memória) — referência secundária
+        sessao: { requestsThisMonth: rateLimiter.requestsThisMonth, maxPerMonth: MAX_REQUESTS_PER_MONTH },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
   });
 
   // POST /api/trinks/reset-monthly — zera o contador mensal Trinks em memória.
@@ -6831,38 +6862,39 @@ Regras CRÍTICAS:
       let trinks429 = false;
       let qtdVendas = 0;
 
-      // 1) tenta API Trinks ao vivo (timeout 6s; se 429/vazia, cai no CSV).
-      try {
-        const dFimApi = new Date(data + "T12:00:00Z"); dFimApi.setUTCDate(dFimApi.getUTCDate() + 1);
-        const transApi: any = await Promise.race([
-          trinksFetchAll("transacoes", { dataInicio: data, dataFim: dFimApi.toISOString().slice(0, 10) }),
-          new Promise((resolve) => setTimeout(() => resolve("__timeout__"), 6000)),
-        ]);
-        if (transApi === "__timeout__") { trinks429 = true; }
-        else {
-          const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
-          for (const t of arr) {
-            const raw = t.dataHora || t.dataReferencia || t.data || "";
-            const d = typeof raw === "string" ? raw.split("T")[0] : "";
-            if (d !== data) continue;
-            qtdVendas++;
-            for (const fp of (t.formasPagamentos || t.formasPagamento || [])) classificaForma(String(fp.nome || ""), Number(fp.valor || 0));
-          }
-          if (qtdVendas > 0) fonteVenda = "trinks";
-        }
-      } catch (e: any) {
-        if (e?.status === 429 || /limit|429/i.test(e?.message || "")) trinks429 = true;
-      }
-
-      // 2) fallback CSV Financeiro (se API não trouxe nada).
+      // v54 csv-first: se há CSV do dia, USA o CSV (0 chamadas Trinks). Só toca a
+      // API ao vivo quando NÃO há CSV do dia (dias recentes ainda não exportados).
       const finPayload: any = await kvGet(trinksImport.kvKeyFor("financeiro", mes));
       const finRows: any[] = Array.isArray(finPayload?.rows) ? finPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
-      if (fonteVenda !== "trinks" && finRows.length > 0) {
+      if (finRows.length > 0) {
         for (const r of finRows) {
           classificaForma(`${r.tipoFormaPagamento || ""} ${r.formaPagamento || ""}`, Number(r.valorPago || r.valorReceber || 0));
         }
         fonteVenda = "csv";
         qtdVendas = finRows.length;
+      } else {
+        // sem CSV do dia → tenta API Trinks ao vivo (timeout 6s).
+        try {
+          const dFimApi = new Date(data + "T12:00:00Z"); dFimApi.setUTCDate(dFimApi.getUTCDate() + 1);
+          const transApi: any = await Promise.race([
+            trinksFetchAll("transacoes", { dataInicio: data, dataFim: dFimApi.toISOString().slice(0, 10) }),
+            new Promise((resolve) => setTimeout(() => resolve("__timeout__"), 6000)),
+          ]);
+          if (transApi === "__timeout__") { trinks429 = true; }
+          else {
+            const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
+            for (const t of arr) {
+              const raw = t.dataHora || t.dataReferencia || t.data || "";
+              const d = typeof raw === "string" ? raw.split("T")[0] : "";
+              if (d !== data) continue;
+              qtdVendas++;
+              for (const fp of (t.formasPagamentos || t.formasPagamento || [])) classificaForma(String(fp.nome || ""), Number(fp.valor || 0));
+            }
+            if (qtdVendas > 0) fonteVenda = "trinks";
+          }
+        } catch (e: any) {
+          if (e?.status === 429 || /limit|429/i.test(e?.message || "")) trinks429 = true;
+        }
       }
 
       // ── Vendido por tipo (CSV Caixa, informativo) ──
@@ -11942,7 +11974,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
 
       // Cron matinal de refinamento — 6h SP recaptura ontem (caso o CSV do email
       // tenha chegado durante a madrugada com status mais atualizado)
-      cron.schedule("0 6 * * *", async () => { await comOrigem("cron-snapshot-refino-6h", async () => {
+      // v54: DESATIVADO p/ economizar cota Trinks — o snapshot 23h30 já captura ontem.
+      if (false) cron.schedule("0 6 * * *", async () => { await comOrigem("cron-snapshot-refino-6h", async () => {
         try {
           const ontem = (() => {
             const d = new Date();
@@ -12005,8 +12038,11 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   // Próximas consultas a qualquer dia passado do mês servem do cache
   // via trinksTryFromCachedRange — zero chamadas Trinks extras.
   // Economia: ~150 chamadas/mês por usuário ativo no dashboard.
+  // v54: pré-fetch 03h DESATIVADO p/ economizar cota Trinks. O snapshot 23h30
+  // (csv-first) já captura o dia; com a Trinks em 429 crônico, o pré-fetch só
+  // queimava retries. Religar = trocar `if (false)` por `if (true)`.
   try {
-    cron.schedule("0 3 * * *", async () => {
+    if (false) cron.schedule("0 3 * * *", async () => {
       try {
         const hojeSP = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
         const ontemSP = (() => {
@@ -12019,7 +12055,6 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           log(`[prefetch] primeiro dia do mês — nada a pré-buscar`, "trinks");
           return;
         }
-        // transFim semi-aberto: precisa ser hojeSP pra incluir ontem.
         log(`[prefetch] aquecendo cache ${primeiroDoMes}..${ontemSP} (transFim=${hojeSP})...`, "trinks");
         const [trans, agend] = await Promise.allSettled([
           trinksFetchAllRange("transacoes", { dataInicio: primeiroDoMes, dataFim: hojeSP }),
@@ -12032,7 +12067,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         log(`[prefetch] erro: ${err?.message || err}`, "trinks");
       }
     }, { timezone: "America/Sao_Paulo" });
-    log("[cron] pré-fetch noturno 03h SP ativo", "trinks");
+    log("[cron] pré-fetch noturno 03h DESATIVADO (economia de cota)", "trinks");
   } catch (err: any) {
     log(`[cron] falha registrar pré-fetch: ${err.message}`, "trinks");
   }

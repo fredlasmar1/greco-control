@@ -8,6 +8,14 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v59 — Estética como 5ª categoria via valor manual (23/06/2026) [concluído]
+
+**Contexto:** A2 só fez 4 categorias (faltou Estética). Estética precisa do nome do serviço × valor — só vem da API agendamentos (429 crônico) ou relatório por serviço (Trinks do dono não exporta; os CSVs que mandou eram financeiro/caixa/catálogo-produtos). Decisão do dono: **campo manual**.
+
+**Feito:** `POST /api/viabilidade/estetica/:mes` salva `{receita, comissaoPct}` em kv `viab_estetica:YYYY-MM` (receita=0 limpa). `calcularCategoriasMargem` lê e monta 5ª linha `estetica` (margem = receita − comissão(receita×pct) − taxa − imposto − fixo rateado por participação). `esteticaPendente` agora = `!estetica`. Aba Viabilidade: 5º card "Estética" (quando lançado) + campo de lançamento (receita R$ + comissão % + Salvar → reloadKey). Recorte da receita de serviço (já contada nos barbeiros) — sinalizado p/ não parecer dupla-contagem. Validado: R$3.000/40% → margem 55,5%.
+
+**5 categorias completas:** Express/Clássico/VIP (ranking) + Produtos (ranking) + Estética (manual). Quando a API liberar / houver relatório por serviço, dá pra automatizar a estética (helper já estruturado).
+
 ### v58 — Reajuste de Preços: raio-X lucro/prejuízo + preço pra margem 30% (23/06/2026) [concluído]
 
 **Ideia do dono:** o preço dos serviços ELE define; o sistema só diz se cada um lucra ou dá prejuízo (custo × preço atual) e qual preço pra atingir margem-alvo (30%). Inverte o problema (não caçar custo perfeito; usar o preço existente). "Serviço é chute no escuro hoje."

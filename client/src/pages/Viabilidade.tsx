@@ -28,6 +28,10 @@ export default function Viabilidade() {
   const [loading, setLoading] = useState(false);
   const [catsFixas, setCatsFixas] = useState<Array<{ id: string; nome: string; tipo: string; cor: string }>>([]);
   const [reloadKey, setReloadKey] = useState(0);
+  // estética manual (receita + comissão %)
+  const [esteticaReceita, setEsteticaReceita] = useState("");
+  const [esteticaComissao, setEsteticaComissao] = useState("40");
+  const [salvandoEst, setSalvandoEst] = useState(false);
 
   const carregar = () => {
     setLoading(true);
@@ -35,12 +39,28 @@ export default function Viabilidade() {
       fetch(`${API_BASE}/api/viabilidade/${selectedMes}`).then(r => r.json()),
       fetch(`${API_BASE}/api/expense-categorias`).then(r => r.json()),
     ]).then(([v, c]) => {
-      if (v?.ok) setData(v);
+      if (v?.ok) {
+        setData(v);
+        const est = v.categorias?.estetica;
+        setEsteticaReceita(est ? String(est.receita) : "");
+        setEsteticaComissao(est ? String(est.comissaoPct) : "40");
+      }
       const cats = (c?.categorias || []).filter((x: any) => x.tipo === "fixo" || x.tipo === "recorrente");
       setCatsFixas(cats);
     }).finally(() => setLoading(false));
   };
   useEffect(() => { setData(null); carregar(); /* eslint-disable-next-line */ }, [selectedMes, reloadKey]);
+
+  const salvarEstetica = async () => {
+    setSalvandoEst(true);
+    try {
+      await fetch(`${API_BASE}/api/viabilidade/estetica/${selectedMes}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receita: Number((esteticaReceita || "0").replace(",", ".")) || 0, comissaoPct: Number(esteticaComissao) || 40 }),
+      });
+      setReloadKey(k => k + 1);
+    } finally { setSalvandoEst(false); }
+  };
 
   const categorizar = async (txId: string, categoriaId: string) => {
     await fetch(`${API_BASE}/api/expenses/bank/${txId}/categoria`, {
@@ -204,6 +224,25 @@ export default function Viabilidade() {
                       </CardContent>
                     </Card>
                   ))}
+                  {/* Estética (valor manual) */}
+                  {cats.estetica && (
+                    <Card className="bg-card border-card-border" data-testid="cat-Estetica">
+                      <CardContent className="p-3">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className={`w-2 h-2 rounded-full ${dot(cats.estetica.margemPct)}`} />
+                          <span className="text-xs font-medium">Estética</span>
+                          <span className="text-[8px] text-muted-foreground ml-auto">manual</span>
+                        </div>
+                        <div className={`text-lg font-bold ${semaforo(cats.estetica.margemPct)}`}>{cats.estetica.margemPct.toFixed(1)}%</div>
+                        <div className="text-[10px] text-muted-foreground">margem {formatCurrency(cats.estetica.margemReal)}</div>
+                        <div className="mt-1.5 pt-1.5 border-t border-border/40 space-y-0.5 text-[10px] text-muted-foreground">
+                          <div className="flex justify-between"><span>Receita</span><span className="tabular-nums">{formatCurrency(cats.estetica.receita)}</span></div>
+                          <div className="flex justify-between"><span>Comissão ({cats.estetica.comissaoPct}%)</span><span className="tabular-nums">−{formatCurrency(cats.estetica.comissao)}</span></div>
+                          <div className="flex justify-between"><span>Custo fixo</span><span className="tabular-nums">−{formatCurrency(cats.estetica.custoFixoRateado)}</span></div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
                   {/* Produtos */}
                   <Card className="bg-card border-card-border" data-testid="cat-Produtos">
                     <CardContent className="p-3">
@@ -220,6 +259,18 @@ export default function Viabilidade() {
                     </CardContent>
                   </Card>
                 </div>
+
+                {/* lançar/editar estética manual */}
+                <Card className="bg-card border-card-border"><CardContent className="p-3 flex items-center gap-2 flex-wrap text-xs">
+                  <span className="text-muted-foreground">Estética do mês (R$ faturado):</span>
+                  <input type="number" min={0} value={esteticaReceita} onChange={e => setEsteticaReceita(e.target.value)} placeholder="0,00" className="h-7 w-24 rounded border border-border bg-background px-2 text-sm" data-testid="input-estetica-receita" />
+                  <span className="text-muted-foreground">comissão</span>
+                  <input type="number" min={0} max={100} value={esteticaComissao} onChange={e => setEsteticaComissao(e.target.value)} className="h-7 w-16 rounded border border-border bg-background px-2 text-sm" data-testid="input-estetica-comissao" />
+                  <span className="text-muted-foreground">%</span>
+                  <Button size="sm" className="h-7 text-xs" disabled={salvandoEst} onClick={salvarEstetica} data-testid="btn-salvar-estetica">{salvandoEst ? "…" : "Salvar"}</Button>
+                  <span className="text-[10px] text-muted-foreground ml-auto">você vê no Trinks web (filtro de serviços de estética). É recorte da receita de serviço.</span>
+                </CardContent></Card>
+
                 <div className="text-[10px] text-muted-foreground space-y-0.5">
                   <p>● {cats.avisoFixoRateado}.</p>
                   {cats.esteticaPendente && <p className="text-amber-400">⚠ Estética ainda não separada — precisa do relatório Trinks por serviço (a estética que os barbeiros fazem está embutida na categoria deles). Serviço sem categoria (assistentes/não-mapeados): {formatCurrency(cats.semCategoriaServico)}.</p>}

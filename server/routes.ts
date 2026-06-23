@@ -7339,9 +7339,33 @@ Regras CRÍTICAS:
           margemPct: receita > 0 ? r2((margem / receita) * 100) : 0,
         };
       };
+      // Estética: valor MANUAL informado pelo dono (a API/CSV não separa por serviço).
+      // Recorte da receita de serviço (já contada nas categorias dos barbeiros) — informativo.
+      let estetica: any = null;
+      try {
+        const est: any = await kvGet(`viab_estetica:${mes}`);
+        if (est && Number(est.receita) > 0) {
+          const receita = Number(est.receita);
+          const comPct = Number(est.comissaoPct || 40) / 100;
+          const comissaoV = receita * comPct;
+          const taxaV = receita * taxa, impV = receita * imp;
+          const fixoV = receitaServTotal > 0 ? fixoTotal * (receita / receitaServTotal) : 0;
+          const custo = comissaoV + taxaV + impV + fixoV;
+          const margem = receita - custo;
+          estetica = {
+            nome: "Estética", manual: true, comissaoPct: Number(est.comissaoPct || 40),
+            receita: r2(receita), comissao: r2(comissaoV), taxaCartao: r2(taxaV), imposto: r2(impV),
+            custoFixoRateado: r2(fixoV), custoTotal: r2(custo), margemReal: r2(margem),
+            margemPct: receita > 0 ? r2((margem / receita) * 100) : 0,
+            nota: "valor informado manualmente; recorte da receita de serviço (já contada nas categorias dos barbeiros)",
+          };
+        }
+      } catch {}
+
       const prodTaxa = produtosReceita * taxa, prodImp = produtosReceita * imp;
       return {
         linhas: [linhaCat("Express", acc.Express), linhaCat("Clássico", acc.Classico), linhaCat("VIP", acc.VIP)],
+        estetica,
         produtos: {
           nome: "Produtos", receita: r2(produtosReceita),
           taxaCartao: r2(prodTaxa), imposto: r2(prodImp),
@@ -7349,7 +7373,7 @@ Regras CRÍTICAS:
           margemPct: produtosReceita > 0 ? r2(((produtosReceita - prodTaxa - prodImp) / produtosReceita) * 100) : 0,
           nota: "sem custo de mercadoria nem comissão de produto descontados",
         },
-        esteticaPendente: true,
+        esteticaPendente: !estetica,
         semCategoriaServico: r2(semCategoria),
         avisoFixoRateado: "custo fixo rateado por participação na receita de serviço",
       };
@@ -7965,6 +7989,26 @@ Regras CRÍTICAS:
         avisos: notas,
         categorias: await calcularCategoriasMargem(mes),  // A2
       });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
+  // POST /api/viabilidade/estetica/:mes — valor manual da estética do mês (a API/CSV
+  // não separa por serviço). body: { receita, comissaoPct }. receita=0/null limpa.
+  app.post("/api/viabilidade/estetica/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "Mês inválido." });
+      const receita = Number(req.body?.receita || 0);
+      const comissaoPct = Math.max(0, Math.min(100, Number(req.body?.comissaoPct ?? 40)));
+      if (!receita || receita <= 0) {
+        await kvSet(`viab_estetica:${mes}`, null);
+        return res.json({ ok: true, limpo: true });
+      }
+      const reg = { receita: Math.round(receita * 100) / 100, comissaoPct, salvoEm: new Date().toISOString() };
+      await kvSet(`viab_estetica:${mes}`, reg);
+      return res.json({ ok: true, estetica: reg });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }

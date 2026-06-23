@@ -12,7 +12,7 @@
 
 // ─── Tipos públicos ───────────────────────────────────────────────────────────
 
-export type TrinksImportType = "financeiro" | "dre" | "ranking" | "caixa" | "clientes";
+export type TrinksImportType = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos";
 
 export interface FinanceiroRow {
   data: string;                  // YYYY-MM-DD (Data Atendimento/Venda)
@@ -179,7 +179,24 @@ export interface ClientesPayload {
   rows: RankingClienteRow[];
 }
 
-export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload | CaixaPayload | ClientesPayload;
+// ─── Catálogo de Produtos (custo + comissão por produto) ────────────────────
+export interface ProdutoCatalogo {
+  nome: string;
+  categoria: string;
+  preco: number;          // Preço (R$) de venda
+  comissaoPct: number;    // % Comissão
+  custo: number;          // Valor De Compra (R$) — 0 se não cadastrado na Trinks
+  paraRevenda: boolean;
+}
+export interface ProdutosPayload {
+  tipo: "produtos";
+  geradoEm: string;
+  totalProdutos: number;
+  comCusto: number;       // quantos têm custo > 0
+  produtos: ProdutoCatalogo[];
+}
+
+export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload | CaixaPayload | ClientesPayload | ProdutosPayload;
 
 // ─── Utilidades ──────────────────────────────────────────────────────────────
 
@@ -293,6 +310,12 @@ export function detectTrinksType(text: string): TrinksImportType | null {
   const all = splitLines(text);
   const head = all.slice(0, 15).join("\n").toLowerCase();
   const full = all.join("\n").toLowerCase();
+
+  // Catálogo de produtos: header "Nome;Categoria;...;Valor De Compra". Assinatura
+  // exclusiva (tem "valor de compra" + "% comissão" + "código de barras").
+  if (head.includes("valor de compra") && head.includes("código de barras")) {
+    return "produtos";
+  }
 
   // Clientes (Fase 2): cabeçalho "Posição;Nome Cliente;...;Visitas com pagamento
   // no período;...". Assinatura exclusiva — não colide com o ranking de
@@ -877,16 +900,63 @@ export function clientesKvKey(payload: ClientesPayload): string {
   return clientesEhBase(payload) ? CLIENTES_BASE_KEY : kvKeyFor("clientes", payload.mes);
 }
 
+// ─── Parser: Catálogo de Produtos ────────────────────────────────────────────
+export function parseProdutos(text: string): ProdutosPayload {
+  const lines = splitLines(text);
+  let geradoEm = "";
+  for (const line of lines.slice(0, 8)) {
+    const ger = line.match(/Relat[oó]rio gerado em\s+(.+?)["\s]*$/i);
+    if (ger) geradoEm = ger[1].trim();
+  }
+  const headerIdx = lines.findIndex(l => {
+    const lo = l.toLowerCase();
+    return lo.includes("valor de compra") && lo.includes("código de barras");
+  });
+  if (headerIdx < 0) throw new Error("Cabeçalho do catálogo de produtos não encontrado.");
+  const header = parseCsvLine(lines[headerIdx]).map(h => h.trim().toLowerCase());
+  const col = (nome: string) => header.findIndex(h => h === nome);
+  const iNome = col("nome");
+  const iCat = col("categoria");
+  const iRev = col("é para revenda");
+  const iPreco = col("preço (r$)");
+  const iCom = col("% comissão");
+  const iCusto = col("valor de compra (r$)");
+
+  const produtos: ProdutoCatalogo[] = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const c = parseCsvLine(lines[i]);
+    const nome = (c[iNome] || "").trim();
+    if (!nome) continue;
+    produtos.push({
+      nome,
+      categoria: iCat >= 0 ? (c[iCat] || "").trim() : "",
+      preco: iPreco >= 0 ? parseBR(c[iPreco]) : 0,
+      comissaoPct: iCom >= 0 ? parsePct(c[iCom]) : 0,
+      custo: iCusto >= 0 ? parseBR(c[iCusto]) : 0,
+      paraRevenda: iRev >= 0 ? /^s/i.test((c[iRev] || "").trim()) : true,
+    });
+  }
+  return {
+    tipo: "produtos",
+    geradoEm,
+    totalProdutos: produtos.length,
+    comCusto: produtos.filter(p => p.custo > 0).length,
+    produtos,
+  };
+}
+
 export function parseTrinksCsv(buf: Buffer): TrinksImportPayload {
   const text = decodeCsvBuffer(buf);
   const tipo = detectTrinksType(text);
   if (!tipo) {
-    throw new Error("Tipo de relatório não reconhecido. Esperado: financeiro, DRE, ranking, caixa ou clientes.");
+    throw new Error("Tipo de relatório não reconhecido. Esperado: financeiro, DRE, ranking, caixa, clientes ou produtos.");
   }
   if (tipo === "financeiro") return parseFinanceiro(text);
   if (tipo === "dre") return parseDRE(text);
   if (tipo === "caixa") return parseCaixa(text);
   if (tipo === "clientes") return parseClientes(text);
+  if (tipo === "produtos") return parseProdutos(text);
   return parseRanking(text);
 }
 
@@ -1100,6 +1170,17 @@ export function summarize(payload: TrinksImportPayload, importadoEm: string, mes
       geradoEm: payload.geradoEm,
       importadoEm,
       descricao: `Clientes · ${payload.totalClientes} clientes · ${novos} novos · R$ ${totalReais.toFixed(2).replace(".", ",")}`,
+    };
+  }
+  if (payload.tipo === "produtos") {
+    return {
+      tipo: "produtos",
+      mes: "",
+      totalValor: 0,
+      totalLinhas: payload.totalProdutos,
+      geradoEm: payload.geradoEm,
+      importadoEm,
+      descricao: `Produtos · ${payload.totalProdutos} no catálogo · ${payload.comCusto} com custo cadastrado`,
     };
   }
   // ranking — pode ter múltiplos meses; chamamos summarize por período fora

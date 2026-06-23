@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v60 — Parser de Catálogo de Produtos (importação) (23/06/2026) [concluído]
+
+**Problema do dono:** `produtos.csv` (catálogo Trinks) dava "tipo não reconhecido" — não havia parser. (Os 2 `relatorio.csv` que ele mandou eram Caixa+Financeiro de MAIO, já reconhecidos.)
+
+**Feito (`trinksImport.ts` + `routes.ts` + `ImportarTrinks.tsx`):** novo tipo **"produtos"**. Detecção: header com "valor de compra" + "código de barras". `parseProdutos` extrai Nome·Categoria·Preço·%Comissão·Custo(Valor De Compra)·paraRevenda → `ProdutosPayload`. Confirm salva em kv fixo **`catalogo_produtos`** (NÃO por mês). Preview/summarize/UI (label "Catálogo de Produtos", ícone Wallet, `PreviewProdutos` com total/com-custo/sem-custo + amostra). Validado: produtos.csv → 51 produtos, 6 com custo, 45 sem. **Ressalva: 45/51 vieram SEM custo da Trinks** (dono completa em Custos de Produtos). Catálogo entra no sistema (nome/preço/comissão); margem de produto exata depende dos custos. Próximo possível: usar `catalogo_produtos` pra margem real de Produtos na Viabilidade.
+
 ### v59 — Estética como 5ª categoria via valor manual (23/06/2026) [concluído]
 
 **Contexto:** A2 só fez 4 categorias (faltou Estética). Estética precisa do nome do serviço × valor — só vem da API agendamentos (429 crônico) ou relatório por serviço (Trinks do dono não exporta; os CSVs que mandou eram financeiro/caixa/catálogo-produtos). Decisão do dono: **campo manual**.

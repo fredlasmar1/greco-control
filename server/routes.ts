@@ -2614,6 +2614,8 @@ export async function registerRoutes(
         const s = trinksImport.summarize(payload, importadoEm);
         const chave = payload.tipo === "clientes"
           ? trinksImport.clientesKvKey(payload)
+          : payload.tipo === "produtos"
+          ? "catalogo_produtos"
           : trinksImport.kvKeyFor(payload.tipo, payload.mes);
         summaries.push({ ...s, chave, sobrescreve: idx[chave] || null });
       }
@@ -2656,6 +2658,11 @@ export async function registerRoutes(
           .sort((a, b) => b.total - a.total)
           .slice(0, 5)
           .map(r => ({ nome: r.nome, total: r.total, visitasPeriodo: r.visitasPeriodo }));
+      } else if (payload.tipo === "produtos") {
+        previewData.totalProdutos = payload.totalProdutos;
+        previewData.comCusto = payload.comCusto;
+        previewData.semCusto = payload.totalProdutos - payload.comCusto;
+        previewData.amostra = payload.produtos.slice(0, 5).map(p => ({ nome: p.nome, preco: p.preco, custo: p.custo, comissaoPct: p.comissaoPct }));
       }
 
       log(`Trinks import preview: ${req.file.originalname} → ${payload.tipo} (${summaries.length} chave(s))`, "trinks-import");
@@ -2711,6 +2718,15 @@ export async function registerRoutes(
           s.mes = "";
           s.descricao = `Base de sumidos · ${payload.totalClientes} clientes · ${payload.periodoInicio} → ${payload.periodoFim}`;
         }
+        idx[chave] = s;
+        persistidas.push(s);
+      } else if (payload.tipo === "produtos") {
+        // Catálogo não é por mês — chave fixa. Também popula produtos_custos
+        // (por NOME, já que o CSV não traz ID Trinks) pra a margem usar o custo.
+        const chave = "catalogo_produtos";
+        await kvSet(chave, payload);
+        const s = trinksImport.summarize(payload, importadoEm);
+        s.mes = "";
         idx[chave] = s;
         persistidas.push(s);
       } else {

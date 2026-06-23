@@ -30,11 +30,12 @@ import {
   RefreshCw,
   Banknote,
   UserPlus,
+  Wallet,
 } from "lucide-react";
 
 // ─── Tipos espelhando o backend (server/trinksImport.ts) ─────────────────────
 
-type TipoImport = "financeiro" | "dre" | "ranking" | "caixa" | "clientes";
+type TipoImport = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos";
 
 interface ImportItem {
   chave: string;
@@ -71,6 +72,7 @@ const TIPO_LABELS: Record<TipoImport, string> = {
   ranking: "Ranking de Profissionais",
   caixa: "Caixa (Pagamentos por Comanda)",
   clientes: "Ranking de Clientes",
+  produtos: "Catálogo de Produtos",
 };
 
 const TIPO_ICONS: Record<TipoImport, any> = {
@@ -79,6 +81,7 @@ const TIPO_ICONS: Record<TipoImport, any> = {
   ranking: Users,
   caixa: Banknote,
   clientes: UserPlus,
+  produtos: Wallet,
 };
 
 function mesLabel(mes: string): string {
@@ -590,6 +593,7 @@ function PreviewBlock({
       {tipo === "dre" && <PreviewDRE p={preview.preview} />}
       {tipo === "ranking" && <PreviewRanking p={preview.preview} />}
       {tipo === "clientes" && <PreviewClientes p={preview.preview} />}
+      {tipo === "produtos" && <PreviewProdutos p={preview.preview} />}
 
       {/* Resumo das chaves a salvar */}
       <div className="rounded-md border border-border bg-muted/30 p-3">
@@ -767,6 +771,34 @@ function PreviewClientes({ p }: { p: any }) {
               <div key={i} className="flex items-center justify-between">
                 <span className="truncate">{c.nome} <span className="text-muted-foreground">· {c.visitasPeriodo}x</span></span>
                 <span className="font-mono">{formatCurrency(c.total)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PreviewProdutos({ p }: { p: any }) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-border bg-card/50 p-3">
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          <Stat label="Produtos" value={String(p.totalProdutos ?? 0)} highlight />
+          <Stat label="Com custo" value={String(p.comCusto ?? 0)} positive />
+          <Stat label="Sem custo" value={String(p.semCusto ?? 0)} negative={p.semCusto > 0} />
+        </div>
+        {p.semCusto > 0 && (
+          <p className="text-[11px] text-amber-400 mb-2">⚠ {p.semCusto} produtos sem "Valor de Compra" na Trinks — a margem deles fica incompleta até você cadastrar o custo (aba Custos de Produtos).</p>
+        )}
+        {p.amostra?.length > 0 && (
+          <div className="space-y-0.5 text-xs">
+            <p className="font-medium text-muted-foreground mb-1">Amostra</p>
+            {p.amostra.map((pr: any, i: number) => (
+              <div key={i} className="flex items-center justify-between">
+                <span className="truncate">{pr.nome} <span className="text-muted-foreground">· com {pr.comissaoPct}%</span></span>
+                <span className="font-mono">{formatCurrency(pr.preco)} {pr.custo > 0 ? <span className="text-muted-foreground">(custo {formatCurrency(pr.custo)})</span> : <span className="text-amber-400">(s/ custo)</span>}</span>
               </div>
             ))}
           </div>

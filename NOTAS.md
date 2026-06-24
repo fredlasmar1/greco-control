@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v62 — Caixa do Dia: fallback CSV Caixa pro "vendido por forma" (24/06/2026) [concluído]
+
+**Problema:** Conferência D+1 mostrava vendido por forma = R$0 em dias fora do range do financeiro importado (financeiro junho só cobre 13–23/06) — caía na API Trinks (429 crônico). O CSV de Caixa tinha as formas (totalCredito/totalDebito/totalDinheiro/totalPrePago por comanda) mas não era usado.
+
+**Fix (`routes.ts` /api/caixa-dia/conferencia + `CaixaDia.tsx`):** novo fallback `fonteVenda="csv-caixa"` — quando financeiro do dia vazio + API indisponível, usa as formas do CSV Caixa. Caixa fecha sem tocar a Trinks. Badge "● CSV Caixa" + aviso (Caixa não separa PIX → some em "outros"; confira crédito/débito). Validado prod: 02/06 Crédito BATE (dif R$2,74)/Débito BATE; 12/06 (sexta) não bate pq liquida segunda c/ sáb+dom (limitação fim-de-semana conhecida).
+
 ### v61 — Financeiro: aceita variante "por Data de Atendimento/Venda" (24/06/2026) [concluído]
 
 **Problema:** CSV financeiro variante (header "Mês da Data do Atendimento/Venda" em vez de "Mês de Previsão de Recebimento") dava "tipo não reconhecido". Mesmas 22 colunas, só muda a 1ª. A Trinks exporta o financeiro em 2 recortes: previsão de recebimento (competência caixa) e data de atendimento (competência venda).

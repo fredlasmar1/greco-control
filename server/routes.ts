@@ -6871,7 +6871,7 @@ Regras CRÍTICAS:
         else if (f.includes("depós") || f.includes("depos") || f.includes("pré") || f.includes("pre-") || f.includes("plano") || f.includes("assinatura") || f.includes("saldo")) vend.plano += v;
         else vend.outros += v;
       };
-      let fonteVenda: "trinks" | "csv" | null = null;
+      let fonteVenda: "trinks" | "csv" | "csv-caixa" | null = null;
       let trinks429 = false;
       let qtdVendas = 0;
 
@@ -6910,14 +6910,37 @@ Regras CRÍTICAS:
         }
       }
 
-      // ── Vendido por tipo (CSV Caixa, informativo) ──
+      // ── Vendido por tipo + por forma (CSV Caixa) ──
+      // O CSV de Caixa traz, por comanda, tanto o breakdown por tipo (serviço/
+      // produto/pacote) quanto por forma de pagamento (crédito/débito/dinheiro/
+      // pré-pago). Servem de reserva pro "vendido por forma" quando o financeiro
+      // do dia não existe e a API está em 429 — fecha o caixa sem tocar a Trinks.
       const tipo = { servico: 0, produto: 0, pacote: 0 };
+      const vendCaixa = { credito: 0, debito: 0, pix: 0, dinheiro: 0, plano: 0, outros: 0 };
       const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
       const caixaRows: any[] = Array.isArray(caixaPayload?.rows) ? caixaPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
       for (const r of caixaRows) {
         tipo.servico += Number(r.totalServico || 0);
         tipo.produto += Number(r.totalProdutos || 0);
         tipo.pacote += Number(r.totalPacotes || 0);
+        vendCaixa.credito += Number(r.totalCredito || 0);
+        vendCaixa.debito += Number(r.totalDebito || 0);
+        vendCaixa.dinheiro += Number(r.totalDinheiro || 0);
+        vendCaixa.plano += Number(r.totalPrePago || 0);
+        vendCaixa.outros += Number(r.totalOutros || 0) + Number(r.totalVale || 0);
+      }
+      // fallback: financeiro do dia vazio + API indisponível → usa as formas do Caixa.
+      // (o Caixa não separa PIX — cai em "outros"; crédito/débito, o foco da
+      // conferência de cartão D+1, vêm certos.)
+      if (fonteVenda === null && caixaRows.length > 0 &&
+          (vendCaixa.credito + vendCaixa.debito + vendCaixa.dinheiro + vendCaixa.plano + vendCaixa.outros) > 0) {
+        vend.credito = vendCaixa.credito;
+        vend.debito = vendCaixa.debito;
+        vend.dinheiro = vendCaixa.dinheiro;
+        vend.plano = vendCaixa.plano;
+        vend.outros = vendCaixa.outros;
+        fonteVenda = "csv-caixa";
+        qtdVendas = caixaRows.length;
       }
 
       // ── Caiu no Itaú ──

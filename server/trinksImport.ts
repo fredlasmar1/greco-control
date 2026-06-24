@@ -341,8 +341,10 @@ export function detectTrinksType(text: string): TrinksImportType | null {
     return "caixa";
   }
 
-  // Financeiro: tem "Mês de Previsão de Recebimento" e "Forma de Pagamento" e "Cliente"
-  if (head.includes("mês de previsão de recebimento") &&
+  // Financeiro: 2 variantes da Trinks — "Mês de Previsão de Recebimento" OU
+  // "Mês da Data do Atendimento/Venda" (mesmas colunas, só muda a 1ª). O caixa
+  // (que também tem forma de pagamento) já foi descartado acima por "total serviço".
+  if ((head.includes("mês de previsão de recebimento") || head.includes("mês da data do atendimento")) &&
       head.includes("forma de pagamento") &&
       head.includes("cliente") &&
       head.includes("valor pago")) {
@@ -361,7 +363,8 @@ export function detectTrinksType(text: string): TrinksImportType | null {
 
 // ─── Parser: Financeiro ──────────────────────────────────────────────────────
 
-const FINANCEIRO_HEADER_REGEX = /^"?M[eê]s de Previs[aã]o de Recebimento"?/i;
+// 2 variantes da Trinks: "Mês de Previsão de Recebimento" e "Mês da Data do Atendimento/Venda".
+const FINANCEIRO_HEADER_REGEX = /^"?M[eê]s d[ae] (Previs[aã]o de Recebimento|Data do Atendimento)/i;
 
 export function parseFinanceiro(text: string): FinanceiroPayload {
   const lines = splitLines(text);

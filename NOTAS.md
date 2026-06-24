@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v61 — Financeiro: aceita variante "por Data de Atendimento/Venda" (24/06/2026) [concluído]
+
+**Problema:** CSV financeiro variante (header "Mês da Data do Atendimento/Venda" em vez de "Mês de Previsão de Recebimento") dava "tipo não reconhecido". Mesmas 22 colunas, só muda a 1ª. A Trinks exporta o financeiro em 2 recortes: previsão de recebimento (competência caixa) e data de atendimento (competência venda).
+
+**Fix (`trinksImport.ts`):** `detectTrinksType` financeiro aceita "mês de previsão de recebimento" OU "mês da data do atendimento". `FINANCEIRO_HEADER_REGEX` afrouxado p/ `/^"?M[eê]s d[ae] (Previs[aã]o de Recebimento|Data do Atendimento)/i`. Parser lê as colunas por nome (iguais). Validado: variante → financeiro, mês 2026-06, R$68.043, 681 linhas. **Dono: tanto faz a versão; último que subir no mês vale (sobrescreve).** Nota: as 2 versões dão valores diferentes (atendimento R$68k vs previsão R$41k junho parcial).
+
 ### v60 — Parser de Catálogo de Produtos (importação) (23/06/2026) [concluído]
 
 **Problema do dono:** `produtos.csv` (catálogo Trinks) dava "tipo não reconhecido" — não havia parser. (Os 2 `relatorio.csv` que ele mandou eram Caixa+Financeiro de MAIO, já reconhecidos.)

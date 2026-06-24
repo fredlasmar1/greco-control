@@ -104,7 +104,7 @@ export default function CaixaDia() {
             )}
           </div>
           {resp.fonteVenda === "csv-caixa" && (
-            <div className="text-[10px] text-amber-400/80 -mt-1">⚠ Fonte Caixa não separa PIX (some em "outros") — a linha PIX vendido fica zerada; confira crédito/débito.</div>
+            <div className="text-[10px] text-amber-400/80 -mt-1">ℹ PIX vem da coluna "Outros" do Caixa (no Trinks o PIX é lançado ali) — pode incluir outras formas além de PIX.</div>
           )}
 
           {/* Vendido no dia — por forma */}

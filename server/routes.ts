@@ -6927,17 +6927,20 @@ Regras CRÍTICAS:
         vendCaixa.debito += Number(r.totalDebito || 0);
         vendCaixa.dinheiro += Number(r.totalDinheiro || 0);
         vendCaixa.plano += Number(r.totalPrePago || 0);
-        vendCaixa.outros += Number(r.totalOutros || 0) + Number(r.totalVale || 0);
+        // No relatório de Caixa da Trinks o PIX é lançado em "Total Outros"
+        // (não há coluna PIX dedicada). Confirmado batendo com o PIX que caiu no
+        // Itaú (02/06: outros R$1.323 vs caiu R$1.286). Vale-presente → outros.
+        vendCaixa.pix += Number(r.totalOutros || 0);
+        vendCaixa.outros += Number(r.totalVale || 0);
       }
       // fallback: financeiro do dia vazio + API indisponível → usa as formas do Caixa.
-      // (o Caixa não separa PIX — cai em "outros"; crédito/débito, o foco da
-      // conferência de cartão D+1, vêm certos.)
       if (fonteVenda === null && caixaRows.length > 0 &&
-          (vendCaixa.credito + vendCaixa.debito + vendCaixa.dinheiro + vendCaixa.plano + vendCaixa.outros) > 0) {
+          (vendCaixa.credito + vendCaixa.debito + vendCaixa.dinheiro + vendCaixa.plano + vendCaixa.pix + vendCaixa.outros) > 0) {
         vend.credito = vendCaixa.credito;
         vend.debito = vendCaixa.debito;
         vend.dinheiro = vendCaixa.dinheiro;
         vend.plano = vendCaixa.plano;
+        vend.pix = vendCaixa.pix;
         vend.outros = vendCaixa.outros;
         fonteVenda = "csv-caixa";
         qtdVendas = caixaRows.length;

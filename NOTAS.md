@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v62.1 — Caixa do Dia: PIX vem da coluna "Outros" do Caixa (24/06/2026) [concluído]
+
+**Descoberta:** CSV de Caixa não tem coluna PIX — no Trinks o PIX é lançado em **"Total (R$) Outros"** (col 21). Confirmado: 02/06 totalOutros R$1.323 vs PIX caiu no Itaú R$1.286 (dif R$37). **Fix:** fallback csv-caixa mapeia `vend.pix = totalOutros` (vale-presente → outros). Aviso no front: "PIX vem de Outros, pode incluir outras formas". Validado: 02/06 PIX agora BATE (era zerado). Crédito/Débito/PIX os 3 batem no meio de semana.
+
 ### v62 — Caixa do Dia: fallback CSV Caixa pro "vendido por forma" (24/06/2026) [concluído]
 
 **Problema:** Conferência D+1 mostrava vendido por forma = R$0 em dias fora do range do financeiro importado (financeiro junho só cobre 13–23/06) — caía na API Trinks (429 crônico). O CSV de Caixa tinha as formas (totalCredito/totalDebito/totalDinheiro/totalPrePago por comanda) mas não era usado.

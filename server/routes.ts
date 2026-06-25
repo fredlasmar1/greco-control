@@ -8056,6 +8056,63 @@ Regras CRÍTICAS:
     }
   });
 
+  // POST /api/viabilidade/estetica-auto/:mes — calcula a estética pela AGENDA da
+  // Trinks (1 sync paginado do mês, guarda o resultado). Classifica serviços de
+  // estética pelo nome (barboterapia, spa, sobrancelha, pigmentação, limpeza,
+  // hidratação, massagem, depilação…). Soma o valor dos NÃO-cancelados e grava em
+  // viab_estetica:mes (mesmo registro do manual). Econômico: roda 1x por mês.
+  app.post("/api/viabilidade/estetica-auto/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "Mês inválido." });
+      const [ano, m] = mes.split("-").map(Number);
+      const ini = `${mes}-01`;
+      const fim = new Date(Date.UTC(ano, m, 0)).toISOString().slice(0, 10); // último dia do mês
+      // keywords de estética desta barbearia (validadas com a agenda real)
+      const EST_RE = /barboterap|spa|sobrancelh|pigment|limpez|hidrat|massag|pestan|depilac|peeling|micropigment|design|p[eé]s\b/i;
+      let ags: any[] = [];
+      try {
+        ags = await trinksFetchAll("agendamentos", { dataInicio: ini, dataFim: fim });
+      } catch (e: any) {
+        if (e?.status === 429 || /limit|429/i.test(e?.message || "")) {
+          return res.status(503).json({ ok: false, error: "Trinks recusou (429) agora. Tente daqui a pouco." });
+        }
+        throw e;
+      }
+      const porServ: Record<string, { qtd: number; valor: number; estetica: boolean }> = {};
+      let totalEstetica = 0, qtdEstetica = 0;
+      for (const a of ags) {
+        const st = (a?.status?.nome || "").toLowerCase();
+        if (st.includes("cancel")) continue; // ignora cancelados
+        const nome = a?.servico?.nome || "—";
+        const valor = Number(a?.valor || 0);
+        const ehEst = EST_RE.test(nome);
+        if (!porServ[nome]) porServ[nome] = { qtd: 0, valor: 0, estetica: ehEst };
+        porServ[nome].qtd++;
+        porServ[nome].valor += valor;
+        if (ehEst) { totalEstetica += valor; qtdEstetica++; }
+      }
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const listaEstetica = Object.entries(porServ).filter(([, v]) => v.estetica)
+        .map(([nome, v]) => ({ nome, qtd: v.qtd, valor: r2(v.valor) })).sort((a, b) => b.valor - a.valor);
+      const outros = Object.entries(porServ).filter(([, v]) => !v.estetica)
+        .map(([nome, v]) => ({ nome, qtd: v.qtd, valor: r2(v.valor) })).sort((a, b) => b.valor - a.valor);
+
+      if (totalEstetica <= 0) {
+        return res.json({ ok: true, mes, totalEstetica: 0, qtdEstetica: 0, listaEstetica, outros, totalAgendamentos: ags.length, avisoVazio: true });
+      }
+      const reg = {
+        receita: r2(totalEstetica), comissaoPct: 35, auto: true,
+        qtdAtendimentos: qtdEstetica, servicos: listaEstetica,
+        salvoEm: new Date().toISOString(),
+      };
+      await kvSet(`viab_estetica:${mes}`, reg);
+      return res.json({ ok: true, mes, totalEstetica: r2(totalEstetica), qtdEstetica, listaEstetica, outros: outros.slice(0, 20), totalAgendamentos: ags.length, estetica: reg });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   // ─── POST /api/precificacao/calcular — v24
   // Recebe lista de servicos e retorna calculo expandido para cada um.
   // Body: { mes: "YYYY-MM", servicos: [{ id, nome, categoria, preco, duracao }, ...] }

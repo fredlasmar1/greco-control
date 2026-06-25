@@ -32,6 +32,8 @@ export default function Viabilidade() {
   const [esteticaReceita, setEsteticaReceita] = useState("");
   const [esteticaComissao, setEsteticaComissao] = useState("40");
   const [salvandoEst, setSalvandoEst] = useState(false);
+  const [calcEst, setCalcEst] = useState(false);
+  const [esteticaAutoMsg, setEsteticaAutoMsg] = useState("");
 
   const carregar = () => {
     setLoading(true);
@@ -60,6 +62,21 @@ export default function Viabilidade() {
       });
       setReloadKey(k => k + 1);
     } finally { setSalvandoEst(false); }
+  };
+
+  const calcularEsteticaAuto = async () => {
+    setCalcEst(true); setEsteticaAutoMsg("");
+    try {
+      const r = await fetch(`${API_BASE}/api/viabilidade/estetica-auto/${selectedMes}`, { method: "POST" });
+      const d = await r.json();
+      if (!d.ok) { setEsteticaAutoMsg(`⚠ ${d.error || "Falhou"}`); return; }
+      if (d.avisoVazio) { setEsteticaAutoMsg(`Nenhum serviço de estética encontrado na agenda de ${selectedMes}.`); return; }
+      const top = (d.listaEstetica || []).slice(0, 5).map((s: any) => `${s.nome} (${s.qtd}×)`).join(", ");
+      setEsteticaAutoMsg(`✓ Calculado pela agenda: R$ ${d.totalEstetica} em ${d.qtdEstetica} atendimentos — ${top}${d.listaEstetica?.length > 5 ? "…" : ""}`);
+      setReloadKey(k => k + 1);
+    } catch (e: any) {
+      setEsteticaAutoMsg(`⚠ Erro: ${e?.message || e}`);
+    } finally { setCalcEst(false); }
   };
 
   const categorizar = async (txId: string, categoriaId: string) => {
@@ -268,8 +285,10 @@ export default function Viabilidade() {
                   <input type="number" min={0} max={100} value={esteticaComissao} onChange={e => setEsteticaComissao(e.target.value)} className="h-7 w-16 rounded border border-border bg-background px-2 text-sm" data-testid="input-estetica-comissao" />
                   <span className="text-muted-foreground">%</span>
                   <Button size="sm" className="h-7 text-xs" disabled={salvandoEst} onClick={salvarEstetica} data-testid="btn-salvar-estetica">{salvandoEst ? "…" : "Salvar"}</Button>
-                  <span className="text-[10px] text-muted-foreground ml-auto">você vê no Trinks web (filtro de serviços de estética). É recorte da receita de serviço.</span>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={calcEst} onClick={calcularEsteticaAuto} data-testid="btn-estetica-auto">{calcEst ? "calculando…" : "↻ Calcular pela agenda (Trinks)"}</Button>
+                  <span className="text-[10px] text-muted-foreground ml-auto">manual: você informa · ou calcule automático pela agenda da Trinks.</span>
                 </CardContent></Card>
+                {esteticaAutoMsg && <div className="text-[10px] text-muted-foreground -mt-1">{esteticaAutoMsg}</div>}
 
                 <div className="text-[10px] text-muted-foreground space-y-0.5">
                   <p>● {cats.avisoFixoRateado}.</p>

@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v63 — Estética AUTOMÁTICA pela agenda da Trinks (25/06/2026) [concluído]
+
+**Contexto:** API Trinks VOLTOU a responder (25/06; mês teve 17.467 ok / 11.422 429 → limite é por janela/rajada, não mensal; cota compartilhada c/ grecometas → manter economia). Agendamentos trazem `servico.nome`+valor+status → dá pra automatizar a Estética (era manual v59).
+
+**Feito:** `POST /api/viabilidade/estetica-auto/:mes` — 1 sync paginado da agenda do mês (trinksFetchAll, ~36 req p/ junho, cache 2h), classifica estética por keyword `/barboterap|spa|sobrancelh|pigment|limpez|hidrat|massag|pestan|depilac|peeling|micropigment|design|pés/i`, soma valor dos NÃO-cancelados, grava em `viab_estetica:mes` (mesmo registro do manual, comissaoPct 35, auto:true, lista de serviços). 429 → 503 "tente depois". Botão "↻ Calcular pela agenda (Trinks)" na aba Viabilidade + msg com resumo. **Validado junho: R$7.594 em 184 atend (Design Sobrancelha 1790, Massagem Corporal 1600, Barboterapia 1388, Hidratação, Spa dos Pés, Pigmentação Barba, Lavagem c/ Massagem, Limpeza de Pele…); margem 60,5%.** Química (Progressiva/Selagem) fica FORA (não é estética pura). Cortes/barbas fora (correto). Manual continua (pode sobrescrever).
+
 ### v62.1 — Caixa do Dia: PIX vem da coluna "Outros" do Caixa (24/06/2026) [concluído]
 
 **Descoberta:** CSV de Caixa não tem coluna PIX — no Trinks o PIX é lançado em **"Total (R$) Outros"** (col 21). Confirmado: 02/06 totalOutros R$1.323 vs PIX caiu no Itaú R$1.286 (dif R$37). **Fix:** fallback csv-caixa mapeia `vend.pix = totalOutros` (vale-presente → outros). Aviso no front: "PIX vem de Outros, pode incluir outras formas". Validado: 02/06 PIX agora BATE (era zerado). Crédito/Débito/PIX os 3 batem no meio de semana.

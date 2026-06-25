@@ -835,6 +835,7 @@ export default function Precificacao() {
         <TabsList className="mb-4">
           <TabsTrigger value="calculadora" data-testid="tab-calculadora">Calculadora de Preço</TabsTrigger>
           <TabsTrigger value="reajuste" data-testid="tab-reajuste">Reajuste de Preços</TabsTrigger>
+          <TabsTrigger value="margem-produtos" data-testid="tab-margem-produtos">Margem de Produtos</TabsTrigger>
           <TabsTrigger value="catalogo" data-testid="tab-catalogo">Catálogo</TabsTrigger>
           <TabsTrigger value="ficha-servicos" data-testid="tab-ficha-servicos">Ficha de Serviços</TabsTrigger>
           <TabsTrigger value="custos-produtos" data-testid="tab-custos-produtos">Custos de Produtos</TabsTrigger>
@@ -846,6 +847,10 @@ export default function Precificacao() {
 
         <TabsContent value="reajuste" className="mt-0">
           <ReajustePrecos analysis={analysis} contexto={contexto} margemAlvo={margemAlvo} setMargemAlvo={setMargemAlvo} />
+        </TabsContent>
+
+        <TabsContent value="margem-produtos" className="mt-0">
+          <MargemProdutos apiBase={(globalThis as any).__API_BASE__ || ""} />
         </TabsContent>
 
         <TabsContent value="catalogo" className="mt-0">
@@ -1527,6 +1532,120 @@ function ReajustePrecos({ analysis, contexto, margemAlvo, setMargemAlvo }: {
         <p>● Custo = produtos (ficha) + custo fixo rateado + comissão + taxa de cartão ({taxaPct}%) + imposto ({impostoPct}%).</p>
         <p>● "Preço p/ {margemAlvo}%" é quanto cobrar pra sobrar {margemAlvo}% depois de tudo. Reajuste = quanto subir do preço atual.</p>
         <p className="text-amber-400">⚠ Serviços "sem ficha" têm custo de material zerado — o custo real é maior, então o reajuste pode ser ainda mais necessário. Preencha as fichas e categorize as fixas pra o custo ficar exato.</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── v64: Margem de Produtos (do catálogo importado) ─────────────────────────
+// Lista os produtos do catálogo (CSV importado) com preço/comissão e o custo
+// EDITÁVEL inline. Margem = preço − custo − comissão − taxa − imposto. O custo
+// de compra a Trinks não exporta confiável (vem 0 ou errado) → o dono preenche.
+function MargemProdutos({ apiBase }: { apiBase: string }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [editando, setEditando] = useState<Record<string, string>>({});
+  const [salvando, setSalvando] = useState<string | null>(null);
+
+  const carregar = () => {
+    setLoading(true);
+    fetch(`${apiBase}/api/produtos/catalogo`).then(r => r.json()).then(d => { setData(d); }).finally(() => setLoading(false));
+  };
+  useEffect(() => { carregar(); /* eslint-disable-next-line */ }, []);
+
+  const salvarCusto = async (nome: string) => {
+    const v = Number((editando[nome] || "").replace(",", "."));
+    if (!isFinite(v) || v < 0) return;
+    setSalvando(nome);
+    try {
+      await fetch(`${apiBase}/api/produtos/catalogo/custo`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome, custo: v }),
+      });
+      setEditando(e => { const n = { ...e }; delete n[nome]; return n; });
+      carregar();
+    } finally { setSalvando(null); }
+  };
+
+  if (loading) return <div className="text-sm text-muted-foreground p-4">Carregando catálogo…</div>;
+  if (!data?.importado) return (
+    <Card className="bg-card border-card-border"><CardContent className="p-4 text-sm text-muted-foreground">
+      Nenhum catálogo importado ainda. Vá em <strong>Importar Trinks</strong> e suba o relatório de <strong>Produtos</strong> (Nome · Preço · % Comissão · Valor de Compra).
+    </CardContent></Card>
+  );
+
+  const semaforo = (pct: number) => pct < 0 ? "text-red-400" : pct < 10 ? "text-amber-400" : "text-emerald-400";
+  const comCusto = data.produtos.filter((p: any) => !p.semCusto);
+  const prejuizo = comCusto.filter((p: any) => p.margemPct < 0).length;
+
+  return (
+    <div className="space-y-4 max-w-[920px]">
+      <Card className="bg-card border-card-border"><CardContent className="p-3 flex items-center gap-3 flex-wrap text-xs">
+        <span className="font-medium">{data.total} produtos no catálogo</span>
+        <span className="text-emerald-400">{data.total - data.semCusto} com custo</span>
+        {data.semCusto > 0 && <span className="text-amber-400">{data.semCusto} sem custo (preencha pra ver a margem)</span>}
+        {prejuizo > 0 && <span className="text-red-400 font-medium">🔴 {prejuizo} no prejuízo</span>}
+        <span className="text-muted-foreground ml-auto">taxa {data.taxaCartaoPct}% · imposto {data.impostoPct}%</span>
+      </CardContent></Card>
+
+      <Card className="bg-card border-card-border">
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="border-b border-border text-[10px] uppercase text-muted-foreground">
+              <tr>
+                <th className="text-left p-2.5">Produto</th>
+                <th className="text-right p-2.5">Preço</th>
+                <th className="text-right p-2.5">Custo (R$)</th>
+                <th className="text-right p-2.5">Comissão</th>
+                <th className="text-right p-2.5">Margem</th>
+                <th className="p-2.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.produtos.map((p: any) => {
+                const emEdicao = editando[p.nome] !== undefined;
+                return (
+                  <tr key={p.nome} className="border-b border-border/30 hover:bg-muted/20" data-testid={`prod-${p.nome}`}>
+                    <td className="p-2.5">
+                      <div className="truncate max-w-[220px]" title={p.nome}>{p.nome}</div>
+                      <div className="text-[9px] text-muted-foreground">{p.categoria}</div>
+                    </td>
+                    <td className="p-2.5 text-right tabular-nums">{formatCurrency(p.preco)}</td>
+                    <td className="p-2.5 text-right">
+                      <input
+                        type="number" min={0} step="0.01"
+                        value={emEdicao ? editando[p.nome] : (p.custo > 0 ? p.custo : "")}
+                        placeholder={p.semCusto ? "—" : ""}
+                        onChange={e => setEditando(ed => ({ ...ed, [p.nome]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === "Enter") salvarCusto(p.nome); }}
+                        className={`h-6 w-20 rounded border bg-background px-1.5 text-right text-xs ${p.semCusto && !emEdicao ? "border-amber-500/40" : "border-border"}`}
+                        data-testid={`custo-${p.nome}`}
+                      />
+                    </td>
+                    <td className="p-2.5 text-right tabular-nums text-muted-foreground">{p.comissaoPct}%</td>
+                    <td className={`p-2.5 text-right tabular-nums font-semibold ${p.semCusto ? "text-muted-foreground" : semaforo(p.margemPct)}`}>
+                      {p.semCusto ? "—" : `${p.margemPct}%`}
+                      {!p.semCusto && <div className="text-[9px] font-normal text-muted-foreground">{formatCurrency(p.margemReal)}</div>}
+                    </td>
+                    <td className="p-2.5 text-right">
+                      {emEdicao && (
+                        <Button size="sm" className="h-6 text-[10px] px-2" disabled={salvando === p.nome} onClick={() => salvarCusto(p.nome)} data-testid={`salvar-${p.nome}`}>
+                          {salvando === p.nome ? "…" : "Salvar"}
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <div className="text-[11px] text-muted-foreground space-y-0.5">
+        <p>● Margem = preço − custo de compra − comissão − taxa de cartão ({data.taxaCartaoPct}%) − imposto ({data.impostoPct}%).</p>
+        <p>● Digite o custo e tecle Enter (ou Salvar). Produtos sem custo ficam sem margem até você preencher.</p>
+        <p className="text-amber-400">⚠ Os custos que vieram da Trinks podem estar errados (custo de caixa em vez de unitário) — confira os que estão com margem negativa.</p>
       </div>
     </div>
   );

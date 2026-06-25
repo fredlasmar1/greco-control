@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v64 — Margem de Produtos (aba editável do catálogo) (25/06/2026) [concluído]
+
+**Objetivo:** corrigir o "Produtos 96,5% otimista" → margem real por produto. Bloqueio: custo de compra (Trinks v1 NÃO expõe; catálogo importado veio 45/51 sem custo, e os 6 que tinham estão ERRADOS — custo de caixa, ex: AMENDOIM custo 45 vende 2).
+
+**Feito:** `GET /api/produtos/catalogo` (margem por produto do kv catalogo_produtos: preço − custo − comissão − taxa − imposto; local, sem API) + `PUT /api/produtos/catalogo/custo` (grava custo por nome). Aba **"Margem de Produtos"** na Precificação: tabela com custo EDITÁVEL inline (Enter salva), margem% c/ semáforo, resumo (com/sem custo, N prejuízo), ordenada prejuízo→sem-custo. Avisa custos suspeitos (margem negativa = custo de caixa). Validado: PUT salva; margem calcula. **Dono completa/corrige os 45 custos pra margem ficar real.** Margem AGREGADA na Viabilidade (card Produtos) ainda usa receita−taxa−imposto (sem CMV) — fica pra quando custos preenchidos + vendas por produto.
+
 ### v63 — Estética AUTOMÁTICA pela agenda da Trinks (25/06/2026) [concluído]
 
 **Contexto:** API Trinks VOLTOU a responder (25/06; mês teve 17.467 ok / 11.422 429 → limite é por janela/rajada, não mensal; cota compartilhada c/ grecometas → manter economia). Agendamentos trazem `servico.nome`+valor+status → dá pra automatizar a Estética (era manual v59).

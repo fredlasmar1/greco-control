@@ -10996,6 +10996,55 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     }
   });
 
+  // GET /api/produtos/catalogo — margem por produto a partir do CATÁLOGO importado
+  // (kv catalogo_produtos: nome/preço/comissão/custo). Local e rápido (não toca a
+  // API). Margem = preço − custo − comissão − taxa cartão − imposto.
+  app.get("/api/produtos/catalogo", async (_req: Request, res: Response) => {
+    try {
+      const cat: any = await kvGet("catalogo_produtos");
+      const cfg = await getConfigFin();
+      const taxa = Number(cfg.taxaCartaoPct || 0) / 100;
+      const imp = Number(cfg.impostoPct || 0) / 100;
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const prods: any[] = Array.isArray(cat?.produtos) ? cat.produtos : [];
+      const lista = prods.map((p: any) => {
+        const preco = Number(p.preco || 0);
+        const custo = Number(p.custo || 0);
+        const comV = preco * (Number(p.comissaoPct || 0) / 100);
+        const taxaV = preco * taxa, impV = preco * imp;
+        const margem = preco - custo - comV - taxaV - impV;
+        return {
+          nome: p.nome, categoria: p.categoria || "", preco: r2(preco), custo: r2(custo),
+          comissaoPct: Number(p.comissaoPct || 0), comissaoValor: r2(comV), taxaCartao: r2(taxaV), imposto: r2(impV),
+          margemReal: r2(margem), margemPct: preco > 0 ? r2((margem / preco) * 100) : 0,
+          semCusto: custo <= 0, paraRevenda: p.paraRevenda !== false,
+        };
+      }).sort((a: any, b: any) => (a.semCusto === b.semCusto ? a.margemPct - b.margemPct : a.semCusto ? 1 : -1));
+      return res.json({
+        ok: true, importado: !!cat, geradoEm: cat?.geradoEm || null,
+        total: lista.length, semCusto: lista.filter((x: any) => x.semCusto).length,
+        taxaCartaoPct: cfg.taxaCartaoPct, impostoPct: cfg.impostoPct, produtos: lista,
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  // PUT /api/produtos/catalogo/custo — grava o custo de UM produto do catálogo (por nome).
+  app.put("/api/produtos/catalogo/custo", async (req: Request, res: Response) => {
+    try {
+      const nome = String(req.body?.nome || "").trim();
+      const custo = Math.max(0, Number(req.body?.custo || 0));
+      if (!nome) return res.status(400).json({ ok: false, error: "nome obrigatório" });
+      const cat: any = await kvGet("catalogo_produtos");
+      if (!cat?.produtos) return res.status(404).json({ ok: false, error: "catálogo não importado" });
+      const p = cat.produtos.find((x: any) => x.nome === nome);
+      if (!p) return res.status(404).json({ ok: false, error: "produto não encontrado" });
+      p.custo = custo;
+      cat.comCusto = cat.produtos.filter((x: any) => Number(x.custo || 0) > 0).length;
+      await kvSet("catalogo_produtos", cat);
+      return res.json({ ok: true, nome, custo });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   // PUT /api/produtos/custos/:id — atualiza custo (e opcionalmente preço de venda) de um produto
   // body: { custo: number, precoVenda?: number | null }
   //   - precoVenda undefined: mantém o atual

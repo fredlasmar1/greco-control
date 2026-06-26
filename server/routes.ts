@@ -2002,7 +2002,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-06-26-acumulado-semana-mes",
+      build: "2026-06-26-trinks-email-snapshots",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -2252,6 +2252,13 @@ export async function registerRoutes(
   async function capturarSnapshotDia(data: string, opts: { preferirCsv?: boolean } = {}): Promise<SnapshotDia> {
     const avisos: string[] = [];
     const transFim = ymdAddDays(data, 1);
+
+    // ─── Guard: snapshot fonte=trinks-email é verdade absoluta (vem do e-mail oficial) ───
+    // Não sobrescreve com CSV de agendamentos / API — esses subestimam (só serviços agendados).
+    const existente = await getSnapshot(data);
+    if (existente && existente.fonte === "trinks-email") {
+      return existente;
+    }
 
     // ─── Tentativa 1: API Trinks (a menos que preferirCsv) ───
     if (!opts.preferirCsv) {
@@ -2518,6 +2525,77 @@ export async function registerRoutes(
       }
       const totalMes = resultados.reduce((s, r) => s + r.total, 0);
       return res.json({ ok: true, mes, resultados, totalMes });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/snapshot-dia/set-mes-oficial
+  // Body: { "mes": "2026-06", "dataReferencia": "2026-06-25", "total": 74458.65 }
+  // Grava o acumulado mensal oficial Trinks (vindo do campo "Total Junho/2026" do e-mail).
+  // O helper de acumulado vai usar ESSE valor como base e somar só dias APOS dataReferencia.
+  app.post("/api/snapshot-dia/set-mes-oficial", async (req: Request, res: Response) => {
+    try {
+      const { mes, dataReferencia, total } = (req.body || {}) as { mes?: string; dataReferencia?: string; total?: number };
+      if (!mes || !/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido YYYY-MM" });
+      if (!dataReferencia || !/^\d{4}-\d{2}-\d{2}$/.test(dataReferencia)) return res.status(400).json({ ok: false, error: "dataReferencia inválida" });
+      if (typeof total !== "number" || !Number.isFinite(total)) return res.status(400).json({ ok: false, error: "total inválido" });
+      await kvSet(`trinks_mes_oficial:${mes}`, { dataReferencia, totalAcumulado: total, gravadoEm: new Date().toISOString() });
+      return res.json({ ok: true, mes, dataReferencia, total });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/snapshot-dia/mes-oficial/:mes
+  app.get("/api/snapshot-dia/mes-oficial/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes);
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes inválido YYYY-MM" });
+      const dados = await kvGet<{ dataReferencia: string; totalAcumulado: number; gravadoEm: string }>(`trinks_mes_oficial:${mes}`);
+      return res.json({ ok: true, mes, dados });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/snapshot-dia/backfill-trinks-email
+  // Body: { "2026-06-25": 3790.00, "2026-06-24": 4813.00, ... }
+  // Grava cada par como snapshot fonte="trinks-email" (verdade oficial Trinks).
+  // Substitui qualquer snapshot existente (csv-agendamentos, vazio, etc).
+  app.post("/api/snapshot-dia/backfill-trinks-email", async (req: Request, res: Response) => {
+    try {
+      const body = (req.body || {}) as Record<string, number>;
+      const entries = Object.entries(body);
+      if (entries.length === 0) {
+        return res.status(400).json({ ok: false, error: "body vazio. Envie { 'YYYY-MM-DD': valor, ... }" });
+      }
+      const gravados: Array<{ data: string; total: number }> = [];
+      for (const [data, totalRaw] of entries) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) continue;
+        const total = Number(totalRaw);
+        if (!Number.isFinite(total) || total < 0) continue;
+        const anterior = await getSnapshot(data);
+        const snap: SnapshotDia = {
+          data,
+          fonte: "trinks-email",
+          capturadoEm: new Date().toISOString(),
+          faturamento: {
+            total,
+            // Sem breakdown detalhado no e-mail — zera. Total é o que importa pro acumulado.
+            pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, outros: total,
+            qtdTransacoes: anterior?.faturamento?.qtdTransacoes || 0,
+          },
+          agendamentos: anterior?.agendamentos || { finalizados: 0, confirmados: 0, cancelados: 0, noShow: 0 },
+          comissoesPorProf: anterior?.comissoesPorProf,
+          agendamentosRaw: anterior?.agendamentosRaw,
+          avisos: ["Backfill via e-mail Trinks 'Resumo do dia' (Valor Total oficial)."],
+        };
+        await saveSnapshot(snap);
+        gravados.push({ data, total });
+      }
+      const totalSomado = gravados.reduce((s, g) => s + g.total, 0);
+      return res.json({ ok: true, gravados: gravados.length, total: totalSomado, detalhe: gravados });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }
@@ -9820,8 +9898,27 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
 
     // ── Janela do mês: dia 01 do mês corrente até ontem
     const inicioMes = `${ano}-${mes}-01`;
+    const mesAtual = `${ano}-${mes}`;
+
+    // Se existe "mes-oficial" (acumulado Trinks via e-mail), usa como BASE
+    // e soma somente os dias APÓS dataReferencia até ontem.
+    const mesOficial = await kvGet<{ dataReferencia: string; totalAcumulado: number }>(`trinks_mes_oficial:${mesAtual}`).catch(() => null);
+
     let totalMes = 0; let diasMes = 0;
-    cur = inicioMes;
+    let inicioContagemDiaria = inicioMes;
+    if (mesOficial && mesOficial.dataReferencia && Number.isFinite(mesOficial.totalAcumulado)) {
+      totalMes = mesOficial.totalAcumulado;
+      // Conta os dias úteis de 01 até dataReferencia como "já incluídos"
+      let c = inicioMes;
+      while (c <= mesOficial.dataReferencia) {
+        if (ehDiaUtilGreco(c)) diasMes++;
+        c = ymdAddDays(c, 1);
+      }
+      // Daqui em diante, somar snapshots a partir do dia seguinte à dataReferencia
+      inicioContagemDiaria = ymdAddDays(mesOficial.dataReferencia, 1);
+    }
+
+    cur = inicioContagemDiaria;
     while (cur <= ontemYMD) {
       if (ehDiaUtilGreco(cur)) {
         const snap = await getSnapshot(cur).catch(() => null);

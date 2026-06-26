@@ -17,6 +17,7 @@ import { kvGet, kvSet } from "./db";
 import { log } from "./index";
 
 export type FonteSnapshot =
+  | "trinks-email"         // E-mail "Resumo do dia" da Trinks — fonte oficial de caixa
   | "trinks-api"           // API Trinks respondeu com dados completos
   | "csv-agendamentos"     // CSV do email (cobertura por status)
   | "csv-financeiro"       // CSV financeiro Trinks (mensal, fallback)

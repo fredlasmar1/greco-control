@@ -2002,7 +2002,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-06-26-matinal-enxuta",
+      build: "2026-06-26-acumulado-semana-mes",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -9756,6 +9756,89 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     }
   });
 
+  // ─── Helper: acumulado da SEMANA (ter→ontem) e do MÊS (dia 1→ontem) ─────
+  // Dias úteis da Greco = terça a sábado (exclui dom/seg) + feriados nacionais.
+  // Soma `faturamento.total` dos snapshots diários já fechados (não inclui hoje).
+  // Se um dia não tem snapshot ainda, simplesmente não conta — evita inflar.
+  async function montarAcumuladoSemanaMes(): Promise<{
+    semana: { dias: number; total: number; inicio: string; fim: string };
+    mes:    { dias: number; total: number; inicio: string; fim: string };
+  }> {
+    // Feriados nacionais (data fixa) — mesma lógica do contasMensais
+    const feriadosBR = (ano: number): Set<string> => new Set([
+      `${ano}-01-01`, `${ano}-04-21`, `${ano}-05-01`, `${ano}-09-07`,
+      `${ano}-10-12`, `${ano}-11-02`, `${ano}-11-15`, `${ano}-11-20`, `${ano}-12-25`,
+    ]);
+
+    // Hoje em SP
+    const tzFmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
+    });
+    const partsHoje = tzFmt.formatToParts(new Date());
+    const pick = (t: string) => partsHoje.find(p => p.type === t)?.value || "";
+    const hojeYMD = `${pick("year")}-${pick("month")}-${pick("day")}`;
+    const ano = Number(pick("year"));
+    const mes = pick("month");
+    const feriadosSet = new Set<string>([...feriadosBR(ano), ...feriadosBR(ano + 1)]);
+
+    // getDay de uma YMD interpretada como meia-noite SP (é robusto pra fuso)
+    const dowYMD = (ymdStr: string): number => {
+      // Cria Date em SP usando string ISO + offset −3h (BRT, sem horário de verão desde 2019)
+      const d = new Date(`${ymdStr}T12:00:00-03:00`);
+      return d.getUTCDay(); // 0=dom … 6=sáb. Como pegamos meio-dia, fuso não quebra.
+    };
+    const ehDiaUtilGreco = (ymdStr: string): boolean => {
+      const dow = dowYMD(ymdStr);
+      if (dow === 0 || dow === 1) return false;          // dom/seg fechados
+      if (feriadosSet.has(ymdStr)) return false;
+      return true;
+    };
+
+    // ── Janela da semana: terça anterior (ou da semana corrente) até ontem
+    // Regra: a "semana" começa sempre na terça-feira da semana corrente em SP.
+    // Se hoje é dom/seg, mostramos a semana que acabou sábado.
+    const ontemYMD = ymdAddDays(hojeYMD, -1);
+    const dowHoje = dowYMD(hojeYMD);
+    // Quantos dias voltar de hoje até a última terça (inclusive)
+    // dow: 0=dom 1=seg 2=ter 3=qua 4=qui 5=sex 6=sáb
+    const diasDesdeTerca = (dowHoje + 5) % 7; // 2→0 3→1 4→2 5→3 6→4 0→5 1→6
+    const inicioSemana = ymdAddDays(hojeYMD, -diasDesdeTerca);
+
+    let totalSemana = 0; let diasSemana = 0;
+    let cur = inicioSemana;
+    while (cur < hojeYMD) { // não inclui hoje
+      if (ehDiaUtilGreco(cur)) {
+        const snap = await getSnapshot(cur).catch(() => null);
+        if (snap && snap.fonte !== "vazio" && snap.faturamento?.total > 0) {
+          totalSemana += snap.faturamento.total;
+          diasSemana++;
+        }
+      }
+      cur = ymdAddDays(cur, 1);
+    }
+
+    // ── Janela do mês: dia 01 do mês corrente até ontem
+    const inicioMes = `${ano}-${mes}-01`;
+    let totalMes = 0; let diasMes = 0;
+    cur = inicioMes;
+    while (cur <= ontemYMD) {
+      if (ehDiaUtilGreco(cur)) {
+        const snap = await getSnapshot(cur).catch(() => null);
+        if (snap && snap.fonte !== "vazio" && snap.faturamento?.total > 0) {
+          totalMes += snap.faturamento.total;
+          diasMes++;
+        }
+      }
+      cur = ymdAddDays(cur, 1);
+    }
+
+    return {
+      semana: { dias: diasSemana, total: totalSemana, inicio: inicioSemana, fim: ontemYMD },
+      mes:    { dias: diasMes,    total: totalMes,    inicio: inicioMes,    fim: ontemYMD },
+    };
+  }
+
   // ─── Helper: monta lista de pagamentos a avisar HOJE ─────────────────────
   async function montarPagamentosHoje(): Promise<PagamentoHojeItem[]> {
     const itens: PagamentoHojeItem[] = [];
@@ -9788,13 +9871,14 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   // Inclui: fechamento ontem + previsão hoje (serviços + Clube Greco) + pagamentos.
   app.post("/api/telegram/resumo-manha", async (_req: Request, res: Response) => {
     try {
-      const [hoje, ontem, amanhaData, pagamentos] = await Promise.all([
+      const [hoje, ontem, amanhaData, pagamentos, acumulado] = await Promise.all([
         calcularHojeCompleto(),
         calcularOntemFechado().catch(() => null),
         calcularAmanha().catch(() => null),
         montarPagamentosHoje(),
+        montarAcumuladoSemanaMes().catch(() => null),
       ]);
-      const msg = montarResumoManha(hoje, amanhaData, ontem, pagamentos);
+      const msg = montarResumoManha(hoje, amanhaData, ontem, pagamentos, acumulado);
       const r = await enviarMensagem(msg);
       return res.json({ ...r, enviado: r.ok, pagamentos });
     } catch (err: any) {
@@ -12101,13 +12185,14 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       cron.schedule("0 8 * * 2-6", async () => { await comOrigem("cron-manha", async () => {
         log("[cron] disparando resumo da manhã (única mensagem do dia)...", "telegram");
         try {
-          const [hoje, ontem, amanhaData, pagamentos] = await Promise.all([
+          const [hoje, ontem, amanhaData, pagamentos, acumulado] = await Promise.all([
             calcularHojeCompleto(),
             calcularOntemFechado().catch(() => null),
             calcularAmanha().catch(() => null),
             montarPagamentosHoje(),
+            montarAcumuladoSemanaMes().catch(() => null),
           ]);
-          const msg = montarResumoManha(hoje, amanhaData, ontem, pagamentos);
+          const msg = montarResumoManha(hoje, amanhaData, ontem, pagamentos, acumulado);
           const r = await enviarMensagem(msg);
           log(`[cron] resumo manhã: ${r.ok ? "OK" : "FALHOU: " + r.error} (${pagamentos.length} pagamentos)`, "telegram");
         } catch (err: any) {

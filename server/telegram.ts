@@ -156,11 +156,17 @@ export interface PagamentoHojeItem {
  *
  * Envia às 8h ter-sáb.
  */
+export interface AcumuladoSemanaMes {
+  semana: { dias: number; total: number; inicio: string; fim: string };
+  mes:    { dias: number; total: number; inicio: string; fim: string };
+}
+
 export function montarResumoManha(
   hoje: ResumoDiaData,
   _amanha: ResumoAmanhaData | null,
   ontem?: ResumoDiaData | null,
   pagamentosHoje?: PagamentoHojeItem[],
+  acumulado?: AcumuladoSemanaMes | null,
 ): string {
   // `hoje` é usado só para a data de cabeçalho (já está no fuso correto)
   const dataStr = formatarDataBR(hoje.data);
@@ -208,7 +214,21 @@ export function montarResumoManha(
     msg += `<i>Sem dados de ontem ainda — checa o dashboard.</i>\n\n`;
   }
 
-  // ── 3) Pagamentos de hoje (contas + equipe) ──
+  // ── 3) Acumulado da semana e do mês ──
+  if (acumulado && (acumulado.semana.dias > 0 || acumulado.mes.dias > 0)) {
+    msg += `📈 <b>Acumulado</b>\n`;
+    if (acumulado.semana.dias > 0) {
+      const lbl = acumulado.semana.dias === 1 ? "dia" : "dias";
+      msg += `├ Semana (${acumulado.semana.dias} ${lbl}): <b>${formatCurrency(acumulado.semana.total)}</b>\n`;
+    }
+    if (acumulado.mes.dias > 0) {
+      const lbl = acumulado.mes.dias === 1 ? "dia" : "dias";
+      msg += `└ Mês (${acumulado.mes.dias} ${lbl}): <b>${formatCurrency(acumulado.mes.total)}</b>\n`;
+    }
+    msg += `\n`;
+  }
+
+  // ── 4) Pagamentos de hoje (contas + equipe) ──
   if (pagamentosHoje && pagamentosHoje.length > 0) {
     const contas = pagamentosHoje.filter(p => p.tipo === "conta");
     const equipe = pagamentosHoje.filter(p => p.tipo === "equipe");

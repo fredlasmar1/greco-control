@@ -144,26 +144,31 @@ export interface PagamentoHojeItem {
 }
 
 /**
- * Monta o resumo da manhã (é a ÚNICA mensagem do dia desde 21/06/2026):
- *   1º bloco: FECHAMENTO de ontem (faturamento real + comandas + quem não bateu meta)
- *   2º bloco: PREVISÃO de hoje (agendamentos + Clube Greco + meta)
- *   3º bloco: PAGAMENTOS de hoje (contas mensais + salário/vale dos barbeiros)
+ * Monta o resumo da manhã — formato enxuto inspirado no e-mail do Trinks.
+ * Desde 26/06/2026 contém SOMENTE:
+ *   1) Fechamento de ontem (faturamento total + comandas + ticket + meta)
+ *   2) Top de ontem (até 3 profissionais)
+ *   3) Pagamentos de hoje (contas mensais + salário/vale)
+ *
+ * Os parâmetros `hoje` e `amanha` continuam na assinatura por compatibilidade
+ * com chamadas existentes, mas NÃO são exibidos. Quem quiser previsão abre o
+ * dashboard pelo link no fim da mensagem.
  *
  * Envia às 8h ter-sáb.
  */
 export function montarResumoManha(
   hoje: ResumoDiaData,
-  amanha: ResumoAmanhaData | null,
+  _amanha: ResumoAmanhaData | null,
   ontem?: ResumoDiaData | null,
   pagamentosHoje?: PagamentoHojeItem[],
 ): string {
-  const emoji = progressoEmoji(hoje.progressoPct);
+  // `hoje` é usado só para a data de cabeçalho (já está no fuso correto)
   const dataStr = formatarDataBR(hoje.data);
 
   let msg = `☀️ <b>Bom dia, Fred!</b>\n`;
   msg += `<i>${escapeHtml(dataStr)}</i>\n\n`;
 
-  // ── 1º bloco: Fechamento de ontem ──
+  // ── 1) Fechamento de ontem ──
   if (ontem) {
     const ontemStr = formatarDataBR(ontem.data).split(",")[0];
     const bateu = ontem.fechado >= ontem.metaDiaria;
@@ -183,9 +188,14 @@ export function montarResumoManha(
       msg += `└ ${emojiO} Faltaram ${formatCurrency(falta)} para a meta\n`;
     }
 
-    // Top profissionais de ontem (fechado)
-    const profsOntem = (ontem.porProfissional || []).filter(p => p.fechado > 0 || p.countFechado > 0);
-    const rankOntem = profsOntem.slice().sort((a, b) => b.fechado - a.fechado).slice(0, 3);
+    // ── 2) Top de ontem (até 3) ──
+    const profsOntem = (ontem.porProfissional || []).filter(
+      p => p.fechado > 0 || p.countFechado > 0,
+    );
+    const rankOntem = profsOntem
+      .slice()
+      .sort((a, b) => b.fechado - a.fechado)
+      .slice(0, 3);
     if (rankOntem.length > 0) {
       msg += `\n🏆 <b>Top de ontem</b>\n`;
       rankOntem.forEach((p, i) => {
@@ -193,90 +203,12 @@ export function montarResumoManha(
         msg += `${icon} ${escapeHtml(p.nome)}: ${formatCurrency(p.fechado)} (${p.countFechado})\n`;
       });
     }
-
-    // Quem NÃO bateu meta individual de ontem.
-    // Critério: tem meta individual (metaIndividual no payload? por enquanto usamos
-    // metaDiaria / N profissionais como aproximação se não vier explícita)
-    // O ideal é que o backend mande metaIndividual por profissional no futuro.
-    // Por ora, marcamos como "abaixo da média" quem ficou < 80% do top do dia.
-    if (profsOntem.length >= 2) {
-      const topVal = rankOntem[0]?.fechado || 0;
-      const abaixo = profsOntem.filter(p => p.fechado > 0 && p.fechado < topVal * 0.5);
-      if (abaixo.length > 0) {
-        msg += `\n⚠️ <b>Abaixo da média ontem</b>\n`;
-        abaixo.slice(0, 5).forEach(p => {
-          msg += `· ${escapeHtml(p.nome)}: ${formatCurrency(p.fechado)} (${p.countFechado})\n`;
-        });
-      }
-    }
-
-    // Atendimentos de plano de ontem
-    if (ontem.plano && ontem.plano.count > 0) {
-      msg += `\n🎫 <b>Plano de assinatura</b>: ${ontem.plano.count} atend. (${formatCurrency(ontem.plano.valorTabela)} em tabela)\n`;
-      const rankPlano = (ontem.plano.porProfissional || []).slice(0, 3);
-      rankPlano.forEach(p => {
-        msg += `· ${escapeHtml(p.nome)}: ${p.count}\n`;
-      });
-    }
     msg += `\n`;
-  }
-
-  // ── 2º bloco: Previsão de hoje (serviços + Clube Greco) ──
-  const planoHojeValor = (hoje.plano?.valorTabela) || 0;
-  const planoHojeCount = (hoje.plano?.count) || 0;
-  const totalEsperadoCompleto = hoje.totalEsperado + planoHojeValor;
-  const progressoCompleto = hoje.metaDiaria > 0
-    ? (totalEsperadoCompleto / hoje.metaDiaria) * 100
-    : 0;
-  const emojiCompleto = progressoEmoji(progressoCompleto);
-  const atingeCompleto = totalEsperadoCompleto >= hoje.metaDiaria;
-
-  msg += `📅 <b>Previsão de hoje</b>\n`;
-  msg += `├ Agendamentos: <b>${hoje.agendamentosCount}</b>${planoHojeCount > 0 ? ` + ${planoHojeCount} plano` : ""}\n`;
-  msg += `├ Serviços: ${formatCurrency(hoje.totalEsperado)}\n`;
-  if (planoHojeValor > 0) {
-    msg += `├ Clube Greco: ${formatCurrency(planoHojeValor)}\n`;
-  }
-  msg += `├ <b>Total previsto: ${formatCurrency(totalEsperadoCompleto)}</b>\n`;
-  msg += `├ Meta diária: ${formatCurrency(hoje.metaDiaria)}\n`;
-  if (atingeCompleto) {
-    msg += `└ ${emojiCompleto} <b>Meta já projetada!</b> (+${formatCurrency(totalEsperadoCompleto - hoje.metaDiaria)})\n`;
   } else {
-    const faltaCompleto = hoje.metaDiaria - totalEsperadoCompleto;
-    msg += `└ ${emojiCompleto} Falta projetar <b>${formatCurrency(faltaCompleto)}</b> para a meta\n`;
-  }
-  msg += `\n<code>${barra(progressoCompleto)}</code> ${progressoCompleto.toFixed(0)}%\n\n`;
-
-  // Ranking profissional (top 5)
-  const rank = hoje.porProfissional
-    .filter(p => p.countPrevisto > 0 || p.countFechado > 0)
-    .slice(0, 5);
-  if (rank.length > 0) {
-    msg += `👥 <b>Agenda por profissional</b>\n`;
-    rank.forEach((p, i) => {
-      const icon = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "▫️";
-      const count = p.countPrevisto || p.countFechado;
-      msg += `${icon} ${escapeHtml(p.nome)}: ${count} agend. · ${formatCurrency(Math.max(p.previsto, p.fechado))}\n`;
-    });
-    msg += `\n`;
+    msg += `<i>Sem dados de ontem ainda — checa o dashboard.</i>\n\n`;
   }
 
-  // Previsão de amanhã (mantida como terçeiro bloco — útil em sextas)
-  if (amanha && amanha.count > 0) {
-    const labelAmanha = amanha.proxDiaUtil ? "próximo dia útil" : "amanhã";
-    const emojiA = progressoEmoji(amanha.progressoPct);
-    msg += `🔮 <b>Previsão ${labelAmanha}</b> (${formatarDataBR(amanha.data).split(",")[0]})\n`;
-    msg += `├ ${amanha.count} agendamentos já marcados\n`;
-    msg += `├ Previsto: <b>${formatCurrency(amanha.total)}</b>\n`;
-    if (amanha.atingeMeta) {
-      msg += `└ ${emojiA} Meta já garantida\n`;
-    } else {
-      msg += `└ ${emojiA} Falta ${formatCurrency(amanha.falta)} para meta\n`;
-    }
-    msg += `\n`;
-  }
-
-  // ── 3º bloco: Pagamentos de hoje (contas + equipe) ──
+  // ── 3) Pagamentos de hoje (contas + equipe) ──
   if (pagamentosHoje && pagamentosHoje.length > 0) {
     const contas = pagamentosHoje.filter(p => p.tipo === "conta");
     const equipe = pagamentosHoje.filter(p => p.tipo === "equipe");
@@ -301,17 +233,7 @@ export function montarResumoManha(
     msg += `\n`;
   }
 
-  // Dica motivacional / alerta (usa total esperado com Clube Greco)
-  if (!atingeCompleto && (hoje.agendamentosCount + planoHojeCount) > 0) {
-    const ticketMedio = totalEsperadoCompleto / Math.max(1, hoje.agendamentosCount + planoHojeCount);
-    const faltaCompleto = hoje.metaDiaria - totalEsperadoCompleto;
-    const agFaltam = Math.ceil(faltaCompleto / Math.max(1, ticketMedio));
-    msg += `💡 ~${agFaltam} agendamentos extras (ticket médio ${formatCurrency(ticketMedio)}) fecham a meta.\n`;
-  } else if (hoje.agendamentosCount === 0 && planoHojeCount === 0) {
-    msg += `⚠️ Nenhum agendamento confirmado ainda. Corre atrás!\n`;
-  }
-
-  msg += `\n🔗 <a href="https://grecocontrol.com.br/">Abrir Dashboard</a>`;
+  msg += `🔗 <a href="https://grecocontrol.com.br/">Abrir Dashboard</a>`;
 
   return msg;
 }

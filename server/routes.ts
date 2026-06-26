@@ -31,6 +31,7 @@ import {
 } from "./contasMensais";
 import type { PagamentoHojeItem } from "./telegram";
 import { registrarEventoTrinks, comOrigem, resumoUltimosDias, lerUltimosDias } from "./trinksAuditLog";
+import { getTrinksCota, setFatiaBase, comprarTokens } from "./trinksQuota";
 import * as cron from "node-cron";
 import {
   enviarMensagem,
@@ -1900,19 +1901,51 @@ export async function registerRoutes(
       const h = hojeBuckets[hojeBuckets.length - 1] || { total: 0, ok: 0, rate429: 0, erros: 0 };
       const mes = await resumoUltimosDias(31);
       const trinks429Agora = circuitOpenUntil > Date.now();
+      const cota = await getTrinksCota();
+      const fatiaMensal = cota.fatiaEfetiva; // base + tokens comprados no mês
       return res.json({
         ok: true,
         hoje: { ok: h.ok, rate429: h.rate429, erros: h.erros, total: h.total },
         mes: { ok: mes.totais.ok, rate429: mes.totais.rate429, erros: mes.totais.erros, total: mes.totais.total },
         trinks429Agora,
-        // v54: fatia mensal do Greco Control (metade dos ~5000 da conta, resto = grecometas).
+        // Fatia mensal CONFIGURÁVEL do Greco Control (base + tokens comprados).
         // Consumo real = total de requisições do mês (auditoria persistente).
-        fatiaMensal: TRINKS_FATIA_MENSAL,
+        fatiaMensal,
+        fatiaBase: cota.fatiaBase,
+        tokensComprados: cota.extras,
         consumoMes: mes.totais.total,
-        fatiaEstourada: mes.totais.total > TRINKS_FATIA_MENSAL,
+        fatiaEstourada: mes.totais.total > fatiaMensal,
         // contador interno (nossa contagem em memória) — referência secundária
         sessao: { requestsThisMonth: rateLimiter.requestsThisMonth, maxPerMonth: MAX_REQUESTS_PER_MONTH },
       });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
+  // ─── Cota Trinks CONFIGURÁVEL (fatia base + tokens comprados) ───
+  app.get("/api/trinks/cota", async (_req: Request, res: Response) => {
+    try {
+      return res.json({ ok: true, ...(await getTrinksCota()) });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+  app.post("/api/trinks/cota", async (req: Request, res: Response) => {
+    try {
+      const { fatiaBase } = req.body || {};
+      if (fatiaBase != null) await setFatiaBase(Number(fatiaBase));
+      return res.json({ ok: true, ...(await getTrinksCota()) });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+  app.post("/api/trinks/cota/comprar", async (req: Request, res: Response) => {
+    try {
+      const qtd = Number((req.body || {}).quantidade);
+      if (!qtd || qtd <= 0) return res.status(400).json({ ok: false, error: "Quantidade inválida." });
+      await comprarTokens(qtd);
+      return res.json({ ok: true, ...(await getTrinksCota()) });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }

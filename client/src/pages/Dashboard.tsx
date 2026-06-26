@@ -1055,6 +1055,7 @@ export default function Dashboard() {
             </div>
           );
         })()}
+        <TrinksCotaControls />
       </div>
 
       {/* ───────── Fase 1: Resumo do Mês (fonte canônica) ───────── */}
@@ -2365,5 +2366,61 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+// Cota Trinks configurável do Greco Control: registrar tokens comprados + editar
+// a fatia base. Espelha o Grecometas. Tokens comprados zeram no mês que vem.
+function TrinksCotaControls() {
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+  const [cota, setCota] = useState<any>(null);
+  const [tokens, setTokens] = useState("");
+  const [fatia, setFatia] = useState("");
+  const load = useCallback(() => {
+    fetch(`${API_BASE}/api/trinks/cota`)
+      .then((r) => r.json())
+      .then((d) => { if (d?.ok) { setCota(d); setFatia(String(d.fatiaBase)); } })
+      .catch(() => {});
+  }, [API_BASE]);
+  useEffect(() => { load(); }, [load]);
+  if (!cota) return null;
+  const comprar = async () => {
+    const q = Number(tokens);
+    if (!q || q <= 0) return;
+    await fetch(`${API_BASE}/api/trinks/cota/comprar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quantidade: q }) });
+    setTokens("");
+    load();
+  };
+  const salvarFatia = async () => {
+    await fetch(`${API_BASE}/api/trinks/cota`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fatiaBase: Number(fatia) }) });
+    load();
+  };
+  return (
+    <div className="rounded-md border border-card-border bg-card p-2.5 text-[11px]" data-testid="trinks-cota-controls">
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <span className="text-muted-foreground">Cota Trinks (Greco Control)</span>
+        <span className="font-bold text-foreground">
+          {cota.fatiaBase.toLocaleString("pt-BR")}
+          {cota.extras > 0 && <> + {cota.extras.toLocaleString("pt-BR")} comprados</>} = {cota.fatiaEfetiva.toLocaleString("pt-BR")}/mês
+        </span>
+      </div>
+      <div className="flex items-end gap-3 flex-wrap">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-muted-foreground">Comprei tokens</span>
+          <div className="flex gap-1">
+            <input type="number" value={tokens} onChange={(e) => setTokens(e.target.value)} placeholder="qtd" className="w-20 px-2 py-1 rounded border border-card-border bg-background text-foreground" />
+            <button onClick={comprar} className="px-2 py-1 rounded bg-emerald-600 text-white font-bold">+ Registrar</button>
+          </div>
+        </label>
+        <label className="flex flex-col gap-0.5">
+          <span className="text-muted-foreground">Fatia base/mês</span>
+          <div className="flex gap-1">
+            <input type="number" value={fatia} onChange={(e) => setFatia(e.target.value)} className="w-20 px-2 py-1 rounded border border-card-border bg-background text-foreground" />
+            <button onClick={salvarFatia} className="px-2 py-1 rounded bg-secondary text-foreground font-bold border border-card-border">Salvar</button>
+          </div>
+        </label>
+        <span className="text-muted-foreground self-center">Tokens comprados zeram no mês que vem.</span>
+      </div>
+    </div>
   );
 }

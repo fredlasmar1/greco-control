@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v65 — Cota Trinks: proteger POST com auth admin (26/06/2026) [concluído]
+
+**Contexto:** cota Trinks configurável já feita (commit d00eade, outra aba, no ar): `trinksQuota.ts` (kv `trinks_fatia_base` + `trinks_tokens_extras` por mês), endpoints GET/POST `/api/trinks/cota` + POST `/comprar`, controles no Dashboard (`TrinksCotaControls`). **Ponta solta do HANDOFF_COTA_TRINKS.md:** os 2 POST estavam SEM auth.
+
+**Feito:** os 2 POST (`/api/trinks/cota`, `/api/trinks/cota/comprar`) agora exigem admin (`getUserFromToken(extractToken(req))` + `role !== "admin"` → 403, padrão dos outros endpoints admin). GET livre. Frontend: `TrinksCotaControls` usa `authFetch` (envia Bearer), trata 403, esconde controles de escrita p/ não-admin. Validado: GET ok sem token; POST sem token → 403. (Cota compartilhada Trinks: Grecometas + Greco Control, bancos separados, fatia só alerta — hard-stop segue MAX_REQUESTS_PER_MONTH=4500.)
+
 ### v64 — Margem de Produtos (aba editável do catálogo) (25/06/2026) [concluído]
 
 **Objetivo:** corrigir o "Produtos 96,5% otimista" → margem real por produto. Bloqueio: custo de compra (Trinks v1 NÃO expõe; catálogo importado veio 45/51 sem custo, e os 6 que tinham estão ERRADOS — custo de caixa, ex: AMENDOIM custo 45 vende 2).

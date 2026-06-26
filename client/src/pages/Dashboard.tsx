@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
+import { authFetch, useAuth } from "@/lib/authStore";
 import { useStore } from "@/lib/store";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -2383,16 +2384,19 @@ function TrinksCotaControls() {
       .catch(() => {});
   }, [API_BASE]);
   useEffect(() => { load(); }, [load]);
+  const isAdmin = useAuth((s) => s.isAdmin());
   if (!cota) return null;
   const comprar = async () => {
     const q = Number(tokens);
     if (!q || q <= 0) return;
-    await fetch(`${API_BASE}/api/trinks/cota/comprar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quantidade: q }) });
+    const r = await authFetch(`/api/trinks/cota/comprar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quantidade: q }) });
+    if (r.status === 403) { alert("Apenas administradores podem alterar a cota."); return; }
     setTokens("");
     load();
   };
   const salvarFatia = async () => {
-    await fetch(`${API_BASE}/api/trinks/cota`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fatiaBase: Number(fatia) }) });
+    const r = await authFetch(`/api/trinks/cota`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fatiaBase: Number(fatia) }) });
+    if (r.status === 403) { alert("Apenas administradores podem alterar a cota."); return; }
     load();
   };
   return (
@@ -2404,6 +2408,7 @@ function TrinksCotaControls() {
           {cota.extras > 0 && <> + {cota.extras.toLocaleString("pt-BR")} comprados</>} = {cota.fatiaEfetiva.toLocaleString("pt-BR")}/mês
         </span>
       </div>
+      {isAdmin ? (
       <div className="flex items-end gap-3 flex-wrap">
         <label className="flex flex-col gap-0.5">
           <span className="text-muted-foreground">Comprei tokens</span>
@@ -2421,6 +2426,9 @@ function TrinksCotaControls() {
         </label>
         <span className="text-muted-foreground self-center">Tokens comprados zeram no mês que vem.</span>
       </div>
+      ) : (
+        <span className="text-muted-foreground">Só administradores alteram a cota.</span>
+      )}
     </div>
   );
 }

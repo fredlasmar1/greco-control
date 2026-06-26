@@ -1933,6 +1933,8 @@ export async function registerRoutes(
   });
   app.post("/api/trinks/cota", async (req: Request, res: Response) => {
     try {
+      const admin = getUserFromToken(extractToken(req));
+      if (!admin || admin.role !== "admin") return res.status(403).json({ ok: false, error: "Acesso negado." });
       const { fatiaBase } = req.body || {};
       if (fatiaBase != null) await setFatiaBase(Number(fatiaBase));
       return res.json({ ok: true, ...(await getTrinksCota()) });
@@ -1942,6 +1944,8 @@ export async function registerRoutes(
   });
   app.post("/api/trinks/cota/comprar", async (req: Request, res: Response) => {
     try {
+      const admin = getUserFromToken(extractToken(req));
+      if (!admin || admin.role !== "admin") return res.status(403).json({ ok: false, error: "Acesso negado." });
       const qtd = Number((req.body || {}).quantidade);
       if (!qtd || qtd <= 0) return res.status(400).json({ ok: false, error: "Quantidade inválida." });
       await comprarTokens(qtd);

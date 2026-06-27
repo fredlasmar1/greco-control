@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v69 — Margem de Produtos: preenchimento em massa de custos (27/06/2026) [concluído]
+
+**Pedido:** fechar os custos de produto (dono escolheu preencher na tela; 45/51 sem custo). **Feito (frontend, `MargemProdutos`):** Enter salva + foca o próximo input de custo; `salvarCusto` atualiza a linha LOCALMENTE (recalcula margem c/ taxa+imposto+comissão) sem refetch → ordem não reembaralha; lista ordenada estável por categoria+nome. Backend (PUT /api/produtos/catalogo/custo) inalterado. Fluxo: digita custo → Enter → próximo, margem 🔴🟡🟢 na hora. Catálogo: 51 produtos (Bebidas/Doces/Pomadas/Shampoos/Óleos/Tônicos/etc); 6 vieram do Trinks com custo (4 errados).
+
 ### v68 — Faturamento acumulado do ano no topo do Dashboard (26/06/2026) [concluído]
 
 **Pedido:** ver o total faturado no ano no Dashboard. **Feito:** componente `FaturamentoAno` no topo do Dashboard — soma `receita` de `/api/historico/mensal` (Caixa por mês): total 2026, atendimentos, média/mês, melhor mês + mini-barras por mês. Validado: ~R$493.889 jan-jun (mai melhor, R$89.490). Mês corrente parcial; atualiza ao importar cada mês.

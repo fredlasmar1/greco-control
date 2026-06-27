@@ -1553,8 +1553,12 @@ function MargemProdutos({ apiBase }: { apiBase: string }) {
   };
   useEffect(() => { carregar(); /* eslint-disable-next-line */ }, []);
 
+  // Salva o custo e atualiza a linha LOCALMENTE (sem refetch) — assim a ordem da
+  // lista não muda e o foco pode seguir pro próximo campo (preenchimento em massa).
   const salvarCusto = async (nome: string) => {
-    const v = Number((editando[nome] || "").replace(",", "."));
+    const raw = editando[nome];
+    if (raw === undefined) return;
+    const v = Number((raw || "").replace(",", "."));
     if (!isFinite(v) || v < 0) return;
     setSalvando(nome);
     try {
@@ -1563,7 +1567,17 @@ function MargemProdutos({ apiBase }: { apiBase: string }) {
         body: JSON.stringify({ nome, custo: v }),
       });
       setEditando(e => { const n = { ...e }; delete n[nome]; return n; });
-      carregar();
+      setData((prev: any) => {
+        if (!prev) return prev;
+        const taxa = (prev.taxaCartaoPct || 0) / 100, imp = (prev.impostoPct || 0) / 100;
+        const produtos = prev.produtos.map((p: any) => {
+          if (p.nome !== nome) return p;
+          const comV = p.preco * ((p.comissaoPct || 0) / 100), taxaV = p.preco * taxa, impV = p.preco * imp;
+          const margem = p.preco - v - comV - taxaV - impV;
+          return { ...p, custo: v, semCusto: v <= 0, comissaoValor: Math.round(comV * 100) / 100, taxaCartao: Math.round(taxaV * 100) / 100, imposto: Math.round(impV * 100) / 100, margemReal: Math.round(margem * 100) / 100, margemPct: p.preco > 0 ? Math.round((margem / p.preco) * 10000) / 100 : 0 };
+        });
+        return { ...prev, produtos, semCusto: produtos.filter((x: any) => x.semCusto).length };
+      });
     } finally { setSalvando(null); }
   };
 
@@ -1602,7 +1616,7 @@ function MargemProdutos({ apiBase }: { apiBase: string }) {
               </tr>
             </thead>
             <tbody>
-              {data.produtos.map((p: any) => {
+              {[...data.produtos].sort((a: any, b: any) => (a.categoria || "").localeCompare(b.categoria || "", "pt-BR") || a.nome.localeCompare(b.nome, "pt-BR")).map((p: any) => {
                 const emEdicao = editando[p.nome] !== undefined;
                 return (
                   <tr key={p.nome} className="border-b border-border/30 hover:bg-muted/20" data-testid={`prod-${p.nome}`}>
@@ -1617,7 +1631,7 @@ function MargemProdutos({ apiBase }: { apiBase: string }) {
                         value={emEdicao ? editando[p.nome] : (p.custo > 0 ? p.custo : "")}
                         placeholder={p.semCusto ? "—" : ""}
                         onChange={e => setEditando(ed => ({ ...ed, [p.nome]: e.target.value }))}
-                        onKeyDown={e => { if (e.key === "Enter") salvarCusto(p.nome); }}
+                        onKeyDown={e => { if (e.key === "Enter") { const ins = Array.from(document.querySelectorAll('input[data-testid^="custo-"]')) as HTMLElement[]; const i = ins.indexOf(e.currentTarget as HTMLElement); salvarCusto(p.nome); if (i >= 0 && ins[i + 1]) ins[i + 1].focus(); } }}
                         className={`h-6 w-20 rounded border bg-background px-1.5 text-right text-xs ${p.semCusto && !emEdicao ? "border-amber-500/40" : "border-border"}`}
                         data-testid={`custo-${p.nome}`}
                       />

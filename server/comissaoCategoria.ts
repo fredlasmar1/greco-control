@@ -268,10 +268,15 @@ export interface CalculoServicoInput {
   margemDesejadaPct: number;  // 0..100
   taxaCartaoPct?: number;     // v56: 0..100 — taxa da maquininha (% do preço)
   impostoPct?: number;        // v56: 0..100 — imposto sobre faturamento (% do preço)
+  // v70: custo fixo POR ATENDIMENTO (totalFixas ÷ média de atendimentos/mês).
+  // Quando informado, SUBSTITUI o rateio por minuto (decisão do dono). R$ por atendimento.
+  custoFixoPorAtendimento?: number;
+  outrosCustos?: number;      // v70: outros custos do serviço, em R$ (campo livre)
 }
 
 export interface CalculoServicoOutput {
   custoFixoRateado: number;
+  outrosCustos: number;           // v70: outros custos em R$
   comissaoValor: number;          // soma barbeiro + assistente
   comissaoBarbeiroValor: number;  // só barbeiro
   comissaoAssistenteValor: number; // só assistente (0 se não usado)
@@ -297,13 +302,16 @@ export function calcularMargemServico(input: CalculoServicoInput): CalculoServic
   const tax = Math.max(0, Math.min(100, Number(input.taxaCartaoPct) || 0));
   const imp = Math.max(0, Math.min(100, Number(input.impostoPct) || 0));
 
-  const custoFixoRateado = dur * cfm;
+  // v70: custo fixo por ATENDIMENTO (se informado) tem prioridade sobre o por-minuto.
+  const cfa = Number(input.custoFixoPorAtendimento);
+  const custoFixoRateado = isFinite(cfa) && cfa >= 0 ? cfa : dur * cfm;
+  const outros = Math.max(0, Number(input.outrosCustos) || 0);
   const comissaoBarbeiroValor = preco * (com / 100);
   const comissaoAssistenteValor = preco * (ass / 100);
   const comissaoValor = comissaoBarbeiroValor + comissaoAssistenteValor;
   const taxaCartaoValor = preco * (tax / 100);
   const impostoValor = preco * (imp / 100);
-  const custoTotal = ficha + custoFixoRateado + comissaoValor + taxaCartaoValor + impostoValor;
+  const custoTotal = ficha + custoFixoRateado + outros + comissaoValor + taxaCartaoValor + impostoValor;
   const margemRealValor = preco - custoTotal;
   const margemRealPct = preco > 0 ? (margemRealValor / preco) * 100 : 0;
 
@@ -314,11 +322,12 @@ export function calcularMargemServico(input: CalculoServicoInput): CalculoServic
   if (denom <= 0) {
     precoSugeridoErro = `Comissão (${comTot}%) + taxa (${tax}%) + imposto (${imp}%) + margem (${mar}%) ≥ 100%. Impossível calcular preço.`;
   } else {
-    precoSugerido = (ficha + custoFixoRateado) / denom;
+    precoSugerido = (ficha + custoFixoRateado + outros) / denom;
   }
 
   return {
     custoFixoRateado: Number(custoFixoRateado.toFixed(2)),
+    outrosCustos: Number(outros.toFixed(2)),
     comissaoValor: Number(comissaoValor.toFixed(2)),
     comissaoBarbeiroValor: Number(comissaoBarbeiroValor.toFixed(2)),
     comissaoAssistenteValor: Number(comissaoAssistenteValor.toFixed(2)),

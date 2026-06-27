@@ -83,6 +83,8 @@ interface PrecificacaoContexto {
   totalFixas: number;
   minutosProdutivosMes: number;
   custoFixoPorMinuto: number;
+  custoFixoPorAtendimento?: number;  // v70
+  mediaAtendimentos?: number;        // v70
   comandas?: number;
   ocupacaoRealEstimada?: number;
   baseOcupacao?: string;
@@ -672,7 +674,9 @@ export default function Precificacao() {
       // Fórmulas v24 + v56 (taxa de cartão + imposto entram no custo)
       const taxaCartaoPct = contexto?.taxaCartaoPct || 0;
       const impostoPct = contexto?.impostoPct || 0;
-      const custoFixoRateado = s.duration * cfm;
+      // v70: custo fixo POR ATENDIMENTO (decisão do dono) tem prioridade sobre o por-minuto
+      const cfa = contexto?.custoFixoPorAtendimento;
+      const custoFixoRateado = (cfa != null && cfa >= 0) ? cfa : s.duration * cfm;
       // v24 Etapa 5: em modo simulação, comissão = (preço − ficha) × % (trava custo antes da comissão)
       // No modo padrão, comissão = preço × % (sobre o preço cheio)
       const baseComissao = modoSimulacao ? Math.max(0, s.price - totalCost) : s.price;
@@ -831,15 +835,19 @@ export default function Precificacao() {
         </div>
       </div>
 
-      <Tabs defaultValue="calculadora" className="w-full">
-        <TabsList className="mb-4">
-          <TabsTrigger value="calculadora" data-testid="tab-calculadora">Calculadora de Preço</TabsTrigger>
-          <TabsTrigger value="reajuste" data-testid="tab-reajuste">Reajuste de Preços</TabsTrigger>
-          <TabsTrigger value="margem-produtos" data-testid="tab-margem-produtos">Margem de Produtos</TabsTrigger>
+      <Tabs defaultValue="visao-geral" className="w-full">
+        <TabsList className="mb-4 flex-wrap h-auto">
+          <TabsTrigger value="visao-geral" data-testid="tab-visao-geral">📊 Visão Geral</TabsTrigger>
+          <TabsTrigger value="calculadora" data-testid="tab-calculadora">🧮 Calculadora (1 a 1)</TabsTrigger>
+          <TabsTrigger value="margem-produtos" data-testid="tab-margem-produtos">Custos de Produtos</TabsTrigger>
+          <TabsTrigger value="reajuste" data-testid="tab-reajuste">Reajuste p/ Meta</TabsTrigger>
           <TabsTrigger value="catalogo" data-testid="tab-catalogo">Catálogo</TabsTrigger>
           <TabsTrigger value="ficha-servicos" data-testid="tab-ficha-servicos">Ficha de Serviços</TabsTrigger>
-          <TabsTrigger value="custos-produtos" data-testid="tab-custos-produtos">Custos de Produtos</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="visao-geral" className="mt-0">
+          <VisaoGeral analysis={analysis} apiBase={(globalThis as any).__API_BASE__ || ""} />
+        </TabsContent>
 
         <TabsContent value="calculadora" className="mt-0">
           <CalculadoraPreco analysis={analysis} contexto={contexto} onImpostoSalvo={() => qClient.invalidateQueries({ queryKey: ["/api/precificacao/contexto"] })} apiBase={(globalThis as any).__API_BASE__ || ""} />
@@ -855,10 +863,6 @@ export default function Precificacao() {
 
         <TabsContent value="catalogo" className="mt-0">
           <Servicos embedded />
-        </TabsContent>
-
-        <TabsContent value="custos-produtos" className="mt-0">
-          <CustosProdutosPanel />
         </TabsContent>
 
         <TabsContent value="ficha-servicos" className="space-y-6 mt-0">
@@ -1661,6 +1665,98 @@ function MargemProdutos({ apiBase }: { apiBase: string }) {
         <p>● Digite o custo e tecle Enter (ou Salvar). Produtos sem custo ficam sem margem até você preencher.</p>
         <p className="text-amber-400">⚠ Os custos que vieram da Trinks podem estar errados (custo de caixa em vez de unitário) — confira os que estão com margem negativa.</p>
       </div>
+    </div>
+  );
+}
+
+// ─── v70: Visão Geral — todos os itens (serviços + produtos) num lugar só ─────
+// Pesquisável, com margem real e semáforo, pra ver onde ganha/perde de relance.
+function VisaoGeral({ analysis, apiBase }: { analysis: any[]; apiBase: string }) {
+  const [produtos, setProdutos] = useState<any[]>([]);
+  const [busca, setBusca] = useState("");
+  const [filtro, setFiltro] = useState<"todos" | "servicos" | "produtos">("todos");
+
+  useEffect(() => {
+    fetch(`${apiBase}/api/produtos/catalogo`).then(r => r.json()).then(d => { if (d?.produtos) setProdutos(d.produtos); }).catch(() => {});
+  }, [apiBase]);
+
+  const itens = useMemo(() => {
+    const serv = analysis.map((s: any) => ({
+      tipo: "serviço" as const, nome: s.name, categoria: s.category || "",
+      preco: s.price, custo: s.custoTotal, margemPct: s.margin, semDados: s.itemCount === 0 && s.totalCost === 0 ? false : false,
+    }));
+    const prod = produtos.map((p: any) => ({
+      tipo: "produto" as const, nome: p.nome, categoria: p.categoria || "",
+      preco: p.preco, custo: p.semCusto ? null : Math.round((p.preco - p.margemReal) * 100) / 100,
+      margemPct: p.semCusto ? null : p.margemPct, semDados: p.semCusto,
+    }));
+    let arr = [...serv, ...prod];
+    if (filtro === "servicos") arr = arr.filter(i => i.tipo === "serviço");
+    if (filtro === "produtos") arr = arr.filter(i => i.tipo === "produto");
+    const q = busca.trim().toLowerCase();
+    if (q) arr = arr.filter(i => i.nome.toLowerCase().includes(q) || i.categoria.toLowerCase().includes(q));
+    // ordena: com dados primeiro (pior margem no topo), sem dados no fim
+    return arr.sort((a, b) => {
+      if (a.margemPct == null && b.margemPct == null) return a.nome.localeCompare(b.nome);
+      if (a.margemPct == null) return 1;
+      if (b.margemPct == null) return -1;
+      return a.margemPct - b.margemPct;
+    });
+  }, [analysis, produtos, busca, filtro]);
+
+  const comDados = itens.filter(i => i.margemPct != null);
+  const prejuizo = comDados.filter(i => (i.margemPct as number) < 0).length;
+  const semaforo = (pct: number) => pct < 0 ? "text-red-400" : pct < 10 ? "text-amber-400" : "text-emerald-400";
+  const fmtPctVal = (v: number | null) => v == null ? "—" : `${v.toFixed(1)}%`;
+
+  return (
+    <div className="space-y-3 max-w-[960px]">
+      {/* busca + filtro + resumo */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Input placeholder="🔎 Buscar serviço ou produto…" value={busca} onChange={e => setBusca(e.target.value)} className="h-9 max-w-xs" data-testid="vg-busca" />
+        <div className="flex gap-1">
+          {(["todos", "servicos", "produtos"] as const).map(f => (
+            <Button key={f} size="sm" variant={filtro === f ? "default" : "outline"} className="h-8 text-xs capitalize" onClick={() => setFiltro(f)} data-testid={`vg-filtro-${f}`}>{f}</Button>
+          ))}
+        </div>
+        <div className="ml-auto text-xs text-muted-foreground">
+          {comDados.length} c/ margem · {prejuizo > 0 && <span className="text-red-400 font-medium">🔴 {prejuizo} no prejuízo</span>}
+        </div>
+      </div>
+
+      <Card className="bg-card border-card-border">
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="border-b border-border text-[10px] uppercase text-muted-foreground">
+              <tr>
+                <th className="text-left p-2.5">Item</th>
+                <th className="text-left p-2.5">Tipo</th>
+                <th className="text-right p-2.5">Preço</th>
+                <th className="text-right p-2.5">Custo</th>
+                <th className="text-right p-2.5">Margem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {itens.map((i, idx) => (
+                <tr key={`${i.tipo}-${i.nome}-${idx}`} className="border-b border-border/30 hover:bg-muted/20" data-testid={`vg-item`}>
+                  <td className="p-2.5">
+                    <div className="truncate max-w-[260px]" title={i.nome}>{i.nome}</div>
+                    {i.categoria && <div className="text-[9px] text-muted-foreground">{i.categoria}</div>}
+                  </td>
+                  <td className="p-2.5"><span className={`text-[9px] px-1.5 py-0.5 rounded ${i.tipo === "serviço" ? "bg-sky-500/15 text-sky-400" : "bg-purple-500/15 text-purple-400"}`}>{i.tipo}</span></td>
+                  <td className="p-2.5 text-right tabular-nums">{formatCurrency(i.preco)}</td>
+                  <td className="p-2.5 text-right tabular-nums text-muted-foreground">{i.custo == null ? <span className="text-amber-400">s/ custo</span> : formatCurrency(i.custo)}</td>
+                  <td className={`p-2.5 text-right tabular-nums font-semibold ${i.margemPct == null ? "text-muted-foreground" : semaforo(i.margemPct as number)}`}>
+                    {i.margemPct != null && (i.margemPct as number) < 0 ? "🔴 " : ""}{fmtPctVal(i.margemPct)}
+                  </td>
+                </tr>
+              ))}
+              {itens.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">Nenhum item encontrado.</td></tr>}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+      <p className="text-[10px] text-muted-foreground">● Margem real = preço − custos (fixo por atendimento + produtos/ficha + comissão + taxa + imposto). Produtos "s/ custo" precisam do custo de compra na aba <strong>Custos de Produtos</strong>.</p>
     </div>
   );
 }

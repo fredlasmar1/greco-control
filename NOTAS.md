@@ -8,6 +8,14 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v70 — Custo fixo POR ATENDIMENTO + aba Visão Geral unificada (27/06/2026) [parcial]
+
+**Decisões do dono (precificação):** (1) custo fixo ÷ ATENDIMENTOS (não por minuto); (2) NÃO flutuar → usar média de atendimentos dos meses fechados; (3) "custo variável" = compras+cartão+outros custos; (4) taxas do Itaú ele vai mandar (ponderar cartão/PIX). Quer 2 abas: "1 a 1" (serviço E produto) + "todos pesquisável".
+
+**Feito:** `comissaoCategoria.calcularMargemServico` ganhou `custoFixoPorAtendimento` (prioridade sobre por-minuto) + `outrosCustos`. `routes.ts`: helper `mediaAtendimentosMes()` (média de comandas dos meses fechados, exclui corrente); `/contexto` e `/calcular` expõem/usam `custoFixoPorAtendimento` (= totalFixas÷média). Validado: média 940 (5 meses), custo fixo/atend R$0,39 (baixo até categorizar fixas), Corte R$60 margem 55,85%. Frontend: `analysis` usa custoFixoPorAtendimento; nova aba **📊 Visão Geral** (`VisaoGeral`: serviços+produtos juntos, busca, filtro Todos/Serviços/Produtos, margem+semáforo, pior no topo); removida a aba "Custos de Produtos" antiga (CustosProdutosPanel, vazia); abas renomeadas; default = Visão Geral.
+
+**FALTA (próximo):** (a) Calculadora 1-a-1 de PRODUTO (hoje só serviço); (b) input "outros custos" na tela (motor já aceita); (c) taxas do Itaú (ponderar cartão/PIX) — aguardando dono.
+
 ### v69 — Margem de Produtos: preenchimento em massa de custos (27/06/2026) [concluído]
 
 **Pedido:** fechar os custos de produto (dono escolheu preencher na tela; 45/51 sem custo). **Feito (frontend, `MargemProdutos`):** Enter salva + foca o próximo input de custo; `salvarCusto` atualiza a linha LOCALMENTE (recalcula margem c/ taxa+imposto+comissão) sem refetch → ordem não reembaralha; lista ordenada estável por categoria+nome. Backend (PUT /api/produtos/catalogo/custo) inalterado. Fluxo: digita custo → Enter → próximo, margem 🔴🟡🟢 na hora. Catálogo: 51 produtos (Bebidas/Doces/Pomadas/Shampoos/Óleos/Tônicos/etc); 6 vieram do Trinks com custo (4 errados).

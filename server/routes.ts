@@ -7460,6 +7460,24 @@ Regras CRÍTICAS:
     } catch { return []; }
   }
 
+  // v70: média de atendimentos/mês dos meses FECHADOS (Caixa), pra ratear o custo
+  // fixo POR ATENDIMENTO de forma estável (não flutua com o mês corrente parcial).
+  async function mediaAtendimentosMes(mesCorrente?: string): Promise<{ media: number; meses: number }> {
+    const corrente = mesCorrente || new Date().toISOString().slice(0, 7);
+    const totais: number[] = [];
+    for (let m = 1; m <= 12; m++) {
+      const mes = `2026-${String(m).padStart(2, "0")}`;
+      if (mes >= corrente) continue; // exclui o mês corrente (parcial) e futuros
+      const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+      if (Array.isArray(caixa?.rows) && caixa.rows.length > 0) {
+        const n = caixa.rows.filter((r: any) => !String(r.tipo || "").toLowerCase().includes("estorno")).length;
+        if (n > 0) totais.push(n);
+      }
+    }
+    if (totais.length === 0) return { media: 0, meses: 0 };
+    return { media: Math.round(totais.reduce((a, b) => a + b, 0) / totais.length), meses: totais.length };
+  }
+
   // A2: margem por categoria (Express/Clássico/VIP + Produtos) do ranking de
   // profissionais. Estética PENDENTE (precisa do relatório por serviço). Custo
   // fixo do mês é rateado por participação na receita de serviço; taxa+imposto da config.
@@ -7995,6 +8013,10 @@ Regras CRÍTICAS:
         diasMes: cfg.diasMes,
         ocupacaoPct: cfg.ocupacaoPct,
       });
+      // v70: custo fixo POR ATENDIMENTO (decisão do dono) = totalFixas ÷ média de
+      // atendimentos dos meses fechados (estável, não flutua com o mês corrente).
+      const mediaAtd = await mediaAtendimentosMes(mes);
+      const custoFixoPorAtendimento = mediaAtd.media > 0 ? Math.round((totais.totalFixas / mediaAtd.media) * 100) / 100 : 0;
 
       // Parte 1: ocupação REAL estimada (pra comparar com o chute manual).
       // minutos usados ÷ minutos disponíveis. Usa duração real da agenda quando
@@ -8050,6 +8072,9 @@ Regras CRÍTICAS:
         totalFixas: totais.totalFixas,
         minutosProdutivosMes: cfm.minutosProdutivosMes,
         custoFixoPorMinuto: cfm.custoFixoPorMinuto,
+        custoFixoPorAtendimento,                 // v70
+        mediaAtendimentos: mediaAtd.media,       // v70
+        mesesMediaAtendimentos: mediaAtd.meses,  // v70
         comandas,
         ocupacaoRealEstimada,
         baseOcupacao,
@@ -8395,6 +8420,9 @@ Regras CRÍTICAS:
         diasMes: cfg.diasMes,
         ocupacaoPct: cfg.ocupacaoPct,
       });
+      // v70: custo fixo por atendimento (estável)
+      const mediaAtd = await mediaAtendimentosMes(mes);
+      const custoFixoPorAtendimento = mediaAtd.media > 0 ? Math.round((totais.totalFixas / mediaAtd.media) * 100) / 100 : 0;
 
       const result = servicos.map((s: any) => {
         const id = String(s.id || "");
@@ -8424,6 +8452,8 @@ Regras CRÍTICAS:
           duracaoMin: duracao,
           fichaTecnica,
           custoFixoPorMinuto: cfm.custoFixoPorMinuto,
+          custoFixoPorAtendimento,           // v70 — prioridade sobre o por-minuto
+          outrosCustos: Number((sc as any)?.outrosCustos || 0),  // v70
           comissaoPct,
           comissaoAssistentePct,
           margemDesejadaPct,

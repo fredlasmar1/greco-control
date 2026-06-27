@@ -2002,7 +2002,7 @@ export async function registerRoutes(
   // GET /api/version — identifica qual código está rodando em produção
   app.get("/api/version", (_req: Request, res: Response) => {
     return res.json({
-      build: "2026-06-26-trinks-email-snapshots",
+      build: "2026-06-27-ontem-via-trinks-email",
       timestamp: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       nodeVersion: process.version,
@@ -4172,7 +4172,18 @@ export async function registerRoutes(
     const parts = tzFmt.formatToParts(ontem);
     const pick = (t: string) => parts.find(p => p.type === t)?.value || "";
     const dataOntem = `${pick("year")}-${pick("month")}-${pick("day")}`;
-    return calcularDiaCompleto(dataOntem);
+    const base = await calcularDiaCompleto(dataOntem);
+
+    // Se temos snapshot fonte=trinks-email (caixa fechado oficial), usa esse valor
+    // como Faturamento de ontem (senão, mantém o cálculo via API/CSV).
+    try {
+      const snap = await getSnapshot(dataOntem);
+      if (snap && snap.fonte === "trinks-email" && snap.faturamento?.total > 0) {
+        (base as any).fechado = snap.faturamento.total;
+        (base as any).fonteFechado = "trinks-email";
+      }
+    } catch {}
+    return base;
   }
 
   // ─── Cálculo agregado por profissional em uma janela de tempo ─────────

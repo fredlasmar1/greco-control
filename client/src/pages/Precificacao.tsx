@@ -864,7 +864,7 @@ export default function Precificacao() {
         </TabsList>
 
         <TabsContent value="lista-servicos" className="mt-0">
-          <ListaServicos apiBase={(globalThis as any).__API_BASE__ || ""} />
+          <ListaServicos apiBase={(globalThis as any).__API_BASE__ || ""} mes={selectedMes} />
         </TabsContent>
 
         <TabsContent value="visao-geral" className="mt-0">
@@ -1793,11 +1793,14 @@ function VisaoGeral({ analysis, apiBase, onEditarServico }: { analysis: any[]; a
 // ─── v72: Meus Serviços — lista de TODOS os serviços (catálogo cacheado) ──────
 // Independe da API ao vivo (usa /api/servicos/lista, que cacheia no kv). Resolve
 // a lista sumir quando a fonte é CSV.
-function ListaServicos({ apiBase }: { apiBase: string }) {
+function ListaServicos({ apiBase, mes }: { apiBase: string; mes: string }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
   const [atualizando, setAtualizando] = useState(false);
+  const [contexto, setContexto] = useState<any>(null);
+  const [custos, setCustos] = useState<any[]>([]);     // savedCosts
+  const [aberto, setAberto] = useState<string | null>(null);  // serviço expandido
 
   const carregar = (refresh = false) => {
     if (refresh) setAtualizando(true); else setLoading(true);
@@ -1805,22 +1808,40 @@ function ListaServicos({ apiBase }: { apiBase: string }) {
       .then(r => r.json()).then(d => setData(d))
       .finally(() => { setLoading(false); setAtualizando(false); });
   };
-  useEffect(() => { carregar(); /* eslint-disable-next-line */ }, []);
+  const carregarCustos = () => fetch(`${apiBase}/api/service-costs`).then(r => r.json()).then(setCustos).catch(() => {});
+  useEffect(() => { carregar(); carregarCustos(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    fetch(`${apiBase}/api/precificacao/contexto/${mes}`).then(r => r.json()).then(d => { if (d?.ok) setContexto(d); }).catch(() => {});
+  }, [apiBase, mes]);
 
   if (loading) return <div className="text-sm text-muted-foreground p-4">Carregando serviços…</div>;
   const servicos: any[] = data?.servicos || [];
   const q = busca.trim().toLowerCase();
   const filtrados = q ? servicos.filter(s => s.nome.toLowerCase().includes(q) || s.categoria.toLowerCase().includes(q)) : servicos;
-
-  // agrupa por categoria
   const grupos: Record<string, any[]> = {};
   for (const s of filtrados) (grupos[s.categoria || "Sem categoria"] ||= []).push(s);
+  const custoDe = (id: string) => custos.find((c: any) => c.serviceId === id);
+
+  // margem rápida (pra o badge na lista) — mesma fórmula do editor
+  const margemRapida = (s: any): number | null => {
+    if (!contexto) return null;
+    const sc = custoDe(s.id);
+    const ficha = (sc?.items || []).reduce((a: number, it: any) => a + (it.quantity || 0) * (it.unitCost || 0), 0);
+    const fixo = contexto.custoFixoPorAtendimento || 0;
+    const com = (sc?.comissaoPct ?? comissaoPctPadrao(s.nome));
+    const ass = sc?.comissaoAssistentePct ?? 0;
+    const taxa = contexto.taxaCartaoPct || 0, imp = contexto.impostoPct || 0;
+    const outros = Number(sc?.outrosCustos || 0);
+    const custo = ficha + fixo + outros + s.preco * ((com + ass + taxa + imp) / 100);
+    return s.preco > 0 ? ((s.preco - custo) / s.preco) * 100 : null;
+  };
+  const cor = (pct: number | null) => pct == null ? "text-muted-foreground" : pct < 0 ? "text-red-400" : pct < 10 ? "text-amber-400" : "text-emerald-400";
 
   return (
     <div className="space-y-3 max-w-[820px]">
       <div className="flex items-center gap-2 flex-wrap">
         <Input placeholder="🔎 Buscar serviço…" value={busca} onChange={e => setBusca(e.target.value)} className="h-9 max-w-xs" data-testid="ls-busca" />
-        <span className="text-xs text-muted-foreground">{servicos.length} serviços</span>
+        <span className="text-xs text-muted-foreground">{servicos.length} serviços · clique pra editar o custo</span>
         <Button size="sm" variant="outline" className="h-8 text-xs ml-auto" disabled={atualizando} onClick={() => carregar(true)} data-testid="ls-atualizar">
           {atualizando ? "atualizando…" : "↻ Atualizar da Trinks"}
         </Button>
@@ -1835,22 +1856,142 @@ function ListaServicos({ apiBase }: { apiBase: string }) {
           <Card key={cat} className="bg-card border-card-border">
             <CardHeader className="pb-2"><CardTitle className="text-sm">{cat} <span className="text-[11px] text-muted-foreground font-normal">({grupos[cat].length})</span></CardTitle></CardHeader>
             <CardContent className="p-0">
-              <table className="w-full text-xs">
-                <tbody>
-                  {grupos[cat].map((s, i) => (
-                    <tr key={s.id} className={`border-t border-border/30 ${i % 2 ? "bg-muted/10" : ""}`} data-testid={`ls-serv-${s.id}`}>
-                      <td className="p-2.5">{s.nome}{!s.visivel && <span className="text-[9px] text-muted-foreground ml-1">(oculto)</span>}</td>
-                      <td className="p-2.5 text-right tabular-nums text-muted-foreground w-20">{s.duracao}min</td>
-                      <td className="p-2.5 text-right tabular-nums font-semibold w-24">{formatCurrency(s.preco)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {grupos[cat].map((s, i) => {
+                const m = margemRapida(s);
+                const isAberto = aberto === s.id;
+                return (
+                  <div key={s.id} className={`border-t border-border/30 ${i % 2 ? "bg-muted/5" : ""}`} data-testid={`ls-serv-${s.id}`}>
+                    <button className="w-full flex items-center gap-2 p-2.5 text-xs hover:bg-muted/20 text-left" onClick={() => setAberto(isAberto ? null : s.id)} data-testid={`ls-toggle-${s.id}`}>
+                      <span className="text-muted-foreground">{isAberto ? "▾" : "▸"}</span>
+                      <span className="flex-1 truncate">{s.nome}{!s.visivel && <span className="text-[9px] text-muted-foreground ml-1">(oculto)</span>}</span>
+                      <span className="tabular-nums text-muted-foreground">{s.duracao}min</span>
+                      <span className="tabular-nums font-semibold w-20 text-right">{formatCurrency(s.preco)}</span>
+                      <span className={`tabular-nums w-16 text-right font-semibold ${cor(m)}`}>{m == null ? "—" : `${m.toFixed(0)}%`}</span>
+                    </button>
+                    {isAberto && (
+                      <div className="px-3 pb-3 bg-muted/10">
+                        <EditorServicoCusto
+                          servico={s} contexto={contexto} savedCost={custoDe(s.id)} apiBase={apiBase}
+                          onSaved={() => carregarCustos()}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </CardContent>
           </Card>
         ))
       )}
       {data?.geradoEm && <p className="text-[10px] text-muted-foreground">Catálogo atualizado em {new Date(data.geradoEm).toLocaleString("pt-BR")} · fonte: {data.fonte}.</p>}
+    </div>
+  );
+}
+
+// ─── v72: Editor de custo de UM serviço (a tela do mockup, dentro da lista) ───
+function EditorServicoCusto({ servico, contexto, savedCost, apiBase, onSaved }: {
+  servico: any; contexto: any; savedCost: any; apiBase: string; onSaved: () => void;
+}) {
+  const [items, setItems] = useState<any[]>(savedCost?.items || []);
+  const [comissao, setComissao] = useState<string>(String(savedCost?.comissaoPct ?? comissaoPctPadrao(servico.nome)));
+  const [assistente, setAssistente] = useState<string>(String(savedCost?.comissaoAssistentePct ?? 0));
+  const [outros, setOutros] = useState<string>(String(savedCost?.outrosCustos ?? 0));
+  const [margemAlvo, setMargemAlvo] = useState<string>(String(savedCost?.margemDesejadaPct ?? 30));
+  const [preco, setPreco] = useState<number>(servico.preco);
+  const [salvando, setSalvando] = useState(false);
+  const [salvo, setSalvo] = useState(false);
+
+  const num = (s: string) => Number((s || "0").replace(",", ".")) || 0;
+  const taxa = contexto?.taxaCartaoPct || 0;
+  const imposto = contexto?.impostoPct || 0;
+  const fixoAtend = contexto?.custoFixoPorAtendimento || 0;
+  const ficha = items.reduce((a, it) => a + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0);
+  const comPct = num(comissao), assPct = num(assistente);
+  const comV = preco * (comPct / 100), assV = preco * (assPct / 100);
+  const taxaV = preco * (taxa / 100), impV = preco * (imposto / 100);
+  const outrosV = num(outros);
+  const custoTotal = ficha + fixoAtend + comV + assV + taxaV + impV + outrosV;
+  const margemReal = preco - custoTotal;
+  const margemPct = preco > 0 ? (margemReal / preco) * 100 : 0;
+  const alvo = num(margemAlvo);
+  const denom = 1 - (comPct + assPct) / 100 - taxa / 100 - imposto / 100 - alvo / 100;
+  const precoIdeal = denom > 0 ? (ficha + fixoAtend + outrosV) / denom : null;
+
+  const addItem = () => setItems(prev => [...prev, { id: `i-${Date.now()}`, name: "", category: "produto", quantity: 1, unitCost: 0 }]);
+  const upItem = (id: string, f: string, v: any) => setItems(prev => prev.map(it => it.id === id ? { ...it, [f]: v } : it));
+  const rmItem = (id: string) => setItems(prev => prev.filter(it => it.id !== id));
+
+  const salvar = async () => {
+    setSalvando(true); setSalvo(false);
+    try {
+      await fetch(`${apiBase}/api/service-costs/${encodeURIComponent(servico.id)}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serviceName: servico.nome, items, comissaoPct: comPct, comissaoAssistentePct: assPct, margemDesejadaPct: alvo, outrosCustos: outrosV }),
+      });
+      setSalvo(true); onSaved();
+    } finally { setSalvando(false); }
+  };
+
+  const linha = (lbl: string, val: number, extra?: string) => (
+    <div className="flex justify-between py-1 text-xs border-b border-border/20">
+      <span className="text-muted-foreground">{lbl}{extra && <span className="text-[10px] ml-1">{extra}</span>}</span>
+      <span className="tabular-nums">{formatCurrency(val)}</span>
+    </div>
+  );
+  const cor = margemPct < 0 ? "text-red-400" : margemPct < 10 ? "text-amber-400" : "text-emerald-400";
+
+  return (
+    <div className="rounded-lg border border-card-border bg-background/40 p-3 space-y-3 text-xs">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-semibold">{servico.nome}</span>
+        <span className="text-muted-foreground">· {servico.duracao}min</span>
+        <label className="ml-auto flex items-center gap-1">Preço cobrado: <input type="number" value={preco} onChange={e => setPreco(Number(e.target.value) || 0)} className="h-7 w-20 rounded border border-border bg-background px-1.5 text-right" data-testid="es-preco" /></label>
+      </div>
+
+      {/* 1) produtos usados (ficha) */}
+      <div>
+        <div className="flex items-center justify-between mb-1"><span className="font-medium">1) Produtos usados (ficha) — R$ {ficha.toFixed(2)}</span><Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={addItem}>+ produto</Button></div>
+        {items.length === 0 && <p className="text-[10px] text-muted-foreground">Nenhum produto na ficha. Adicione o que o serviço consome (ex.: lâmina, shampoo).</p>}
+        {items.map(it => (
+          <div key={it.id} className="flex items-center gap-1 mb-1">
+            <input placeholder="produto" value={it.name} onChange={e => upItem(it.id, "name", e.target.value)} className="h-6 flex-1 rounded border border-border bg-background px-1.5 text-[11px]" />
+            <input type="number" title="qtd" value={it.quantity} onChange={e => upItem(it.id, "quantity", Number(e.target.value) || 0)} className="h-6 w-12 rounded border border-border bg-background px-1 text-right text-[11px]" />
+            <span className="text-muted-foreground">×</span>
+            <input type="number" title="custo unit" value={it.unitCost} onChange={e => upItem(it.id, "unitCost", Number(e.target.value) || 0)} className="h-6 w-16 rounded border border-border bg-background px-1 text-right text-[11px]" />
+            <button onClick={() => rmItem(it.id)} className="text-red-400 px-1">✕</button>
+          </div>
+        ))}
+      </div>
+
+      {/* 2-5 decomposição */}
+      <div>
+        {linha("2) Custo fixo por atendimento", fixoAtend, `(${contexto?.totalFixas ? "R$" + contexto.totalFixas + " ÷ " + (contexto.mediaAtendimentos || "?") + " atend" : "automático"})`)}
+        <div className="flex justify-between items-center py-1 text-xs border-b border-border/20">
+          <span className="text-muted-foreground">3) Comissão barbeiro <input type="number" value={comissao} onChange={e => setComissao(e.target.value)} className="h-6 w-12 rounded border border-border bg-background px-1 text-right mx-1" />% + assist. <input type="number" value={assistente} onChange={e => setAssistente(e.target.value)} className="h-6 w-12 rounded border border-border bg-background px-1 text-right mx-1" />%</span>
+          <span className="tabular-nums">{formatCurrency(comV + assV)}</span>
+        </div>
+        {linha(`4) Imposto (${imposto}%) + Taxa cartão/PIX (${taxa}%)`, impV + taxaV, "global")}
+        <div className="flex justify-between items-center py-1 text-xs border-b border-border/20">
+          <span className="text-muted-foreground">5) Outros custos (R$)</span>
+          <input type="number" value={outros} onChange={e => setOutros(e.target.value)} className="h-6 w-20 rounded border border-border bg-background px-1.5 text-right" data-testid="es-outros" />
+        </div>
+      </div>
+
+      {/* totais */}
+      <div className="rounded bg-muted/30 p-2 space-y-1">
+        <div className="flex justify-between font-semibold"><span>CUSTO TOTAL</span><span className="tabular-nums text-red-400">{formatCurrency(custoTotal)}</span></div>
+        <div className="flex justify-between font-semibold"><span>MARGEM REAL</span><span className={`tabular-nums ${cor}`}>{formatCurrency(margemReal)} ({margemPct.toFixed(1)}%)</span></div>
+      </div>
+
+      {/* margem alvo → preço ideal */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span>Quero margem de</span>
+        <input type="number" value={margemAlvo} onChange={e => setMargemAlvo(e.target.value)} className="h-7 w-16 rounded border border-border bg-background px-1.5 text-right" data-testid="es-margem-alvo" />
+        <span>% →</span>
+        <span className="font-bold text-primary">Preço ideal: {precoIdeal != null ? formatCurrency(precoIdeal) : "—"}</span>
+        {precoIdeal != null && preco > 0 && (precoIdeal > preco ? <span className="text-amber-400 text-[10px]">(subir de {formatCurrency(preco)})</span> : <span className="text-emerald-400 text-[10px]">(já acima ✓)</span>)}
+        <Button size="sm" className="h-7 text-xs ml-auto" disabled={salvando} onClick={salvar} data-testid="es-salvar">{salvando ? "salvando…" : salvo ? "✓ salvo" : "Salvar"}</Button>
+      </div>
     </div>
   );
 }

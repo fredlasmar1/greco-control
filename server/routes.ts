@@ -7212,6 +7212,31 @@ Regras CRÍTICAS:
     return res.json(serviceCosts);
   });
 
+  // v72: upsert de UM serviço (não mexe nos demais) — usado pelo editor por serviço.
+  app.put("/api/service-costs/:serviceId", (req: Request, res: Response) => {
+    const id = String(req.params.serviceId || "");
+    if (!id) return res.status(400).json({ ok: false, error: "serviceId obrigatório" });
+    const c = req.body || {};
+    const clamp = (v: any) => Math.max(0, Math.min(100, Number(v) || 0));
+    const entry: ServiceCostEntry = {
+      serviceId: id,
+      serviceName: String(c.serviceName || ""),
+      items: Array.isArray(c.items) ? c.items.map((it: any) => ({
+        id: String(it.id || `item-${Math.random().toString(36).slice(2, 8)}`),
+        name: String(it.name || ""), category: it.category || "produto",
+        quantity: Math.max(0, Number(it.quantity) || 0), unitCost: Math.max(0, Number(it.unitCost) || 0),
+      })) : [],
+    };
+    if (c.comissaoPct !== undefined && c.comissaoPct !== null && c.comissaoPct !== "") entry.comissaoPct = clamp(c.comissaoPct);
+    if (c.comissaoAssistentePct !== undefined && c.comissaoAssistentePct !== null && c.comissaoAssistentePct !== "") entry.comissaoAssistentePct = clamp(c.comissaoAssistentePct);
+    if (c.margemDesejadaPct !== undefined && c.margemDesejadaPct !== null && c.margemDesejadaPct !== "") entry.margemDesejadaPct = clamp(c.margemDesejadaPct);
+    if (c.outrosCustos !== undefined && c.outrosCustos !== null && c.outrosCustos !== "") { const v = Number(c.outrosCustos); if (isFinite(v) && v >= 0) entry.outrosCustos = v; }
+    serviceCosts = serviceCosts.filter(x => x.serviceId !== id);
+    serviceCosts.push(entry);
+    saveServiceCosts();
+    return res.json({ ok: true, serviceCost: entry });
+  });
+
   app.post("/api/service-costs", (req: Request, res: Response) => {
     const { costs } = req.body;
     if (!Array.isArray(costs)) {

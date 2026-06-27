@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v73 — Editor de custo dentro de cada serviço (Meus Serviços) (27/06/2026) [concluído]
+
+**Pedido (confirmado o mockup antes):** editar cada serviço pra achar o custo, fórmula = produtos(ficha)+fixo/atend+comissão(barb+assist)+imposto+taxa+outros → margem real → margem-alvo → preço ideal. Imposto/taxa globais; ficha = produtos adicionados. **Feito:** `PUT /api/service-costs/:serviceId` (upsert de UM serviço, não mexe nos outros). `ListaServicos` agora carrega contexto (custoFixoPorAtendimento/taxa/imposto) + savedCosts; cada serviço expande inline o `EditorServicoCusto` (ficha add/remove, comissão, assistente, outros, preço editável, margem-alvo→preço ideal, tudo recalcula ao vivo; salva via PUT). Badge de margem% na linha. Validado: PUT salva/persiste. (Dívida: serviceCosts em arquivo .service-costs.json — perde no deploy Railway sem volume.)
+
 ### v72 — Aba "Meus Serviços" (catálogo cacheado, independe da API) (27/06/2026) [concluído]
 
 **Raiz descoberta:** os serviços só vinham da API ao vivo (`hasTrinksData && trinks.servicos`) — no modo CSV a lista ficava VAZIA (dono frustrado: "preciso editar cada serviço, não está dando essa opção"). **Feito:** `GET /api/servicos/lista` (cacheia em kv `catalogo_servicos`; usa cache, só toca a Trinks se vazio ou `?refresh=1`) — 59 serviços. Nova aba **"✂️ Meus Serviços"** (1ª, default) `ListaServicos`: agrupada por categoria (nome·duração·preço), busca + botão "↻ Atualizar da Trinks". Independe da API estar no ar. **Dono quer corrigir a precificação "um a um" — este foi o passo 1 (ter a lista visível).** Próximos passos a definir com ele.

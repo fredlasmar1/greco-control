@@ -1059,6 +1059,9 @@ export default function Dashboard() {
         <TrinksCotaControls />
       </div>
 
+      {/* ───────── Retenção de Clientes (jan–jun) ───────── */}
+      <RetencaoClientes />
+
       {/* ───────── Fase 1: Resumo do Mês (fonte canônica) ───────── */}
       {(canonicoMes || equipeMesDash) && (
         <div className="space-y-4" data-testid="resumo-mes">
@@ -2429,6 +2432,84 @@ function TrinksCotaControls() {
       ) : (
         <span className="text-muted-foreground">Só administradores alteram a cota.</span>
       )}
+    </div>
+  );
+}
+
+// ─── v67: Retenção de Clientes (jan–jun) — entender o gargalo ─────────────────
+const NOME_MES_RET: Record<string, string> = { "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr", "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago", "09": "Set", "10": "Out", "11": "Nov", "12": "Dez" };
+function RetencaoClientes() {
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+  const [d, setD] = useState<any>(null);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/clientes/retencao`).then((r) => r.json()).then((x) => { if (x?.ok) setD(x); }).catch(() => {});
+  }, [API_BASE]);
+  if (!d || !d.meses?.length) return null;
+  const rot = (m: string) => NOME_MES_RET[m.slice(5)] || m;
+
+  return (
+    <div className="rounded-lg border border-card-border bg-card p-4 space-y-3" data-testid="retencao-clientes">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-sm font-bold flex items-center gap-2"><Users className="w-4 h-4 text-sky-400" /> Retenção de Clientes (jan–jun)</h2>
+        <span className="text-[11px] text-muted-foreground">{d.totalClientes.toLocaleString("pt-BR")} clientes únicos no período</span>
+      </div>
+
+      {/* destaques / gargalo */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5">
+          <div className="text-[10px] text-muted-foreground">Vieram 1 vez só</div>
+          <div className="text-lg font-bold text-red-400">{d.frequencia.pctUmaVisita}%</div>
+          <div className="text-[10px] text-muted-foreground">{d.frequencia.umaVisita} clientes — não voltaram</div>
+        </div>
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5">
+          <div className="text-[10px] text-muted-foreground">Inativos (sumidos ≥2 meses)</div>
+          <div className="text-lg font-bold text-amber-400">{d.pctInativos}%</div>
+          <div className="text-[10px] text-muted-foreground">{d.inativos} clientes perdidos</div>
+        </div>
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5">
+          <div className="text-[10px] text-muted-foreground">Fiéis (4+ meses)</div>
+          <div className="text-lg font-bold text-emerald-400">{d.pctFieis}%</div>
+          <div className="text-[10px] text-muted-foreground">{d.fieis} clientes — sua base</div>
+        </div>
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5">
+          <div className="text-[10px] text-muted-foreground">Voltaram 2+ vezes</div>
+          <div className="text-lg font-bold text-foreground">{(d.frequencia.duasATres + d.frequencia.quatroMais).toLocaleString("pt-BR")}</div>
+          <div className="text-[10px] text-muted-foreground">{d.totalClientes ? Math.round(((d.frequencia.duasATres + d.frequencia.quatroMais) / d.totalClientes) * 100) : 0}% recorrentes</div>
+        </div>
+      </div>
+
+      {/* tabela mês a mês */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-[10px] uppercase text-muted-foreground border-b border-border">
+            <tr>
+              <th className="text-left p-1.5">Mês</th>
+              <th className="text-right p-1.5">Foram</th>
+              <th className="text-right p-1.5">Novos</th>
+              <th className="text-right p-1.5">Voltaram</th>
+              <th className="text-right p-1.5">Perderam*</th>
+              <th className="text-right p-1.5">% retorno</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.meses.map((m: any) => (
+              <tr key={m.mes} className="border-b border-border/30">
+                <td className="p-1.5 font-medium">{rot(m.mes)}</td>
+                <td className="p-1.5 text-right tabular-nums">{m.ativos}</td>
+                <td className="p-1.5 text-right tabular-nums text-sky-400">{m.novos}</td>
+                <td className="p-1.5 text-right tabular-nums text-emerald-400">{m.retornaram}</td>
+                <td className="p-1.5 text-right tabular-nums text-red-400">{m.perdidos || "—"}</td>
+                <td className="p-1.5 text-right tabular-nums">{m.taxaRetorno}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="text-[10px] text-muted-foreground space-y-0.5">
+        <p>● <strong>Perderam*</strong> = clientes que foram no mês anterior e não voltaram no mês seguinte (~{Math.round(d.meses.slice(1).reduce((s: number, m: any) => s + m.perdidos, 0) / Math.max(1, d.meses.length - 1))}/mês em média).</p>
+        <p className="text-red-400">🎯 Gargalo: <strong>{d.frequencia.pctUmaVisita}% dos clientes vieram 1 vez só</strong>. Reduzir isso (1ª visita → 2ª) é onde está o maior ganho — campanha de retorno pra quem veio uma vez.</p>
+      </div>
     </div>
   );
 }

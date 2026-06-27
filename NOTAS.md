@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v67 — Retenção de Clientes no Dashboard (análise de churn/gargalo) (26/06/2026) [concluído]
+
+**Pedido:** dono quer entender o gargalo de clientes. **Feito:** `GET /api/clientes/retencao` — cruza Caixas jan-jun por clienteId: por mês {ativos, novos, retornaram, perdidos, taxaRetorno}; frequência semestre (1/2-3/4+ visitas); recorrência por meses distintos; fiéis (4+ meses); inativos (sem vir ≥2 meses). Card `RetencaoClientes` no Dashboard (entre cota e Resumo). **Validado: 1.216 clientes; 37,7% (458) vieram 1x só; 40,6% inativos; 30% fiéis; ~200 churn/mês; retorno 58%→83%.** Gargalo = 1ª visita não vira 2ª.
+
 ### v66 — Tela de Evolução (histórico mês a mês: clientes + barbeiros) (26/06/2026) [concluído]
 
 **Pedido:** dono quer ver números reais mês a mês desde jan/2026 (clientes e barbeiros). Importou Caixa de jan-jun (jan 77.905/867com, fev 78.736/883, mar 82.616/953, abr 88.205/1001, mai 89.490/996, jun atualizado 816com/75.918). Estado: caixa jan-jun; ranking mar-jun (faltam jan/fev); financeiro abr-jun.

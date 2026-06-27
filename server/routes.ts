@@ -8300,6 +8300,82 @@ Regras CRÍTICAS:
     }
   });
 
+  // GET /api/clientes/retencao — análise de retenção/churn a partir dos Caixas
+  // (cada comanda tem clienteId+data). Responde: ativos/novos/retornaram/perdidos
+  // por mês + distribuição de frequência + fiéis + inativos (gargalo).
+  app.get("/api/clientes/retencao", async (_req: Request, res: Response) => {
+    try {
+      const mesesDisp: string[] = [];
+      const porCliente = new Map<string, { nome: string; meses: Set<string>; visitas: number }>();
+      for (let m = 1; m <= 12; m++) {
+        const mes = `2026-${String(m).padStart(2, "0")}`;
+        const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+        if (!Array.isArray(caixa?.rows) || caixa.rows.length === 0) continue;
+        mesesDisp.push(mes);
+        for (const r of caixa.rows) {
+          if (String(r.tipo || "").toLowerCase().includes("estorno")) continue;
+          const id = String(r.clienteId || "").trim();
+          if (!id) continue; // walk-in sem cadastro não entra na retenção
+          let c = porCliente.get(id);
+          if (!c) { c = { nome: String(r.clienteNome || "").trim(), meses: new Set(), visitas: 0 }; porCliente.set(id, c); }
+          c.meses.add(mes); c.visitas++;
+        }
+      }
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const ultimoMes = mesesDisp[mesesDisp.length - 1] || "";
+      const idxMes = (mes: string) => mesesDisp.indexOf(mes);
+
+      const ativosPorMes = new Map<string, Set<string>>();
+      for (const mes of mesesDisp) ativosPorMes.set(mes, new Set());
+      for (const [id, c] of porCliente) for (const mes of c.meses) ativosPorMes.get(mes)!.add(id);
+
+      const primeiroMesDe = new Map<string, string>();
+      for (const [id, c] of porCliente) {
+        let pm = "9999"; for (const mes of c.meses) if (mes < pm) pm = mes;
+        primeiroMesDe.set(id, pm);
+      }
+
+      const meses = mesesDisp.map((mes, i) => {
+        const ativos = ativosPorMes.get(mes)!;
+        let novos = 0, retornaram = 0;
+        for (const id of ativos) (primeiroMesDe.get(id) === mes ? novos++ : retornaram++);
+        let perdidos = 0;
+        if (i > 0) {
+          const ant = ativosPorMes.get(mesesDisp[i - 1])!;
+          for (const id of ant) if (!ativos.has(id)) perdidos++;
+        }
+        return { mes, ativos: ativos.size, novos, retornaram, perdidos, taxaRetorno: ativos.size > 0 ? r2((retornaram / ativos.size) * 100) : 0 };
+      });
+
+      let umaVez = 0, duasTres = 0, quatroMais = 0;
+      const mesesDistrib = { "1": 0, "2": 0, "3": 0, "4+": 0 } as Record<string, number>;
+      for (const [, c] of porCliente) {
+        const nm = c.meses.size;
+        if (nm === 1) mesesDistrib["1"]++; else if (nm === 2) mesesDistrib["2"]++;
+        else if (nm === 3) mesesDistrib["3"]++; else mesesDistrib["4+"]++;
+        if (c.visitas === 1) umaVez++; else if (c.visitas <= 3) duasTres++; else quatroMais++;
+      }
+      const totalClientes = porCliente.size;
+      const fieis = mesesDistrib["4+"];
+      const ultIdx = mesesDisp.length - 1;
+      let inativos = 0;
+      for (const [, c] of porCliente) {
+        let um = ""; for (const mes of c.meses) if (mes > um) um = mes;
+        if (ultIdx - idxMes(um) >= 2) inativos++;
+      }
+
+      return res.json({
+        ok: true, mesesDisponiveis: mesesDisp, ultimoMes, totalClientes, meses,
+        frequencia: { umaVisita: umaVez, duasATres: duasTres, quatroMais, pctUmaVisita: totalClientes ? r2((umaVez / totalClientes) * 100) : 0 },
+        recorrenciaMeses: mesesDistrib,
+        fieis, pctFieis: totalClientes ? r2((fieis / totalClientes) * 100) : 0,
+        inativos, pctInativos: totalClientes ? r2((inativos / totalClientes) * 100) : 0,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   // ─── POST /api/precificacao/calcular — v24
   // Recebe lista de servicos e retorna calculo expandido para cada um.
   // Body: { mes: "YYYY-MM", servicos: [{ id, nome, categoria, preco, duracao }, ...] }

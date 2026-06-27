@@ -8228,6 +8228,67 @@ Regras CRÍTICAS:
     }
   });
 
+  // GET /api/historico/mensal — evolução mês a mês (clientes + barbeiros) a partir
+  // do CAIXA (receita/comandas/clientes) + RANKING (barbeiros). Local, sem API.
+  // Clientes novos = primeira aparição no histórico disponível.
+  app.get("/api/historico/mensal", async (_req: Request, res: Response) => {
+    try {
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const meses: any[] = [];
+      for (let m = 1; m <= 12; m++) {
+        const mes = `2026-${String(m).padStart(2, "0")}`;
+        const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+        if (!Array.isArray(caixa?.rows) || caixa.rows.length === 0) continue;
+        const rows = caixa.rows.filter((r: any) => !String(r.tipo || "").toLowerCase().includes("estorno"));
+        let receita = 0, servico = 0, produto = 0, pacote = 0;
+        const clientes = new Set<string>();
+        for (const r of rows) {
+          receita += Number(r.totalGeral || 0);
+          servico += Number(r.totalServico || 0);
+          produto += Number(r.totalProdutos || 0);
+          pacote += Number(r.totalPacotes || 0);
+          const cid = String(r.clienteId || "").trim();
+          if (cid) clientes.add(cid);
+        }
+        // barbeiros do ranking (se houver)
+        const ranking: any = await kvGet(trinksImport.kvKeyFor("ranking", mes));
+        const profs = ranking?.periodos?.[0]?.profissionais;
+        let barbeiros: any = null;
+        if (Array.isArray(profs)) {
+          barbeiros = profs.map((p: any) => {
+            const serv = Number(p.totalServicos || 0);
+            return {
+              nome: String(p.profissional || "").trim(),
+              atendimentos: Number(p.qtdAtendimentos || 0),
+              servicos: r2(serv),
+              produtos: r2(Number(p.totalProdutos || 0)),
+              comissao: r2(comissaoServicosRanking(p.profissional, serv).comissao),
+            };
+          }).filter((b: any) => b.servicos > 0 || b.produtos > 0).sort((a: any, b: any) => b.servicos - a.servicos);
+        }
+        meses.push({
+          mes, receita: r2(receita), servico: r2(servico), produto: r2(produto), pacote: r2(pacote),
+          comandas: rows.length, clientesUnicos: clientes.size,
+          ticketMedio: rows.length ? r2(receita / rows.length) : 0,
+          temRanking: !!barbeiros, barbeiros,
+          _clientes: Array.from(clientes),
+        });
+      }
+      // clientes novos vs recorrentes (primeira aparição no histórico)
+      const vistos = new Set<string>();
+      for (const mm of meses) {
+        let novos = 0;
+        for (const c of mm._clientes) { if (!vistos.has(c)) { novos++; vistos.add(c); } }
+        mm.clientesNovos = novos;
+        mm.clientesRecorrentes = mm.clientesUnicos - novos;
+        delete mm._clientes;
+      }
+      return res.json({ ok: true, meses });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   // ─── POST /api/precificacao/calcular — v24
   // Recebe lista de servicos e retorna calculo expandido para cada um.
   // Body: { mes: "YYYY-MM", servicos: [{ id, nome, categoria, preco, duracao }, ...] }

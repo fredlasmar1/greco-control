@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v66 — Tela de Evolução (histórico mês a mês: clientes + barbeiros) (26/06/2026) [concluído]
+
+**Pedido:** dono quer ver números reais mês a mês desde jan/2026 (clientes e barbeiros). Importou Caixa de jan-jun (jan 77.905/867com, fev 78.736/883, mar 82.616/953, abr 88.205/1001, mai 89.490/996, jun atualizado 816com/75.918). Estado: caixa jan-jun; ranking mar-jun (faltam jan/fev); financeiro abr-jun.
+
+**Feito:** `GET /api/historico/mensal` — itera 2026-01..12, lê Caixa (receita/comandas/clientes únicos por clienteId/ticket) + Ranking (barbeiros: atend/serviços/produtos/comissão via comissaoServicosRanking). Clientes novos = primeira aparição no histórico. Nova página **Evolução** (`/evolucao`, menu após Viabilidade, ícone LineChart): barras de faturamento/mês + tabela clientes (novos×recorrentes×%recorrência×ticket) + barbeiros por mês (seletor, só meses c/ ranking) + aviso de meses sem ranking. Validado: recorrência 0%(jan)→83%(jun) = base fidelizando. Rankings jan/fev entram sozinhos quando importados.
+
 ### v65 — Cota Trinks: proteger POST com auth admin (26/06/2026) [concluído]
 
 **Contexto:** cota Trinks configurável já feita (commit d00eade, outra aba, no ar): `trinksQuota.ts` (kv `trinks_fatia_base` + `trinks_tokens_extras` por mês), endpoints GET/POST `/api/trinks/cota` + POST `/comprar`, controles no Dashboard (`TrinksCotaControls`). **Ponta solta do HANDOFF_COTA_TRINKS.md:** os 2 POST estavam SEM auth.

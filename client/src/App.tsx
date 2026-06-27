@@ -31,6 +31,7 @@ import Estoque from "@/pages/Estoque";
 import ImportarTrinks from "@/pages/ImportarTrinks";
 import Conselheiro from "@/pages/Conselheiro";
 import Viabilidade from "@/pages/Viabilidade";
+import Evolucao from "@/pages/Evolucao";
 import TrinksAuditoria from "@/pages/TrinksAuditoria";
 import Login from "@/pages/Login";
 import { CopilotDrawer } from "@/components/CopilotDrawer";
@@ -70,6 +71,7 @@ function AdminRoutes() {
           <Route path="/servicos">{() => <RedirectTo to="/precificacao" />}</Route>
           <Route path="/precificacao" component={Precificacao} />
           <Route path="/viabilidade" component={Viabilidade} />
+          <Route path="/evolucao" component={Evolucao} />
           <Route path="/financeiro" component={Financeiro} />
           <Route path="/estoque" component={Estoque} />
           {/* /consolidacao e /conciliacao unificadas em /lancamentos (abas internas) */}

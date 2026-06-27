@@ -7508,6 +7508,38 @@ Regras CRÍTICAS:
     return { media: Math.round(totais.reduce((a, b) => a + b, 0) / totais.length), meses: totais.length };
   }
 
+  // v74: custo fixo por atendimento = MÉDIA das despesas fixas ÷ MÉDIA de
+  // atendimentos, ambos dos MESES FECHADOS (decisão do dono: estável, do
+  // "fechamento mensal"). Reflete automaticamente quando as fixas forem
+  // categorizadas (extrato Itaú + regras).
+  async function custoFixoAtendimentoMedio(mesCorrente?: string): Promise<{
+    custoFixoPorAtendimento: number; mediaFixas: number; mediaAtendimentos: number; meses: number;
+  }> {
+    const corrente = mesCorrente || new Date().toISOString().slice(0, 7);
+    const fixasArr: number[] = [], atendArr: number[] = [];
+    for (let m = 1; m <= 12; m++) {
+      const mes = `2026-${String(m).padStart(2, "0")}`;
+      if (mes >= corrente) continue;
+      const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+      if (!Array.isArray(caixa?.rows) || caixa.rows.length === 0) continue;
+      const atend = caixa.rows.filter((r: any) => !String(r.tipo || "").toLowerCase().includes("estorno")).length;
+      if (atend === 0) continue;
+      let totFix = 0;
+      try { totFix = Number((await computeTotaisDoMes(mes))?.totalFixas || 0); } catch {}
+      fixasArr.push(totFix);
+      atendArr.push(atend);
+    }
+    if (fixasArr.length === 0) return { custoFixoPorAtendimento: 0, mediaFixas: 0, mediaAtendimentos: 0, meses: 0 };
+    const mediaFixas = fixasArr.reduce((a, b) => a + b, 0) / fixasArr.length;
+    const mediaAtend = atendArr.reduce((a, b) => a + b, 0) / atendArr.length;
+    return {
+      custoFixoPorAtendimento: mediaAtend > 0 ? Math.round((mediaFixas / mediaAtend) * 100) / 100 : 0,
+      mediaFixas: Math.round(mediaFixas * 100) / 100,
+      mediaAtendimentos: Math.round(mediaAtend),
+      meses: fixasArr.length,
+    };
+  }
+
   // A2: margem por categoria (Express/Clássico/VIP + Produtos) do ranking de
   // profissionais. Estética PENDENTE (precisa do relatório por serviço). Custo
   // fixo do mês é rateado por participação na receita de serviço; taxa+imposto da config.
@@ -8043,10 +8075,11 @@ Regras CRÍTICAS:
         diasMes: cfg.diasMes,
         ocupacaoPct: cfg.ocupacaoPct,
       });
-      // v70: custo fixo POR ATENDIMENTO (decisão do dono) = totalFixas ÷ média de
-      // atendimentos dos meses fechados (estável, não flutua com o mês corrente).
-      const mediaAtd = await mediaAtendimentosMes(mes);
-      const custoFixoPorAtendimento = mediaAtd.media > 0 ? Math.round((totais.totalFixas / mediaAtd.media) * 100) / 100 : 0;
+      // v74: custo fixo POR ATENDIMENTO = média das fixas ÷ média de atendimentos
+      // dos MESES FECHADOS (decisão do dono — "fechamento mensal", estável).
+      const cfaMedio = await custoFixoAtendimentoMedio(mes);
+      const custoFixoPorAtendimento = cfaMedio.custoFixoPorAtendimento;
+      const mediaAtd = { media: cfaMedio.mediaAtendimentos, meses: cfaMedio.meses };
 
       // Parte 1: ocupação REAL estimada (pra comparar com o chute manual).
       // minutos usados ÷ minutos disponíveis. Usa duração real da agenda quando
@@ -8102,9 +8135,10 @@ Regras CRÍTICAS:
         totalFixas: totais.totalFixas,
         minutosProdutivosMes: cfm.minutosProdutivosMes,
         custoFixoPorMinuto: cfm.custoFixoPorMinuto,
-        custoFixoPorAtendimento,                 // v70
+        custoFixoPorAtendimento,                 // v70/v74
         mediaAtendimentos: mediaAtd.media,       // v70
         mesesMediaAtendimentos: mediaAtd.meses,  // v70
+        mediaFixas: cfaMedio.mediaFixas,         // v74 (média das fixas dos meses fechados)
         comandas,
         ocupacaoRealEstimada,
         baseOcupacao,
@@ -8450,9 +8484,9 @@ Regras CRÍTICAS:
         diasMes: cfg.diasMes,
         ocupacaoPct: cfg.ocupacaoPct,
       });
-      // v70: custo fixo por atendimento (estável)
-      const mediaAtd = await mediaAtendimentosMes(mes);
-      const custoFixoPorAtendimento = mediaAtd.media > 0 ? Math.round((totais.totalFixas / mediaAtd.media) * 100) / 100 : 0;
+      // v74: custo fixo por atendimento = média fixas ÷ média atendimentos (meses fechados)
+      const cfaMedio = await custoFixoAtendimentoMedio(mes);
+      const custoFixoPorAtendimento = cfaMedio.custoFixoPorAtendimento;
 
       const result = servicos.map((s: any) => {
         const id = String(s.id || "");

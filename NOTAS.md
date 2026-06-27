@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v74 — Custo fixo/atend = média das fixas ÷ média atendimentos (meses fechados) (27/06/2026) [concluído]
+
+**Decisão do dono:** custo fixo vem do "fechamento mensal" → média dos meses fechados. **Feito:** helper `custoFixoAtendimentoMedio(mes)` = (média do totalFixas dos meses fechados via computeTotaisDoMes) ÷ (média de atendimentos dos meses fechados). `/contexto` e `/calcular` usam; contexto expõe `mediaFixas`. Validado: média fixas R$19 ÷ 940 atend = R$0,02 (baixo pq meses fechados jan-mai SEM fixas categorizadas — confirma que falta dado, não lógica). **Próximo (dono escolheu opção 2): montar REGRAS de categorização das fixas** (`expense-regras` + classificarDescricao já existem; cria regra por keyword → classifica auto todo mês) + importar extrato Itaú. Engine 100% automática; só falta alimentar. (Custos fixos típicos discutidos: aluguel/condomínio/IPTU, energia, água, internet/telefone, salários fixos+pró-labore, encargos, contador, software/Trinks, seguro, manutenção/limpeza, taxas bancárias fixas.)
+
 ### v73 — Editor de custo dentro de cada serviço (Meus Serviços) (27/06/2026) [concluído]
 
 **Pedido (confirmado o mockup antes):** editar cada serviço pra achar o custo, fórmula = produtos(ficha)+fixo/atend+comissão(barb+assist)+imposto+taxa+outros → margem real → margem-alvo → preço ideal. Imposto/taxa globais; ficha = produtos adicionados. **Feito:** `PUT /api/service-costs/:serviceId` (upsert de UM serviço, não mexe nos outros). `ListaServicos` agora carrega contexto (custoFixoPorAtendimento/taxa/imposto) + savedCosts; cada serviço expande inline o `EditorServicoCusto` (ficha add/remove, comissão, assistente, outros, preço editável, margem-alvo→preço ideal, tudo recalcula ao vivo; salva via PUT). Badge de margem% na linha. Validado: PUT salva/persiste. (Dívida: serviceCosts em arquivo .service-costs.json — perde no deploy Railway sem volume.)

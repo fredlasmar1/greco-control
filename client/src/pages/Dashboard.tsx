@@ -942,6 +942,9 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 max-w-[1400px]">
+      {/* Faturamento acumulado do ano */}
+      <FaturamentoAno />
+
       {/* Data source banner */}
       {hasTrinksData && lastSync ? (
         <SyncBanner
@@ -2510,6 +2513,56 @@ function RetencaoClientes() {
         <p>● <strong>Perderam*</strong> = clientes que foram no mês anterior e não voltaram no mês seguinte (~{Math.round(d.meses.slice(1).reduce((s: number, m: any) => s + m.perdidos, 0) / Math.max(1, d.meses.length - 1))}/mês em média).</p>
         <p className="text-red-400">🎯 Gargalo: <strong>{d.frequencia.pctUmaVisita}% dos clientes vieram 1 vez só</strong>. Reduzir isso (1ª visita → 2ª) é onde está o maior ganho — campanha de retorno pra quem veio uma vez.</p>
       </div>
+    </div>
+  );
+}
+
+// ─── v68: Faturamento acumulado do ano (soma dos Caixas mensais) ─────────────
+function FaturamentoAno() {
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+  const [meses, setMeses] = useState<any[] | null>(null);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/historico/mensal`).then((r) => r.json()).then((d) => { if (d?.ok) setMeses(d.meses || []); }).catch(() => {});
+  }, [API_BASE]);
+  if (!meses || meses.length === 0) return null;
+  const total = meses.reduce((s, m) => s + (m.receita || 0), 0);
+  const comandas = meses.reduce((s, m) => s + (m.comandas || 0), 0);
+  const media = meses.length ? total / meses.length : 0;
+  const melhor = meses.reduce((a, b) => (b.receita > a.receita ? b : a), meses[0]);
+  const rot = (m: string) => (NOME_MES_RET[m.slice(5)] || m);
+  return (
+    <div className="rounded-lg border border-primary/30 bg-gradient-to-br from-primary/10 to-card p-4" data-testid="faturamento-ano">
+      <div className="flex items-end justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Faturamento acumulado · 2026</div>
+          <div className="text-3xl font-bold text-primary tabular-nums">{formatCurrency(total)}</div>
+          <div className="text-[11px] text-muted-foreground">
+            {rot(meses[0].mes)}–{rot(meses[meses.length - 1].mes)} · {comandas.toLocaleString("pt-BR")} atendimentos
+          </div>
+        </div>
+        <div className="flex gap-4 text-xs">
+          <div className="text-right">
+            <div className="text-[10px] text-muted-foreground">Média/mês</div>
+            <div className="font-semibold tabular-nums">{formatCurrency(media)}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] text-muted-foreground">Melhor mês</div>
+            <div className="font-semibold tabular-nums">{rot(melhor.mes)} · {formatCurrency(melhor.receita)}</div>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-end gap-1 mt-3 h-12">
+        {meses.map((m) => {
+          const max = Math.max(...meses.map((x) => x.receita), 1);
+          return (
+            <div key={m.mes} className="flex-1 flex flex-col items-center gap-0.5" title={`${rot(m.mes)}: ${formatCurrency(m.receita)}`}>
+              <div className="w-full bg-primary/40 rounded-t" style={{ height: `${Math.max(6, (m.receita / max) * 100)}%` }} />
+              <span className="text-[9px] text-muted-foreground">{rot(m.mes)}</span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-1">Fonte: Caixa da Trinks (mês corrente é parcial). Atualiza ao importar cada mês.</p>
     </div>
   );
 }

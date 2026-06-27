@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v68 — Faturamento acumulado do ano no topo do Dashboard (26/06/2026) [concluído]
+
+**Pedido:** ver o total faturado no ano no Dashboard. **Feito:** componente `FaturamentoAno` no topo do Dashboard — soma `receita` de `/api/historico/mensal` (Caixa por mês): total 2026, atendimentos, média/mês, melhor mês + mini-barras por mês. Validado: ~R$493.889 jan-jun (mai melhor, R$89.490). Mês corrente parcial; atualiza ao importar cada mês.
+
 ### v67 — Retenção de Clientes no Dashboard (análise de churn/gargalo) (26/06/2026) [concluído]
 
 **Pedido:** dono quer entender o gargalo de clientes. **Feito:** `GET /api/clientes/retencao` — cruza Caixas jan-jun por clienteId: por mês {ativos, novos, retornaram, perdidos, taxaRetorno}; frequência semestre (1/2-3/4+ visitas); recorrência por meses distintos; fiéis (4+ meses); inativos (sem vir ≥2 meses). Card `RetencaoClientes` no Dashboard (entre cota e Resumo). **Validado: 1.216 clientes; 37,7% (458) vieram 1x só; 40,6% inativos; 30% fiéis; ~200 churn/mês; retorno 58%→83%.** Gargalo = 1ª visita não vira 2ª.

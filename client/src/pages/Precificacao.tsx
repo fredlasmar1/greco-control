@@ -852,8 +852,9 @@ export default function Precificacao() {
         </div>
       </div>
 
-      <Tabs defaultValue="visao-geral" className="w-full">
+      <Tabs defaultValue="lista-servicos" className="w-full">
         <TabsList className="mb-4 flex-wrap h-auto">
+          <TabsTrigger value="lista-servicos" data-testid="tab-lista-servicos">✂️ Meus Serviços</TabsTrigger>
           <TabsTrigger value="visao-geral" data-testid="tab-visao-geral">📊 Visão Geral</TabsTrigger>
           <TabsTrigger value="calculadora" data-testid="tab-calculadora">🧮 Calculadora (1 a 1)</TabsTrigger>
           <TabsTrigger value="margem-produtos" data-testid="tab-margem-produtos">Custos de Produtos</TabsTrigger>
@@ -861,6 +862,10 @@ export default function Precificacao() {
           <TabsTrigger value="catalogo" data-testid="tab-catalogo">Catálogo</TabsTrigger>
           <TabsTrigger value="ficha-servicos" data-testid="tab-ficha-servicos">Ficha de Serviços</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="lista-servicos" className="mt-0">
+          <ListaServicos apiBase={(globalThis as any).__API_BASE__ || ""} />
+        </TabsContent>
 
         <TabsContent value="visao-geral" className="mt-0">
           <VisaoGeral analysis={analysis} apiBase={(globalThis as any).__API_BASE__ || ""} onEditarServico={(id) => setEditingService(id)} />
@@ -1781,6 +1786,71 @@ function VisaoGeral({ analysis, apiBase, onEditarServico }: { analysis: any[]; a
         </CardContent>
       </Card>
       <p className="text-[10px] text-muted-foreground">● Margem real = preço − custos (fixo por atendimento + produtos/ficha + comissão + taxa + imposto). Produtos "s/ custo" precisam do custo de compra na aba <strong>Custos de Produtos</strong>.</p>
+    </div>
+  );
+}
+
+// ─── v72: Meus Serviços — lista de TODOS os serviços (catálogo cacheado) ──────
+// Independe da API ao vivo (usa /api/servicos/lista, que cacheia no kv). Resolve
+// a lista sumir quando a fonte é CSV.
+function ListaServicos({ apiBase }: { apiBase: string }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [busca, setBusca] = useState("");
+  const [atualizando, setAtualizando] = useState(false);
+
+  const carregar = (refresh = false) => {
+    if (refresh) setAtualizando(true); else setLoading(true);
+    fetch(`${apiBase}/api/servicos/lista${refresh ? "?refresh=1" : ""}`)
+      .then(r => r.json()).then(d => setData(d))
+      .finally(() => { setLoading(false); setAtualizando(false); });
+  };
+  useEffect(() => { carregar(); /* eslint-disable-next-line */ }, []);
+
+  if (loading) return <div className="text-sm text-muted-foreground p-4">Carregando serviços…</div>;
+  const servicos: any[] = data?.servicos || [];
+  const q = busca.trim().toLowerCase();
+  const filtrados = q ? servicos.filter(s => s.nome.toLowerCase().includes(q) || s.categoria.toLowerCase().includes(q)) : servicos;
+
+  // agrupa por categoria
+  const grupos: Record<string, any[]> = {};
+  for (const s of filtrados) (grupos[s.categoria || "Sem categoria"] ||= []).push(s);
+
+  return (
+    <div className="space-y-3 max-w-[820px]">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Input placeholder="🔎 Buscar serviço…" value={busca} onChange={e => setBusca(e.target.value)} className="h-9 max-w-xs" data-testid="ls-busca" />
+        <span className="text-xs text-muted-foreground">{servicos.length} serviços</span>
+        <Button size="sm" variant="outline" className="h-8 text-xs ml-auto" disabled={atualizando} onClick={() => carregar(true)} data-testid="ls-atualizar">
+          {atualizando ? "atualizando…" : "↻ Atualizar da Trinks"}
+        </Button>
+      </div>
+
+      {servicos.length === 0 ? (
+        <Card className="bg-card border-card-border"><CardContent className="p-4 text-sm text-muted-foreground">
+          Nenhum serviço no catálogo ainda. Clique em <strong>↻ Atualizar da Trinks</strong> pra carregar.
+        </CardContent></Card>
+      ) : (
+        Object.keys(grupos).sort((a, b) => a.localeCompare(b, "pt-BR")).map(cat => (
+          <Card key={cat} className="bg-card border-card-border">
+            <CardHeader className="pb-2"><CardTitle className="text-sm">{cat} <span className="text-[11px] text-muted-foreground font-normal">({grupos[cat].length})</span></CardTitle></CardHeader>
+            <CardContent className="p-0">
+              <table className="w-full text-xs">
+                <tbody>
+                  {grupos[cat].map((s, i) => (
+                    <tr key={s.id} className={`border-t border-border/30 ${i % 2 ? "bg-muted/10" : ""}`} data-testid={`ls-serv-${s.id}`}>
+                      <td className="p-2.5">{s.nome}{!s.visivel && <span className="text-[9px] text-muted-foreground ml-1">(oculto)</span>}</td>
+                      <td className="p-2.5 text-right tabular-nums text-muted-foreground w-20">{s.duracao}min</td>
+                      <td className="p-2.5 text-right tabular-nums font-semibold w-24">{formatCurrency(s.preco)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        ))
+      )}
+      {data?.geradoEm && <p className="text-[10px] text-muted-foreground">Catálogo atualizado em {new Date(data.geradoEm).toLocaleString("pt-BR")} · fonte: {data.fonte}.</p>}
     </div>
   );
 }

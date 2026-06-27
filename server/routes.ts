@@ -11400,6 +11400,42 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   // GET /api/produtos/catalogo — margem por produto a partir do CATÁLOGO importado
   // (kv catalogo_produtos: nome/preço/comissão/custo). Local e rápido (não toca a
   // API). Margem = preço − custo − comissão − taxa cartão − imposto.
+  // GET /api/servicos/lista — catálogo de TODOS os serviços, com CACHE (kv
+  // catalogo_servicos). Não depende da API estar no ar: usa o cache; só toca a
+  // Trinks se o cache estiver vazio OU ?refresh=1. Resolve a lista sumir no modo CSV.
+  app.get("/api/servicos/lista", async (req: Request, res: Response) => {
+    try {
+      const refresh = req.query.refresh === "1";
+      const cache: any = await kvGet("catalogo_servicos");
+      let servicos: any[] = Array.isArray(cache?.servicos) ? cache.servicos : [];
+      let fonte = "cache";
+      let geradoEm = cache?.salvoEm || null;
+      if (refresh || servicos.length === 0) {
+        try {
+          const arr: any = await trinksFetchAll("servicos");
+          const list = Array.isArray(arr) ? arr : (arr?.data || []);
+          if (Array.isArray(list) && list.length > 0) {
+            servicos = list;
+            geradoEm = new Date().toISOString();
+            await kvSet("catalogo_servicos", { servicos, salvoEm: geradoEm });
+            fonte = "trinks";
+          }
+        } catch { /* mantém cache */ }
+      }
+      const lista = servicos
+        .filter((s: any) => Number(s.preco) > 0)
+        .map((s: any) => ({
+          id: String(s.id), nome: String(s.nome || "Serviço").trim(),
+          preco: Number(s.preco || 0), duracao: Number(s.duracaoEmMinutos || 30),
+          categoria: String(s.categoria || "").trim(), visivel: s.visivelParaCliente !== false,
+        }))
+        .sort((a: any, b: any) => a.categoria.localeCompare(b.categoria, "pt-BR") || a.nome.localeCompare(b.nome, "pt-BR"));
+      return res.json({ ok: true, fonte, geradoEm, total: lista.length, servicos: lista });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   app.get("/api/produtos/catalogo", async (_req: Request, res: Response) => {
     try {
       const cat: any = await kvGet("catalogo_produtos");

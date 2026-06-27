@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v72 — Aba "Meus Serviços" (catálogo cacheado, independe da API) (27/06/2026) [concluído]
+
+**Raiz descoberta:** os serviços só vinham da API ao vivo (`hasTrinksData && trinks.servicos`) — no modo CSV a lista ficava VAZIA (dono frustrado: "preciso editar cada serviço, não está dando essa opção"). **Feito:** `GET /api/servicos/lista` (cacheia em kv `catalogo_servicos`; usa cache, só toca a Trinks se vazio ou `?refresh=1`) — 59 serviços. Nova aba **"✂️ Meus Serviços"** (1ª, default) `ListaServicos`: agrupada por categoria (nome·duração·preço), busca + botão "↻ Atualizar da Trinks". Independe da API estar no ar. **Dono quer corrigir a precificação "um a um" — este foi o passo 1 (ter a lista visível).** Próximos passos a definir com ele.
+
 ### v71 — Editar cada serviço (botão na Visão Geral) + "outros custos" (27/06/2026) [concluído]
 
 **Pedido:** "preciso editar cada serviço, você não está me dando essa opção". O editor (CostDetailDialog) existia mas escondido na aba Ficha de Serviços. **Feito:** (1) `outrosCustos` ponta-a-ponta — `ServiceCostEntry.outrosCustos` (backend persiste no POST /api/service-costs), input no CostDetailDialog, `analysis` client + `/calcular` somam no custo e no preço sugerido; (2) botão **✏️ Editar** em cada SERVIÇO na aba Visão Geral → `onEditarServico(id)` → `setEditingService`; (3) CostDetailDialog MOVIDO pra fora dos TabsContent (abre de qualquer aba — antes Radix desmontava). Editor ajusta ficha+comissão barbeiro/assistente+margem+outros custos → salva → recalcula. Validado: ficha 3 + outros 5 + fixo 0,39 + comissão 24 → custo 38,09, margem 36,52%. Produtos editam na aba Custos de Produtos. (serviceCosts ainda em arquivo .service-costs.json — perde no deploy Railway sem volume; dívida.)

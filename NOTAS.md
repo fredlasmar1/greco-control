@@ -8,7 +8,11 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
-### v70 — Custo fixo POR ATENDIMENTO + aba Visão Geral unificada (27/06/2026) [parcial]
+### v71 — Editar cada serviço (botão na Visão Geral) + "outros custos" (27/06/2026) [concluído]
+
+**Pedido:** "preciso editar cada serviço, você não está me dando essa opção". O editor (CostDetailDialog) existia mas escondido na aba Ficha de Serviços. **Feito:** (1) `outrosCustos` ponta-a-ponta — `ServiceCostEntry.outrosCustos` (backend persiste no POST /api/service-costs), input no CostDetailDialog, `analysis` client + `/calcular` somam no custo e no preço sugerido; (2) botão **✏️ Editar** em cada SERVIÇO na aba Visão Geral → `onEditarServico(id)` → `setEditingService`; (3) CostDetailDialog MOVIDO pra fora dos TabsContent (abre de qualquer aba — antes Radix desmontava). Editor ajusta ficha+comissão barbeiro/assistente+margem+outros custos → salva → recalcula. Validado: ficha 3 + outros 5 + fixo 0,39 + comissão 24 → custo 38,09, margem 36,52%. Produtos editam na aba Custos de Produtos. (serviceCosts ainda em arquivo .service-costs.json — perde no deploy Railway sem volume; dívida.)
+
+### v70 — Custo fixo POR ATENDIMENTO + aba Visão Geral unificada (27/06/2026) [parcial: falta calculadora 1-a-1 de produto + taxas Itaú]
 
 **Decisões do dono (precificação):** (1) custo fixo ÷ ATENDIMENTOS (não por minuto); (2) NÃO flutuar → usar média de atendimentos dos meses fechados; (3) "custo variável" = compras+cartão+outros custos; (4) taxas do Itaú ele vai mandar (ponderar cartão/PIX). Quer 2 abas: "1 a 1" (serviço E produto) + "todos pesquisável".
 

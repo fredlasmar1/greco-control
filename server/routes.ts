@@ -807,6 +807,7 @@ interface ServiceCostEntry {
   // 0 (default) = serviço sem assistente. Soma com comissaoPct no cálculo.
   comissaoAssistentePct?: number;  // 0..100
   margemDesejadaPct?: number;  // 0..100. Margem alvo para o preço sugerido.
+  outrosCustos?: number;       // v70: outros custos do serviço em R$ (campo livre).
 }
 
 const SERVICE_COSTS_FILE = path.join(process.cwd(), ".service-costs.json");
@@ -7240,6 +7241,10 @@ Regras CRÍTICAS:
       if (c.comissaoAssistentePct !== undefined && c.comissaoAssistentePct !== null && c.comissaoAssistentePct !== "") {
         const v = Number(c.comissaoAssistentePct);
         if (isFinite(v)) entry.comissaoAssistentePct = Math.max(0, Math.min(100, v));
+      }
+      if (c.outrosCustos !== undefined && c.outrosCustos !== null && c.outrosCustos !== "") {
+        const v = Number(c.outrosCustos);
+        if (isFinite(v) && v >= 0) entry.outrosCustos = v;  // v70
       }
       return entry;
     });

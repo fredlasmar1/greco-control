@@ -73,6 +73,7 @@ interface ServiceCostData {
   comissaoPct?: number;        // v24: % do barbeiro/executor
   comissaoAssistentePct?: number; // v31: % adicional do assistente (default 0)
   margemDesejadaPct?: number;  // v24: override por serviço
+  outrosCustos?: number;       // v70: outros custos do serviço em R$
 }
 
 // v24: Contexto operacional do mês (custo fixo/min)
@@ -157,6 +158,7 @@ function CostDetailDialog({
   comissaoPctInit,
   comissaoAssistentePctInit,
   margemDesejadaPctInit,
+  outrosCustosInit,
   onSave,
 }: {
   open: boolean;
@@ -166,20 +168,23 @@ function CostDetailDialog({
   comissaoPctInit: number;
   comissaoAssistentePctInit: number;
   margemDesejadaPctInit: number;
-  onSave: (data: { items: CostItem[]; comissaoPct: number; comissaoAssistentePct: number; margemDesejadaPct: number }) => void;
+  outrosCustosInit: number;
+  onSave: (data: { items: CostItem[]; comissaoPct: number; comissaoAssistentePct: number; margemDesejadaPct: number; outrosCustos: number }) => void;
 }) {
   const [localItems, setLocalItems] = useState<CostItem[]>(items);
   const [showPresets, setShowPresets] = useState(false);
   const [comissaoStr, setComissaoStr] = useState(String(comissaoPctInit));
   const [assistenteStr, setAssistenteStr] = useState(String(comissaoAssistentePctInit));
   const [margemStr, setMargemStr] = useState(String(margemDesejadaPctInit));
+  const [outrosStr, setOutrosStr] = useState(String(outrosCustosInit || 0));
 
   useEffect(() => {
     setLocalItems(items);
     setComissaoStr(String(comissaoPctInit));
     setAssistenteStr(String(comissaoAssistentePctInit));
     setMargemStr(String(margemDesejadaPctInit));
-  }, [items, open, comissaoPctInit, comissaoAssistentePctInit, margemDesejadaPctInit]);
+    setOutrosStr(String(outrosCustosInit || 0));
+  }, [items, open, comissaoPctInit, comissaoAssistentePctInit, margemDesejadaPctInit, outrosCustosInit]);
 
   const addItem = (preset?: typeof PRESET_ITEMS[0]) => {
     const newItem: CostItem = {
@@ -219,6 +224,7 @@ function CostDetailDialog({
       comissaoPct: parsePct(comissaoStr),
       comissaoAssistentePct: parsePct(assistenteStr),
       margemDesejadaPct: parsePct(margemStr),
+      outrosCustos: Math.max(0, Number((outrosStr || "0").replace(",", ".")) || 0),
     });
     onClose();
   };
@@ -291,6 +297,15 @@ function CostDetailDialog({
                 type="text" inputMode="decimal" placeholder="30"
                 value={margemStr}
                 onChange={e => setMargemStr(e.target.value.replace(/[^\d.,]/g, ""))}
+                className="h-8 text-sm tabular-nums"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-amber-300 block mb-1">Outros custos (R$)</label>
+              <Input
+                type="text" inputMode="decimal" placeholder="0,00"
+                value={outrosStr}
+                onChange={e => setOutrosStr(e.target.value.replace(/[^\d.,]/g, ""))}
                 className="h-8 text-sm tabular-nums"
               />
             </div>
@@ -635,7 +650,7 @@ export default function Precificacao() {
 
   const handleSaveItems = (
     serviceId: string,
-    data: { items: CostItem[]; comissaoPct: number; comissaoAssistentePct: number; margemDesejadaPct: number },
+    data: { items: CostItem[]; comissaoPct: number; comissaoAssistentePct: number; margemDesejadaPct: number; outrosCustos?: number },
   ) => {
     const svc = services.find(s => s.id === serviceId);
     const existing = savedCosts.filter(c => c.serviceId !== serviceId);
@@ -648,6 +663,7 @@ export default function Precificacao() {
         comissaoPct: data.comissaoPct,
         comissaoAssistentePct: data.comissaoAssistentePct,
         margemDesejadaPct: data.margemDesejadaPct,
+        outrosCustos: data.outrosCustos ?? 0,
       },
     ];
     saveMutation.mutate(updated);
@@ -685,13 +701,14 @@ export default function Precificacao() {
       const commissionValue = commissionBarbeiro + commissionAssistente;
       const taxaCartaoValor = s.price * (taxaCartaoPct / 100);
       const impostoValor = s.price * (impostoPct / 100);
-      const custoTotal = totalCost + custoFixoRateado + commissionValue + taxaCartaoValor + impostoValor;
+      const outrosCustos = Number(sc?.outrosCustos || 0);  // v70
+      const custoTotal = totalCost + custoFixoRateado + outrosCustos + commissionValue + taxaCartaoValor + impostoValor;
       const netProfit = s.price - custoTotal;
       const margin = s.price > 0 ? (netProfit / s.price) * 100 : 0;
 
       // Preço sugerido: cobre comissão + taxa + imposto + margem
       const denom = 1 - (comissaoTotalPct / 100) - (taxaCartaoPct / 100) - (impostoPct / 100) - (margemDesejadaPct / 100);
-      const precoSugerido = denom > 0 ? (totalCost + custoFixoRateado) / denom : null;
+      const precoSugerido = denom > 0 ? (totalCost + custoFixoRateado + outrosCustos) / denom : null;
       const precoSugeridoErro = denom <= 0
         ? `Comissão (${comissaoTotalPct}%) + taxa (${taxaCartaoPct}%) + imposto (${impostoPct}%) + margem (${margemDesejadaPct}%) ≥ 100%`
         : null;
@@ -846,7 +863,7 @@ export default function Precificacao() {
         </TabsList>
 
         <TabsContent value="visao-geral" className="mt-0">
-          <VisaoGeral analysis={analysis} apiBase={(globalThis as any).__API_BASE__ || ""} />
+          <VisaoGeral analysis={analysis} apiBase={(globalThis as any).__API_BASE__ || ""} onEditarServico={(id) => setEditingService(id)} />
         </TabsContent>
 
         <TabsContent value="calculadora" className="mt-0">
@@ -1296,26 +1313,6 @@ export default function Precificacao() {
         })}
       </div>
 
-      {/* Detail Dialog */}
-      {editingServiceData && (() => {
-        const sc = savedCosts.find(c => c.serviceId === editingServiceData.id);
-        const comInit = sc?.comissaoPct ?? comissaoPctPadrao(editingServiceData.name);
-        const assInit = sc?.comissaoAssistentePct ?? 0;
-        const marInit = sc?.margemDesejadaPct ?? margemDesejadaPadrao(editingServiceData.category, editingServiceData.name);
-        return (
-          <CostDetailDialog
-            open={!!editingService}
-            onClose={() => setEditingService(null)}
-            service={editingServiceData}
-            items={getItems(editingServiceData.id)}
-            comissaoPctInit={comInit}
-            comissaoAssistentePctInit={assInit}
-            margemDesejadaPctInit={marInit}
-            onSave={(data) => handleSaveItems(editingServiceData.id, data)}
-          />
-        );
-      })()}
-
       {/* Info */}
       <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-primary/10 border border-primary/20">
         <Info className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
@@ -1333,6 +1330,27 @@ export default function Precificacao() {
       </div>
         </TabsContent>
       </Tabs>
+
+      {/* Editor de serviço (fora das abas — abre de qualquer aba, ex.: Visão Geral) */}
+      {editingServiceData && (() => {
+        const sc = savedCosts.find(c => c.serviceId === editingServiceData.id);
+        const comInit = sc?.comissaoPct ?? comissaoPctPadrao(editingServiceData.name);
+        const assInit = sc?.comissaoAssistentePct ?? 0;
+        const marInit = sc?.margemDesejadaPct ?? margemDesejadaPadrao(editingServiceData.category, editingServiceData.name);
+        return (
+          <CostDetailDialog
+            open={!!editingService}
+            onClose={() => setEditingService(null)}
+            service={editingServiceData}
+            items={getItems(editingServiceData.id)}
+            comissaoPctInit={comInit}
+            comissaoAssistentePctInit={assInit}
+            margemDesejadaPctInit={marInit}
+            outrosCustosInit={sc?.outrosCustos ?? 0}
+            onSave={(data) => handleSaveItems(editingServiceData.id, data)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -1671,7 +1689,7 @@ function MargemProdutos({ apiBase }: { apiBase: string }) {
 
 // ─── v70: Visão Geral — todos os itens (serviços + produtos) num lugar só ─────
 // Pesquisável, com margem real e semáforo, pra ver onde ganha/perde de relance.
-function VisaoGeral({ analysis, apiBase }: { analysis: any[]; apiBase: string }) {
+function VisaoGeral({ analysis, apiBase, onEditarServico }: { analysis: any[]; apiBase: string; onEditarServico: (id: string) => void }) {
   const [produtos, setProdutos] = useState<any[]>([]);
   const [busca, setBusca] = useState("");
   const [filtro, setFiltro] = useState<"todos" | "servicos" | "produtos">("todos");
@@ -1682,11 +1700,11 @@ function VisaoGeral({ analysis, apiBase }: { analysis: any[]; apiBase: string })
 
   const itens = useMemo(() => {
     const serv = analysis.map((s: any) => ({
-      tipo: "serviço" as const, nome: s.name, categoria: s.category || "",
-      preco: s.price, custo: s.custoTotal, margemPct: s.margin, semDados: s.itemCount === 0 && s.totalCost === 0 ? false : false,
+      tipo: "serviço" as const, id: s.id, nome: s.name, categoria: s.category || "",
+      preco: s.price, custo: s.custoTotal, margemPct: s.margin, semDados: false,
     }));
     const prod = produtos.map((p: any) => ({
-      tipo: "produto" as const, nome: p.nome, categoria: p.categoria || "",
+      tipo: "produto" as const, id: null, nome: p.nome, categoria: p.categoria || "",
       preco: p.preco, custo: p.semCusto ? null : Math.round((p.preco - p.margemReal) * 100) / 100,
       margemPct: p.semCusto ? null : p.margemPct, semDados: p.semCusto,
     }));
@@ -1734,6 +1752,7 @@ function VisaoGeral({ analysis, apiBase }: { analysis: any[]; apiBase: string })
                 <th className="text-right p-2.5">Preço</th>
                 <th className="text-right p-2.5">Custo</th>
                 <th className="text-right p-2.5">Margem</th>
+                <th className="p-2.5"></th>
               </tr>
             </thead>
             <tbody>
@@ -1749,9 +1768,14 @@ function VisaoGeral({ analysis, apiBase }: { analysis: any[]; apiBase: string })
                   <td className={`p-2.5 text-right tabular-nums font-semibold ${i.margemPct == null ? "text-muted-foreground" : semaforo(i.margemPct as number)}`}>
                     {i.margemPct != null && (i.margemPct as number) < 0 ? "🔴 " : ""}{fmtPctVal(i.margemPct)}
                   </td>
+                  <td className="p-2.5 text-right">
+                    {i.tipo === "serviço" && i.id
+                      ? <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={() => onEditarServico(i.id as string)} data-testid={`vg-editar-${i.id}`}>✏️ Editar</Button>
+                      : <span className="text-[9px] text-muted-foreground">aba Custos</span>}
+                  </td>
                 </tr>
               ))}
-              {itens.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">Nenhum item encontrado.</td></tr>}
+              {itens.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-muted-foreground">Nenhum item encontrado.</td></tr>}
             </tbody>
           </table>
         </CardContent>

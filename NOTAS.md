@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v75 — Faturamento por fonte no Dashboard (onde atacar) (28/06/2026) [concluído]
+
+**Pedido:** dividir o faturamento do ano por barbeiro/assistente/secretaria/produtos/planos. **Feito:** `FaturamentoPorFonte` no Dashboard (usa /api/historico/mensal). Fatias do total: Serviços R$393k (79%) / Planos-Clube R$76k (15%) / Produtos R$27k (6%). Serviços divididos por função via ranking (barras + top profissionais). `funcaoDoProf`: Assistentes=Fernanda/Ellen/Débora/Patricia/Larissa (Larissa dupla→assistente nos serviços); Secretarias=Camila/Bruna; resto Barbeiros. **Guilherme Alves Lemes = barbeiro (default, dono não confirmou explicitamente).** Serviços-por-equipe usam ranking mar-jun (faltam jan/fev); tipos (serv/prod/plano) ano todo do caixa. Dados no sistema: caixa jan-jun (jun parcial até 26/06), ranking mar-jun, financeiro abr-jun, dre abr, produtos catálogo. NÃO há julho.
+
 ### v74 — Custo fixo/atend = média das fixas ÷ média atendimentos (meses fechados) (27/06/2026) [concluído]
 
 **Decisão do dono:** custo fixo vem do "fechamento mensal" → média dos meses fechados. **Feito:** helper `custoFixoAtendimentoMedio(mes)` = (média do totalFixas dos meses fechados via computeTotaisDoMes) ÷ (média de atendimentos dos meses fechados). `/contexto` e `/calcular` usam; contexto expõe `mediaFixas`. Validado: média fixas R$19 ÷ 940 atend = R$0,02 (baixo pq meses fechados jan-mai SEM fixas categorizadas — confirma que falta dado, não lógica). **Próximo (dono escolheu opção 2): montar REGRAS de categorização das fixas** (`expense-regras` + classificarDescricao já existem; cria regra por keyword → classifica auto todo mês) + importar extrato Itaú. Engine 100% automática; só falta alimentar. (Custos fixos típicos discutidos: aluguel/condomínio/IPTU, energia, água, internet/telefone, salários fixos+pró-labore, encargos, contador, software/Trinks, seguro, manutenção/limpeza, taxas bancárias fixas.)

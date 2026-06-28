@@ -945,6 +945,9 @@ export default function Dashboard() {
       {/* Faturamento acumulado do ano */}
       <FaturamentoAno />
 
+      {/* Faturamento por fonte (onde atacar) */}
+      <FaturamentoPorFonte />
+
       {/* Data source banner */}
       {hasTrinksData && lastSync ? (
         <SyncBanner
@@ -2563,6 +2566,114 @@ function FaturamentoAno() {
         })}
       </div>
       <p className="text-[10px] text-muted-foreground mt-1">Fonte: Caixa da Trinks (mês corrente é parcial). Atualiza ao importar cada mês.</p>
+    </div>
+  );
+}
+
+// ─── v75: Faturamento por fonte (onde atacar) ────────────────────────────────
+// Serviços (caixa) divididos por função (barbeiro/assistente/secretaria via
+// ranking) + Produtos + Planos como fatias próprias. Soma = faturamento total.
+function funcaoDoProf(nome: string): "Barbeiros" | "Assistentes" | "Secretarias" {
+  const n = (nome || "").toLowerCase();
+  // Assistentes (desde jan): Fernanda, Ellen, Débora, Patricia, Larissa.
+  // Larissa é dupla (secretaria/assistente) → nos SERVIÇOS conta como assistente.
+  if (/fernanda|ellen|d[ée]bora|patr[íi]cia|larissa/.test(n)) return "Assistentes";
+  // Secretarias (vendem produto, ~0 serviço): Camila, Bruna.
+  if (/camila|bruna/.test(n)) return "Secretarias";
+  return "Barbeiros";
+}
+function FaturamentoPorFonte() {
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+  const [meses, setMeses] = useState<any[] | null>(null);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/historico/mensal`).then(r => r.json()).then(d => { if (d?.ok) setMeses(d.meses || []); }).catch(() => {});
+  }, [API_BASE]);
+  if (!meses || meses.length === 0) return null;
+
+  const totServico = meses.reduce((s, m) => s + (m.servico || 0), 0);
+  const totProduto = meses.reduce((s, m) => s + (m.produto || 0), 0);
+  const totPlano = meses.reduce((s, m) => s + (m.pacote || 0), 0);
+  const totalGeral = totServico + totProduto + totPlano;
+
+  // serviços por função + por profissional (dos meses com ranking)
+  const porFuncao: Record<string, number> = { Barbeiros: 0, Assistentes: 0, Secretarias: 0 };
+  const porProf: Record<string, { nome: string; func: string; servicos: number }> = {};
+  const mesesComRanking = meses.filter(m => m.temRanking);
+  for (const m of mesesComRanking) {
+    for (const b of (m.barbeiros || [])) {
+      const f = funcaoDoProf(b.nome);
+      porFuncao[f] += b.servicos || 0;
+      const chave = b.nome;
+      if (!porProf[chave]) porProf[chave] = { nome: b.nome, func: f, servicos: 0 };
+      porProf[chave].servicos += b.servicos || 0;
+    }
+  }
+  const servNoRanking = porFuncao.Barbeiros + porFuncao.Assistentes + porFuncao.Secretarias;
+  const profs = Object.values(porProf).filter(p => p.servicos > 0).sort((a, b) => b.servicos - a.servicos);
+
+  const fmtPct = (v: number) => totalGeral > 0 ? `${Math.round((v / totalGeral) * 100)}%` : "—";
+  const corFunc: Record<string, string> = { Barbeiros: "bg-sky-500", Assistentes: "bg-violet-500", Secretarias: "bg-pink-500" };
+
+  // fatias do total: serviços por função + produtos + planos
+  const fatias = [
+    { label: "Barbeiros (serviços)", valor: porFuncao.Barbeiros, cor: "bg-sky-500" },
+    { label: "Assistentes (serviços)", valor: porFuncao.Assistentes, cor: "bg-violet-500" },
+    { label: "Secretarias (serviços)", valor: porFuncao.Secretarias, cor: "bg-pink-500" },
+    { label: "Planos (Clube Greco)", valor: totPlano, cor: "bg-amber-500" },
+    { label: "Produtos", valor: totProduto, cor: "bg-emerald-500" },
+  ];
+  // se ranking incompleto, mostra serviços não-distribuídos
+  const servForaRanking = totServico - servNoRanking;
+
+  return (
+    <div className="rounded-lg border border-card-border bg-card p-4 space-y-3" data-testid="faturamento-por-fonte">
+      <h2 className="text-sm font-bold flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> Faturamento por fonte — onde atacar</h2>
+
+      {/* fatias por tipo */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5"><div className="text-[10px] text-muted-foreground">Serviços</div><div className="text-lg font-bold text-sky-400">{formatCurrency(totServico)}</div><div className="text-[10px] text-muted-foreground">{fmtPct(totServico)} do total</div></div>
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5"><div className="text-[10px] text-muted-foreground">Planos (Clube)</div><div className="text-lg font-bold text-amber-400">{formatCurrency(totPlano)}</div><div className="text-[10px] text-muted-foreground">{fmtPct(totPlano)} do total</div></div>
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5"><div className="text-[10px] text-muted-foreground">Produtos</div><div className="text-lg font-bold text-emerald-400">{formatCurrency(totProduto)}</div><div className="text-[10px] text-muted-foreground">{fmtPct(totProduto)} do total</div></div>
+      </div>
+
+      {/* serviços divididos por função */}
+      <div>
+        <div className="text-[11px] text-muted-foreground mb-1">Serviços por equipe {mesesComRanking.length < meses.length && <span className="text-amber-400">(ranking de {mesesComRanking.length} de {meses.length} meses — falta jan/fev)</span>}</div>
+        <div className="space-y-1">
+          {(["Barbeiros", "Assistentes", "Secretarias"] as const).map(f => (
+            <div key={f} className="flex items-center gap-2 text-xs">
+              <span className="w-20 text-muted-foreground">{f}</span>
+              <div className="flex-1 bg-muted/20 rounded h-4 relative overflow-hidden">
+                <div className={`h-full ${corFunc[f]}/40 rounded`} style={{ width: `${servNoRanking > 0 ? (porFuncao[f] / servNoRanking) * 100 : 0}%` }} />
+                <span className="absolute inset-y-0 left-2 flex items-center tabular-nums font-medium">{formatCurrency(porFuncao[f])}</span>
+              </div>
+              <span className="w-10 text-right text-muted-foreground tabular-nums">{servNoRanking > 0 ? Math.round((porFuncao[f] / servNoRanking) * 100) : 0}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* top profissionais */}
+      {profs.length > 0 && (
+        <div>
+          <div className="text-[11px] text-muted-foreground mb-1">Top profissionais (serviços)</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <tbody>
+                {profs.slice(0, 12).map((p, i) => (
+                  <tr key={i} className="border-b border-border/20">
+                    <td className="py-1 pr-2 truncate max-w-[180px]">{p.nome}</td>
+                    <td className="py-1 pr-2"><span className={`text-[9px] px-1.5 py-0.5 rounded text-white ${corFunc[p.func] || "bg-slate-500"}/70`}>{p.func.slice(0, -1)}</span></td>
+                    <td className="py-1 text-right tabular-nums font-semibold">{formatCurrency(p.servicos)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <p className="text-[10px] text-muted-foreground">● Serviços por equipe vêm do ranking (mar–jun); produtos e planos do caixa (ano todo). Onde atacar: fatia pequena com potencial = oportunidade (ex.: produtos {fmtPct(totProduto)}).</p>
     </div>
   );
 }

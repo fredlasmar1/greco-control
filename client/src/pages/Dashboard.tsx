@@ -2537,11 +2537,11 @@ function FaturamentoAno() {
   const melhor = meses.reduce((a, b) => (b.receita > a.receita ? b : a), meses[0]);
   const rot = (m: string) => (NOME_MES_RET[m.slice(5)] || m);
   return (
-    <div className="rounded-lg border border-primary/30 bg-gradient-to-br from-primary/10 to-card p-4" data-testid="faturamento-ano">
+    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/15 bg-black p-5" data-testid="faturamento-ano">
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Faturamento acumulado · 2026</div>
-          <div className="text-3xl font-bold text-primary tabular-nums">{formatCurrency(total)}</div>
+          <div className="text-[11px] uppercase tracking-[0.25em] text-red-400 font-semibold">Faturamento acumulado · 2026</div>
+          <div className="text-3xl font-bold text-white tabular-nums">{formatCurrency(total)}</div>
           <div className="text-[11px] text-muted-foreground">
             {rot(meses[0].mes)}–{rot(meses[meses.length - 1].mes)} · {comandas.toLocaleString("pt-BR")} atendimentos
           </div>
@@ -2629,7 +2629,7 @@ function FaturamentoPorFonte() {
   const servForaRanking = totServico - servNoRanking;
 
   return (
-    <div className="rounded-lg border border-card-border bg-card p-4 space-y-3" data-testid="faturamento-por-fonte">
+    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/15 bg-black p-5 space-y-3" data-testid="faturamento-por-fonte">
       <h2 className="text-sm font-bold flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> Faturamento por fonte — onde atacar</h2>
 
       {/* fatias por tipo */}
@@ -2681,115 +2681,117 @@ function FaturamentoPorFonte() {
   );
 }
 
-// ─── v76: Painel Executivo (Hoje · Semana · Mês) — premium, cores Greco ──────
-// Branco = consolidados · verde = positivo (≥meta) · vermelho = negativo · azul = detalhe.
-const _diaMes = (s: string) => s ? s.slice(8, 10) + "/" + s.slice(5, 7) : "";
-function BarraMeta({ pct, alt = "h-2" }: { pct: number; alt?: string }) {
-  const cor = pct >= 100 ? "bg-emerald-500" : pct >= 70 ? "bg-sky-500" : pct >= 40 ? "bg-amber-500" : "bg-red-500";
+// ─── v77: Painel Executivo PREMIUM (Hoje · Semana · Mês) ─────────────────────
+// Cores Greco: fundo preto · consolidados BRANCO · positivo VERDE · negativo
+// VERMELHO · detalhe AZUL. Cada grupo na sua caixa colorida.
+const _dm = (s: string) => s ? `${s.slice(8, 10)}/${s.slice(5, 7)}` : "";
+const _corPct = (p: number) => p >= 100 ? "text-emerald-400" : p >= 70 ? "text-sky-400" : p >= 40 ? "text-amber-400" : "text-red-400";
+const _corBar = (p: number) => p >= 100 ? "bg-emerald-500" : p >= 70 ? "bg-sky-500" : p >= 40 ? "bg-amber-500" : "bg-red-500";
+
+// Anel de progresso circular (SVG) — premium
+function Anel({ pct, size = 76, stroke = 7 }: { pct: number; size?: number; stroke?: number }) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const off = c - (Math.min(100, Math.max(0, pct)) / 100) * c;
+  const cor = pct >= 100 ? "#34d399" : pct >= 70 ? "#38bdf8" : pct >= 40 ? "#fbbf24" : "#f87171";
   return (
-    <div className={`w-full ${alt} rounded-full bg-white/10 overflow-hidden`}>
-      <div className={`h-full ${cor} rounded-full transition-all`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
-    </div>
+    <svg width={size} height={size} className="-rotate-90">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={stroke} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={cor} strokeWidth={stroke} strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" style={{ transition: "stroke-dashoffset .5s" }} />
+      <text x="50%" y="50%" dominantBaseline="central" textAnchor="middle" className="rotate-90" style={{ transformOrigin: "center" }} fill={cor} fontSize={size * 0.22} fontWeight="700">{pct}%</text>
+    </svg>
   );
 }
+function Barra({ pct }: { pct: number }) {
+  return <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden"><div className={`h-full ${_corBar(pct)} rounded-full`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>;
+}
+
 function PainelExecutivo() {
   const API_BASE = (globalThis as any).__API_BASE__ || "";
   const [d, setD] = useState<any>(null);
+  const [carregando, setCarregando] = useState(true);
   useEffect(() => {
-    fetch(`${API_BASE}/api/dashboard/painel`).then(r => r.json()).then(x => { if (x?.ok) setD(x); }).catch(() => {});
+    fetch(`${API_BASE}/api/dashboard/painel`).then(r => r.json()).then(x => { if (x?.ok) setD(x); }).finally(() => setCarregando(false));
   }, [API_BASE]);
+  if (carregando) return <div className="rounded-2xl border border-white/10 bg-black p-6 text-sm text-white/40">Carregando painel…</div>;
   if (!d) return null;
   const { hoje, semana, mes } = d;
-  const corPct = (p: number) => p >= 100 ? "text-emerald-400" : p >= 70 ? "text-sky-400" : p < 40 ? "text-red-400" : "text-white";
   const maxDia = Math.max(1, ...(mes.porDia || []).map((x: any) => x.valor));
+  const metaDiaMes = mes.meta / 30;
+
+  const cats = [
+    { lbl: "Serviços", v: semana.servicos, m: semana.metaServicos, ring: "ring-sky-500/30", txt: "text-sky-400", bar: "bg-sky-500" },
+    { lbl: "Planos", v: semana.planos, m: semana.metaPlanos, ring: "ring-amber-500/30", txt: "text-amber-400", bar: "bg-amber-500" },
+    { lbl: "Produtos", v: semana.produtos, m: semana.metaProdutos, ring: "ring-emerald-500/30", txt: "text-emerald-400", bar: "bg-emerald-500" },
+  ];
 
   return (
-    <div className="space-y-3">
-      {/* HOJE */}
-      <div className="rounded-xl border border-white/10 bg-black p-4" data-testid="painel-hoje">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] uppercase tracking-[0.2em] text-sky-400 font-semibold">Hoje</span>
-            <span className="text-[11px] text-white/50">{_diaMes(hoje.data)}</span>
-          </div>
-          <span className={`text-[10px] px-2 py-0.5 rounded-full border ${hoje.fonte === "trinks" ? "border-emerald-500/40 text-emerald-400" : hoje.fonte === "ultimo" ? "border-amber-500/40 text-amber-400" : "border-sky-500/40 text-sky-400"}`}>
-            {hoje.fonte === "trinks" ? "● ao vivo" : hoje.fonte === "ultimo" ? "último dia fechado" : "CSV"}
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      {/* ───── HOJE ───── */}
+      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-5" data-testid="painel-hoje">
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">Hoje</span>
+          <span className={`text-[9px] px-2 py-0.5 rounded-full border ${hoje.fonte === "trinks" ? "border-emerald-500/40 text-emerald-400" : hoje.fonte === "ultimo" ? "border-amber-500/40 text-amber-400" : "border-white/20 text-white/50"}`}>
+            {hoje.fonte === "trinks" ? "● AO VIVO" : hoje.fonte === "ultimo" ? `último: ${_dm(hoje.data)}` : "CSV"}
           </span>
         </div>
-        <div className="flex items-end justify-between gap-3 mb-2">
-          <div>
-            <div className="text-3xl font-bold text-white tabular-nums">{formatCurrency(hoje.realizado)}</div>
-            <div className="text-[11px] text-white/50">meta {formatCurrency(hoje.meta)} · {hoje.atendimentos} atendimentos</div>
+        <div className="flex items-center gap-4">
+          <Anel pct={hoje.pct} />
+          <div className="min-w-0">
+            <div className="text-2xl font-bold text-white tabular-nums leading-tight">{formatCurrency(hoje.realizado)}</div>
+            <div className="text-[11px] text-white/40">de {formatCurrency(hoje.meta)}</div>
+            <div className="text-[11px] text-sky-400/80 mt-1">{hoje.atendimentos} atendimentos</div>
           </div>
-          <div className={`text-2xl font-bold tabular-nums ${corPct(hoje.pct)}`}>{hoje.pct}%</div>
         </div>
-        <BarraMeta pct={hoje.pct} />
-        {hoje.trinks429 && <div className="text-[10px] text-amber-400 mt-1">⚠ Trinks indisponível agora — mostrando último dia fechado.</div>}
+        {hoje.trinks429 && <div className="text-[9px] text-amber-400/80 mt-3">⚠ Trinks indisponível — último dia fechado</div>}
       </div>
 
-      {/* SEMANA */}
-      <div className="rounded-xl border border-white/10 bg-black p-4" data-testid="painel-semana">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] uppercase tracking-[0.2em] text-sky-400 font-semibold">Semana</span>
-          <span className="text-[11px] text-white/50">{_diaMes(semana.inicio)}–{_diaMes(semana.fim)}</span>
+      {/* ───── SEMANA ───── */}
+      <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/15 bg-black p-5" data-testid="painel-semana">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">Semana</span>
+          <span className="text-[10px] text-white/40">{_dm(semana.inicio)}–{_dm(semana.fim)}</span>
         </div>
-        <div className="flex items-end justify-between gap-3 mb-2">
-          <div>
-            <div className="text-2xl font-bold text-white tabular-nums">{formatCurrency(semana.realizado)}</div>
-            <div className="text-[11px] text-white/50">meta {formatCurrency(semana.meta)}</div>
-          </div>
-          <div className={`text-xl font-bold tabular-nums ${corPct(semana.pct)}`}>{semana.pct}%</div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-2xl font-bold text-white tabular-nums">{formatCurrency(semana.realizado)}</span>
+          <span className={`text-sm font-bold tabular-nums ${_corPct(semana.pct)}`}>{semana.pct}%</span>
         </div>
-        <BarraMeta pct={semana.pct} />
-        {/* por categoria vs meta */}
-        <div className="grid grid-cols-3 gap-3 mt-3">
-          {[
-            { lbl: "Serviços", v: semana.servicos, m: semana.metaServicos },
-            { lbl: "Planos", v: semana.planos, m: semana.metaPlanos },
-            { lbl: "Produtos", v: semana.produtos, m: semana.metaProdutos },
-          ].map((c) => {
+        <div className="text-[11px] text-white/40 mb-2">de {formatCurrency(semana.meta)}</div>
+        <Barra pct={semana.pct} />
+        <div className="grid grid-cols-3 gap-2 mt-3">
+          {cats.map(c => {
             const p = c.m > 0 ? Math.round((c.v / c.m) * 100) : 0;
             return (
-              <div key={c.lbl}>
-                <div className="flex items-center justify-between text-[10px] mb-1">
-                  <span className="text-white/60">{c.lbl}</span>
-                  <span className={corPct(p)}>{p}%</span>
-                </div>
-                <BarraMeta pct={p} alt="h-1.5" />
-                <div className="text-[10px] text-white/40 mt-0.5 tabular-nums">{formatCurrency(c.v)} <span className="text-white/25">/ {formatCurrency(c.m)}</span></div>
+              <div key={c.lbl} className={`rounded-lg bg-white/[0.03] ring-1 ${c.ring} p-2`}>
+                <div className={`text-[9px] uppercase tracking-wide ${c.txt} font-semibold`}>{c.lbl}</div>
+                <div className="text-sm font-bold text-white tabular-nums my-0.5">{formatCurrency(c.v)}</div>
+                <div className="h-1 rounded-full bg-white/10 overflow-hidden mb-1"><div className={`h-full ${c.bar} rounded-full`} style={{ width: `${Math.min(100, p)}%` }} /></div>
+                <div className="text-[9px] text-white/30 tabular-nums">{p}% · meta {formatCurrency(c.m)}</div>
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* MÊS dia a dia */}
-      <div className="rounded-xl border border-white/10 bg-black p-4" data-testid="painel-mes">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] uppercase tracking-[0.2em] text-sky-400 font-semibold">Mês</span>
-          <span className="text-[11px] text-white/50">{mes.mes}</span>
+      {/* ───── MÊS ───── */}
+      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-5" data-testid="painel-mes">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">Mês · {mes.mes}</span>
+          <span className={`text-sm font-bold tabular-nums ${_corPct(mes.pct)}`}>{mes.pct}%</span>
         </div>
-        <div className="flex items-end justify-between gap-3 mb-2">
-          <div>
-            <div className="text-2xl font-bold text-white tabular-nums">{formatCurrency(mes.realizado)}</div>
-            <div className="text-[11px] text-white/50">meta {formatCurrency(mes.meta)}{mes.melhorDia && <> · melhor dia {_diaMes(mes.melhorDia.dia)} {formatCurrency(mes.melhorDia.valor)}</>}</div>
-          </div>
-          <div className={`text-xl font-bold tabular-nums ${corPct(mes.pct)}`}>{mes.pct}%</div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-2xl font-bold text-white tabular-nums">{formatCurrency(mes.realizado)}</span>
         </div>
-        <BarraMeta pct={mes.pct} />
-        {/* consolidado dia a dia */}
-        <div className="flex items-end gap-[3px] mt-3 h-14">
-          {(mes.porDia || []).map((x: any) => {
-            const acima = x.valor >= mes.meta / 30;
-            return (
-              <div key={x.dia} className="flex-1 flex flex-col items-center gap-0.5 group relative" title={`${_diaMes(x.dia)}: ${formatCurrency(x.valor)}`}>
-                <div className={`w-full rounded-t ${acima ? "bg-emerald-500/60" : "bg-red-500/50"}`} style={{ height: `${Math.max(6, (x.valor / maxDia) * 100)}%` }} />
-                <span className="text-[8px] text-white/30">{x.dia.slice(8, 10)}</span>
-              </div>
-            );
-          })}
+        <div className="text-[11px] text-white/40 mb-2">de {formatCurrency(mes.meta)}{mes.melhorDia && <> · melhor {_dm(mes.melhorDia.dia)} <span className="text-emerald-400">{formatCurrency(mes.melhorDia.valor)}</span></>}</div>
+        <Barra pct={mes.pct} />
+        <div className="flex items-end gap-[2px] mt-3 h-16">
+          {(mes.porDia || []).map((x: any) => (
+            <div key={x.dia} className="flex-1 group relative flex flex-col justify-end h-full" title={`${_dm(x.dia)}: ${formatCurrency(x.valor)}`}>
+              <div className={`w-full rounded-sm ${x.valor >= metaDiaMes ? "bg-emerald-500/70" : "bg-red-500/60"}`} style={{ height: `${Math.max(8, (x.valor / maxDia) * 100)}%` }} />
+            </div>
+          ))}
         </div>
-        <div className="text-[10px] text-white/40 mt-1">Verde = dia acima da média de meta (R$ {formatCurrency(mes.meta / 30)}/dia) · vermelho = abaixo. Atacar os vermelhos.</div>
+        <div className="flex justify-between text-[8px] text-white/25 mt-0.5"><span>{mes.porDia?.[0] && _dm(mes.porDia[0].dia)}</span><span className="text-emerald-400/60">▮ acima</span><span className="text-red-400/60">▮ abaixo R${Math.round(metaDiaMes)}/dia</span><span>{mes.porDia?.length ? _dm(mes.porDia[mes.porDia.length - 1].dia) : ""}</span></div>
       </div>
     </div>
   );

@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v77 — Dashboard premium v2: redesign + contornos por cor (28/06/2026) [concluído]
+
+**Pedido:** painel não ficou premium; dia/semana em tempo real; cada grupo em caixa colorida. **Feito:** PainelExecutivo reescrito (grid 3 cols): HOJE com anel SVG de progresso; SEMANA com 3 mini-caixas coloridas (Serviços=azul/Planos=âmbar/Produtos=verde) vs meta; MÊS com gráfico dia-a-dia (verde≥meta/dia, vermelho<). Anel/Barra helpers. Timeout API hoje 6s→12s. **Contornos (dono):** Hoje+Mês = borda azul+ring branco; Semana+Ano(FaturamentoAno+PorFonte) = borda vermelha+ring branco; todos fundo PRETO, número principal BRANCO, meta batida VERDE. FaturamentoAno/PorFonte restilizados pro mesmo padrão. **Tempo real depende da API responder (oscila 429); fallback último dia c/ aviso.** Pendência: dia/semana 100% API (hoje semana usa caixa; melhora quando API estável).
+
 ### v76 — Painel Executivo premium: Hoje · Semana · Mês (topo do Dashboard) (28/06/2026) [concluído]
 
 **Pedido:** Dashboard premium (cores Greco: preto/azul/vermelho/branco; positivo verde, negativo vermelho, consolidado branco), ordem HOJE→SEMANA→MÊS→ANO. **Feito:** `GET /api/dashboard/painel` — Hoje (caixa do dia → API ao vivo c/ timeout 6s → fallback último dia fechado), Semana (últimos 7d do caixa + por categoria serv/plano/prod), Mês (caixa dia-a-dia + melhor dia). Metas: diária `metaDiaria` (5k), semana 5k×6=30k, mês metasHistorico||100k, por categoria proporção 79/15/6. Frontend `PainelExecutivo` + `BarraMeta` no TOPO do Dashboard (acima de FaturamentoAno/PorFonte): cards Hoje/Semana/Mês premium (fundo black, branco/verde/vermelho/azul), barras por categoria, gráfico dia-a-dia (verde=acima meta/dia, vermelho=abaixo). Validado: hoje R$1.052(último dia), semana 40%, mês 77%. **PENDENTE (dono quer depois): restilizar FaturamentoAno+PorFonte pra combinar com o premium.** Metas por categoria são deduzidas (dono ajusta depois se quiser).

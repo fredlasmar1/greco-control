@@ -8383,7 +8383,7 @@ Regras CRÍTICAS:
         try {
           const trans: any = await Promise.race([
             trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: ymdAddDays(hoje, 1) }),
-            new Promise((resolve) => setTimeout(() => resolve("__timeout__"), 6000)),
+            new Promise((resolve) => setTimeout(() => resolve("__timeout__"), 12000)),
           ]);
           if (trans === "__timeout__") { hoje429 = true; }
           else {

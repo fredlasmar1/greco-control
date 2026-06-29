@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v81 — Leitura AUTOMÁTICA do e-mail "Resumo do dia" da Trinks (Gmail IMAP) (29/06/2026) [concluído]
+
+**Pedido:** automático via Gmail — ler o e-mail de fechamento todo dia, sem token. **Feito:** `server/trinksEmail.ts` (imapflow + mailparser): conecta no Gmail (grecobarbearia@gmail.com, senha de app), filtra `from:atendimento@trinks.com subject:"Resumo do dia"`, parseia o HTML (htmlParaTexto + regex tolerantes a tabela), extrai data/total/serviços/produtos/pacotes/agendamentos, grava snapshot fonte=trinks-email (idempotente — pula se já igual). `POST /api/trinks-email/sincronizar` (manual) + cron 7h SP. **VALIDADO em prod:** lê 16 resumos, extrai certo (13/06 R$4.814,80 … 27/06 R$4.273,10; domingos=0 ignorados); os dias já estavam gravados como trinks-email (idempotência → processados 0). Corrigi o 27/06 (era csv-agendamentos R$3.185 → trinks-email R$4.273,10 oficial). **Card Hoje mostra último dia COM movimento (27/06; 28 domingo=0, 29 hoje não fechou) — correto.**
+
+**⚠️ PENDENTE p/ o cron funcionar em PROD:** configurar no Railway as env vars `GMAIL_USER=grecobarbearia@gmail.com` e `GMAIL_APP_PASSWORD` (senha de app; está só no .env local, fora do git). Sem isso o cron não autentica. Dono gerou a senha de app (revogável em myaccount.google.com/apppasswords).
+
 ### v80 — Aviso de atualização de CSVs no topo do Dashboard (28/06/2026) [concluído]
 
 **Pedido:** aviso minimalista, 1º item do dashboard, pra lembrar de atualizar os CSVs. **Feito:** `GET /api/dashboard/avisos-csv` (caixa do mês: última data + diasDesde; quais tipos faltam caixa/financeiro/ranking; desatualizado se ≥2d ou falta algo). Componente `AvisoCSV` (1º item, antes do PainelExecutivo): banner pequeno clicável → /importar-trinks; âmbar se desatualizado ("📋 Lembre de atualizar os CSVs · dados até DD/MM (Nd atrás) · falta: X"), verde sutil se em dia ("✓ CSVs em dia"). Validado: caixa até 26/06 (2d), desatualizado=true.

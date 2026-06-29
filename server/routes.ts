@@ -62,6 +62,7 @@ import {
   getSnapshot, saveSnapshot, listSnapshotsDoMes, snapshotVazio, classificarFormaPagamento,
   type SnapshotDia, type FonteSnapshot,
 } from "./snapshotDiario";
+import { sincronizarEmailsTrinks } from "./trinksEmail";
 import {
   listFechamentos as listCaixaFechamentos,
   getFechamento as getCaixaFechamento,
@@ -2597,6 +2598,19 @@ export async function registerRoutes(
       }
       const totalSomado = gravados.reduce((s, g) => s + g.total, 0);
       return res.json({ ok: true, gravados: gravados.length, total: totalSomado, detalhe: gravados });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/trinks-email/sincronizar — lê os e-mails "Resumo do dia" da Trinks
+  // (Gmail IMAP) e grava os fechamentos como snapshot oficial. Body opcional: {dias,max}.
+  app.post("/api/trinks-email/sincronizar", async (req: Request, res: Response) => {
+    try {
+      const dias = Number(req.body?.dias) || 7;
+      const max = Number(req.body?.max) || 12;
+      const r = await sincronizarEmailsTrinks({ dias, max });
+      return res.status(r.ok ? 200 : 500).json(r);
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }
@@ -12886,6 +12900,17 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           log(`[cron-snapshot] erro: ${err.message}`, "snapshot");
         }
       }); }, { timezone: "America/Sao_Paulo" });
+
+      // v81: Cron MATINAL — lê o e-mail "Resumo do dia" da Trinks (Gmail IMAP) e
+      // grava o fechamento de ontem como snapshot OFICIAL (0 token Trinks). 7h SP.
+      cron.schedule("0 7 * * *", async () => {
+        try {
+          const r = await sincronizarEmailsTrinks({ dias: 3, max: 5 });
+          log(`[cron-trinks-email] ${r.ok ? `processados ${r.processados}` : "erro: " + r.erro}`, "trinks-email");
+        } catch (err: any) {
+          log(`[cron-trinks-email] erro: ${err.message}`, "trinks-email");
+        }
+      }, { timezone: "America/Sao_Paulo" });
 
       // Cron matinal de refinamento — 6h SP recaptura ontem (caso o CSV do email
       // tenha chegado durante a madrugada com status mais atualizado)

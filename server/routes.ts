@@ -8448,6 +8448,35 @@ Regras CRÍTICAS:
     }
   });
 
+  // v80: aviso de atualização de CSVs — quão atual está o caixa do mês + o que falta.
+  app.get("/api/dashboard/avisos-csv", async (_req: Request, res: Response) => {
+    try {
+      const hoje = ymdHoje();
+      const mes = hoje.slice(0, 7);
+      const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+      const rows = Array.isArray(caixa?.rows) ? caixa.rows : [];
+      let ultimo: string | null = null;
+      for (const r of rows) {
+        const d = String(r.data || "").slice(0, 10);
+        if (d && (!ultimo || d > ultimo)) ultimo = d;
+      }
+      const diasDesde = ultimo
+        ? Math.round((new Date(hoje + "T12:00:00Z").getTime() - new Date(ultimo + "T12:00:00Z").getTime()) / 86400000)
+        : null;
+      const labels: Record<string, string> = { caixa: "Caixa", financeiro: "Financeiro", ranking: "Ranking" };
+      const faltando: string[] = [];
+      for (const t of ["caixa", "financeiro", "ranking"]) {
+        const x: any = await kvGet(trinksImport.kvKeyFor(t, mes));
+        const tem = t === "ranking" ? !!x?.periodos?.[0]?.profissionais?.length : !!(Array.isArray(x?.rows) && x.rows.length);
+        if (!tem) faltando.push(labels[t]);
+      }
+      const desatualizado = (diasDesde == null) || diasDesde >= 2 || faltando.length > 0;
+      return res.json({ ok: true, mes, ultimoCaixaData: ultimo, diasDesde, faltando, desatualizado });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   app.get("/api/historico/mensal", async (_req: Request, res: Response) => {
     try {
       const r2 = (n: number) => Math.round(n * 100) / 100;

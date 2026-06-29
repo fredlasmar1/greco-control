@@ -942,6 +942,9 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 max-w-[1400px]">
+      {/* v80: aviso de atualização de CSVs (primeiro item, minimalista) */}
+      <AvisoCSV />
+
       {/* v76: Painel executivo — Hoje · Semana · Mês (topo) */}
       <PainelExecutivo />
 
@@ -2805,5 +2808,37 @@ function PainelExecutivo() {
         <div className="flex justify-between text-[8px] text-white/25 mt-0.5"><span>{mes.porDia?.[0] && _dm(mes.porDia[0].dia)}</span><span className="text-emerald-400/60">▮ acima</span><span className="text-red-400/60">▮ abaixo R${Math.round(metaDiaMes)}/dia</span><span>{mes.porDia?.length ? _dm(mes.porDia[mes.porDia.length - 1].dia) : ""}</span></div>
       </div>
     </div>
+  );
+}
+
+// ─── v80: Aviso de atualização de CSVs — minimalista, 1º item do dashboard ───
+function AvisoCSV() {
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+  const [a, setA] = useState<any>(null);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/dashboard/avisos-csv`).then(r => r.json()).then(x => { if (x?.ok) setA(x); }).catch(() => {});
+  }, [API_BASE]);
+  if (!a) return null;
+  const atual = !a.desatualizado;
+  const partes: string[] = [];
+  if (a.ultimoCaixaData) partes.push(`dados até ${a.ultimoCaixaData.slice(8, 10)}/${a.ultimoCaixaData.slice(5, 7)}${a.diasDesde > 0 ? ` (${a.diasDesde}d atrás)` : ""}`);
+  if (a.faltando?.length) partes.push(`falta: ${a.faltando.join(", ")}`);
+
+  return (
+    <Link href="/importar-trinks">
+      <div
+        className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs cursor-pointer transition-colors ${atual
+          ? "border border-emerald-500/25 bg-emerald-500/[0.04] text-emerald-300/80 hover:bg-emerald-500/[0.08]"
+          : "border border-amber-500/30 bg-amber-500/[0.06] text-amber-300 hover:bg-amber-500/[0.1]"}`}
+        data-testid="aviso-csv"
+      >
+        <span>{atual ? "✓" : "📋"}</span>
+        <span className="flex-1 truncate">
+          {atual ? "CSVs em dia." : "Lembre de atualizar os CSVs"}
+          {partes.length > 0 && <span className="text-white/40"> · {partes.join(" · ")}</span>}
+        </span>
+        <span className="text-[10px] opacity-70 whitespace-nowrap">Importar Trinks →</span>
+      </div>
+    </Link>
   );
 }

@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v80 — Aviso de atualização de CSVs no topo do Dashboard (28/06/2026) [concluído]
+
+**Pedido:** aviso minimalista, 1º item do dashboard, pra lembrar de atualizar os CSVs. **Feito:** `GET /api/dashboard/avisos-csv` (caixa do mês: última data + diasDesde; quais tipos faltam caixa/financeiro/ranking; desatualizado se ≥2d ou falta algo). Componente `AvisoCSV` (1º item, antes do PainelExecutivo): banner pequeno clicável → /importar-trinks; âmbar se desatualizado ("📋 Lembre de atualizar os CSVs · dados até DD/MM (Nd atrás) · falta: X"), verde sutil se em dia ("✓ CSVs em dia"). Validado: caixa até 26/06 (2d), desatualizado=true.
+
 ### v78+v79 — Painel rápido + fechamento noturno via snapshot (28/06/2026) [concluído]
 
 **Pedido do dono:** sistema rápido + economia de token; trabalhar com dados de FECHAMENTO (cron 23:50 fecha o dia, no dia seguinte ele usa). **Diagnóstico:** painel demorava 12,58s (timeout 12s esperando API ao vivo do hoje); resto dos endpoints <1s. Trinks mês: 21.923 ok / 10.828 429 (cota compartilhada esgota).

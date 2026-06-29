@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v82 — Card "Último fechamento" + Caixa do Dia com fechamentos diários (29/06/2026) [concluído]
+
+**Pedido:** dashboard deve mostrar ONTEM (não "hoje"); Caixa do Dia deve listar os fechamentos pra conferir. **Feito:** (1) card do painel: título "Hoje" → "Último fechamento" + data quando ehHoje=false (era confuso mostrar "hoje" sendo dia anterior). (2) `GET /api/caixa-dia-fechamentos?dias=N` (rota com hífen — `/api/caixa-dia/fechamentos` colidia com `/api/caixa-dia/:data` que valida data!) — últimos N dias com snapshot>0: fechamentoTrinks (email), caiuItau (REDE D+1 + PIX D do extrato), conferido. Componente `FechamentosDiarios` no topo da Caixa do Dia: tabela clicável (clica → setData → conferência detalhada). Validado: 13 dias (27/06 R$4.273 … ), caiu=0 onde extrato não cobre. **Config Railway feita via account token do dono (GMAIL_USER+GMAIL_APP_PASSWORD setados).**
+
 ### v81 — Leitura AUTOMÁTICA do e-mail "Resumo do dia" da Trinks (Gmail IMAP) (29/06/2026) [concluído]
 
 **Pedido:** automático via Gmail — ler o e-mail de fechamento todo dia, sem token. **Feito:** `server/trinksEmail.ts` (imapflow + mailparser): conecta no Gmail (grecobarbearia@gmail.com, senha de app), filtra `from:atendimento@trinks.com subject:"Resumo do dia"`, parseia o HTML (htmlParaTexto + regex tolerantes a tabela), extrai data/total/serviços/produtos/pacotes/agendamentos, grava snapshot fonte=trinks-email (idempotente — pula se já igual). `POST /api/trinks-email/sincronizar` (manual) + cron 7h SP. **VALIDADO em prod:** lê 16 resumos, extrai certo (13/06 R$4.814,80 … 27/06 R$4.273,10; domingos=0 ignorados); os dias já estavam gravados como trinks-email (idempotência → processados 0). Corrigi o 27/06 (era csv-agendamentos R$3.185 → trinks-email R$4.273,10 oficial). **Card Hoje mostra último dia COM movimento (27/06; 28 domingo=0, 29 hoje não fechou) — correto.**

@@ -79,6 +79,9 @@ export default function CaixaDia() {
         </div>
       </div>
 
+      {/* v82: fechamentos diários (Trinks/email) pra conferir */}
+      <FechamentosDiarios onConferir={(dt) => setData(dt)} />
+
       {loading && !resp && <div className="text-sm text-muted-foreground py-8 text-center">Carregando…</div>}
 
       {resp && !resp.temVenda && (
@@ -198,6 +201,60 @@ export default function CaixaDia() {
           </Card>
         </>
       )}
+    </div>
+  );
+}
+
+// ─── v82: Fechamentos diários (Trinks/email) pra conferir o caixa de manhã ────
+function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void }) {
+  const [lista, setLista] = useState<any[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/caixa-dia-fechamentos?dias=21`).then(r => r.json()).then(d => { if (d?.ok) setLista(d.fechamentos || []); }).finally(() => setCarregando(false));
+  }, []);
+  if (carregando) return null;
+  if (lista.length === 0) return null;
+  const dm = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+
+  return (
+    <div className="rounded-lg border border-card-border bg-card overflow-hidden" data-testid="fechamentos-diarios">
+      <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+        <span className="text-sm font-semibold">Fechamentos recentes (Trinks)</span>
+        <span className="text-[10px] text-muted-foreground">clique pra conferir o dia</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-[10px] uppercase text-muted-foreground border-b border-border/50">
+            <tr>
+              <th className="text-left p-2">Dia</th>
+              <th className="text-right p-2">Fechamento Trinks</th>
+              <th className="text-right p-2">Caiu no Itaú</th>
+              <th className="text-center p-2">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lista.map((f) => {
+              const semExtrato = f.caiuItau === 0;
+              const bate = !semExtrato && Math.abs(f.diferenca) <= 60;
+              return (
+                <tr key={f.data} className="border-b border-border/20 hover:bg-muted/20 cursor-pointer" onClick={() => onConferir(f.data)} data-testid={`fech-${f.data}`}>
+                  <td className="p-2 font-medium">{dm(f.data)}</td>
+                  <td className="p-2 text-right tabular-nums font-semibold">R$ {fmt(f.fechamentoTrinks)}</td>
+                  <td className="p-2 text-right tabular-nums text-muted-foreground">{semExtrato ? "—" : `R$ ${fmt(f.caiuItau)}`}</td>
+                  <td className="p-2 text-center">
+                    {f.conferido === "bate" ? <span className="text-emerald-400">✓ conferido</span>
+                      : f.conferido === "nao_bate" ? <span className="text-red-400">✕ não bate</span>
+                      : semExtrato ? <span className="text-muted-foreground text-[10px]">sem extrato</span>
+                      : bate ? <span className="text-emerald-400/70">bate</span>
+                      : <span className="text-amber-400">conferir →</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-t border-border/50">Fechamento Trinks = valor oficial do e-mail. "Caiu no Itaú" preenche conforme você importa o extrato.</div>
     </div>
   );
 }

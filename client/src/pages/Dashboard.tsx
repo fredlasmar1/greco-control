@@ -2741,12 +2741,12 @@ function PainelExecutivo() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-      {/* ───── HOJE ───── */}
+      {/* ───── ÚLTIMO FECHAMENTO (ontem) ───── */}
       <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-5" data-testid="painel-hoje">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">Hoje</span>
+          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">{hoje.ehHoje ? "Hoje" : "Último fechamento"}</span>
           <span className={`text-[9px] px-2 py-0.5 rounded-full border ${hoje.ehHoje ? "border-emerald-500/40 text-emerald-400" : "border-sky-500/40 text-sky-400"}`}>
-            {hoje.ehHoje ? "● hoje" : `fechado · ${_dm(hoje.data)}`}
+            {hoje.ehHoje ? "● hoje" : `${_dm(hoje.data)}`}
           </span>
         </div>
         <div className="flex items-center gap-4">

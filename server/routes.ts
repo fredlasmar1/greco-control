@@ -7129,6 +7129,49 @@ Regras CRÍTICAS:
     }
   });
 
+  // v82: lista os FECHAMENTOS diários (snapshot/email Trinks) + quanto caiu no Itaú
+  // por dia, pra conferir o caixa de manhã. Últimos N dias com movimento.
+  app.get("/api/caixa-dia-fechamentos", async (req: Request, res: Response) => {
+    try {
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const dias = Math.min(60, Math.max(1, Number(req.query.dias) || 21));
+      const TOL = 50;
+      const contasObs = new Set(contasConsolidacao.filter(c => c.observacao).map(c => c.id));
+      const hoje = ymdHoje();
+      const out: any[] = [];
+      for (let i = 1; i <= dias; i++) {
+        const data = ymdAddDays(hoje, -i);
+        const snap: any = await getSnapshot(data);
+        if (!snap || Number(snap?.faturamento?.total || 0) <= 0) continue; // só dias com movimento
+        // caiu no Itaú: crédito+débito no D+1 útil + PIX no próprio dia
+        const d1 = new Date(data + "T12:00:00Z"); d1.setUTCDate(d1.getUTCDate() + 1);
+        while (d1.getUTCDay() === 0 || d1.getUTCDay() === 6) d1.setUTCDate(d1.getUTCDate() + 1);
+        const dataMais1 = d1.toISOString().slice(0, 10);
+        let caiu = 0;
+        for (const t of transacoesBanco) {
+          if (contasObs.has(t.contaId) || Number(t.amount) <= 0 || t.incluidoNoFluxo === false) continue;
+          const up = (t.description || "").toUpperCase();
+          if (t.date === dataMais1 && up.includes("REDE")) caiu += t.amount;
+          else if (t.date === data && up.includes("PIX") && (up.includes("RECEB") || up.includes("QR"))) caiu += t.amount;
+        }
+        const fechamentoTrinks = Number(snap.faturamento.total || 0);
+        const conf: any = await kvGet(`caixa_conferencia:${data}`);
+        out.push({
+          data,
+          fechamentoTrinks: r2(fechamentoTrinks),
+          fonte: snap.fonte,
+          caiuItau: r2(caiu),
+          // bruto Trinks vs líquido que caiu (taxa explica parte) — informativo
+          diferenca: r2(caiu - fechamentoTrinks),
+          conferido: conf?.status || null,
+        });
+      }
+      return res.json({ ok: true, dias, fechamentos: out, tolerancia: TOL });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   // POST /api/caixa-dia/conferencia/:data — salva "bate / não bate" + justificativa
   app.post("/api/caixa-dia/conferencia/:data", async (req: Request, res: Response) => {
     try {

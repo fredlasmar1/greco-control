@@ -205,56 +205,83 @@ export default function CaixaDia() {
   );
 }
 
-// ─── v82: Fechamentos diários (Trinks/email) pra conferir o caixa de manhã ────
+// ─── v83: Fechamentos do mês (email Trinks) + calculadora por forma ──────────
 function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void }) {
-  const [lista, setLista] = useState<any[]>([]);
+  const [d, setD] = useState<any>(null);
   const [carregando, setCarregando] = useState(true);
+  const mesAtual = hojeYMD().slice(0, 7);
+  const [mes] = useState<string>(mesAtual);
   useEffect(() => {
-    fetch(`${API_BASE}/api/caixa-dia-fechamentos?dias=21`).then(r => r.json()).then(d => { if (d?.ok) setLista(d.fechamentos || []); }).finally(() => setCarregando(false));
-  }, []);
-  if (carregando) return null;
-  if (lista.length === 0) return null;
+    fetch(`${API_BASE}/api/caixa-dia-fechamentos?mes=${mes}`).then(r => r.json()).then(x => { if (x?.ok) setD(x); }).finally(() => setCarregando(false));
+  }, [mes]);
+  if (carregando || !d) return null;
+  const c = d.calculadora || {};
+  const fechamentos = d.fechamentos || [];
   const dm = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+  const mesLabel = new Date(mes + "-01T12:00:00").toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+
+  const formas = [
+    { lbl: "PIX", v: c.pix, cor: "text-sky-400" },
+    { lbl: "Crédito", v: c.credito, cor: "text-violet-400" },
+    { lbl: "Débito", v: c.debito, cor: "text-amber-400" },
+    { lbl: "Dinheiro", v: c.dinheiro, cor: "text-emerald-400" },
+    { lbl: "Planos (Clube)", v: c.planos, cor: "text-pink-400" },
+  ];
 
   return (
-    <div className="rounded-lg border border-card-border bg-card overflow-hidden" data-testid="fechamentos-diarios">
-      <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-        <span className="text-sm font-semibold">Fechamentos recentes (Trinks)</span>
-        <span className="text-[10px] text-muted-foreground">clique pra conferir o dia</span>
+    <div className="space-y-3">
+      {/* CALCULADORA DO MÊS por forma */}
+      <div className="rounded-2xl border-2 border-sky-400/50 ring-1 ring-white/10 bg-black p-4" data-testid="calculadora-mes">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] uppercase tracking-[0.2em] text-sky-400 font-semibold">Recebimentos · {mesLabel}</span>
+          <span className="text-[10px] text-white/40">fonte: Caixa Trinks</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {formas.map(f => (
+            <div key={f.lbl} className="rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+              <div className={`text-[10px] uppercase tracking-wide ${f.cor} font-semibold`}>{f.lbl}</div>
+              <div className="text-base font-bold text-white tabular-nums mt-0.5">R$ {fmt(f.v || 0)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 pt-3 border-t border-white/10 flex items-end justify-between flex-wrap gap-2">
+          <div>
+            <div className="text-[10px] text-white/40 uppercase tracking-wide">Total do mês</div>
+            <div className="text-2xl font-bold text-white tabular-nums">R$ {fmt(c.totalCaixa || 0)}</div>
+          </div>
+          {c.totalEmail > 0 && <div className="text-[10px] text-white/40">Total oficial (email): <span className="text-white/70 tabular-nums">R$ {fmt(c.totalEmail)}</span></div>}
+        </div>
+        <div className="text-[10px] text-white/30 mt-1">PIX = coluna "Outros" do Trinks. Planos = venda de pacote/Clube (recorte). Formas somam ~o total (fora descontos/troco).</div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="text-[10px] uppercase text-muted-foreground border-b border-border/50">
-            <tr>
-              <th className="text-left p-2">Dia</th>
-              <th className="text-right p-2">Fechamento Trinks</th>
-              <th className="text-right p-2">Caiu no Itaú</th>
-              <th className="text-center p-2">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lista.map((f) => {
-              const semExtrato = f.caiuItau === 0;
-              const bate = !semExtrato && Math.abs(f.diferenca) <= 60;
-              return (
+
+      {/* FECHAMENTOS por dia */}
+      <div className="rounded-lg border border-card-border bg-card overflow-hidden" data-testid="fechamentos-diarios">
+        <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+          <span className="text-sm font-semibold">Fechamentos do mês ({fechamentos.length} dias)</span>
+          <span className="text-[10px] text-muted-foreground">clique pra conferir o dia</span>
+        </div>
+        <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
+          <table className="w-full text-xs">
+            <thead className="text-[10px] uppercase text-muted-foreground border-b border-border/50 sticky top-0 bg-card">
+              <tr>
+                <th className="text-left p-2">Dia</th>
+                <th className="text-right p-2">Fechamento Trinks</th>
+                <th className="text-right p-2">Caiu no Itaú</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fechamentos.map((f: any) => (
                 <tr key={f.data} className="border-b border-border/20 hover:bg-muted/20 cursor-pointer" onClick={() => onConferir(f.data)} data-testid={`fech-${f.data}`}>
                   <td className="p-2 font-medium">{dm(f.data)}</td>
                   <td className="p-2 text-right tabular-nums font-semibold">R$ {fmt(f.fechamentoTrinks)}</td>
-                  <td className="p-2 text-right tabular-nums text-muted-foreground">{semExtrato ? "—" : `R$ ${fmt(f.caiuItau)}`}</td>
-                  <td className="p-2 text-center">
-                    {f.conferido === "bate" ? <span className="text-emerald-400">✓ conferido</span>
-                      : f.conferido === "nao_bate" ? <span className="text-red-400">✕ não bate</span>
-                      : semExtrato ? <span className="text-muted-foreground text-[10px]">sem extrato</span>
-                      : bate ? <span className="text-emerald-400/70">bate</span>
-                      : <span className="text-amber-400">conferir →</span>}
-                  </td>
+                  <td className="p-2 text-right tabular-nums">{f.caiuItau > 0 ? <span className="text-muted-foreground">R$ {fmt(f.caiuItau)}</span> : <span className="text-muted-foreground/40">aguardando extrato</span>}</td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-t border-border/50">Fechamento Trinks = total oficial do e-mail. "Caiu no Itaú" preenche conforme você importa o extrato.</div>
       </div>
-      <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-t border-border/50">Fechamento Trinks = valor oficial do e-mail. "Caiu no Itaú" preenche conforme você importa o extrato.</div>
     </div>
   );
 }

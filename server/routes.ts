@@ -7134,16 +7134,30 @@ Regras CRÍTICAS:
   app.get("/api/caixa-dia-fechamentos", async (req: Request, res: Response) => {
     try {
       const r2 = (n: number) => Math.round(n * 100) / 100;
-      const dias = Math.min(60, Math.max(1, Number(req.query.dias) || 21));
       const TOL = 50;
+      const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes)) ? String(req.query.mes) : ymdHoje().slice(0, 7);
       const contasObs = new Set(contasConsolidacao.filter(c => c.observacao).map(c => c.id));
-      const hoje = ymdHoje();
-      const out: any[] = [];
-      for (let i = 1; i <= dias; i++) {
-        const data = ymdAddDays(hoje, -i);
-        const snap: any = await getSnapshot(data);
-        if (!snap || Number(snap?.faturamento?.total || 0) <= 0) continue; // só dias com movimento
-        // caiu no Itaú: crédito+débito no D+1 útil + PIX no próprio dia
+
+      // ── Calculadora do mês POR FORMA (fonte: Caixa CSV, que tem o breakdown) ──
+      const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+      const cxRows = Array.isArray(caixa?.rows) ? caixa.rows : [];
+      let pix = 0, credito = 0, debito = 0, dinheiro = 0, planos = 0, totalCaixa = 0;
+      for (const r of cxRows) {
+        pix += Number(r.totalOutros || 0);        // no Trinks, PIX cai em "Outros"
+        credito += Number(r.totalCredito || 0);
+        debito += Number(r.totalDebito || 0);
+        dinheiro += Number(r.totalDinheiro || 0);
+        planos += Number(r.totalPacotes || 0);    // venda de pacote/Clube (recorte por tipo)
+        totalCaixa += Number(r.totalGeral || 0);
+      }
+
+      // ── Fechamentos de TODOS os dias do mês (snapshot/email) + caiu no Itaú ──
+      const snaps = await listSnapshotsDoMes(mes);
+      const comMovimento = snaps.filter((s: any) => Number(s?.faturamento?.total || 0) > 0)
+        .sort((a: any, b: any) => b.data.localeCompare(a.data));
+      let totalEmail = 0;
+      const fechamentos = comMovimento.map((snap: any) => {
+        const data = snap.data;
         const d1 = new Date(data + "T12:00:00Z"); d1.setUTCDate(d1.getUTCDate() + 1);
         while (d1.getUTCDay() === 0 || d1.getUTCDay() === 6) d1.setUTCDate(d1.getUTCDate() + 1);
         const dataMais1 = d1.toISOString().slice(0, 10);
@@ -7155,18 +7169,18 @@ Regras CRÍTICAS:
           else if (t.date === data && up.includes("PIX") && (up.includes("RECEB") || up.includes("QR"))) caiu += t.amount;
         }
         const fechamentoTrinks = Number(snap.faturamento.total || 0);
-        const conf: any = await kvGet(`caixa_conferencia:${data}`);
-        out.push({
-          data,
-          fechamentoTrinks: r2(fechamentoTrinks),
-          fonte: snap.fonte,
-          caiuItau: r2(caiu),
-          // bruto Trinks vs líquido que caiu (taxa explica parte) — informativo
-          diferenca: r2(caiu - fechamentoTrinks),
-          conferido: conf?.status || null,
-        });
-      }
-      return res.json({ ok: true, dias, fechamentos: out, tolerancia: TOL });
+        totalEmail += fechamentoTrinks;
+        return { data, fechamentoTrinks: r2(fechamentoTrinks), fonte: snap.fonte, caiuItau: r2(caiu), diferenca: r2(caiu - fechamentoTrinks) };
+      });
+
+      return res.json({
+        ok: true, mes, tolerancia: TOL,
+        calculadora: {
+          pix: r2(pix), credito: r2(credito), debito: r2(debito), dinheiro: r2(dinheiro),
+          planos: r2(planos), totalCaixa: r2(totalCaixa), totalEmail: r2(totalEmail),
+        },
+        fechamentos,
+      });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }

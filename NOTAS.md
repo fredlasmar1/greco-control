@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v83 — Calculadora do mês por forma + fechamentos do mês todo (Caixa do Dia) (29/06/2026) [concluído]
+
+**Pedido:** Caixa do Dia tem que ter TODOS os emails de junho + calculadora do mês (PIX/crédito/débito/dinheiro/planos/total); o status "✓ conferido" estava falso (caixa_conferencia gravado por processo às 12:02, dono não conferiu). "Coração do sistema." **Feito:** sincronizei emails (junho todo coberto, 28 snapshots). `/api/caixa-dia-fechamentos?mes=` reformulado: lista TODOS os dias do mês via listSnapshotsDoMes (não últimos N) + **calculadora por forma do CAIXA CSV** (email não tem breakdown — vai tudo em "outros"): pix=totalOutros, credito, debito, dinheiro, planos=totalPacotes, totalCaixa, totalEmail. Removido o "conferido" falso. `FechamentosDiarios` v83: card "Recebimentos do mês" (5 formas + total) + tabela do mês clicável (Dia/Fechamento Trinks/Caiu no Itaú→aguardando extrato). Validado jun: PIX 24.042 · Créd 30.234 · Déb 17.234 · Din 6.014 · Planos 12.887 · Total 76.936 · 19 dias. **Dívida: registros caixa_conferencia espúrios ('bate') ainda no kv — não aparecem mais na lista, mas estão lá.**
+
 ### v82 — Card "Último fechamento" + Caixa do Dia com fechamentos diários (29/06/2026) [concluído]
 
 **Pedido:** dashboard deve mostrar ONTEM (não "hoje"); Caixa do Dia deve listar os fechamentos pra conferir. **Feito:** (1) card do painel: título "Hoje" → "Último fechamento" + data quando ehHoje=false (era confuso mostrar "hoje" sendo dia anterior). (2) `GET /api/caixa-dia-fechamentos?dias=N` (rota com hífen — `/api/caixa-dia/fechamentos` colidia com `/api/caixa-dia/:data` que valida data!) — últimos N dias com snapshot>0: fechamentoTrinks (email), caiuItau (REDE D+1 + PIX D do extrato), conferido. Componente `FechamentosDiarios` no topo da Caixa do Dia: tabela clicável (clica → setData → conferência detalhada). Validado: 13 dias (27/06 R$4.273 … ), caiu=0 onde extrato não cobre. **Config Railway feita via account token do dono (GMAIL_USER+GMAIL_APP_PASSWORD setados).**

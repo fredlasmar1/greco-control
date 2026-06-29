@@ -8,6 +8,12 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v78+v79 — Painel rápido + fechamento noturno via snapshot (28/06/2026) [concluído]
+
+**Pedido do dono:** sistema rápido + economia de token; trabalhar com dados de FECHAMENTO (cron 23:50 fecha o dia, no dia seguinte ele usa). **Diagnóstico:** painel demorava 12,58s (timeout 12s esperando API ao vivo do hoje); resto dos endpoints <1s. Trinks mês: 21.923 ok / 10.828 429 (cota compartilhada esgota).
+
+**v78:** painel `/api/dashboard/painel` deixou de chamar API (só CSV) → 0,9s; `hoje.precisaAoVivo` flag; `/api/dashboard/hoje` separado (carrega em paralelo). **v79:** `/api/dashboard/hoje` agora lê o SNAPSHOT (kv `snapshot_dia`, 0 token, 0,5s) — usa infra que já existia (`snapshotDiario.ts` + `capturarSnapshotDia` + cron). Cron de fechamento **23:30→23:50**. Frontend: card Hoje mostra último dia fechado (badge "fechado · DD/MM" ou "● hoje"), busca snapshot sempre (banco). Validado: painel 0,87s, hoje 0,53s, snapshot 27/06 R$3.185/32 atend. **Resultado: dashboard abre <1s, 0 token ao abrir; token só no fechamento noturno (~30/mês vs ~30k antes).** Snapshot tem faturamento(total+formas)+agendamentos+comissoesPorProf.
+
 ### v77 — Dashboard premium v2: redesign + contornos por cor (28/06/2026) [concluído]
 
 **Pedido:** painel não ficou premium; dia/semana em tempo real; cada grupo em caixa colorida. **Feito:** PainelExecutivo reescrito (grid 3 cols): HOJE com anel SVG de progresso; SEMANA com 3 mini-caixas coloridas (Serviços=azul/Planos=âmbar/Produtos=verde) vs meta; MÊS com gráfico dia-a-dia (verde≥meta/dia, vermelho<). Anel/Barra helpers. Timeout API hoje 6s→12s. **Contornos (dono):** Hoje+Mês = borda azul+ring branco; Semana+Ano(FaturamentoAno+PorFonte) = borda vermelha+ring branco; todos fundo PRETO, número principal BRANCO, meta batida VERDE. FaturamentoAno/PorFonte restilizados pro mesmo padrão. **Tempo real depende da API responder (oscila 429); fallback último dia c/ aviso.** Pendência: dia/semana 100% API (hoje semana usa caixa; melhora quando API estável).

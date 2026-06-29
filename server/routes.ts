@@ -8373,42 +8373,25 @@ Regras CRÍTICAS:
         }
       }
 
-      // ── HOJE (caixa do dia se houver; senão API ao vivo; senão último dia do caixa) ──
-      let hojeRealizado = 0, hojeAtend = 0, hojeFonte: "csv" | "trinks" | "ultimo" = "csv", hoje429 = false, hojeDataRef = hoje;
+      // ── HOJE (v78: SÓ CSV — rápido, sem tocar a API). O "ao vivo" vem do
+      // endpoint separado /api/dashboard/hoje (assíncrono, não trava a tela). ──
+      let hojeRealizado = 0, hojeAtend = 0, hojeFonte: "csv" | "ultimo" = "csv", hojeDataRef = hoje;
       const rowsHoje = rows.filter((r: any) => String(r.data || "").slice(0, 10) === hoje);
+      let precisaAoVivo = false;
       if (rowsHoje.length > 0) {
         hojeRealizado = rowsHoje.reduce((s: number, r: any) => s + Number(r.totalGeral || 0), 0);
         hojeAtend = rowsHoje.length; hojeFonte = "csv";
-      } else {
-        try {
-          const trans: any = await Promise.race([
-            trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: ymdAddDays(hoje, 1) }),
-            new Promise((resolve) => setTimeout(() => resolve("__timeout__"), 12000)),
-          ]);
-          if (trans === "__timeout__") { hoje429 = true; }
-          else {
-            const arr: any[] = Array.isArray(trans) ? trans : (trans?.data || []);
-            for (const t of arr) {
-              const d = String(t.dataHora || t.data || "").slice(0, 10);
-              if (d !== hoje) continue;
-              hojeAtend++;
-              for (const fp of (t.formasPagamentos || t.formasPagamento || [])) hojeRealizado += Number(fp.valor || 0);
-            }
-            if (hojeAtend > 0) hojeFonte = "trinks";
-          }
-        } catch (e: any) { if (e?.status === 429 || /limit|429/i.test(e?.message || "")) hoje429 = true; }
-        // sem dado de hoje → mostra o último dia fechado do caixa como referência
-        if (hojeRealizado === 0 && ultimoDiaCaixa) {
-          hojeRealizado = porDiaMap[ultimoDiaCaixa] || 0;
-          hojeAtend = rows.filter((r: any) => String(r.data || "").slice(0, 10) === ultimoDiaCaixa).length;
-          hojeFonte = "ultimo"; hojeDataRef = ultimoDiaCaixa;
-        }
+      } else if (ultimoDiaCaixa) {
+        // sem caixa de hoje → mostra o último dia fechado e sinaliza buscar ao vivo
+        hojeRealizado = porDiaMap[ultimoDiaCaixa] || 0;
+        hojeAtend = rows.filter((r: any) => String(r.data || "").slice(0, 10) === ultimoDiaCaixa).length;
+        hojeFonte = "ultimo"; hojeDataRef = ultimoDiaCaixa; precisaAoVivo = true;
       }
 
       return res.json({
         ok: true,
         hoje: {
-          data: hojeDataRef, ehHoje: hojeDataRef === hoje, fonte: hojeFonte, trinks429: hoje429,
+          data: hojeDataRef, ehHoje: hojeDataRef === hoje, fonte: hojeFonte, precisaAoVivo,
           meta: metaDia, realizado: r2(hojeRealizado), atendimentos: hojeAtend,
           pct: metaDia > 0 ? Math.round((hojeRealizado / metaDia) * 100) : 0,
         },
@@ -8424,6 +8407,41 @@ Regras CRÍTICAS:
           servicos: r2(mesServ), planos: r2(mesPlano), produtos: r2(mesProd),
           porDia, melhorDia, ultimoDia: ultimoDiaCaixa,
         },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
+  // v79: HOJE = ÚLTIMO DIA FECHADO via SNAPSHOT (cron noturno). Lê do kv
+  // (snapshot_dia), 0 token, instantâneo. O fechamento das 23:50 alimenta isso;
+  // de manhã o dono trabalha com o fechamento do dia anterior. Sem tocar a API.
+  app.get("/api/dashboard/hoje", async (_req: Request, res: Response) => {
+    try {
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const hoje = ymdHoje();
+      const metaDia = metaDiaria;
+      // pega o snapshot mais recente COM faturamento (hoje, ontem, ou último do mês)
+      const candidatos = [hoje, ymdAddDays(hoje, -1)];
+      let snap: any = null;
+      for (const dt of candidatos) {
+        const s: any = await getSnapshot(dt);
+        if (s && Number(s?.faturamento?.total) > 0) { snap = s; break; }
+      }
+      if (!snap) {
+        const doMes = await listSnapshotsDoMes(hoje.slice(0, 7));
+        snap = doMes.filter((s: any) => Number(s?.faturamento?.total) > 0).sort((a: any, b: any) => b.data.localeCompare(a.data))[0] || null;
+      }
+      if (!snap) {
+        return res.json({ ok: true, fonte: "vazio", data: null, meta: metaDia, realizado: 0, atendimentos: 0, pct: 0 });
+      }
+      const realizado = Number(snap.faturamento.total || 0);
+      const atend = Number(snap.faturamento.qtdTransacoes || snap.agendamentos?.finalizados || 0);
+      return res.json({
+        ok: true, data: snap.data, ehHoje: snap.data === hoje, fonte: "snapshot",
+        capturadoEm: snap.capturadoEm || null, fonteSnapshot: snap.fonte,
+        meta: metaDia, realizado: r2(realizado), atendimentos: atend,
+        pct: metaDia > 0 ? Math.round((realizado / metaDia) * 100) : 0,
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
@@ -12818,11 +12836,11 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         }
       }); }, { timezone: "America/Sao_Paulo" });
 
-      // v36 Fase 2: Cron noturno de SNAPSHOT — captura o dia atual + refina o anterior
-      // 23:30 SP todo dia (inclusive domingos, pra registrar dias vazios com aviso)
-      // ⚠️ Em modo csv-first, passa preferirCsv:true e envolve com comOrigem para
-      // (a) não queimar Trinks quando o CSV já tem o dia, (b) origens identificadas.
-      cron.schedule("30 23 * * *", async () => { await comOrigem("cron-snapshot-23h30", async () => {
+      // v36 Fase 2 / v79: Cron noturno de SNAPSHOT — FECHAMENTO do dia às 23:50 SP
+      // todo dia. Fecha os valores do dia (+ refina ontem) pra o dono trabalhar no
+      // dia seguinte. Alimenta o painel (lê do snapshot, 0 token). Em csv-first,
+      // preferirCsv:true pra não queimar Trinks quando o CSV já tem o dia.
+      cron.schedule("50 23 * * *", async () => { await comOrigem("cron-snapshot-23h50", async () => {
         try {
           const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
           const ontem = (() => {

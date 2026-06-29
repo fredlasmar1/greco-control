@@ -2710,12 +2710,23 @@ function PainelExecutivo() {
   const API_BASE = (globalThis as any).__API_BASE__ || "";
   const [d, setD] = useState<any>(null);
   const [carregando, setCarregando] = useState(true);
+  const [hojeVivo, setHojeVivo] = useState<any>(null);  // v78: "Hoje ao vivo" carrega separado
   useEffect(() => {
-    fetch(`${API_BASE}/api/dashboard/painel`).then(r => r.json()).then(x => { if (x?.ok) setD(x); }).finally(() => setCarregando(false));
+    fetch(`${API_BASE}/api/dashboard/painel`).then(r => r.json()).then(x => {
+      if (x?.ok) setD(x);
+    }).finally(() => setCarregando(false));
+    // sempre busca o snapshot do último dia fechado (banco, 0 token) — pode ser
+    // mais recente que o caixa CSV; preenche o card Hoje sem travar a tela.
+    fetch(`${API_BASE}/api/dashboard/hoje`).then(r => r.json()).then(h => { if (h?.ok) setHojeVivo(h); }).catch(() => {});
   }, [API_BASE]);
-  if (carregando) return <div className="rounded-2xl border border-white/10 bg-black p-6 text-sm text-white/40">Carregando painel…</div>;
+  if (carregando) return <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-6 text-sm text-white/40">Carregando painel…</div>;
   if (!d) return null;
-  const { hoje, semana, mes } = d;
+  // v79: o snapshot (último dia fechado pelo cron) substitui o "último dia do caixa"
+  // quando é mais recente — ambos vêm do banco (0 token).
+  const hoje = (hojeVivo && hojeVivo.fonte === "snapshot" && hojeVivo.realizado > 0 && (!d.hoje?.data || hojeVivo.data >= d.hoje.data))
+    ? { ...d.hoje, ...hojeVivo }
+    : d.hoje;
+  const { semana, mes } = d;
   const maxDia = Math.max(1, ...(mes.porDia || []).map((x: any) => x.valor));
   const metaDiaMes = mes.meta / 30;
 
@@ -2731,8 +2742,8 @@ function PainelExecutivo() {
       <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-5" data-testid="painel-hoje">
         <div className="flex items-center justify-between mb-4">
           <span className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">Hoje</span>
-          <span className={`text-[9px] px-2 py-0.5 rounded-full border ${hoje.fonte === "trinks" ? "border-emerald-500/40 text-emerald-400" : hoje.fonte === "ultimo" ? "border-amber-500/40 text-amber-400" : "border-white/20 text-white/50"}`}>
-            {hoje.fonte === "trinks" ? "● AO VIVO" : hoje.fonte === "ultimo" ? `último: ${_dm(hoje.data)}` : "CSV"}
+          <span className={`text-[9px] px-2 py-0.5 rounded-full border ${hoje.ehHoje ? "border-emerald-500/40 text-emerald-400" : "border-sky-500/40 text-sky-400"}`}>
+            {hoje.ehHoje ? "● hoje" : `fechado · ${_dm(hoje.data)}`}
           </span>
         </div>
         <div className="flex items-center gap-4">

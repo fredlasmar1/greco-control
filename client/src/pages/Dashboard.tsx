@@ -942,6 +942,9 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 max-w-[1400px]">
+      {/* v76: Painel executivo — Hoje · Semana · Mês (topo) */}
+      <PainelExecutivo />
+
       {/* Faturamento acumulado do ano */}
       <FaturamentoAno />
 
@@ -2674,6 +2677,120 @@ function FaturamentoPorFonte() {
       )}
 
       <p className="text-[10px] text-muted-foreground">● Serviços por equipe vêm do ranking (mar–jun); produtos e planos do caixa (ano todo). Onde atacar: fatia pequena com potencial = oportunidade (ex.: produtos {fmtPct(totProduto)}).</p>
+    </div>
+  );
+}
+
+// ─── v76: Painel Executivo (Hoje · Semana · Mês) — premium, cores Greco ──────
+// Branco = consolidados · verde = positivo (≥meta) · vermelho = negativo · azul = detalhe.
+const _diaMes = (s: string) => s ? s.slice(8, 10) + "/" + s.slice(5, 7) : "";
+function BarraMeta({ pct, alt = "h-2" }: { pct: number; alt?: string }) {
+  const cor = pct >= 100 ? "bg-emerald-500" : pct >= 70 ? "bg-sky-500" : pct >= 40 ? "bg-amber-500" : "bg-red-500";
+  return (
+    <div className={`w-full ${alt} rounded-full bg-white/10 overflow-hidden`}>
+      <div className={`h-full ${cor} rounded-full transition-all`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+    </div>
+  );
+}
+function PainelExecutivo() {
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+  const [d, setD] = useState<any>(null);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/dashboard/painel`).then(r => r.json()).then(x => { if (x?.ok) setD(x); }).catch(() => {});
+  }, [API_BASE]);
+  if (!d) return null;
+  const { hoje, semana, mes } = d;
+  const corPct = (p: number) => p >= 100 ? "text-emerald-400" : p >= 70 ? "text-sky-400" : p < 40 ? "text-red-400" : "text-white";
+  const maxDia = Math.max(1, ...(mes.porDia || []).map((x: any) => x.valor));
+
+  return (
+    <div className="space-y-3">
+      {/* HOJE */}
+      <div className="rounded-xl border border-white/10 bg-black p-4" data-testid="painel-hoje">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] uppercase tracking-[0.2em] text-sky-400 font-semibold">Hoje</span>
+            <span className="text-[11px] text-white/50">{_diaMes(hoje.data)}</span>
+          </div>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full border ${hoje.fonte === "trinks" ? "border-emerald-500/40 text-emerald-400" : hoje.fonte === "ultimo" ? "border-amber-500/40 text-amber-400" : "border-sky-500/40 text-sky-400"}`}>
+            {hoje.fonte === "trinks" ? "● ao vivo" : hoje.fonte === "ultimo" ? "último dia fechado" : "CSV"}
+          </span>
+        </div>
+        <div className="flex items-end justify-between gap-3 mb-2">
+          <div>
+            <div className="text-3xl font-bold text-white tabular-nums">{formatCurrency(hoje.realizado)}</div>
+            <div className="text-[11px] text-white/50">meta {formatCurrency(hoje.meta)} · {hoje.atendimentos} atendimentos</div>
+          </div>
+          <div className={`text-2xl font-bold tabular-nums ${corPct(hoje.pct)}`}>{hoje.pct}%</div>
+        </div>
+        <BarraMeta pct={hoje.pct} />
+        {hoje.trinks429 && <div className="text-[10px] text-amber-400 mt-1">⚠ Trinks indisponível agora — mostrando último dia fechado.</div>}
+      </div>
+
+      {/* SEMANA */}
+      <div className="rounded-xl border border-white/10 bg-black p-4" data-testid="painel-semana">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] uppercase tracking-[0.2em] text-sky-400 font-semibold">Semana</span>
+          <span className="text-[11px] text-white/50">{_diaMes(semana.inicio)}–{_diaMes(semana.fim)}</span>
+        </div>
+        <div className="flex items-end justify-between gap-3 mb-2">
+          <div>
+            <div className="text-2xl font-bold text-white tabular-nums">{formatCurrency(semana.realizado)}</div>
+            <div className="text-[11px] text-white/50">meta {formatCurrency(semana.meta)}</div>
+          </div>
+          <div className={`text-xl font-bold tabular-nums ${corPct(semana.pct)}`}>{semana.pct}%</div>
+        </div>
+        <BarraMeta pct={semana.pct} />
+        {/* por categoria vs meta */}
+        <div className="grid grid-cols-3 gap-3 mt-3">
+          {[
+            { lbl: "Serviços", v: semana.servicos, m: semana.metaServicos },
+            { lbl: "Planos", v: semana.planos, m: semana.metaPlanos },
+            { lbl: "Produtos", v: semana.produtos, m: semana.metaProdutos },
+          ].map((c) => {
+            const p = c.m > 0 ? Math.round((c.v / c.m) * 100) : 0;
+            return (
+              <div key={c.lbl}>
+                <div className="flex items-center justify-between text-[10px] mb-1">
+                  <span className="text-white/60">{c.lbl}</span>
+                  <span className={corPct(p)}>{p}%</span>
+                </div>
+                <BarraMeta pct={p} alt="h-1.5" />
+                <div className="text-[10px] text-white/40 mt-0.5 tabular-nums">{formatCurrency(c.v)} <span className="text-white/25">/ {formatCurrency(c.m)}</span></div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* MÊS dia a dia */}
+      <div className="rounded-xl border border-white/10 bg-black p-4" data-testid="painel-mes">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] uppercase tracking-[0.2em] text-sky-400 font-semibold">Mês</span>
+          <span className="text-[11px] text-white/50">{mes.mes}</span>
+        </div>
+        <div className="flex items-end justify-between gap-3 mb-2">
+          <div>
+            <div className="text-2xl font-bold text-white tabular-nums">{formatCurrency(mes.realizado)}</div>
+            <div className="text-[11px] text-white/50">meta {formatCurrency(mes.meta)}{mes.melhorDia && <> · melhor dia {_diaMes(mes.melhorDia.dia)} {formatCurrency(mes.melhorDia.valor)}</>}</div>
+          </div>
+          <div className={`text-xl font-bold tabular-nums ${corPct(mes.pct)}`}>{mes.pct}%</div>
+        </div>
+        <BarraMeta pct={mes.pct} />
+        {/* consolidado dia a dia */}
+        <div className="flex items-end gap-[3px] mt-3 h-14">
+          {(mes.porDia || []).map((x: any) => {
+            const acima = x.valor >= mes.meta / 30;
+            return (
+              <div key={x.dia} className="flex-1 flex flex-col items-center gap-0.5 group relative" title={`${_diaMes(x.dia)}: ${formatCurrency(x.valor)}`}>
+                <div className={`w-full rounded-t ${acima ? "bg-emerald-500/60" : "bg-red-500/50"}`} style={{ height: `${Math.max(6, (x.valor / maxDia) * 100)}%` }} />
+                <span className="text-[8px] text-white/30">{x.dia.slice(8, 10)}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="text-[10px] text-white/40 mt-1">Verde = dia acima da média de meta (R$ {formatCurrency(mes.meta / 30)}/dia) · vermelho = abaixo. Atacar os vermelhos.</div>
+      </div>
     </div>
   );
 }

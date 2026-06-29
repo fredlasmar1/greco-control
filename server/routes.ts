@@ -8331,6 +8331,105 @@ Regras CRÍTICAS:
   // GET /api/historico/mensal — evolução mês a mês (clientes + barbeiros) a partir
   // do CAIXA (receita/comandas/clientes) + RANKING (barbeiros). Local, sem API.
   // Clientes novos = primeira aparição no histórico disponível.
+  // v76: painel executivo — HOJE (API ao vivo + fallback CSV) / SEMANA / MÊS dia a dia.
+  // Metas: diária (metaDiaria), semana = diária×6, mês = metasHistorico ou 100k.
+  // Por categoria: proporção histórica (serv 79% / planos 15% / produtos 6%).
+  app.get("/api/dashboard/painel", async (_req: Request, res: Response) => {
+    try {
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const hoje = ymdHoje();
+      const mes = hoje.slice(0, 7);
+      const metaDia = metaDiaria;
+      const metaSemana = metaDiaria * 6;
+      const metaMes = (metasHistorico.find(m => m.month === mes)?.target) || 100000;
+      const PROP = { serv: 0.79, plano: 0.15, prod: 0.06 };
+
+      // ── MÊS (caixa CSV do mês corrente, dia a dia) ──
+      const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+      const rows = (Array.isArray(caixa?.rows) ? caixa.rows : []).filter((r: any) => !String(r.tipo || "").toLowerCase().includes("estorno"));
+      const porDiaMap: Record<string, number> = {};
+      let mesServ = 0, mesProd = 0, mesPlano = 0, mesTotal = 0;
+      for (const r of rows) {
+        const dia = String(r.data || "").slice(0, 10);
+        if (!dia) continue;
+        porDiaMap[dia] = (porDiaMap[dia] || 0) + Number(r.totalGeral || 0);
+        mesServ += Number(r.totalServico || 0);
+        mesProd += Number(r.totalProdutos || 0);
+        mesPlano += Number(r.totalPacotes || 0);
+        mesTotal += Number(r.totalGeral || 0);
+      }
+      const porDia = Object.entries(porDiaMap).map(([dia, valor]) => ({ dia, valor: r2(valor) })).sort((a, b) => a.dia.localeCompare(b.dia));
+      const melhorDia = porDia.reduce((a: any, b: any) => (b.valor > (a?.valor || 0) ? b : a), null as any);
+      const ultimoDiaCaixa = porDia.length ? porDia[porDia.length - 1].dia : null;
+
+      // ── SEMANA (últimos 7 dias até hoje, do caixa) ──
+      const seteAtras = ymdAddDays(hoje, -6);
+      let semServ = 0, semProd = 0, semPlano = 0, semTotal = 0;
+      for (const r of rows) {
+        const dia = String(r.data || "").slice(0, 10);
+        if (dia >= seteAtras && dia <= hoje) {
+          semServ += Number(r.totalServico || 0); semProd += Number(r.totalProdutos || 0);
+          semPlano += Number(r.totalPacotes || 0); semTotal += Number(r.totalGeral || 0);
+        }
+      }
+
+      // ── HOJE (caixa do dia se houver; senão API ao vivo; senão último dia do caixa) ──
+      let hojeRealizado = 0, hojeAtend = 0, hojeFonte: "csv" | "trinks" | "ultimo" = "csv", hoje429 = false, hojeDataRef = hoje;
+      const rowsHoje = rows.filter((r: any) => String(r.data || "").slice(0, 10) === hoje);
+      if (rowsHoje.length > 0) {
+        hojeRealizado = rowsHoje.reduce((s: number, r: any) => s + Number(r.totalGeral || 0), 0);
+        hojeAtend = rowsHoje.length; hojeFonte = "csv";
+      } else {
+        try {
+          const trans: any = await Promise.race([
+            trinksFetchAll("transacoes", { dataInicio: hoje, dataFim: ymdAddDays(hoje, 1) }),
+            new Promise((resolve) => setTimeout(() => resolve("__timeout__"), 6000)),
+          ]);
+          if (trans === "__timeout__") { hoje429 = true; }
+          else {
+            const arr: any[] = Array.isArray(trans) ? trans : (trans?.data || []);
+            for (const t of arr) {
+              const d = String(t.dataHora || t.data || "").slice(0, 10);
+              if (d !== hoje) continue;
+              hojeAtend++;
+              for (const fp of (t.formasPagamentos || t.formasPagamento || [])) hojeRealizado += Number(fp.valor || 0);
+            }
+            if (hojeAtend > 0) hojeFonte = "trinks";
+          }
+        } catch (e: any) { if (e?.status === 429 || /limit|429/i.test(e?.message || "")) hoje429 = true; }
+        // sem dado de hoje → mostra o último dia fechado do caixa como referência
+        if (hojeRealizado === 0 && ultimoDiaCaixa) {
+          hojeRealizado = porDiaMap[ultimoDiaCaixa] || 0;
+          hojeAtend = rows.filter((r: any) => String(r.data || "").slice(0, 10) === ultimoDiaCaixa).length;
+          hojeFonte = "ultimo"; hojeDataRef = ultimoDiaCaixa;
+        }
+      }
+
+      return res.json({
+        ok: true,
+        hoje: {
+          data: hojeDataRef, ehHoje: hojeDataRef === hoje, fonte: hojeFonte, trinks429: hoje429,
+          meta: metaDia, realizado: r2(hojeRealizado), atendimentos: hojeAtend,
+          pct: metaDia > 0 ? Math.round((hojeRealizado / metaDia) * 100) : 0,
+        },
+        semana: {
+          inicio: seteAtras, fim: hoje, meta: metaSemana, realizado: r2(semTotal),
+          pct: metaSemana > 0 ? Math.round((semTotal / metaSemana) * 100) : 0,
+          servicos: r2(semServ), planos: r2(semPlano), produtos: r2(semProd),
+          metaServicos: r2(metaSemana * PROP.serv), metaPlanos: r2(metaSemana * PROP.plano), metaProdutos: r2(metaSemana * PROP.prod),
+        },
+        mes: {
+          mes, meta: metaMes, realizado: r2(mesTotal),
+          pct: metaMes > 0 ? Math.round((mesTotal / metaMes) * 100) : 0,
+          servicos: r2(mesServ), planos: r2(mesPlano), produtos: r2(mesProd),
+          porDia, melhorDia, ultimoDia: ultimoDiaCaixa,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   app.get("/api/historico/mensal", async (_req: Request, res: Response) => {
     try {
       const r2 = (n: number) => Math.round(n * 100) / 100;

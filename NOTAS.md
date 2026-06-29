@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v76 — Painel Executivo premium: Hoje · Semana · Mês (topo do Dashboard) (28/06/2026) [concluído]
+
+**Pedido:** Dashboard premium (cores Greco: preto/azul/vermelho/branco; positivo verde, negativo vermelho, consolidado branco), ordem HOJE→SEMANA→MÊS→ANO. **Feito:** `GET /api/dashboard/painel` — Hoje (caixa do dia → API ao vivo c/ timeout 6s → fallback último dia fechado), Semana (últimos 7d do caixa + por categoria serv/plano/prod), Mês (caixa dia-a-dia + melhor dia). Metas: diária `metaDiaria` (5k), semana 5k×6=30k, mês metasHistorico||100k, por categoria proporção 79/15/6. Frontend `PainelExecutivo` + `BarraMeta` no TOPO do Dashboard (acima de FaturamentoAno/PorFonte): cards Hoje/Semana/Mês premium (fundo black, branco/verde/vermelho/azul), barras por categoria, gráfico dia-a-dia (verde=acima meta/dia, vermelho=abaixo). Validado: hoje R$1.052(último dia), semana 40%, mês 77%. **PENDENTE (dono quer depois): restilizar FaturamentoAno+PorFonte pra combinar com o premium.** Metas por categoria são deduzidas (dono ajusta depois se quiser).
+
 ### v75 — Faturamento por fonte no Dashboard (onde atacar) (28/06/2026) [concluído]
 
 **Pedido:** dividir o faturamento do ano por barbeiro/assistente/secretaria/produtos/planos. **Feito:** `FaturamentoPorFonte` no Dashboard (usa /api/historico/mensal). Fatias do total: Serviços R$393k (79%) / Planos-Clube R$76k (15%) / Produtos R$27k (6%). Serviços divididos por função via ranking (barras + top profissionais). `funcaoDoProf`: Assistentes=Fernanda/Ellen/Débora/Patricia/Larissa (Larissa dupla→assistente nos serviços); Secretarias=Camila/Bruna; resto Barbeiros. **Guilherme Alves Lemes = barbeiro (default, dono não confirmou explicitamente).** Serviços-por-equipe usam ranking mar-jun (faltam jan/fev); tipos (serv/prod/plano) ano todo do caixa. Dados no sistema: caixa jan-jun (jun parcial até 26/06), ranking mar-jun, financeiro abr-jun, dre abr, produtos catálogo. NÃO há julho.

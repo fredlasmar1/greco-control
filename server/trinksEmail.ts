@@ -27,10 +27,18 @@ const MESES_PT: Record<string, string> = {
   janeiro: "01", fevereiro: "02", "março": "03", marco: "03", abril: "04", maio: "05", junho: "06",
   julho: "07", agosto: "08", setembro: "09", outubro: "10", novembro: "11", dezembro: "12",
 };
+export interface CaixaDinheiroDia {
+  abertura: number; recebido: number; troco: number; despesas: number;
+  totalDinheiro: number; sangria: number; saldo: number;
+}
+export interface DebitosDia {
+  clientesEmDebito: number; servicosDebito: number; produtosDebito: number; totalDebito: number;
+}
 export function parseFechamentoTrinks(corpo: string): {
   data: string | null; total: number; servicos: number; produtos: number; pacotes: number;
   finalizados: number; confirmados: number; cancelados: number; noShow: number; clientesPagantes: number;
   totalMes: number; mesRef: string | null;
+  caixaDinheiro: CaixaDinheiroDia; debitos: DebitosDia;
 } {
   const t = /<[a-z]/i.test(corpo) ? htmlParaTexto(corpo) : corpo.replace(/[ \t\r\n]+/g, " ");
   const mData = t.match(/fechamento\s+no\s+dia\s+(\d{2})\/(\d{2})\/(\d{4})/i);
@@ -50,7 +58,27 @@ export function parseFechamentoTrinks(corpo: string): {
   let finalizados = 0, confirmados = 0, cancelados = 0, noShow = 0;
   const mAg = t.match(/cliente\s+faltou\D{0,6}(\d+)\D+(\d+)\D+(\d+)\D+(\d+)\D+(\d+)/i);
   if (mAg) { confirmados = +mAg[2]; finalizados = +mAg[3]; cancelados = +mAg[4]; noShow = +mAg[5]; }
-  return { data, total, servicos, produtos, pacotes, finalizados, confirmados, cancelados, noShow, clientesPagantes, totalMes, mesRef };
+
+  // BLOCO 1 — Caixa em dinheiro. O "Troco" daqui é o 2º (vem após "Recebido em
+  // Dinheiro"); ancoramos nele pra não pegar o Troco do bloco de fechamento.
+  const mTroco = t.match(/Recebido\s+em\s+Dinheiro\s*R\$\s*-?[\d.,]+\s*Troco\s*R\$\s*(-?[\d.,]+)/i);
+  const caixaDinheiro: CaixaDinheiroDia = {
+    abertura: pega(/Abertura\s+de\s+Caixa\s*R\$\s*(-?[\d.,]+)/i),
+    recebido: pega(/Recebido\s+em\s+Dinheiro\s*R\$\s*(-?[\d.,]+)/i),
+    troco: mTroco ? numBR(mTroco[1]) : 0,
+    despesas: pega(/Despesas\s+Caixa\s*R\$\s*(-?[\d.,]+)/i),
+    totalDinheiro: pega(/Total\s+em\s+Dinheiro\s*R\$\s*(-?[\d.,]+)/i),
+    sangria: pega(/Sangria\s*R\$\s*(-?[\d.,]+)/i),
+    saldo: pega(/Saldo\s+do\s+Caixa\s+em\s+Dinheiro\s*R\$\s*(-?[\d.,]+)/i),
+  };
+  // BLOCO 2 — Débitos de clientes
+  const debitos: DebitosDia = {
+    clientesEmDebito: pega(/Total\s+de\s+clientes\s+em\s+d[ée]bito\D{0,4}(\d+)/i),
+    servicosDebito: pega(/Valor\s+total\s+de\s+servi[çc]os\s+em\s+d[ée]bito\s*R\$\s*(-?[\d.,]+)/i),
+    produtosDebito: pega(/Valor\s+total\s+de\s+produtos\s+em\s+d[ée]bito\s*R\$\s*(-?[\d.,]+)/i),
+    totalDebito: pega(/Total\s+produtos\/servi[çc]os\s+em\s+d[ée]bito\s*R\$\s*(-?[\d.,]+)/i),
+  };
+  return { data, total, servicos, produtos, pacotes, finalizados, confirmados, cancelados, noShow, clientesPagantes, totalMes, mesRef, caixaDinheiro, debitos };
 }
 
 export async function sincronizarEmailsTrinks(opts?: { dias?: number; max?: number }): Promise<{
@@ -85,7 +113,8 @@ export async function sincronizarEmailsTrinks(opts?: { dias?: number; max?: numb
         }
         if (!f.data || f.total <= 0) continue; // domingo/dia fechado = 0 → ignora (já é 0 no sistema)
         const anterior = await getSnapshot(f.data);
-        if (anterior?.fonte === "trinks-email" && Math.abs((anterior.faturamento?.total || 0) - f.total) < 0.01) continue;
+        // pula só se já está gravado COM o caixa em dinheiro (senão regrava p/ backfill v86)
+        if (anterior?.fonte === "trinks-email" && anterior.caixaDinheiro && Math.abs((anterior.faturamento?.total || 0) - f.total) < 0.01) continue;
         const snap: SnapshotDia = {
           data: f.data,
           fonte: "trinks-email",
@@ -104,6 +133,8 @@ export async function sincronizarEmailsTrinks(opts?: { dias?: number; max?: numb
           },
           comissoesPorProf: anterior?.comissoesPorProf,
           agendamentosRaw: anterior?.agendamentosRaw,
+          caixaDinheiro: f.caixaDinheiro,
+          debitos: f.debitos,
           avisos: [`E-mail Trinks "Resumo do dia": servicos R$${f.servicos} + produtos R$${f.produtos} + pacotes R$${f.pacotes}.`],
         };
         await saveSnapshot(snap);

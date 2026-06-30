@@ -7181,6 +7181,39 @@ Regras CRÍTICAS:
     }
   });
 
+  // v86 Tier2: GET /api/caixa-dinheiro?mes= — caixa em dinheiro + débitos de
+  // clientes, por dia e consolidado do mês (fonte: e-mail Trinks "Resumo do dia").
+  app.get("/api/caixa-dinheiro", async (req: Request, res: Response) => {
+    try {
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes)) ? String(req.query.mes) : ymdHoje().slice(0, 7);
+      const snaps = await listSnapshotsDoMes(mes);
+      const comCaixa = snaps.filter((s: any) => s.caixaDinheiro).sort((a: any, b: any) => b.data.localeCompare(a.data));
+      const tot = { abertura: 0, recebido: 0, troco: 0, despesas: 0, totalDinheiro: 0, sangria: 0, saldo: 0 };
+      const totDeb = { clientesEmDebito: 0, servicosDebito: 0, produtosDebito: 0, totalDebito: 0 };
+      const dias = comCaixa.map((s: any) => {
+        const cx = s.caixaDinheiro, db = s.debitos || { clientesEmDebito: 0, servicosDebito: 0, produtosDebito: 0, totalDebito: 0 };
+        for (const k of Object.keys(tot)) (tot as any)[k] += Number(cx[k] || 0);
+        for (const k of Object.keys(totDeb)) (totDeb as any)[k] += Number(db[k] || 0);
+        return { data: s.data, ...cx, ...db };
+      });
+      // o "débito do mês" relevante é o do ÚLTIMO dia (saldo devedor acumulado), não a soma
+      const ultimoDebito = comCaixa.length ? (comCaixa[0].debitos || null) : null;
+      const r2obj = (o: any) => { const x: any = {}; for (const k of Object.keys(o)) x[k] = r2(o[k]); return x; };
+      return res.json({
+        ok: true, mes,
+        dias,
+        totaisCaixa: r2obj(tot),
+        totaisDebitoMes: r2obj(totDeb),
+        debitoAtual: ultimoDebito ? r2obj(ultimoDebito) : null,
+        // reconciliação: abertura + recebido + troco - despesas - sangria = saldo
+        reconciliacao: r2(tot.abertura + tot.recebido + tot.troco - tot.despesas - tot.sangria),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   // POST /api/caixa-dia/conferencia/:data — salva "bate / não bate" + justificativa
   app.post("/api/caixa-dia/conferencia/:data", async (req: Request, res: Response) => {
     try {
@@ -8604,6 +8637,44 @@ Regras CRÍTICAS:
         delete mm._clientes;
       }
       return res.json({ ok: true, meses });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
+  // v86: GET /api/ocupacao — taxa de ocupação por mês. Capacidade = nº barbeiros
+  // × horas abertas (ter–sex 11h, sáb 10h; fecha dom/seg). Ocupado = atendimentos
+  // × duração média. Defaults configuráveis por query (barbeiros, duracaoMin).
+  app.get("/api/ocupacao", async (req: Request, res: Response) => {
+    try {
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const nBarbeiros = Number(req.query.barbeiros) || 7;
+      const durMin = Number(req.query.duracaoMin) || 50;
+      // horas abertas por dia da semana (0=dom … 6=sáb)
+      const horasDOW: Record<number, number> = { 0: 0, 1: 0, 2: 11, 3: 11, 4: 11, 5: 11, 6: 10 };
+      const meses: any[] = [];
+      for (let m = 1; m <= 12; m++) {
+        const mes = `2026-${String(m).padStart(2, "0")}`;
+        const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+        if (!Array.isArray(caixa?.rows) || caixa.rows.length === 0) continue;
+        const atendimentos = caixa.rows.filter((r: any) => !String(r.tipo || "").toLowerCase().includes("estorno")).length;
+        // dias do mês: último dia de atendimento no caixa (pra não contar dias futuros num mês parcial)
+        const datasCaixa = caixa.rows.map((r: any) => (r.data || "").slice(0, 10)).filter(Boolean).sort();
+        const ultimoDia = datasCaixa.length ? Number(datasCaixa[datasCaixa.length - 1].slice(8, 10)) : new Date(2026, m, 0).getDate();
+        let horasAbertas = 0;
+        for (let d = 1; d <= ultimoDia; d++) {
+          const dow = new Date(Date.UTC(2026, m - 1, d)).getUTCDay();
+          horasAbertas += horasDOW[dow] || 0;
+        }
+        const capacidadeH = nBarbeiros * horasAbertas;
+        const ocupadoH = atendimentos * (durMin / 60);
+        meses.push({
+          mes, atendimentos, horasAbertas, capacidadeH: r2(capacidadeH), ocupadoH: r2(ocupadoH),
+          ocupacaoPct: capacidadeH > 0 ? r2((ocupadoH / capacidadeH) * 100) : 0,
+          ultimoDia,
+        });
+      }
+      return res.json({ ok: true, nBarbeiros, duracaoMin: durMin, meses });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }

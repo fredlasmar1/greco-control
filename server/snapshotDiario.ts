@@ -62,6 +62,9 @@ export interface SnapshotDia {
   // transacoesRaw só está disponível quando fonte = trinks-api
   agendamentosRaw?: any[];
   transacoesRaw?: any[];
+  // v86 Tier2: caixa em dinheiro + débitos de clientes (extraídos do e-mail Trinks)
+  caixaDinheiro?: { abertura: number; recebido: number; troco: number; despesas: number; totalDinheiro: number; sangria: number; saldo: number };
+  debitos?: { clientesEmDebito: number; servicosDebito: number; produtosDebito: number; totalDebito: number };
   // Erros/avisos durante a captura
   avisos?: string[];
 }

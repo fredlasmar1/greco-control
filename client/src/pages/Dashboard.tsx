@@ -954,6 +954,9 @@ export default function Dashboard() {
       {/* Clientes atendidos & serviços executados mês a mês */}
       <ClientesAtendidosMes />
 
+      {/* Taxa de ocupação mês a mês */}
+      <OcupacaoMes />
+
       {/* Faturamento por fonte (onde atacar) */}
       <FaturamentoPorFonte />
 
@@ -2649,6 +2652,46 @@ function ClientesAtendidosMes() {
         })}
       </div>
       <p className="text-[10px] text-muted-foreground mt-2">Clientes = clientes únicos atendidos no mês. Serviços = atendimentos (comandas) realizados. % = variação vs. mês anterior. Fonte: Caixa da Trinks (mês recente pode ser parcial até reimportar o caixa).</p>
+    </div>
+  );
+}
+
+// ─── v86: Taxa de ocupação mês a mês ─────────────────────────────────────────
+function OcupacaoMes() {
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+  const [d, setD] = useState<any>(null);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/ocupacao`).then((r) => r.json()).then((x) => { if (x?.ok) setD(x); }).catch(() => {});
+  }, [API_BASE]);
+  if (!d || (d.meses || []).length === 0) return null;
+  const rot = (m: string) => (NOME_MES_RET[m.slice(5)] || m);
+  const meses = d.meses;
+  const media = meses.length ? meses.reduce((s: number, m: any) => s + m.ocupacaoPct, 0) / meses.length : 0;
+  const cor = (p: number) => (p >= 85 ? "text-red-400" : p >= 65 ? "text-emerald-400" : "text-sky-400");
+  const corBar = (p: number) => (p >= 85 ? "bg-red-500/60" : p >= 65 ? "bg-emerald-500/60" : "bg-sky-500/60");
+  return (
+    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/15 bg-black p-5" data-testid="ocupacao-mes">
+      <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.25em] text-red-400 font-semibold">Taxa de Ocupação · 2026</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Quanto da agenda dos barbeiros foi ocupada. Sobra capacidade = dá pra crescer.</div>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] text-muted-foreground">Média do ano</div>
+          <div className={`text-2xl font-bold tabular-nums ${cor(media)}`}>{media.toFixed(0)}%</div>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+        {meses.map((m: any) => (
+          <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{rot(m.mes)}</span>
+            <span className={`text-lg font-bold tabular-nums leading-tight ${cor(m.ocupacaoPct)}`}>{m.ocupacaoPct.toFixed(0)}%</span>
+            <div className="w-full bg-white/5 rounded h-1.5 overflow-hidden"><div className={`h-full ${corBar(m.ocupacaoPct)}`} style={{ width: `${Math.min(100, m.ocupacaoPct)}%` }} /></div>
+            <span className="text-[9px] text-muted-foreground tabular-nums">{m.atendimentos} atend</span>
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-2">Premissa: {d.nBarbeiros} barbeiros · ter–sex 11h, sáb 10h · {d.duracaoMin}min/atendimento. Azul &lt;65% (espaço) · verde 65–85% (saudável) · vermelho &gt;85% (no limite). Mês recente pode ser parcial.</p>
     </div>
   );
 }

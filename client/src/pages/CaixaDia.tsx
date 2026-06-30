@@ -82,6 +82,9 @@ export default function CaixaDia() {
       {/* v82: fechamentos diários (Trinks/email) pra conferir */}
       <FechamentosDiarios onConferir={(dt) => setData(dt)} />
 
+      {/* v86: caixa em dinheiro + débitos do mês */}
+      <CaixaDinheiroMes />
+
       {loading && !resp && <div className="text-sm text-muted-foreground py-8 text-center">Carregando…</div>}
 
       {resp && !resp.temVenda && (
@@ -284,6 +287,79 @@ function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void
           </table>
         </div>
         <div className="px-3 py-1.5 text-[10px] text-muted-foreground border-t border-border/50">Fechamento Trinks = total oficial do e-mail. "Caiu no Itaú" preenche conforme você importa o extrato.</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── v86 Tier2: Caixa em dinheiro + débitos do mês (fonte: e-mail Trinks) ─────
+function CaixaDinheiroMes() {
+  const [d, setD] = useState<any>(null);
+  const [carregando, setCarregando] = useState(true);
+  const mes = hojeYMD().slice(0, 7);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/caixa-dinheiro?mes=${mes}`).then(r => r.json()).then(x => { if (x?.ok) setD(x); }).finally(() => setCarregando(false));
+  }, [mes]);
+  if (carregando || !d || (d.dias || []).length === 0) return null;
+  const t = d.totaisCaixa || {};
+  const deb = d.debitoAtual || {};
+  const dm = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+  const mesLabel = new Date(mes + "-01T12:00:00").toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  const reconcOK = Math.abs((d.reconciliacao || 0) - (t.saldo || 0)) < 1;
+
+  return (
+    <div className="space-y-3">
+      {/* Caixa em dinheiro */}
+      <div className="rounded-2xl border-2 border-emerald-500/40 ring-1 ring-white/10 bg-black p-4" data-testid="caixa-dinheiro">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[11px] uppercase tracking-[0.2em] text-emerald-400 font-semibold">Caixa em Dinheiro · {mesLabel}</span>
+          <span className="text-[10px] text-white/40">fonte: e-mail Trinks</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[["Recebido", t.recebido, "text-emerald-400"], ["Despesas", t.despesas, "text-red-400"], ["Sangria", t.sangria, "text-amber-400"], ["Saldo", t.saldo, "text-white"]].map(([lbl, v, cor]: any) => (
+            <div key={lbl} className="rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+              <div className={`text-[10px] uppercase tracking-wide ${cor} font-semibold`}>{lbl}</div>
+              <div className="text-base font-bold text-white tabular-nums mt-0.5">R$ {fmt(v || 0)}</div>
+            </div>
+          ))}
+        </div>
+        <div className={`text-[10px] mt-2 ${reconcOK ? "text-emerald-400/70" : "text-amber-400"}`}>
+          {reconcOK ? "✓" : "⚠"} Reconciliação: Abertura + Recebido + Troco − Despesas − Sangria = R$ {fmt(d.reconciliacao || 0)} {reconcOK ? "(bate com o saldo)" : `(saldo informado: R$ ${fmt(t.saldo || 0)})`}
+        </div>
+        <details className="mt-2">
+          <summary className="text-[11px] text-muted-foreground cursor-pointer">Ver por dia ({(d.dias || []).length} dias)</summary>
+          <div className="overflow-x-auto max-h-[280px] overflow-y-auto mt-2">
+            <table className="w-full text-xs">
+              <thead className="text-[10px] uppercase text-muted-foreground border-b border-border/50 sticky top-0 bg-black">
+                <tr><th className="text-left p-1.5">Dia</th><th className="text-right p-1.5">Recebido</th><th className="text-right p-1.5">Despesas</th><th className="text-right p-1.5">Sangria</th><th className="text-right p-1.5">Saldo</th></tr>
+              </thead>
+              <tbody>
+                {(d.dias || []).map((x: any) => (
+                  <tr key={x.data} className="border-b border-border/20">
+                    <td className="p-1.5 font-medium">{dm(x.data)}</td>
+                    <td className="p-1.5 text-right tabular-nums">R$ {fmt(x.recebido || 0)}</td>
+                    <td className="p-1.5 text-right tabular-nums text-red-400/80">{x.despesas ? `R$ ${fmt(x.despesas)}` : "—"}</td>
+                    <td className="p-1.5 text-right tabular-nums text-amber-400/80">{x.sangria ? `R$ ${fmt(x.sangria)}` : "—"}</td>
+                    <td className="p-1.5 text-right tabular-nums font-semibold">R$ {fmt(x.saldo || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+
+      {/* Débitos de clientes */}
+      <div className="rounded-lg border border-card-border bg-card p-3" data-testid="debitos-clientes">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <span className="text-sm font-semibold">Débitos de clientes (em aberto)</span>
+          {(deb.totalDebito || 0) === 0 ? (
+            <span className="text-xs text-emerald-400">✓ Nenhum cliente em débito</span>
+          ) : (
+            <span className="text-xs text-red-400 tabular-nums">{deb.clientesEmDebito} cliente(s) · R$ {fmt(deb.totalDebito)} (serviços R$ {fmt(deb.servicosDebito)} + produtos R$ {fmt(deb.produtosDebito)})</span>
+          )}
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-1">Valor que clientes ficaram devendo (fiado). Fonte: e-mail Trinks. Mostra o saldo do último dia do mês.</p>
       </div>
     </div>
   );

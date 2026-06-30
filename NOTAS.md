@@ -8,6 +8,15 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v86 — Tier2 (caixa dinheiro + débitos do email) + cards Clientes/Serviços e Ocupação (30/06/2026) [concluído]
+
+**Pedidos:** (a) card de clientes atendidos + serviços por mês no Dashboard; (b) taxa de ocupação (dono deu: 7 barbeiros + 4 assistentes; ter–sex 09–20h=11h, sáb 08–18h=10h, fecha dom/seg); (c) "Tier 2": extrair do email Trinks o BLOCO caixa em dinheiro (7 campos) + débitos de clientes (4 campos), backfill 180 dias, tela.
+**Feito:**
+- **parseFechamentoTrinks** estendido: `caixaDinheiro{abertura,recebido,troco(2º, ancorado em "Recebido em Dinheiro"),despesas,totalDinheiro,sangria,saldo}` + `debitos{clientesEmDebito,servicosDebito,produtosDebito,totalDebito}`. Validado no email real (27/06: recebido 370, troco -70, saldo 300; reconcilia). Snapshot ganhou campos. Backfill: sincronizar regrava se `!anterior.caixaDinheiro` (130 dias regravados).
+- `GET /api/caixa-dinheiro?mes=` (totais+por dia+reconciliação Abertura+Recebido+Troco−Despesas−Sangria=Saldo; débito = último dia). Tela `CaixaDinheiroMes` na Caixa do Dia. Jun: recebido 6.007 → saldo 5.336 (bate); débitos 0 (Greco não fia).
+- `GET /api/ocupacao?barbeiros=&duracaoMin=` (default 7 barbeiros, 50min; horas: ter–sex 11h sáb 10h; conta só até último dia do caixa p/ mês parcial). Card `OcupacaoMes` no Dashboard. Jan 42%→~50% (Fev-Mai), Jun 48%. ~50% = espaço pra crescer.
+- Card `ClientesAtendidosMes` no Dashboard (clientes únicos + atendimentos/mês + var%).
+
 ### v85 — PERFORMANCE: matar a API Trinks ao vivo nos endpoints automáticos (30/06/2026) [concluído]
 
 **Reclamação:** sistema lento, Caixa do Dia demora demais. **Diagnóstico (tempos prod):** `/api/clientes/duplicados` = **42,9s** (chamado em TODA página pelo AppLayout — fazia trinksFetchAll de clientes, queimando cota + timeout, pior após deploy quando o syncCache zera); `conferencia/:data` de hoje = 6,7s (tentava API ao vivo 6s timeout). **Feito:** (1) conferencia/:data v85 csv-only — removido o bloco else que chamava trinksFetchAll("transacoes"); usa financeiro CSV → fallback caixa CSV → "sem dados". 6,7s→1,4s. (2) duplicados v85 — NUNCA toca API no caminho automático; serve do kv `clientes_duplicados:cache` (persiste no deploy); recálculo com API só com `?refresh=1`; salva resultado no kv ao calcular. 42,9s→0,2s. **Outros endpoints automáticos OK:** painel 0,34s, hoje 1,36s, avisos 0,93s, fechamentos 1,27s. **Pendência:** popular o cache de duplicados em prod 1x via ?refresh=1 (badge mostra 0 até lá).

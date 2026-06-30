@@ -951,6 +951,9 @@ export default function Dashboard() {
       {/* Faturamento acumulado do ano */}
       <FaturamentoAno />
 
+      {/* Clientes atendidos & serviços executados mês a mês */}
+      <ClientesAtendidosMes />
+
       {/* Faturamento por fonte (onde atacar) */}
       <FaturamentoPorFonte />
 
@@ -2585,6 +2588,67 @@ function FaturamentoAno() {
         })}
       </div>
       <p className="text-[10px] text-muted-foreground mt-2">Fonte: Caixa da Trinks (mês corrente é parcial). % = variação vs. mês anterior. Atualiza ao importar cada mês.</p>
+    </div>
+  );
+}
+
+// ─── v86: Clientes atendidos & serviços executados mês a mês (evolução) ──────
+function ClientesAtendidosMes() {
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+  const [meses, setMeses] = useState<any[] | null>(null);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/historico/mensal`).then((r) => r.json()).then((d) => { if (d?.ok) setMeses(d.meses || []); }).catch(() => {});
+  }, [API_BASE]);
+  if (!meses || meses.length === 0) return null;
+  const rot = (m: string) => (NOME_MES_RET[m.slice(5)] || m);
+  const maxC = Math.max(...meses.map((x) => x.clientesUnicos || 0), 1);
+  const maxA = Math.max(...meses.map((x) => x.comandas || 0), 1);
+  const totC = meses.reduce((s, m) => s + (m.clientesUnicos || 0), 0);
+  const totA = meses.reduce((s, m) => s + (m.comandas || 0), 0);
+  const varBadge = (atual: number, ant: number) => {
+    if (!ant) return <span className="text-[10px] text-muted-foreground">—</span>;
+    const v = ((atual - ant) / ant) * 100;
+    const up = v >= 0;
+    return <span className={`text-[10px] font-semibold tabular-nums ${up ? "text-emerald-400" : "text-red-400"}`}>{up ? "▲" : "▼"} {up ? "+" : ""}{v.toFixed(0)}%</span>;
+  };
+  return (
+    <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-5" data-testid="clientes-atendidos-mes">
+      <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">Clientes & Serviços · 2026</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Evolução de clientes atendidos e serviços executados, mês a mês.</div>
+        </div>
+        <div className="flex gap-4 text-xs">
+          <div className="text-right"><div className="text-[10px] text-muted-foreground">Clientes (Jan–Jun)</div><div className="font-semibold tabular-nums text-white">{totC.toLocaleString("pt-BR")}</div></div>
+          <div className="text-right"><div className="text-[10px] text-muted-foreground">Serviços (Jan–Jun)</div><div className="font-semibold tabular-nums text-white">{totA.toLocaleString("pt-BR")}</div></div>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+        {meses.map((m, idx) => {
+          const antC = idx > 0 ? meses[idx - 1].clientesUnicos : 0;
+          const antA = idx > 0 ? meses[idx - 1].comandas : 0;
+          return (
+            <div key={m.mes} className="flex flex-col gap-1.5 rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground text-center">{rot(m.mes)}</span>
+              {/* clientes */}
+              <div className="flex flex-col items-center">
+                <span className="text-[9px] text-sky-400/70 uppercase tracking-wide">👤 clientes</span>
+                <span className="text-base font-bold text-white tabular-nums leading-tight">{(m.clientesUnicos || 0).toLocaleString("pt-BR")}</span>
+                {varBadge(m.clientesUnicos, antC)}
+                <div className="w-full bg-white/5 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-sky-500/50" style={{ width: `${Math.max(6, (m.clientesUnicos / maxC) * 100)}%` }} /></div>
+              </div>
+              {/* serviços/atendimentos */}
+              <div className="flex flex-col items-center pt-1.5 border-t border-white/10">
+                <span className="text-[9px] text-emerald-400/70 uppercase tracking-wide">✂️ serviços</span>
+                <span className="text-base font-bold text-white tabular-nums leading-tight">{(m.comandas || 0).toLocaleString("pt-BR")}</span>
+                {varBadge(m.comandas, antA)}
+                <div className="w-full bg-white/5 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-emerald-500/50" style={{ width: `${Math.max(6, (m.comandas / maxA) * 100)}%` }} /></div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-2">Clientes = clientes únicos atendidos no mês. Serviços = atendimentos (comandas) realizados. % = variação vs. mês anterior. Fonte: Caixa da Trinks (mês recente pode ser parcial até reimportar o caixa).</p>
     </div>
   );
 }

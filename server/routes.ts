@@ -8460,6 +8460,10 @@ Regras CRÍTICAS:
       const porDia = Object.entries(porDiaMap).map(([dia, valor]) => ({ dia, valor: r2(valor) })).sort((a, b) => a.dia.localeCompare(b.dia));
       const melhorDia = porDia.reduce((a: any, b: any) => (b.valor > (a?.valor || 0) ? b : a), null as any);
       const ultimoDiaCaixa = porDia.length ? porDia[porDia.length - 1].dia : null;
+      // receita OFICIAL do mês (Total Mês do email) — corrige o caixa parcial
+      const tmMes: any = await kvGet(`trinks_total_mes:${mes}`);
+      const mesOficial = Number(tmMes?.total || 0);
+      const mesRealizado = mesOficial > 0 ? mesOficial : mesTotal;
 
       // ── SEMANA (últimos 7 dias até hoje, do caixa) ──
       const seteAtras = ymdAddDays(hoje, -6);
@@ -8501,12 +8505,48 @@ Regras CRÍTICAS:
           metaServicos: r2(metaSemana * PROP.serv), metaPlanos: r2(metaSemana * PROP.plano), metaProdutos: r2(metaSemana * PROP.prod),
         },
         mes: {
-          mes, meta: metaMes, realizado: r2(mesTotal),
-          pct: metaMes > 0 ? Math.round((mesTotal / metaMes) * 100) : 0,
+          mes, meta: metaMes, realizado: r2(mesRealizado),
+          realizadoCaixa: r2(mesTotal), oficial: r2(mesOficial),
+          pct: metaMes > 0 ? Math.round((mesRealizado / metaMes) * 100) : 0,
           servicos: r2(mesServ), planos: r2(mesPlano), produtos: r2(mesProd),
           porDia, melhorDia, ultimoDia: ultimoDiaCaixa,
         },
       });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
+  // v88: GET /api/dashboard/consultar?dia= OU ?semanaFim= — busca o fechamento de
+  // um dia específico ou a soma de uma semana (7 dias até a data), via snapshots.
+  app.get("/api/dashboard/consultar", async (req: Request, res: Response) => {
+    try {
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const dia = String(req.query.dia || "");
+      const semanaFim = String(req.query.semanaFim || "");
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dia)) {
+        const s: any = await getSnapshot(dia);
+        return res.json({
+          ok: true, tipo: "dia", data: dia, encontrado: !!s,
+          realizado: r2(Number(s?.faturamento?.total || 0)),
+          atendimentos: Number(s?.faturamento?.qtdTransacoes || s?.agendamentos?.finalizados || 0),
+          fonte: s?.fonte || null,
+        });
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(semanaFim)) {
+        const inicio = ymdAddDays(semanaFim, -6);
+        let total = 0; const dias: any[] = [];
+        for (let i = 0; i < 7; i++) {
+          const dt = ymdAddDays(inicio, i);
+          const s: any = await getSnapshot(dt);
+          const v = Number(s?.faturamento?.total || 0);
+          total += v;
+          dias.push({ dia: dt, valor: r2(v) });
+        }
+        const metaSemana = metaDiaria * 6;
+        return res.json({ ok: true, tipo: "semana", inicio, fim: semanaFim, realizado: r2(total), meta: metaSemana, pct: metaSemana > 0 ? Math.round((total / metaSemana) * 100) : 0, dias });
+      }
+      return res.status(400).json({ ok: false, error: "Informe ?dia=YYYY-MM-DD ou ?semanaFim=YYYY-MM-DD" });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }

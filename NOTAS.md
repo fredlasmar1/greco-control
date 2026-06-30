@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v88 — Mês oficial no painel + busca por dia/semana no Dashboard (30/06/2026) [concluído]
+
+**Pedido:** o card Mês mostrava errado (R$76.936 caixa parcial); poder buscar um dia e pesquisar uma semana no dashboard. **Feito:** (1) `/api/dashboard/painel` mês usa `trinks_total_mes` oficial quando existe (76.936→84.719, 85%); expõe realizadoCaixa/oficial. (2) `GET /api/dashboard/consultar?dia=|?semanaFim=` (snapshot do dia / soma 7 dias). (3) PainelExecutivo: faixa de busca no topo com 2 date inputs (dia + semana-fim) que mostram o fechamento inline. Validado: dia 24/06 R$4.813, semana até 13/06 R$18.960.
+
 ### v87 — Lista de clientes pra reativar (frequência acionável) (30/06/2026) [concluído]
 
 **Pedido:** frequência de clientes (quem volta/sumiu). **Descoberta:** já existia `/api/clientes/retencao` (caixa, clienteId — melhor que email de agendamento: comparecimento real, sem homônimo) + componente RetencaoClientes no Dashboard. Dados: 1216 clientes, 30% fiéis, 41% inativos, 38% só 1 visita. **Faltava o acionável:** QUEM sumiu. **Feito:** endpoint acumula valorTotal+ultimaData por cliente; retorna `listaInativos` (vinham 2+ vezes, sumidos 2+ meses, ord. por valor gasto, top 100). Tela: `<details>` "📞 Clientes pra reativar" no RetencaoClientes (nome/visitas/total gasto/última visita/sumido há — SEM telefone/email, contato pelo cadastro Trinks). Ex: Welton Falcão 11x R$1.250 sumido 2m.

@@ -2866,6 +2866,19 @@ function PainelExecutivo() {
   const [d, setD] = useState<any>(null);
   const [carregando, setCarregando] = useState(true);
   const [hojeVivo, setHojeVivo] = useState<any>(null);  // v78: "Hoje ao vivo" carrega separado
+  // v88: busca por dia / semana
+  const [buscaDia, setBuscaDia] = useState("");
+  const [resDia, setResDia] = useState<any>(null);
+  const [buscaSem, setBuscaSem] = useState("");
+  const [resSem, setResSem] = useState<any>(null);
+  const consultarDia = (dt: string) => {
+    setBuscaDia(dt); if (!dt) { setResDia(null); return; }
+    fetch(`${API_BASE}/api/dashboard/consultar?dia=${dt}`).then(r => r.json()).then(x => { if (x?.ok) setResDia(x); }).catch(() => {});
+  };
+  const consultarSemana = (dt: string) => {
+    setBuscaSem(dt); if (!dt) { setResSem(null); return; }
+    fetch(`${API_BASE}/api/dashboard/consultar?semanaFim=${dt}`).then(r => r.json()).then(x => { if (x?.ok) setResSem(x); }).catch(() => {});
+  };
   useEffect(() => {
     fetch(`${API_BASE}/api/dashboard/painel`).then(r => r.json()).then(x => {
       if (x?.ok) setD(x);
@@ -2892,6 +2905,33 @@ function PainelExecutivo() {
   ];
 
   return (
+   <div className="space-y-3">
+    {/* ───── BUSCA por dia / semana ───── */}
+    <div className="rounded-xl border border-white/10 bg-black/40 p-3 flex flex-col sm:flex-row gap-3 flex-wrap items-end" data-testid="painel-busca">
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] uppercase tracking-wide text-white/40">🔍 Buscar um dia</label>
+        <input type="date" value={buscaDia} max={mes.ultimoDia || undefined} onChange={(e) => consultarDia(e.target.value)}
+          className="bg-white/[0.04] border border-white/15 rounded px-2 py-1 text-xs text-white" data-testid="busca-dia" />
+      </div>
+      {resDia && (
+        <div className="text-xs">
+          {resDia.encontrado ? (
+            <span className="text-white">{_dm(resDia.data)}: <strong className="tabular-nums">{formatCurrency(resDia.realizado)}</strong> <span className="text-white/40">· {resDia.atendimentos} atend</span></span>
+          ) : <span className="text-white/40">{_dm(resDia.data)}: sem fechamento</span>}
+        </div>
+      )}
+      <div className="flex flex-col gap-1 sm:ml-4">
+        <label className="text-[10px] uppercase tracking-wide text-white/40">🔍 Semana (até o dia)</label>
+        <input type="date" value={buscaSem} onChange={(e) => consultarSemana(e.target.value)}
+          className="bg-white/[0.04] border border-white/15 rounded px-2 py-1 text-xs text-white" data-testid="busca-semana" />
+      </div>
+      {resSem && (
+        <div className="text-xs">
+          <span className="text-white">{_dm(resSem.inicio)}–{_dm(resSem.fim)}: <strong className="tabular-nums">{formatCurrency(resSem.realizado)}</strong> <span className="text-white/40">· {resSem.pct}% da meta</span></span>
+        </div>
+      )}
+    </div>
+
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
       {/* ───── ÚLTIMO FECHAMENTO (ontem) ───── */}
       <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-5" data-testid="painel-hoje">
@@ -2960,6 +3000,7 @@ function PainelExecutivo() {
         <div className="flex justify-between text-[8px] text-white/25 mt-0.5"><span>{mes.porDia?.[0] && _dm(mes.porDia[0].dia)}</span><span className="text-emerald-400/60">▮ acima</span><span className="text-red-400/60">▮ abaixo R${Math.round(metaDiaMes)}/dia</span><span>{mes.porDia?.length ? _dm(mes.porDia[mes.porDia.length - 1].dia) : ""}</span></div>
       </div>
     </div>
+   </div>
   );
 }
 

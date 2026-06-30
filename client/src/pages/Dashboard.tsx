@@ -2560,18 +2560,31 @@ function FaturamentoAno() {
           </div>
         </div>
       </div>
-      <div className="flex items-end gap-1 mt-3 h-12">
-        {meses.map((m) => {
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-4">
+        {meses.map((m, idx) => {
           const max = Math.max(...meses.map((x) => x.receita), 1);
+          const ant = idx > 0 ? meses[idx - 1].receita : 0;
+          const varPct = ant > 0 ? ((m.receita - ant) / ant) * 100 : null;
+          const subiu = varPct !== null && varPct >= 0;
           return (
-            <div key={m.mes} className="flex-1 flex flex-col items-center gap-0.5" title={`${rot(m.mes)}: ${formatCurrency(m.receita)}`}>
-              <div className="w-full bg-primary/40 rounded-t" style={{ height: `${Math.max(6, (m.receita / max) * 100)}%` }} />
-              <span className="text-[9px] text-muted-foreground">{rot(m.mes)}</span>
+            <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-white/[0.03] border border-white/10 p-2" title={`${rot(m.mes)}: ${formatCurrency(m.receita)}`}>
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{rot(m.mes)}</span>
+              <span className="text-[13px] font-bold text-white tabular-nums leading-tight">{formatCurrency(m.receita)}</span>
+              {varPct === null ? (
+                <span className="text-[10px] text-muted-foreground">—</span>
+              ) : (
+                <span className={`text-[10px] font-semibold tabular-nums ${subiu ? "text-emerald-400" : "text-red-400"}`}>
+                  {subiu ? "▲" : "▼"} {subiu ? "+" : ""}{varPct.toFixed(0)}%
+                </span>
+              )}
+              <div className="w-full bg-white/5 rounded h-1.5 overflow-hidden">
+                <div className={`h-full rounded ${subiu || varPct === null ? "bg-emerald-500/50" : "bg-red-500/50"}`} style={{ width: `${Math.max(6, (m.receita / max) * 100)}%` }} />
+              </div>
             </div>
           );
         })}
       </div>
-      <p className="text-[10px] text-muted-foreground mt-1">Fonte: Caixa da Trinks (mês corrente é parcial). Atualiza ao importar cada mês.</p>
+      <p className="text-[10px] text-muted-foreground mt-2">Fonte: Caixa da Trinks (mês corrente é parcial). % = variação vs. mês anterior. Atualiza ao importar cada mês.</p>
     </div>
   );
 }

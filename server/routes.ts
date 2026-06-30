@@ -5639,17 +5639,24 @@ export async function registerRoutes(
 
   // NOTA: rota /api/version já está definida acima (contém build date + uptime).
 
-  app.get("/api/clientes/duplicados", async (_req: Request, res: Response) => {
+  app.get("/api/clientes/duplicados", async (req: Request, res: Response) => {
     try {
-      // Get clients from sync cache or fetch
+      // v85: o badge no AppLayout chama isso em TODA página. NUNCA tocar a API aqui
+      // (trinksFetchAll de clientes levava ~42s + queimava cota). Serve do cache kv
+      // (Postgres, persiste no deploy). Recálculo com API só com ?refresh=1 explícito.
+      const refresh = req.query.refresh === "1";
       let clientes: any[] = [];
       const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
       if (syncCache && Array.isArray(syncCache.clientes) && syncCache.clientes.length > 0) {
         clientes = syncCache.clientes;
-      } else {
-        // Fetch fresh
+      } else if (refresh) {
         clientes = await trinksFetchAll("clientes");
         if (!Array.isArray(clientes)) clientes = [];
+      } else {
+        // sem clientes em cache e sem refresh → devolve o último resultado salvo (rápido)
+        const cache: any = await kvGet("clientes_duplicados:cache");
+        if (cache) return res.json(cache);
+        return res.json({ totalClientes: 0, clientsWithPhone: 0, clientsWithoutPhone: 0, totalGruposDuplicados: 0, totalClientesDuplicados: 0, potencialReducao: 0, grupos: [], precisaSincronizar: true });
       }
 
       // Normalize phone number: strip everything except digits, take last 8-9 digits
@@ -5714,7 +5721,7 @@ export async function registerRoutes(
       const totalDuplicateClients = duplicateGroups.reduce((s, g) => s + g.count, 0);
       const uniqueAfterMerge = duplicateGroups.length;
 
-      return res.json({
+      const resultado = {
         totalClientes: clientes.length,
         clientsWithPhone,
         clientsWithoutPhone,
@@ -5722,7 +5729,10 @@ export async function registerRoutes(
         totalClientesDuplicados: totalDuplicateClients,
         potencialReducao: totalDuplicateClients - uniqueAfterMerge,
         grupos: duplicateGroups,
-      });
+      };
+      // cacheia pro badge servir rápido nos próximos acessos (sobrevive ao deploy)
+      await kvSet("clientes_duplicados:cache", resultado);
+      return res.json(resultado);
     } catch (err: any) {
       return handleTrinksError(err, res);
     }
@@ -7016,8 +7026,9 @@ Regras CRÍTICAS:
       let trinks429 = false;
       let qtdVendas = 0;
 
-      // v54 csv-first: se há CSV do dia, USA o CSV (0 chamadas Trinks). Só toca a
-      // API ao vivo quando NÃO há CSV do dia (dias recentes ainda não exportados).
+      // v85 csv-only: usa SÓ o CSV (0 chamadas Trinks — a API ao vivo era 429 crônico
+      // e travava ~6s esperando timeout). Se há financeiro do dia, usa; senão o CSV
+      // Caixa abaixo cobre como fallback. Sem CSV nenhum → "sem dados" (rápido).
       const finPayload: any = await kvGet(trinksImport.kvKeyFor("financeiro", mes));
       const finRows: any[] = Array.isArray(finPayload?.rows) ? finPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
       if (finRows.length > 0) {
@@ -7026,29 +7037,6 @@ Regras CRÍTICAS:
         }
         fonteVenda = "csv";
         qtdVendas = finRows.length;
-      } else {
-        // sem CSV do dia → tenta API Trinks ao vivo (timeout 6s).
-        try {
-          const dFimApi = new Date(data + "T12:00:00Z"); dFimApi.setUTCDate(dFimApi.getUTCDate() + 1);
-          const transApi: any = await Promise.race([
-            trinksFetchAll("transacoes", { dataInicio: data, dataFim: dFimApi.toISOString().slice(0, 10) }),
-            new Promise((resolve) => setTimeout(() => resolve("__timeout__"), 6000)),
-          ]);
-          if (transApi === "__timeout__") { trinks429 = true; }
-          else {
-            const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
-            for (const t of arr) {
-              const raw = t.dataHora || t.dataReferencia || t.data || "";
-              const d = typeof raw === "string" ? raw.split("T")[0] : "";
-              if (d !== data) continue;
-              qtdVendas++;
-              for (const fp of (t.formasPagamentos || t.formasPagamento || [])) classificaForma(String(fp.nome || ""), Number(fp.valor || 0));
-            }
-            if (qtdVendas > 0) fonteVenda = "trinks";
-          }
-        } catch (e: any) {
-          if (e?.status === 429 || /limit|429/i.test(e?.message || "")) trinks429 = true;
-        }
       }
 
       // ── Vendido por tipo + por forma (CSV Caixa) ──

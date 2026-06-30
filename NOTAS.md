@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v85 — PERFORMANCE: matar a API Trinks ao vivo nos endpoints automáticos (30/06/2026) [concluído]
+
+**Reclamação:** sistema lento, Caixa do Dia demora demais. **Diagnóstico (tempos prod):** `/api/clientes/duplicados` = **42,9s** (chamado em TODA página pelo AppLayout — fazia trinksFetchAll de clientes, queimando cota + timeout, pior após deploy quando o syncCache zera); `conferencia/:data` de hoje = 6,7s (tentava API ao vivo 6s timeout). **Feito:** (1) conferencia/:data v85 csv-only — removido o bloco else que chamava trinksFetchAll("transacoes"); usa financeiro CSV → fallback caixa CSV → "sem dados". 6,7s→1,4s. (2) duplicados v85 — NUNCA toca API no caminho automático; serve do kv `clientes_duplicados:cache` (persiste no deploy); recálculo com API só com `?refresh=1`; salva resultado no kv ao calcular. 42,9s→0,2s. **Outros endpoints automáticos OK:** painel 0,34s, hoje 1,36s, avisos 0,93s, fechamentos 1,27s. **Pendência:** popular o cache de duplicados em prod 1x via ?refresh=1 (badge mostra 0 até lá).
+
 ### v84 — Receita OFICIAL do mês (Total Mês do email Trinks) — bate com a Trinks (29/06/2026) [concluído]
 
 **Problema do dono:** Trinks mostra receita R$84.629/junho, sistema mostrava R$76.936. **Causa raiz achada:** o sistema somava o CAIXA diário (o que passou pelo caixa); a Trinks mostra a RECEITA do mês, que INCLUI Clube/assinaturas recorrentes (cobradas no cartão, não passam pelo fechamento de caixa diário). O próprio e-mail diário tem "Total Junho/2026 R$ 84.719,25" (oficial). **Feito:** parser extrai `totalMes`+`mesRef` (regex "Total <mês>/<ano> R$X"); sincronizar grava o maior por mês em kv `trinks_total_mes:YYYY-MM` (mesmo se o dia já gravado). `/api/caixa-dia-fechamentos` expõe `totalOficial` + `recorrente` (=oficial−caixa). Card "Recebimentos do mês": **Receita oficial Trinks R$84.719,25** (bate!) + "passou pelo caixa R$76.936" + "Clube/recorrente R$7.782,60". **Validado.** As formas (PIX/créd/déb/din) = detalhe do caixa.

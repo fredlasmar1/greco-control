@@ -60,6 +60,7 @@ import {
   UserPlus,
   Repeat,
   UserMinus,
+  Search,
 } from "lucide-react";
 import {
   LineChart,
@@ -2866,18 +2867,17 @@ function PainelExecutivo() {
   const [d, setD] = useState<any>(null);
   const [carregando, setCarregando] = useState(true);
   const [hojeVivo, setHojeVivo] = useState<any>(null);  // v78: "Hoje ao vivo" carrega separado
-  // v88: busca por dia / semana
-  const [buscaDia, setBuscaDia] = useState("");
-  const [resDia, setResDia] = useState<any>(null);
-  const [buscaSem, setBuscaSem] = useState("");
-  const [resSem, setResSem] = useState<any>(null);
-  const consultarDia = (dt: string) => {
-    setBuscaDia(dt); if (!dt) { setResDia(null); return; }
-    fetch(`${API_BASE}/api/dashboard/consultar?dia=${dt}`).then(r => r.json()).then(x => { if (x?.ok) setResDia(x); }).catch(() => {});
-  };
-  const consultarSemana = (dt: string) => {
-    setBuscaSem(dt); if (!dt) { setResSem(null); return; }
-    fetch(`${API_BASE}/api/dashboard/consultar?semanaFim=${dt}`).then(r => r.json()).then(x => { if (x?.ok) setResSem(x); }).catch(() => {});
+  // v89: consulta por dia / semana (premium)
+  const [modoConsulta, setModoConsulta] = useState<"dia" | "semana">("dia");
+  const [dataConsulta, setDataConsulta] = useState<string>("");
+  const [resConsulta, setResConsulta] = useState<any>(null);
+  const [buscandoConsulta, setBuscandoConsulta] = useState(false);
+  const buscarConsulta = (modo: "dia" | "semana", dt: string) => {
+    setModoConsulta(modo); setDataConsulta(dt);
+    if (!dt) { setResConsulta(null); return; }
+    setBuscandoConsulta(true);
+    const q = modo === "dia" ? `dia=${dt}` : `semanaFim=${dt}`;
+    fetch(`${API_BASE}/api/dashboard/consultar?${q}`).then(r => r.json()).then(x => { if (x?.ok) setResConsulta(x); }).finally(() => setBuscandoConsulta(false));
   };
   useEffect(() => {
     fetch(`${API_BASE}/api/dashboard/painel`).then(r => r.json()).then(x => {
@@ -2897,6 +2897,10 @@ function PainelExecutivo() {
   const { semana, mes } = d;
   const maxDia = Math.max(1, ...(mes.porDia || []).map((x: any) => x.valor));
   const metaDiaMes = mes.meta / 30;
+  const addD = (ymd: string, n: number) => { const dt = new Date(ymd + "T12:00:00"); dt.setDate(dt.getDate() + n); return dt.toISOString().slice(0, 10); };
+  const hojeStr = new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const metaConsulta = modoConsulta === "dia" ? (hoje.meta || 5000) : (semana.meta || 30000);
+  const pctConsulta = resConsulta ? Math.round(((resConsulta.realizado || 0) / metaConsulta) * 100) : 0;
 
   const cats = [
     { lbl: "Serviços", v: semana.servicos, m: semana.metaServicos, ring: "ring-sky-500/30", txt: "text-sky-400", bar: "bg-sky-500" },
@@ -2906,28 +2910,60 @@ function PainelExecutivo() {
 
   return (
    <div className="space-y-3">
-    {/* ───── BUSCA por dia / semana ───── */}
-    <div className="rounded-xl border border-white/10 bg-black/40 p-3 flex flex-col sm:flex-row gap-3 flex-wrap items-end" data-testid="painel-busca">
-      <div className="flex flex-col gap-1">
-        <label className="text-[10px] uppercase tracking-wide text-white/40">🔍 Buscar um dia</label>
-        <input type="date" value={buscaDia} max={mes.ultimoDia || undefined} onChange={(e) => consultarDia(e.target.value)}
-          className="bg-white/[0.04] border border-white/15 rounded px-2 py-1 text-xs text-white" data-testid="busca-dia" />
-      </div>
-      {resDia && (
-        <div className="text-xs">
-          {resDia.encontrado ? (
-            <span className="text-white">{_dm(resDia.data)}: <strong className="tabular-nums">{formatCurrency(resDia.realizado)}</strong> <span className="text-white/40">· {resDia.atendimentos} atend</span></span>
-          ) : <span className="text-white/40">{_dm(resDia.data)}: sem fechamento</span>}
+    {/* ───── CONSULTA por dia / semana (v89) ───── */}
+    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-transparent p-4" data-testid="painel-busca">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+        <div className="flex items-center gap-2">
+          <Search className="w-4 h-4 text-sky-400" />
+          <span className="text-[11px] uppercase tracking-[0.2em] text-white/60 font-semibold">Consultar período</span>
         </div>
-      )}
-      <div className="flex flex-col gap-1 sm:ml-4">
-        <label className="text-[10px] uppercase tracking-wide text-white/40">🔍 Semana (até o dia)</label>
-        <input type="date" value={buscaSem} onChange={(e) => consultarSemana(e.target.value)}
-          className="bg-white/[0.04] border border-white/15 rounded px-2 py-1 text-xs text-white" data-testid="busca-semana" />
+        {/* toggle dia / semana */}
+        <div className="flex rounded-lg border border-white/15 overflow-hidden text-xs">
+          {(["dia", "semana"] as const).map((m) => (
+            <button key={m} onClick={() => buscarConsulta(m, dataConsulta || hojeStr)}
+              className={`px-3 py-1 transition-colors ${modoConsulta === m ? "bg-sky-500/20 text-sky-300 font-semibold" : "text-white/40 hover:text-white/70"}`}
+              data-testid={`consulta-modo-${m}`}>{m === "dia" ? "Dia" : "Semana"}</button>
+          ))}
+        </div>
       </div>
-      {resSem && (
-        <div className="text-xs">
-          <span className="text-white">{_dm(resSem.inicio)}–{_dm(resSem.fim)}: <strong className="tabular-nums">{formatCurrency(resSem.realizado)}</strong> <span className="text-white/40">· {resSem.pct}% da meta</span></span>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* navegação ← data → */}
+        <button onClick={() => dataConsulta && buscarConsulta(modoConsulta, addD(dataConsulta, modoConsulta === "dia" ? -1 : -7))}
+          className="w-8 h-8 rounded-lg border border-white/15 text-white/60 hover:bg-white/5 flex items-center justify-center" data-testid="consulta-prev">‹</button>
+        <input type="date" value={dataConsulta} max={hojeStr} onChange={(e) => buscarConsulta(modoConsulta, e.target.value)}
+          className="bg-white/[0.06] border border-white/20 rounded-lg px-3 py-1.5 text-sm text-white [color-scheme:dark]" data-testid="consulta-data" />
+        <button onClick={() => dataConsulta && buscarConsulta(modoConsulta, addD(dataConsulta, modoConsulta === "dia" ? 1 : 7))}
+          disabled={!dataConsulta || dataConsulta >= hojeStr}
+          className="w-8 h-8 rounded-lg border border-white/15 text-white/60 hover:bg-white/5 disabled:opacity-30 flex items-center justify-center" data-testid="consulta-next">›</button>
+        {/* atalhos */}
+        <div className="flex gap-1.5 ml-1 flex-wrap">
+          <button onClick={() => buscarConsulta("dia", addD(hojeStr, -1))} className="px-2.5 py-1 rounded-lg border border-white/15 text-[11px] text-white/60 hover:bg-white/5">Ontem</button>
+          <button onClick={() => buscarConsulta("semana", hojeStr)} className="px-2.5 py-1 rounded-lg border border-white/15 text-[11px] text-white/60 hover:bg-white/5">Últimos 7 dias</button>
+          <button onClick={() => buscarConsulta("semana", addD(hojeStr, -7))} className="px-2.5 py-1 rounded-lg border border-white/15 text-[11px] text-white/60 hover:bg-white/5">Semana passada</button>
+        </div>
+      </div>
+
+      {/* resultado em card */}
+      {buscandoConsulta && !resConsulta && <div className="text-xs text-white/40 mt-3">Buscando…</div>}
+      {resConsulta && (
+        <div className="mt-3 rounded-xl border border-sky-400/30 bg-black/40 p-4 flex items-center gap-4" data-testid="consulta-resultado">
+          {(resConsulta.tipo === "dia" && !resConsulta.encontrado) ? (
+            <div className="text-sm text-white/50">📭 {_dm(resConsulta.data)} — sem fechamento registrado nesse dia (domingo/segunda fechado, ou ainda não importado).</div>
+          ) : (
+            <>
+              <Anel pct={pctConsulta} />
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wide text-sky-400/70">
+                  {resConsulta.tipo === "dia" ? `Dia ${_dm(resConsulta.data)}` : `Semana ${_dm(resConsulta.inicio)} – ${_dm(resConsulta.fim)}`}
+                </div>
+                <div className="text-2xl font-bold text-white tabular-nums leading-tight">{formatCurrency(resConsulta.realizado)}</div>
+                <div className="text-[11px] text-white/40">{pctConsulta}% da meta ({formatCurrency(metaConsulta)})
+                  {resConsulta.tipo === "dia" && resConsulta.atendimentos > 0 && <span className="text-sky-400/80"> · {resConsulta.atendimentos} atendimentos</span>}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

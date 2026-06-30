@@ -11296,7 +11296,13 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       // não-casou com ranking → mantém ao vivo (não força 0; evita zerar por falha de join)
     }
     const comissaoProdutos = (produtosLiquidoComissionavel * pctProduto) / 100;
-    const comissaoPlano = (planoReais * pctPlano) / 100;
+    // v91: Ranking é a fonte ÚNICA de serviços (decisão do dono, 30/06). Quando há
+    // ranking do mês, os serviços do cliente de plano JÁ entram na produção do
+    // ranking (Total Serviços) — pagar comissão de plano por agendamento dobraria a
+    // conta (além de vir de snapshots parciais capturados durante o 429). Zera.
+    // Sem ranking → cálculo ao vivo mantém o comportamento antigo. A comissão do
+    // Clube Greco é a TAXA da assinatura (à parte) e permanece.
+    const comissaoPlano = _rankMap.temRanking ? 0 : (planoReais * pctPlano) / 100;
     const comissaoClubeGreco = Number(clubeGreco?.comissaoRS || 0);
     const excedente = Math.max(0, servicosLiquido - metaReais);
     const bonusExcedente = (excedente * pctBonusExcedente) / 100;
@@ -11476,13 +11482,19 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         }
       }
 
-      const linhas = await Promise.all(Array.from(ids).map(async (id) => {
+      let linhas = await Promise.all(Array.from(ids).map(async (id) => {
         const profMes = periodo.porProfissional[id];
         const meta = metas[id];
         const pagto = pagamentosMes[id];
         const clube = matchClubePorProfId.get(id);
         return calcularLinhaPagamento(mes, id, profMes, meta, pagto, clube);
       }));
+
+      // v91: descarta linhas-fantasma — ids SEM meta E sem nenhum valor a pagar.
+      // Surgiam de agendamentos com profissionalId hasheado (snapshots durante o
+      // 429) que só carregavam plano; agora que o plano não dobra o ranking, ficam
+      // zeradas. Mantém qualquer profissional com meta (mesmo R$0) ou com valor real.
+      linhas = linhas.filter(l => !!metas[l.profissionalId] || l.calculos.totalBruto > 0.005);
 
       // v32: classifica cada linha em barbeiro vs assistente, calcula ranking e
       // aplica bônus pro top 1 de cada categoria.

@@ -9,3 +9,6 @@ dist/
 .usuarios.json
 .service-costs.json
 .store-data.json
+
+# dumps temporários locais
+.consolidacao-transacoes.json

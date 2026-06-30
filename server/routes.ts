@@ -8578,8 +8578,16 @@ Regras CRÍTICAS:
             };
           }).filter((b: any) => b.servicos > 0 || b.produtos > 0).sort((a: any, b: any) => b.servicos - a.servicos);
         }
+        // receita OFICIAL do mês (Total Mês do email Trinks) — bate com a Trinks.
+        // Usa o oficial quando existe (corrige mês parcial no caixa); senão o caixa.
+        const tm: any = await kvGet(`trinks_total_mes:${mes}`);
+        const receitaOficial = Number(tm?.total || 0);
         meses.push({
-          mes, receita: r2(receita), servico: r2(servico), produto: r2(produto), pacote: r2(pacote),
+          mes,
+          receita: r2(receitaOficial > 0 ? receitaOficial : receita), // oficial quando disponível
+          receitaCaixa: r2(receita),
+          receitaOficial: r2(receitaOficial),
+          servico: r2(servico), produto: r2(produto), pacote: r2(pacote),
           comandas: rows.length, clientesUnicos: clientes.size,
           ticketMedio: rows.length ? r2(receita / rows.length) : 0,
           temRanking: !!barbeiros, barbeiros,

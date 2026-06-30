@@ -251,10 +251,10 @@ function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void
           </div>
           <div className="text-right text-[10px] text-white/40 space-y-0.5">
             <div>Passou pelo caixa: <span className="text-white/70 tabular-nums">R$ {fmt(c.totalCaixa || 0)}</span></div>
-            {c.recorrente > 0 && <div>Clube/recorrente: <span className="text-pink-400/80 tabular-nums">R$ {fmt(c.recorrente)}</span></div>}
+            {c.recorrente > 0 && <div>A conciliar (caixa parcial): <span className="text-amber-400/80 tabular-nums">R$ {fmt(c.recorrente)}</span></div>}
           </div>
         </div>
-        <div className="text-[10px] text-white/30 mt-1">Receita oficial = "Total do mês" do e-mail Trinks (inclui Clube/assinaturas recorrentes que não passam pelo caixa diário). As formas abaixo são o que entrou pelo caixa.</div>
+        <div className="text-[10px] text-white/30 mt-1">Receita oficial = "Total do mês" do e-mail Trinks (bate com a Trinks). A diferença pro caixa = dias ainda não importados no CSV de Caixa. As formas acima são o que já entrou pelo caixa.</div>
       </div>
 
       {/* FECHAMENTOS por dia */}

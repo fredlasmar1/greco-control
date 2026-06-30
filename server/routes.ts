@@ -5640,72 +5640,53 @@ export async function registerRoutes(
   // NOTA: rota /api/version já está definida acima (contém build date + uptime).
 
   app.get("/api/clientes/duplicados", async (req: Request, res: Response) => {
-    try {
-      // v85: o badge no AppLayout chama isso em TODA página. NUNCA tocar a API aqui
-      // (trinksFetchAll de clientes levava ~42s + queimava cota). Serve do cache kv
-      // (Postgres, persiste no deploy). Recálculo com API só com ?refresh=1 explícito.
-      const refresh = req.query.refresh === "1";
-      let clientes: any[] = [];
-      const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
-      if (syncCache && Array.isArray(syncCache.clientes) && syncCache.clientes.length > 0) {
-        clientes = syncCache.clientes;
-      } else if (refresh) {
-        clientes = await trinksFetchAll("clientes");
-        if (!Array.isArray(clientes)) clientes = [];
-      } else {
-        // sem clientes em cache e sem refresh → devolve o último resultado salvo (rápido)
-        const cache: any = await kvGet("clientes_duplicados:cache");
-        if (cache) return res.json(cache);
-        return res.json({ totalClientes: 0, clientsWithPhone: 0, clientsWithoutPhone: 0, totalGruposDuplicados: 0, totalClientesDuplicados: 0, potencialReducao: 0, grupos: [], precisaSincronizar: true });
-      }
+    // Normaliza telefone: só dígitos, últimos 9 (celular) ou 8 (fixo).
+    const normPhone = (raw: string): string => {
+      const d = (raw || "").replace(/\D/g, "");
+      return d.length >= 9 ? d.slice(-9) : d.slice(-8);
+    };
+    const normNome = (s: string): string =>
+      String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+    // O CSV não tem ID Cliente → id sintético = hash NEGATIVO do nome normalizado.
+    // Negativo nunca colide com id real da Trinks (sempre positivo), então o resolver
+    // (que exige typeof number) continua funcionando pros dois mundos.
+    const idDoNome = (nome: string): number => {
+      const s = normNome(nome);
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+      return -(Math.abs(h) || 1);
+    };
 
-      // Normalize phone number: strip everything except digits, take last 8-9 digits
-      function normalizePhone(ddd: string, telefone: string): string {
-        const full = (ddd || "") + (telefone || "");
-        const digits = full.replace(/\D/g, "");
-        // Take last 9 digits (Brazilian mobile) or 8 (landline)
-        return digits.length >= 9 ? digits.slice(-9) : digits.slice(-8);
-      }
+    type NC = { id: any; nome: string; email: string | null; dataCadastro: string; phones: { normalized: string; original: string }[] };
 
-      // Group clients by normalized phone
+    // Mesma rotina de agrupamento por telefone, independente da fonte dos dados.
+    const montar = (clientes: NC[], fonte: string) => {
       const phoneMap: Record<string, any[]> = {};
       let clientsWithPhone = 0;
       let clientsWithoutPhone = 0;
-
-      clientes.forEach((c: any) => {
-        const phones = c.telefones || [];
-        if (phones.length === 0) {
-          clientsWithoutPhone++;
-          return;
-        }
+      for (const c of clientes) {
+        if (c.phones.length === 0) { clientsWithoutPhone++; continue; }
         clientsWithPhone++;
-
-        phones.forEach((p: any) => {
-          const normalized = normalizePhone(p.ddd || "", p.telefone || "");
-          if (normalized.length < 8) return;
-          if (!phoneMap[normalized]) phoneMap[normalized] = [];
-          // Avoid adding same client twice to same phone group
-          if (!phoneMap[normalized].find((x: any) => x.id === c.id)) {
-            phoneMap[normalized].push({
+        for (const p of c.phones) {
+          if (p.normalized.length < 8) continue;
+          if (!phoneMap[p.normalized]) phoneMap[p.normalized] = [];
+          if (!phoneMap[p.normalized].find((x: any) => x.id === c.id)) {
+            phoneMap[p.normalized].push({
               id: c.id,
               nome: c.nome || "",
               email: c.email || null,
               dataCadastro: c.dataCadastro || "",
-              telefoneOriginal: `(${p.ddd || ""}) ${p.telefone || ""}`,
-              telefoneNormalizado: normalized,
+              telefoneOriginal: p.original,
+              telefoneNormalizado: p.normalized,
             });
           }
-        });
-      });
-
-      // Filter out resolved duplicate IDs from each phone group
+        }
+      }
       const resolvedSet = new Set(resolvedDuplicateIds);
       for (const phone of Object.keys(phoneMap)) {
         phoneMap[phone] = phoneMap[phone].filter((c: any) => !resolvedSet.has(c.id));
         if (phoneMap[phone].length === 0) delete phoneMap[phone];
       }
-
-      // Find groups with more than one client (duplicates)
       const duplicateGroups = Object.entries(phoneMap)
         .filter(([_, clients]) => clients.length > 1)
         .map(([phone, clients]) => ({
@@ -5717,22 +5698,97 @@ export async function registerRoutes(
           ),
         }))
         .sort((a, b) => b.count - a.count);
-
       const totalDuplicateClients = duplicateGroups.reduce((s, g) => s + g.count, 0);
-      const uniqueAfterMerge = duplicateGroups.length;
-
-      const resultado = {
+      return {
         totalClientes: clientes.length,
         clientsWithPhone,
         clientsWithoutPhone,
         totalGruposDuplicados: duplicateGroups.length,
         totalClientesDuplicados: totalDuplicateClients,
-        potencialReducao: totalDuplicateClients - uniqueAfterMerge,
+        potencialReducao: totalDuplicateClients - duplicateGroups.length,
         grupos: duplicateGroups,
+        fonte,
       };
-      // cacheia pro badge servir rápido nos próximos acessos (sobrevive ao deploy)
-      await kvSet("clientes_duplicados:cache", resultado);
-      return res.json(resultado);
+    };
+
+    // Adapta clientes da API Trinks (telefones[] {ddd,telefone}) → forma normalizada.
+    const daApi = (clientes: any[]): NC[] => clientes.map((c: any) => ({
+      id: c.id,
+      nome: c.nome || "",
+      email: c.email || null,
+      dataCadastro: c.dataCadastro || "",
+      phones: (c.telefones || []).map((p: any) => ({
+        normalized: normPhone((p.ddd || "") + (p.telefone || "")),
+        original: `(${p.ddd || ""}) ${p.telefone || ""}`,
+      })),
+    }));
+
+    // Fonte CSV "Ranking de Clientes" (kv): base de janela longa, fallback mensal recente.
+    // Tem telefone, NÃO depende da API → imune ao 429. Esta é a fonte padrão do badge.
+    const doCsv = async (): Promise<NC[]> => {
+      let payload: any = await kvGet<any>(trinksImport.CLIENTES_BASE_KEY);
+      if (!payload || !Array.isArray(payload.rows) || payload.rows.length === 0) {
+        const now = new Date();
+        for (let i = 0; i < 3 && !(payload && payload.rows?.length); i++) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          const mes = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          payload = await kvGet<any>(trinksImport.kvKeyFor("clientes", mes));
+        }
+      }
+      if (!payload || !Array.isArray(payload.rows)) return [];
+      return payload.rows.map((r: any) => ({
+        id: idDoNome(r.nome),
+        nome: r.nome || "",
+        email: r.email || null,
+        dataCadastro: r.dataCadastro || "",
+        phones: String(r.telefones || "")
+          .split(/[\/;\n]+/)
+          .map((s: string) => s.trim())
+          .filter(Boolean)
+          .map((s: string) => ({ normalized: normPhone(s), original: s }))
+          .filter((p: any) => p.normalized.length >= 8),
+      }));
+    };
+
+    try {
+      const refresh = req.query.refresh === "1";
+
+      // 1) sync ao vivo já carregado (mais fresco, sem custo de API)
+      const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
+      if (syncCache && Array.isArray(syncCache.clientes) && syncCache.clientes.length > 0) {
+        const resultado = montar(daApi(syncCache.clientes), "trinks-sync");
+        await kvSet("clientes_duplicados:cache", resultado);
+        return res.json(resultado);
+      }
+
+      // 2) refresh explícito → tenta a API ao vivo (só quando a janela da Trinks abre).
+      //    Se cair no 429, NÃO falha: segue pro CSV abaixo.
+      if (refresh) {
+        try {
+          let clientes = await trinksFetchAll("clientes");
+          if (!Array.isArray(clientes)) clientes = [];
+          if (clientes.length > 0) {
+            const resultado = montar(daApi(clientes), "trinks-api");
+            await kvSet("clientes_duplicados:cache", resultado);
+            return res.json(resultado);
+          }
+        } catch (e: any) {
+          log(`duplicados: refresh via API falhou (${e?.message || e}); caindo pro CSV`, "duplicados");
+        }
+      }
+
+      // 3) CSV "Ranking de Clientes" — fonte padrão, imune ao 429
+      const csv = await doCsv();
+      if (csv.length > 0) {
+        const resultado = montar(csv, "csv-ranking-clientes");
+        await kvSet("clientes_duplicados:cache", resultado);
+        return res.json(resultado);
+      }
+
+      // 4) nada disponível → último resultado salvo, senão vazio (pede importar CSV)
+      const cache: any = await kvGet("clientes_duplicados:cache");
+      if (cache) return res.json(cache);
+      return res.json({ totalClientes: 0, clientsWithPhone: 0, clientsWithoutPhone: 0, totalGruposDuplicados: 0, totalClientesDuplicados: 0, potencialReducao: 0, grupos: [], precisaSincronizar: true });
     } catch (err: any) {
       return handleTrinksError(err, res);
     }

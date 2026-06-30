@@ -4,9 +4,14 @@
 
 ## Versão atual em produção
 
-- **Build**: `2026-05-01-fonte-mais-recente` (commit `cf1897e`)
+- **Versão**: **v89** (commit `a6230a2`, 30/06/2026) — buscador premium no Dashboard
+- **Build string em código**: `2026-06-27-ontem-via-trinks-email` (string não é bumpada por versão; confira `git log`)
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
+
+### v89 — Buscador premium no Dashboard (30/06/2026) [concluído]
+
+Refino de UX do v88: toggle dia/semana, setas pra navegar, atalhos de teclado e card de resultado do fechamento buscado. Mesmos endpoints do v88 (`/api/dashboard/consultar?dia=|?semanaFim=`).
 
 ### v88 — Mês oficial no painel + busca por dia/semana no Dashboard (30/06/2026) [concluído]
 

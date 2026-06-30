@@ -7173,11 +7173,18 @@ Regras CRÍTICAS:
         return { data, fechamentoTrinks: r2(fechamentoTrinks), fonte: snap.fonte, caiuItau: r2(caiu), diferenca: r2(caiu - fechamentoTrinks) };
       });
 
+      // receita OFICIAL do mês (Total Mês do email Trinks — inclui Clube/recorrente)
+      const tm: any = await kvGet(`trinks_total_mes:${mes}`);
+      const totalOficial = Number(tm?.total || 0);
+      const recorrente = totalOficial > 0 ? r2(totalOficial - totalCaixa) : 0;
+
       return res.json({
         ok: true, mes, tolerancia: TOL,
         calculadora: {
           pix: r2(pix), credito: r2(credito), debito: r2(debito), dinheiro: r2(dinheiro),
           planos: r2(planos), totalCaixa: r2(totalCaixa), totalEmail: r2(totalEmail),
+          totalOficial: r2(totalOficial),               // receita oficial Trinks (com Clube)
+          recorrente: recorrente > 0 ? recorrente : 0,  // diferença = Clube/recorrente fora do caixa
         },
         fechamentos,
       });

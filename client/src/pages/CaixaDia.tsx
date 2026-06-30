@@ -244,14 +244,17 @@ function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void
             </div>
           ))}
         </div>
-        <div className="mt-3 pt-3 border-t border-white/10 flex items-end justify-between flex-wrap gap-2">
+        <div className="mt-3 pt-3 border-t border-white/10 flex items-end justify-between flex-wrap gap-3">
           <div>
-            <div className="text-[10px] text-white/40 uppercase tracking-wide">Total do mês</div>
-            <div className="text-2xl font-bold text-white tabular-nums">R$ {fmt(c.totalCaixa || 0)}</div>
+            <div className="text-[10px] text-emerald-400/70 uppercase tracking-wide">Receita do mês (oficial Trinks)</div>
+            <div className="text-2xl font-bold text-white tabular-nums">R$ {fmt(c.totalOficial > 0 ? c.totalOficial : c.totalCaixa)}</div>
           </div>
-          {c.totalEmail > 0 && <div className="text-[10px] text-white/40">Total oficial (email): <span className="text-white/70 tabular-nums">R$ {fmt(c.totalEmail)}</span></div>}
+          <div className="text-right text-[10px] text-white/40 space-y-0.5">
+            <div>Passou pelo caixa: <span className="text-white/70 tabular-nums">R$ {fmt(c.totalCaixa || 0)}</span></div>
+            {c.recorrente > 0 && <div>Clube/recorrente: <span className="text-pink-400/80 tabular-nums">R$ {fmt(c.recorrente)}</span></div>}
+          </div>
         </div>
-        <div className="text-[10px] text-white/30 mt-1">PIX = coluna "Outros" do Trinks. Planos = venda de pacote/Clube (recorte). Formas somam ~o total (fora descontos/troco).</div>
+        <div className="text-[10px] text-white/30 mt-1">Receita oficial = "Total do mês" do e-mail Trinks (inclui Clube/assinaturas recorrentes que não passam pelo caixa diário). As formas abaixo são o que entrou pelo caixa.</div>
       </div>
 
       {/* FECHAMENTOS por dia */}

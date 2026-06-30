@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v84 — Receita OFICIAL do mês (Total Mês do email Trinks) — bate com a Trinks (29/06/2026) [concluído]
+
+**Problema do dono:** Trinks mostra receita R$84.629/junho, sistema mostrava R$76.936. **Causa raiz achada:** o sistema somava o CAIXA diário (o que passou pelo caixa); a Trinks mostra a RECEITA do mês, que INCLUI Clube/assinaturas recorrentes (cobradas no cartão, não passam pelo fechamento de caixa diário). O próprio e-mail diário tem "Total Junho/2026 R$ 84.719,25" (oficial). **Feito:** parser extrai `totalMes`+`mesRef` (regex "Total <mês>/<ano> R$X"); sincronizar grava o maior por mês em kv `trinks_total_mes:YYYY-MM` (mesmo se o dia já gravado). `/api/caixa-dia-fechamentos` expõe `totalOficial` + `recorrente` (=oficial−caixa). Card "Recebimentos do mês": **Receita oficial Trinks R$84.719,25** (bate!) + "passou pelo caixa R$76.936" + "Clube/recorrente R$7.782,60". **Validado.** As formas (PIX/créd/déb/din) = detalhe do caixa.
+
 ### v83 — Calculadora do mês por forma + fechamentos do mês todo (Caixa do Dia) (29/06/2026) [concluído]
 
 **Pedido:** Caixa do Dia tem que ter TODOS os emails de junho + calculadora do mês (PIX/crédito/débito/dinheiro/planos/total); o status "✓ conferido" estava falso (caixa_conferencia gravado por processo às 12:02, dono não conferiu). "Coração do sistema." **Feito:** sincronizei emails (junho todo coberto, 28 snapshots). `/api/caixa-dia-fechamentos?mes=` reformulado: lista TODOS os dias do mês via listSnapshotsDoMes (não últimos N) + **calculadora por forma do CAIXA CSV** (email não tem breakdown — vai tudo em "outros"): pix=totalOutros, credito, debito, dinheiro, planos=totalPacotes, totalCaixa, totalEmail. Removido o "conferido" falso. `FechamentosDiarios` v83: card "Recebimentos do mês" (5 formas + total) + tabela do mês clicável (Dia/Fechamento Trinks/Caiu no Itaú→aguardando extrato). Validado jun: PIX 24.042 · Créd 30.234 · Déb 17.234 · Din 6.014 · Planos 12.887 · Total 76.936 · 19 dias. **Dívida: registros caixa_conferencia espúrios ('bate') ainda no kv — não aparecem mais na lista, mas estão lá.**

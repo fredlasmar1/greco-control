@@ -8,6 +8,10 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### v87 — Lista de clientes pra reativar (frequência acionável) (30/06/2026) [concluído]
+
+**Pedido:** frequência de clientes (quem volta/sumiu). **Descoberta:** já existia `/api/clientes/retencao` (caixa, clienteId — melhor que email de agendamento: comparecimento real, sem homônimo) + componente RetencaoClientes no Dashboard. Dados: 1216 clientes, 30% fiéis, 41% inativos, 38% só 1 visita. **Faltava o acionável:** QUEM sumiu. **Feito:** endpoint acumula valorTotal+ultimaData por cliente; retorna `listaInativos` (vinham 2+ vezes, sumidos 2+ meses, ord. por valor gasto, top 100). Tela: `<details>` "📞 Clientes pra reativar" no RetencaoClientes (nome/visitas/total gasto/última visita/sumido há — SEM telefone/email, contato pelo cadastro Trinks). Ex: Welton Falcão 11x R$1.250 sumido 2m.
+
 ### v86 — Tier2 (caixa dinheiro + débitos do email) + cards Clientes/Serviços e Ocupação (30/06/2026) [concluído]
 
 **Pedidos:** (a) card de clientes atendidos + serviços por mês no Dashboard; (b) taxa de ocupação (dono deu: 7 barbeiros + 4 assistentes; ter–sex 09–20h=11h, sáb 08–18h=10h, fecha dom/seg); (c) "Tier 2": extrair do email Trinks o BLOCO caixa em dinheiro (7 campos) + débitos de clientes (4 campos), backfill 180 dias, tela.

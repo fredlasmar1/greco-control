@@ -8686,7 +8686,7 @@ Regras CRÍTICAS:
   app.get("/api/clientes/retencao", async (_req: Request, res: Response) => {
     try {
       const mesesDisp: string[] = [];
-      const porCliente = new Map<string, { nome: string; meses: Set<string>; visitas: number }>();
+      const porCliente = new Map<string, { nome: string; meses: Set<string>; visitas: number; valorTotal: number; ultimaData: string }>();
       for (let m = 1; m <= 12; m++) {
         const mes = `2026-${String(m).padStart(2, "0")}`;
         const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
@@ -8697,8 +8697,12 @@ Regras CRÍTICAS:
           const id = String(r.clienteId || "").trim();
           if (!id) continue; // walk-in sem cadastro não entra na retenção
           let c = porCliente.get(id);
-          if (!c) { c = { nome: String(r.clienteNome || "").trim(), meses: new Set(), visitas: 0 }; porCliente.set(id, c); }
+          if (!c) { c = { nome: String(r.clienteNome || "").trim(), meses: new Set(), visitas: 0, valorTotal: 0, ultimaData: "" }; porCliente.set(id, c); }
           c.meses.add(mes); c.visitas++;
+          c.valorTotal += Number(r.totalGeral || 0);
+          const dt = (r.data || "").slice(0, 10);
+          if (dt > c.ultimaData) c.ultimaData = dt;
+          if (!c.nome && r.clienteNome) c.nome = String(r.clienteNome).trim();
         }
       }
       const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -8739,10 +8743,20 @@ Regras CRÍTICAS:
       const fieis = mesesDistrib["4+"];
       const ultIdx = mesesDisp.length - 1;
       let inativos = 0;
+      const listaInativos: any[] = [];
       for (const [, c] of porCliente) {
         let um = ""; for (const mes of c.meses) if (mes > um) um = mes;
-        if (ultIdx - idxMes(um) >= 2) inativos++;
+        if (ultIdx - idxMes(um) >= 2) {
+          inativos++;
+          // só quem veio 2+ vezes (cliente de verdade que sumiu, vale reativar)
+          if (c.visitas >= 2) listaInativos.push({
+            nome: c.nome || "(sem nome)", visitas: c.visitas, valorTotal: r2(c.valorTotal),
+            ultimaVisita: c.ultimaData, mesesSemVir: ultIdx - idxMes(um),
+          });
+        }
       }
+      // prioridade de reativação: quem mais gastou primeiro
+      listaInativos.sort((a, b) => b.valorTotal - a.valorTotal);
 
       return res.json({
         ok: true, mesesDisponiveis: mesesDisp, ultimoMes, totalClientes, meses,
@@ -8750,6 +8764,7 @@ Regras CRÍTICAS:
         recorrenciaMeses: mesesDistrib,
         fieis, pctFieis: totalClientes ? r2((fieis / totalClientes) * 100) : 0,
         inativos, pctInativos: totalClientes ? r2((inativos / totalClientes) * 100) : 0,
+        listaInativos: listaInativos.slice(0, 100), // top 100 mais valiosos pra reativar
       });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });

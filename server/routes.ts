@@ -8540,7 +8540,7 @@ Regras CRÍTICAS:
   // do CAIXA (receita/comandas/clientes) + RANKING (barbeiros). Local, sem API.
   // Clientes novos = primeira aparição no histórico disponível.
   // v76: painel executivo — HOJE (API ao vivo + fallback CSV) / SEMANA / MÊS dia a dia.
-  // Metas: diária (metaDiaria), semana = diária×6, mês = metasHistorico ou 100k.
+  // Metas: diária (metaDiaria), semana = diária×5 (ter–sáb, 5 dias úteis), mês = metasHistorico ou 100k.
   // Por categoria: proporção histórica (serv 79% / planos 15% / produtos 6%).
   app.get("/api/dashboard/painel", async (_req: Request, res: Response) => {
     try {
@@ -8548,7 +8548,7 @@ Regras CRÍTICAS:
       const hoje = ymdHoje();
       const mes = hoje.slice(0, 7);
       const metaDia = metaDiaria;
-      const metaSemana = metaDiaria * 6;
+      const metaSemana = metaDiaria * 5; // ter–sáb = 5 dias úteis
       const metaMes = (metasHistorico.find(m => m.month === mes)?.target) || 100000;
       const PROP = { serv: 0.79, plano: 0.15, prod: 0.06 };
 
@@ -8649,17 +8649,22 @@ Regras CRÍTICAS:
         });
       }
       if (/^\d{4}-\d{2}-\d{2}$/.test(semanaFim)) {
-        const inicio = ymdAddDays(semanaFim, -6);
+        // Semana ancorada na TERÇA (barbearia opera ter–sáb). A data recebida é
+        // "qualquer dia da semana alvo" → cai pra terça daquela semana.
+        const dowRef = new Date(`${semanaFim}T12:00:00-03:00`).getUTCDay(); // 0=dom…6=sáb
+        const diasDesdeTerca = (dowRef + 5) % 7; // ter→0 qua→1 … sáb→4 dom→5 seg→6
+        const inicio = ymdAddDays(semanaFim, -diasDesdeTerca);
+        const fim = ymdAddDays(inicio, 4); // terça + 4 = sábado
         let total = 0; const dias: any[] = [];
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < 5; i++) { // ter…sáb = 5 dias
           const dt = ymdAddDays(inicio, i);
           const s: any = await getSnapshot(dt);
           const v = Number(s?.faturamento?.total || 0);
           total += v;
           dias.push({ dia: dt, valor: r2(v) });
         }
-        const metaSemana = metaDiaria * 6;
-        return res.json({ ok: true, tipo: "semana", inicio, fim: semanaFim, realizado: r2(total), meta: metaSemana, pct: metaSemana > 0 ? Math.round((total / metaSemana) * 100) : 0, dias });
+        const metaSemana = metaDiaria * 5;
+        return res.json({ ok: true, tipo: "semana", inicio, fim, realizado: r2(total), meta: metaSemana, pct: metaSemana > 0 ? Math.round((total / metaSemana) * 100) : 0, dias });
       }
       return res.status(400).json({ ok: false, error: "Informe ?dia=YYYY-MM-DD ou ?semanaFim=YYYY-MM-DD" });
     } catch (err: any) {

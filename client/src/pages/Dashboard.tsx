@@ -2899,7 +2899,7 @@ function PainelExecutivo() {
   const metaDiaMes = mes.meta / 30;
   const addD = (ymd: string, n: number) => { const dt = new Date(ymd + "T12:00:00"); dt.setDate(dt.getDate() + n); return dt.toISOString().slice(0, 10); };
   const hojeStr = new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-  const metaConsulta = modoConsulta === "dia" ? (hoje.meta || 5000) : (semana.meta || 30000);
+  const metaConsulta = modoConsulta === "dia" ? (hoje.meta || 5000) : (semana.meta || 25000);
   const pctConsulta = resConsulta ? Math.round(((resConsulta.realizado || 0) / metaConsulta) * 100) : 0;
 
   const cats = [
@@ -2939,7 +2939,7 @@ function PainelExecutivo() {
         {/* atalhos */}
         <div className="flex gap-1.5 ml-1 flex-wrap">
           <button onClick={() => buscarConsulta("dia", addD(hojeStr, -1))} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Ontem</button>
-          <button onClick={() => buscarConsulta("semana", hojeStr)} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Últimos 7 dias</button>
+          <button onClick={() => buscarConsulta("semana", hojeStr)} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Esta semana</button>
           <button onClick={() => buscarConsulta("semana", addD(hojeStr, -7))} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Semana passada</button>
         </div>
       </div>

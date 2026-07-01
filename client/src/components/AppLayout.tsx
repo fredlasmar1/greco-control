@@ -43,7 +43,7 @@ const navItems = [
   { path: "/evolucao", label: "Evolução", icon: LineChart },
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
   { path: "/estoque", label: "Estoque", icon: Package },
-  { path: "/pagamento", label: "Pagamento", icon: Wallet },
+  { path: "/pagamento", label: "Pagamentos de Comissões", icon: Wallet },
   { path: "/assinaturas", label: "Assinaturas", icon: Crown },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
   { path: "/metas", label: "Metas", icon: Target },

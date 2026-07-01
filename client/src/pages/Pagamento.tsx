@@ -114,6 +114,11 @@ type RespApi = {
     produtosLiquido: number;
     planoReais: number;
   };
+  conferencia?: {
+    oficialTrinks: number;
+    apiPeriodo: number;
+    temOficial: boolean;
+  };
 };
 
 type StatusConcil = {
@@ -289,8 +294,8 @@ export default function Pagamento() {
         <CardHeader className="pb-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <CardTitle className="flex items-center gap-2 text-base">
-              Aba Pagamento
-              <Badge variant="outline" className="text-xs">v20.2</Badge>
+              Pagamentos de Comissões
+              <Badge variant="outline" className="text-xs">v21</Badge>
             </CardTitle>
             <MonthSelector
               selectedMes={mes}
@@ -350,6 +355,40 @@ export default function Pagamento() {
           </div>
           {data && (
             <>
+              {/* CONFERÊNCIA DE FECHAMENTO — bate a produção da folha com o oficial da Trinks (v21) */}
+              {data.conferencia && (() => {
+                const c = data.conferencia!;
+                const api = c.apiPeriodo || 0;
+                const oficial = c.oficialTrinks || 0;
+                const diff = api - oficial;
+                const pct = oficial > 0 ? Math.abs(diff) / oficial : 0;
+                const confere = oficial > 0 && pct <= 0.08;
+                return (
+                  <div className={`mt-3 mb-2 p-3 rounded-lg border ${!c.temOficial ? "border-slate-200 bg-slate-50" : confere ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                      <div className="text-xs uppercase tracking-wide font-semibold text-slate-600">Conferência do fechamento — antes de pagar</div>
+                      {c.temOficial ? (
+                        confere
+                          ? <Badge className="gap-1 bg-emerald-600 hover:bg-emerald-700"><CheckCircle2 className="w-3 h-3" />Confere com a Trinks</Badge>
+                          : <Badge variant="destructive" className="gap-1"><AlertTriangle className="w-3 h-3" />Divergência de {(pct * 100).toFixed(0)}%</Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1"><AlertTriangle className="w-3 h-3" />Sem total oficial do e-mail</Badge>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                      <Stat label="Oficial Trinks (e-mail do dia)" valor={oficial} bold />
+                      <Stat label="Trinks API (período)" valor={api} muted />
+                      <div className="rounded border p-2">
+                        <div className="text-xs text-muted-foreground">Diferença</div>
+                        <div className={`tabular-nums text-sm font-medium ${confere || !c.temOficial ? "" : "text-amber-600"}`}>{diff >= 0 ? "+" : "−"} R$ {fmtBRL(Math.abs(diff))}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-[11px] text-muted-foreground">
+                      A folha paga sobre o <strong>Ranking de Profissionais (CSV)</strong> que você subiu. Se a produção diverge do oficial, o Ranking de {data.mes} pode estar incompleto — reenvie em <strong>Importar Trinks</strong> antes de pagar. O oficial vem do e-mail diário da Trinks (0 tokens, não gasta cota).
+                    </div>
+                  </div>
+                );
+              })()}
               {data.faturamento && (
                 <div className="mt-3 mb-2 p-3 rounded-md border border-emerald-500/20 bg-emerald-500/5">
                   <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Faturamento bruto do período (Trinks)</div>

@@ -11629,6 +11629,13 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalTaxaCartao: 0, totalSaldo: 0,
       });
 
+      // Conferência de fechamento (0 tokens): o total OFICIAL do mês vem do e-mail
+      // diário da Trinks (kv `trinks_total_mes`, inclui Clube/recorrente). Serve pra
+      // o dono bater a produção da folha (base do Ranking) contra a receita real da
+      // Trinks antes de pagar. NÃO toca a API.
+      const _tmMesPag: any = await kvGet(`trinks_total_mes:${mes}`);
+      const oficialTrinksMes = Number(_tmMesPag?.total || 0);
+
       return res.json({
         ok: true,
         mes,
@@ -11637,6 +11644,12 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         linhas,
         totais,
         clubeOrfaos, // sellers do Clube Greco sem match em profissional ativo
+        // Conferência: oficial (email) × API (período) pra validar o fechamento
+        conferencia: {
+          oficialTrinks: oficialTrinksMes,          // receita oficial do mês (email diário)
+          apiPeriodo: periodo.totais?.reais || 0,   // faturamento que a API retornou no período
+          temOficial: oficialTrinksMes > 0,
+        },
         // Faturamento bruto do período (todas as transações da Trinks no intervalo)
         // — útil pra comparar com o cálculo de comissões e detectar discrepâncias.
         faturamento: {

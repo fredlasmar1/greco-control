@@ -117,6 +117,9 @@ type RespApi = {
   conferencia?: {
     oficialTrinks: number;
     producaoRankingServicos: number;
+    rankingServicos?: number;
+    rankingProdutos?: number;
+    planoVendido?: number;
     temRanking: boolean;
     apiPeriodo: number;
     temOficial: boolean;
@@ -145,6 +148,7 @@ export default function Pagamento() {
   }, [mes]);
   const isMesCorrente = mes === mesCorrente;
   const [data, setData] = useState<RespApi | null>(null);
+  const [equipe, setEquipe] = useState<any>(null); // /api/equipe/mes — produção por barbeiro (ranking, 0 tokens)
   const [status, setStatus] = useState<StatusConcil | null>(null);
   const [loading, setLoading] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
@@ -162,13 +166,15 @@ export default function Pagamento() {
     else setLoading(true);
     try {
       const url = force ? `/api/pagamento/${mes}?force=true` : `/api/pagamento/${mes}`;
-      const [r1, r2] = await Promise.all([
+      const [r1, r2, r3] = await Promise.all([
         authFetch(url),
         authFetch(`/api/conciliacao/status?mes=${mes}`).catch(() => null),
+        authFetch(`/api/equipe/mes/${mes}`).catch(() => null),
       ]);
       const j1: RespApi = await r1.json();
       if (!j1.ok) throw new Error((j1 as any).error || "Erro ao carregar pagamento");
       setData(j1);
+      if (r3) { try { setEquipe(await r3.json()); } catch { setEquipe(null); } }
       if (r2) {
         try { setStatus(await r2.json()); } catch { setStatus(null); }
       }
@@ -391,6 +397,65 @@ export default function Pagamento() {
                     </div>
                     <div className="mt-2 text-[11px] text-muted-foreground">
                       A folha paga a comissão de serviços sobre o <strong>Ranking de Profissionais (CSV)</strong>. Serviços costumam ser ~75–85% da receita oficial (o resto é produto + Clube). Se essa fatia vier muito baixa, o Ranking de {data.mes} pode estar incompleto — reenvie em <strong>Importar Trinks</strong> antes de pagar. Oficial e conferência vêm do e-mail diário da Trinks (0 tokens). {c.apiPeriodo > 0 && <>API do período (informativo): R$ {fmtBRL(c.apiPeriodo)}.</>}
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* FECHAMENTO DO MÊS — intercala as 3 fontes + composição + ranking de produção (v22) */}
+              {equipe?.totais && data.conferencia && (() => {
+                const t = equipe.totais;
+                const conf = data.conferencia!;
+                const servicos = t.servicosBruto || 0;
+                const produtos = t.produtosBruto || 0;
+                const planos = conf.planoVendido || 0;
+                const totalComposto = servicos + produtos + planos;
+                const apel = (n: string) => String(n).split(/[-–—]/)[0].trim();
+                const profs = (equipe.profissionais || [])
+                  .map((p: any) => ({ nome: p.nome, servicos: p.faturamento?.servicos || 0, produtos: p.faturamento?.produtos || 0 }))
+                  .filter((p: any) => p.servicos > 0 || p.produtos > 0)
+                  .sort((a: any, b: any) => b.servicos - a.servicos);
+                return (
+                  <div className="mt-3 mb-2 p-3 rounded-lg border border-slate-200 bg-slate-50">
+                    <div className="text-xs uppercase tracking-wide font-semibold text-slate-600 mb-2">Fechamento do mês — todas as fontes se conferem</div>
+                    {/* 3 fontes lado a lado */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+                      <div className="rounded border bg-white p-2">
+                        <div className="text-[10px] text-muted-foreground">📧 E-mail oficial (Gmail)</div>
+                        <div className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(conf.oficialTrinks || 0)}</div>
+                      </div>
+                      <div className="rounded border bg-white p-2">
+                        <div className="text-[10px] text-muted-foreground">📊 Ranking CSV (serv+prod)</div>
+                        <div className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(t.faturamento || 0)}</div>
+                      </div>
+                      <div className="rounded border bg-white p-2">
+                        <div className="text-[10px] text-muted-foreground">🔌 API Trinks (período)</div>
+                        <div className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(conf.apiPeriodo || 0)}</div>
+                      </div>
+                    </div>
+                    {/* composição pra fechar */}
+                    <div className="rounded border bg-white p-3 mb-3">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-2">Composição (base pra fechar o pagamento)</div>
+                      <div className="space-y-1 text-sm">
+                        <Row label="Serviços (ranking)" valor={servicos} />
+                        <Row label="Produtos (ranking)" valor={produtos} />
+                        <Row label="Planos / Clube (vendidos no mês)" valor={planos} />
+                        <div className="border-t pt-1 mt-1 flex items-baseline justify-between font-semibold text-slate-900">
+                          <span>Total do mês</span>
+                          <span className="tabular-nums">R$ {fmtBRL(totalComposto)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    {/* ranking de produção por barbeiro */}
+                    <div className="rounded border bg-white p-3">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-2">Quem mais produziu (serviços)</div>
+                      <div className="space-y-0.5 text-xs">
+                        {profs.map((p: any, i: number) => (
+                          <div key={p.nome} className="flex items-baseline justify-between gap-2">
+                            <span className="truncate">{i === 0 ? "🥇 " : `${i + 1}. `}{apel(p.nome)}</span>
+                            <span className="tabular-nums whitespace-nowrap text-slate-900">R$ {fmtBRL(p.servicos)}{p.produtos > 0 && <span className="text-muted-foreground"> · prod {fmtBRL(p.produtos)}</span>}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 );

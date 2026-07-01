@@ -11641,6 +11641,10 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const _tmMesPag: any = await kvGet(`trinks_total_mes:${mes}`);
       const oficialTrinksMes = Number(_tmMesPag?.total || 0);
       const _rankConf = await getRankComissaoMap(mes);
+      // Plano/Clube VENDIDO no mês (valor cheio das assinaturas pagas) — decisão do
+      // dono: contar pelo valor vendido. Vem das Assinaturas (0 tokens).
+      let planoVendidoMes = 0;
+      for (const b of clubeBySeller.values()) planoVendidoMes += b.valorVendasRS;
 
       return res.json({
         ok: true,
@@ -11650,12 +11654,16 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         linhas,
         totais,
         clubeOrfaos, // sellers do Clube Greco sem match em profissional ativo
-        // Conferência: oficial (email) × produção de serviços do Ranking (base da folha)
+        // Conferência: intercala as 3 fontes (email / CSV ranking / API) + composição
         conferencia: {
-          oficialTrinks: oficialTrinksMes,               // receita oficial do mês (email diário)
-          producaoRankingServicos: _rankConf.producaoServicos, // Σ Total Serviços do ranking (base real)
+          oficialTrinks: oficialTrinksMes,               // FONTE 1: receita oficial (email diário)
+          rankingServicos: _rankConf.producaoServicos,   // FONTE 2 (serviços): Σ Total Serviços do ranking
+          rankingProdutos: periodo.totais?.produtosBruto || 0, // produtos (base da folha)
+          planoVendido: planoVendidoMes,                 // planos/Clube vendidos no mês (valor cheio)
+          apiPeriodo: periodo.totais?.reais || 0,        // FONTE 3: faturamento da API no período
+          // aliases retrocompat
+          producaoRankingServicos: _rankConf.producaoServicos,
           temRanking: _rankConf.temRanking,
-          apiPeriodo: periodo.totais?.reais || 0,        // faturamento da API no período (informativo)
           temOficial: oficialTrinksMes > 0,
         },
         // Faturamento bruto do período (todas as transações da Trinks no intervalo)

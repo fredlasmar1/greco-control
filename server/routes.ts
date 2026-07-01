@@ -4708,7 +4708,13 @@ export async function registerRoutes(
       _diag: { profCount: profLista.length, agendCount: agendLista.length, transCount: transLista.length, idsLegMapeados: idLegadoParaNome.size },
       fetchedAt: new Date().toISOString(),
     };
-    setCache(cacheKey, result, 3 * 60 * 1000); // cache 3min
+    // v94 (fiscalização): TTL por janela. Período PASSADO é imutável → cache
+    // longo (6h) pra não re-bater a API à toa (antes era 3min pra tudo, mesmo
+    // mês fechado — desperdício). Período corrente muda no dia → 15min (era 3min,
+    // cortava pouco as recargas ambiente da Equipe/desempenho). Force-refresh
+    // (botão "Atualizar dados Trinks") invalida o cache e ignora o TTL.
+    const _ttlPeriodo = periodoEhPassado ? 6 * 60 * 60 * 1000 : 15 * 60 * 1000;
+    setCache(cacheKey, result, _ttlPeriodo);
     return result;
   }
 

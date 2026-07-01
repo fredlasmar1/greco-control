@@ -11190,20 +11190,23 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   // janela-de-tempo do mesService: a fonte congelada (CSV) assume assim que existe.
   // Cache por mês, limpo no import confirm. Match nome→ranking por nome completo,
   // apelido (antes do hífen) e resto (depois do hífen) — cobre o join metas↔ranking.
-  const _rankComissaoCache = new Map<string, { keys: Map<string, number>; temRanking: boolean }>();
+  const _rankComissaoCache = new Map<string, { keys: Map<string, number>; temRanking: boolean; producaoServicos: number }>();
   const normRank = (s: any) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
-  async function getRankComissaoMap(mes: string): Promise<{ keys: Map<string, number>; temRanking: boolean }> {
+  async function getRankComissaoMap(mes: string): Promise<{ keys: Map<string, number>; temRanking: boolean; producaoServicos: number }> {
     const hit = _rankComissaoCache.get(mes);
     if (hit) return hit;
     const keys = new Map<string, number>();
     let temRanking = false;
+    let producaoServicos = 0; // Σ "Total Serviços" do ranking = base real da folha (conferência)
     try {
       const rk: any = await kvGet(trinksImport.kvKeyFor("ranking", mes));
       const profs = rk?.periodos?.[0]?.profissionais || [];
       if (Array.isArray(profs) && profs.length > 0) {
         temRanking = true;
         for (const p of profs) {
-          const r = comissaoServicosRanking(p.profissional, Number(p.totalServicos || 0));
+          const _ts = Number(p.totalServicos || 0);
+          producaoServicos += _ts;
+          const r = comissaoServicosRanking(p.profissional, _ts);
           const partes = String(p.profissional || "").split(/[-–—]/);
           const full = normRank(p.profissional);
           const apel = normRank(partes[0]);
@@ -11215,7 +11218,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         }
       }
     } catch { /* sem ranking → cálculo ao vivo */ }
-    const out = { keys, temRanking };
+    const out = { keys, temRanking, producaoServicos };
     _rankComissaoCache.set(mes, out);
     return out;
   }
@@ -11630,11 +11633,14 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       });
 
       // Conferência de fechamento (0 tokens): o total OFICIAL do mês vem do e-mail
-      // diário da Trinks (kv `trinks_total_mes`, inclui Clube/recorrente). Serve pra
-      // o dono bater a produção da folha (base do Ranking) contra a receita real da
-      // Trinks antes de pagar. NÃO toca a API.
+      // diário da Trinks (kv `trinks_total_mes`, inclui Clube/recorrente). Bate a
+      // PRODUÇÃO DE SERVIÇOS DO RANKING (base real da folha — NÃO a API, que vem
+      // parcial no 429) contra a receita oficial. Serviços costumam ser ~75-85% do
+      // total (o resto é produto/Clube), então ranking << oficial sinaliza CSV
+      // incompleto. NÃO toca a API.
       const _tmMesPag: any = await kvGet(`trinks_total_mes:${mes}`);
       const oficialTrinksMes = Number(_tmMesPag?.total || 0);
+      const _rankConf = await getRankComissaoMap(mes);
 
       return res.json({
         ok: true,
@@ -11644,10 +11650,12 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         linhas,
         totais,
         clubeOrfaos, // sellers do Clube Greco sem match em profissional ativo
-        // Conferência: oficial (email) × API (período) pra validar o fechamento
+        // Conferência: oficial (email) × produção de serviços do Ranking (base da folha)
         conferencia: {
-          oficialTrinks: oficialTrinksMes,          // receita oficial do mês (email diário)
-          apiPeriodo: periodo.totais?.reais || 0,   // faturamento que a API retornou no período
+          oficialTrinks: oficialTrinksMes,               // receita oficial do mês (email diário)
+          producaoRankingServicos: _rankConf.producaoServicos, // Σ Total Serviços do ranking (base real)
+          temRanking: _rankConf.temRanking,
+          apiPeriodo: periodo.totais?.reais || 0,        // faturamento da API no período (informativo)
           temOficial: oficialTrinksMes > 0,
         },
         // Faturamento bruto do período (todas as transações da Trinks no intervalo)

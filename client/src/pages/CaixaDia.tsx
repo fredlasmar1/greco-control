@@ -89,7 +89,7 @@ export default function CaixaDia() {
 
       {resp && !resp.temVenda && (
         <Card className="border-amber-500/30 bg-amber-500/5"><CardContent className="p-4 text-sm flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
           <span>Sem vendas importadas para {labelDia(data)}. Importe o CSV Financeiro do mês (que inclua este dia) em <strong>Importar Trinks</strong>.</span>
         </CardContent></Card>
       )}
@@ -99,23 +99,23 @@ export default function CaixaDia() {
           {/* badge de fonte / aviso 429 */}
           <div className="flex items-center gap-2 text-[11px]" data-testid="caixa-fonte">
             {resp.fonteVenda === "trinks" ? (
-              <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">● Trinks ao vivo</span>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30">● Trinks ao vivo</span>
             ) : resp.fonteVenda === "csv-caixa" ? (
-              <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">● CSV Caixa</span>
+              <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 border border-amber-500/30">● CSV Caixa</span>
             ) : (
-              <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">● CSV importado</span>
+              <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 border border-amber-500/30">● CSV importado</span>
             )}
             {resp.trinks429 && (resp.fonteVenda === "csv" || resp.fonteVenda === "csv-caixa") && (
-              <span className="text-amber-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Trinks indisponível (429) agora — usando o CSV importado.</span>
+              <span className="text-amber-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Trinks indisponível (429) agora — usando o CSV importado.</span>
             )}
           </div>
           {resp.fonteVenda === "csv-caixa" && (
-            <div className="text-[10px] text-amber-400/80 -mt-1">ℹ PIX vem da coluna "Outros" do Caixa (no Trinks o PIX é lançado ali) — pode incluir outras formas além de PIX.</div>
+            <div className="text-[10px] text-amber-600/80 -mt-1">ℹ PIX vem da coluna "Outros" do Caixa (no Trinks o PIX é lançado ali) — pode incluir outras formas além de PIX.</div>
           )}
 
           {/* Vendido no dia — por forma */}
           <Card className="bg-card border-card-border">
-            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="w-4 h-4 text-emerald-400" /> Vendido no dia</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="w-4 h-4 text-emerald-600" /> Vendido no dia</CardTitle></CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
                 {[["💳 Crédito", v!.credito], ["💳 Débito", v!.debito], ["📲 PIX", v!.pix], ["💵 Dinheiro", v!.dinheiro], ["🔵 Plano", v!.plano]].map(([lbl, val]: any) => (
@@ -144,7 +144,7 @@ export default function CaixaDia() {
             </CardHeader>
             <CardContent>
               {pulouFds && (
-                <div className="mb-2 text-[11px] text-amber-400 flex items-start gap-1.5">
+                <div className="mb-2 text-[11px] text-amber-600 flex items-start gap-1.5">
                   <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
                   A liquidação caiu após o fim de semana — pode incluir vendas do sábado junto. Confira antes de marcar.
                 </div>
@@ -166,8 +166,8 @@ export default function CaixaDia() {
                         <td className="py-2 text-right tabular-nums">{fmt(l.vendido)}</td>
                         <td className="py-2 text-right tabular-nums">{fmt(l.esperadoLiquido)}</td>
                         <td className="py-2 text-right tabular-nums">{fmt(l.caiu)}</td>
-                        <td className={`py-2 text-right tabular-nums font-semibold ${Math.abs(l.diferenca) <= resp.tolerancia ? "text-muted-foreground" : l.diferenca < 0 ? "text-red-400" : "text-amber-400"}`}>{l.diferenca >= 0 ? "+" : ""}{fmt(l.diferenca)}</td>
-                        <td className="py-2 text-right">{l.bate ? <span className="text-emerald-400">🟢 bate</span> : <span className="text-red-400">🔴 não</span>}</td>
+                        <td className={`py-2 text-right tabular-nums font-semibold ${Math.abs(l.diferenca) <= resp.tolerancia ? "text-muted-foreground" : l.diferenca < 0 ? "text-red-600" : "text-amber-600"}`}>{l.diferenca >= 0 ? "+" : ""}{fmt(l.diferenca)}</td>
+                        <td className="py-2 text-right">{l.bate ? <span className="text-emerald-600">🟢 bate</span> : <span className="text-red-600">🔴 não</span>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -180,7 +180,7 @@ export default function CaixaDia() {
           {/* Veredito + botões */}
           <Card className="bg-card border-card-border">
             <CardContent className="p-4 space-y-3">
-              <div className={`text-center py-2 rounded-md font-semibold ${resp.todasBatem ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"}`}>
+              <div className={`text-center py-2 rounded-md font-semibold ${resp.todasBatem ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-600"}`}>
                 {resp.todasBatem ? "✓ Tudo confere — o caixa bate" : "✗ Há divergência — confira e justifique"}
               </div>
               {!resp.todasBatem && (
@@ -190,12 +190,12 @@ export default function CaixaDia() {
                 <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white" disabled={salvando} onClick={() => salvar("bate")} data-testid="btn-bate">
                   <CheckCircle2 className="w-4 h-4 mr-1.5" /> Caixa bate
                 </Button>
-                <Button variant="outline" className="flex-1 border-red-500/40 text-red-400 hover:bg-red-500/10" disabled={salvando} onClick={() => salvar("nao_bate")} data-testid="btn-nao-bate">
+                <Button variant="outline" className="flex-1 border-red-500/40 text-red-600 hover:bg-red-500/10" disabled={salvando} onClick={() => salvar("nao_bate")} data-testid="btn-nao-bate">
                   <AlertCircle className="w-4 h-4 mr-1.5" /> Caixa não bate
                 </Button>
               </div>
               {resp.fechamento && (
-                <div className={`text-[11px] text-center ${resp.fechamento.status === "bate" ? "text-emerald-400" : "text-red-400"}`} data-testid="conf-status-salvo">
+                <div className={`text-[11px] text-center ${resp.fechamento.status === "bate" ? "text-emerald-600" : "text-red-600"}`} data-testid="conf-status-salvo">
                   Marcado como <strong>{resp.fechamento.status === "bate" ? "caixa bate" : "caixa não bate"}</strong> em {new Date(resp.fechamento.fechadoEm).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
                   {resp.fechamento.justificativa && <> · "{resp.fechamento.justificativa}"</>}
                 </div>
@@ -224,40 +224,40 @@ function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void
   const mesLabel = new Date(mes + "-01T12:00:00").toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 
   const formas = [
-    { lbl: "PIX", v: c.pix, cor: "text-sky-400" },
-    { lbl: "Crédito", v: c.credito, cor: "text-violet-400" },
-    { lbl: "Débito", v: c.debito, cor: "text-amber-400" },
-    { lbl: "Dinheiro", v: c.dinheiro, cor: "text-emerald-400" },
+    { lbl: "PIX", v: c.pix, cor: "text-sky-600" },
+    { lbl: "Crédito", v: c.credito, cor: "text-violet-600" },
+    { lbl: "Débito", v: c.debito, cor: "text-amber-600" },
+    { lbl: "Dinheiro", v: c.dinheiro, cor: "text-emerald-600" },
     { lbl: "Planos (Clube)", v: c.planos, cor: "text-pink-400" },
   ];
 
   return (
     <div className="space-y-3">
       {/* CALCULADORA DO MÊS por forma */}
-      <div className="rounded-2xl border-2 border-sky-400/50 ring-1 ring-white/10 bg-black p-4" data-testid="calculadora-mes">
+      <div className="rounded-2xl border-2 border-sky-400/50 ring-1 ring-black/5 bg-white p-4" data-testid="calculadora-mes">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-[11px] uppercase tracking-[0.2em] text-sky-400 font-semibold">Recebimentos · {mesLabel}</span>
-          <span className="text-[10px] text-white/40">fonte: Caixa Trinks</span>
+          <span className="text-[11px] uppercase tracking-[0.2em] text-sky-600 font-semibold">Recebimentos · {mesLabel}</span>
+          <span className="text-[10px] text-slate-500">fonte: Caixa Trinks</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
           {formas.map(f => (
-            <div key={f.lbl} className="rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+            <div key={f.lbl} className="rounded-lg bg-slate-50 border border-slate-200 p-2.5">
               <div className={`text-[10px] uppercase tracking-wide ${f.cor} font-semibold`}>{f.lbl}</div>
-              <div className="text-base font-bold text-white tabular-nums mt-0.5">R$ {fmt(f.v || 0)}</div>
+              <div className="text-base font-bold text-slate-900 tabular-nums mt-0.5">R$ {fmt(f.v || 0)}</div>
             </div>
           ))}
         </div>
-        <div className="mt-3 pt-3 border-t border-white/10 flex items-end justify-between flex-wrap gap-3">
+        <div className="mt-3 pt-3 border-t border-slate-200 flex items-end justify-between flex-wrap gap-3">
           <div>
-            <div className="text-[10px] text-emerald-400/70 uppercase tracking-wide">Receita do mês (oficial Trinks)</div>
-            <div className="text-2xl font-bold text-white tabular-nums">R$ {fmt(c.totalOficial > 0 ? c.totalOficial : c.totalCaixa)}</div>
+            <div className="text-[10px] text-emerald-600/70 uppercase tracking-wide">Receita do mês (oficial Trinks)</div>
+            <div className="text-2xl font-bold text-slate-900 tabular-nums">R$ {fmt(c.totalOficial > 0 ? c.totalOficial : c.totalCaixa)}</div>
           </div>
-          <div className="text-right text-[10px] text-white/40 space-y-0.5">
-            <div>Passou pelo caixa: <span className="text-white/70 tabular-nums">R$ {fmt(c.totalCaixa || 0)}</span></div>
-            {c.recorrente > 0 && <div>A conciliar (caixa parcial): <span className="text-amber-400/80 tabular-nums">R$ {fmt(c.recorrente)}</span></div>}
+          <div className="text-right text-[10px] text-slate-500 space-y-0.5">
+            <div>Passou pelo caixa: <span className="text-slate-700 tabular-nums">R$ {fmt(c.totalCaixa || 0)}</span></div>
+            {c.recorrente > 0 && <div>A conciliar (caixa parcial): <span className="text-amber-600/80 tabular-nums">R$ {fmt(c.recorrente)}</span></div>}
           </div>
         </div>
-        <div className="text-[10px] text-white/30 mt-1">Receita oficial = "Total do mês" do e-mail Trinks (bate com a Trinks). A diferença pro caixa = dias ainda não importados no CSV de Caixa. As formas acima são o que já entrou pelo caixa.</div>
+        <div className="text-[10px] text-slate-400 mt-1">Receita oficial = "Total do mês" do e-mail Trinks (bate com a Trinks). A diferença pro caixa = dias ainda não importados no CSV de Caixa. As formas acima são o que já entrou pelo caixa.</div>
       </div>
 
       {/* FECHAMENTOS por dia */}
@@ -310,27 +310,27 @@ function CaixaDinheiroMes() {
   return (
     <div className="space-y-3">
       {/* Caixa em dinheiro */}
-      <div className="rounded-2xl border-2 border-emerald-500/40 ring-1 ring-white/10 bg-black p-4" data-testid="caixa-dinheiro">
+      <div className="rounded-2xl border-2 border-emerald-500/40 ring-1 ring-black/5 bg-white p-4" data-testid="caixa-dinheiro">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-[11px] uppercase tracking-[0.2em] text-emerald-400 font-semibold">Caixa em Dinheiro · {mesLabel}</span>
-          <span className="text-[10px] text-white/40">fonte: e-mail Trinks</span>
+          <span className="text-[11px] uppercase tracking-[0.2em] text-emerald-600 font-semibold">Caixa em Dinheiro · {mesLabel}</span>
+          <span className="text-[10px] text-slate-500">fonte: e-mail Trinks</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {[["Recebido", t.recebido, "text-emerald-400"], ["Despesas", t.despesas, "text-red-400"], ["Sangria", t.sangria, "text-amber-400"], ["Saldo", t.saldo, "text-white"]].map(([lbl, v, cor]: any) => (
-            <div key={lbl} className="rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+          {[["Recebido", t.recebido, "text-emerald-600"], ["Despesas", t.despesas, "text-red-600"], ["Sangria", t.sangria, "text-amber-600"], ["Saldo", t.saldo, "text-slate-900"]].map(([lbl, v, cor]: any) => (
+            <div key={lbl} className="rounded-lg bg-slate-50 border border-slate-200 p-2.5">
               <div className={`text-[10px] uppercase tracking-wide ${cor} font-semibold`}>{lbl}</div>
-              <div className="text-base font-bold text-white tabular-nums mt-0.5">R$ {fmt(v || 0)}</div>
+              <div className="text-base font-bold text-slate-900 tabular-nums mt-0.5">R$ {fmt(v || 0)}</div>
             </div>
           ))}
         </div>
-        <div className={`text-[10px] mt-2 ${reconcOK ? "text-emerald-400/70" : "text-amber-400"}`}>
+        <div className={`text-[10px] mt-2 ${reconcOK ? "text-emerald-600/70" : "text-amber-600"}`}>
           {reconcOK ? "✓" : "⚠"} Reconciliação: Abertura + Recebido + Troco − Despesas − Sangria = R$ {fmt(d.reconciliacao || 0)} {reconcOK ? "(bate com o saldo)" : `(saldo informado: R$ ${fmt(t.saldo || 0)})`}
         </div>
         <details className="mt-2">
           <summary className="text-[11px] text-muted-foreground cursor-pointer">Ver por dia ({(d.dias || []).length} dias)</summary>
           <div className="overflow-x-auto max-h-[280px] overflow-y-auto mt-2">
             <table className="w-full text-xs">
-              <thead className="text-[10px] uppercase text-muted-foreground border-b border-border/50 sticky top-0 bg-black">
+              <thead className="text-[10px] uppercase text-muted-foreground border-b border-border/50 sticky top-0 bg-white">
                 <tr><th className="text-left p-1.5">Dia</th><th className="text-right p-1.5">Recebido</th><th className="text-right p-1.5">Despesas</th><th className="text-right p-1.5">Sangria</th><th className="text-right p-1.5">Saldo</th></tr>
               </thead>
               <tbody>
@@ -338,8 +338,8 @@ function CaixaDinheiroMes() {
                   <tr key={x.data} className="border-b border-border/20">
                     <td className="p-1.5 font-medium">{dm(x.data)}</td>
                     <td className="p-1.5 text-right tabular-nums">R$ {fmt(x.recebido || 0)}</td>
-                    <td className="p-1.5 text-right tabular-nums text-red-400/80">{x.despesas ? `R$ ${fmt(x.despesas)}` : "—"}</td>
-                    <td className="p-1.5 text-right tabular-nums text-amber-400/80">{x.sangria ? `R$ ${fmt(x.sangria)}` : "—"}</td>
+                    <td className="p-1.5 text-right tabular-nums text-red-600/80">{x.despesas ? `R$ ${fmt(x.despesas)}` : "—"}</td>
+                    <td className="p-1.5 text-right tabular-nums text-amber-600/80">{x.sangria ? `R$ ${fmt(x.sangria)}` : "—"}</td>
                     <td className="p-1.5 text-right tabular-nums font-semibold">R$ {fmt(x.saldo || 0)}</td>
                   </tr>
                 ))}
@@ -354,9 +354,9 @@ function CaixaDinheiroMes() {
         <div className="flex items-center justify-between flex-wrap gap-2">
           <span className="text-sm font-semibold">Débitos de clientes (em aberto)</span>
           {(deb.totalDebito || 0) === 0 ? (
-            <span className="text-xs text-emerald-400">✓ Nenhum cliente em débito</span>
+            <span className="text-xs text-emerald-600">✓ Nenhum cliente em débito</span>
           ) : (
-            <span className="text-xs text-red-400 tabular-nums">{deb.clientesEmDebito} cliente(s) · R$ {fmt(deb.totalDebito)} (serviços R$ {fmt(deb.servicosDebito)} + produtos R$ {fmt(deb.produtosDebito)})</span>
+            <span className="text-xs text-red-600 tabular-nums">{deb.clientesEmDebito} cliente(s) · R$ {fmt(deb.totalDebito)} (serviços R$ {fmt(deb.servicosDebito)} + produtos R$ {fmt(deb.produtosDebito)})</span>
           )}
         </div>
         <p className="text-[10px] text-muted-foreground mt-1">Valor que clientes ficaram devendo (fiado). Fonte: e-mail Trinks. Mostra o saldo do último dia do mês.</p>

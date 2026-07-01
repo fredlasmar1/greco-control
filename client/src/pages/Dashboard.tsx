@@ -296,7 +296,7 @@ function FecharDiaDialog() {
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs">
+    <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs">
       <p className="text-muted-foreground mb-1">Dia {label}</p>
       {payload.map((p: any, i: number) => (
         <p key={i} className="font-medium" style={{ color: p.color }}>
@@ -318,7 +318,7 @@ function DemoBanner() {
         Dados de demonstração —{" "}
         <Link
           href="/configuracoes"
-          className="underline hover:text-amber-400"
+          className="underline hover:text-amber-600"
         >
           conecte a Trinks nas Configurações
         </Link>
@@ -970,7 +970,7 @@ export default function Dashboard() {
         />
       ) : csvFresh ? (
         <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 flex items-center gap-2">
-          <span className="text-emerald-400">📋</span>
+          <span className="text-emerald-600">📋</span>
           <div className="text-sm">
             <span className="font-medium text-emerald-300">Dados do CSV (email Trinks)</span>
             <span className="text-muted-foreground text-xs ml-2">
@@ -1066,12 +1066,12 @@ export default function Dashboard() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${estourou ? "bg-red-400" : trinksContador.trinks429Agora ? "bg-amber-400" : "bg-emerald-400"}`} />
                 <span className="text-muted-foreground">API Trinks · fatia do mês</span>
-                <span className={`font-bold ${estourou ? "text-red-400" : "text-foreground"}`}>{trinksContador.consumoMes.toLocaleString("pt-BR")} / {trinksContador.fatiaMensal.toLocaleString("pt-BR")}</span>
-                <span className={estourou ? "text-red-400" : "text-muted-foreground"}>({pct}%)</span>
+                <span className={`font-bold ${estourou ? "text-red-600" : "text-foreground"}`}>{trinksContador.consumoMes.toLocaleString("pt-BR")} / {trinksContador.fatiaMensal.toLocaleString("pt-BR")}</span>
+                <span className={estourou ? "text-red-600" : "text-muted-foreground"}>({pct}%)</span>
                 <span className="text-muted-foreground hidden sm:inline">· hoje {trinksContador.hoje.ok} ok{trinksContador.hoje.rate429 > 0 && ` · ${trinksContador.hoje.rate429} recusadas`}</span>
               </div>
-              {estourou && <div className="text-red-400 mt-1 font-medium">⚠ Fatia estourada — consumindo a cota do grecometas. Reduza o uso da Trinks (use CSV).</div>}
-              {!estourou && trinksContador.trinks429Agora && <div className="text-amber-400 mt-1">⚠ Trinks recusando agora — usando CSV.</div>}
+              {estourou && <div className="text-red-600 mt-1 font-medium">⚠ Fatia estourada — consumindo a cota do grecometas. Reduza o uso da Trinks (use CSV).</div>}
+              {!estourou && trinksContador.trinks429Agora && <div className="text-amber-600 mt-1">⚠ Trinks recusando agora — usando CSV.</div>}
             </div>
           );
         })()}
@@ -1097,13 +1097,13 @@ export default function Dashboard() {
               <div className="flex items-end gap-3 flex-wrap">
                 <p className="text-3xl font-bold text-foreground" data-testid="resumo-faturamento">{formatCurrency(fatMes)}</p>
                 {varFatPct != null && (
-                  <span className={`text-xs font-semibold flex items-center gap-0.5 ${varFatPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  <span className={`text-xs font-semibold flex items-center gap-0.5 ${varFatPct >= 0 ? "text-emerald-600" : "text-red-600"}`}>
                     {varFatPct >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
                     {Math.abs(varFatPct).toFixed(1)}% vs mês anterior
                   </span>
                 )}
               </div>
-              <Progress value={Math.min(100, pctMeta)} className="h-2 my-2 bg-white/10 [&>div]:bg-primary" />
+              <Progress value={Math.min(100, pctMeta)} className="h-2 my-2 bg-slate-50 [&>div]:bg-primary" />
               <div className="flex items-center justify-between text-xs flex-wrap gap-2">
                 <span className="font-semibold text-primary">{pctMeta.toFixed(1)}% da meta</span>
                 {faltaMeta > 0 && <span className="text-muted-foreground">Falta {formatCurrency(faltaMeta)}</span>}
@@ -1113,7 +1113,7 @@ export default function Dashboard() {
                   <span className="text-muted-foreground flex items-center gap-1">
                     <TrendingUp className="w-3.5 h-3.5 text-primary" /> Projeção fim do mês ({duDecorr}/{duTotal} dias úteis)
                   </span>
-                  <span className="font-bold text-foreground">{formatCurrency(projecaoMes)} <span className={`font-semibold ${pctProjMeta >= 100 ? "text-emerald-400" : "text-amber-400"}`}>({pctProjMeta.toFixed(0)}% da meta)</span></span>
+                  <span className="font-bold text-foreground">{formatCurrency(projecaoMes)} <span className={`font-semibold ${pctProjMeta >= 100 ? "text-emerald-600" : "text-amber-600"}`}>({pctProjMeta.toFixed(0)}% da meta)</span></span>
                 </div>
               )}
             </CardContent>
@@ -1126,7 +1126,7 @@ export default function Dashboard() {
               <div className="flex items-center gap-2 mb-1"><TrendingUp className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Ticket médio</span></div>
               <p className="text-xl font-bold" data-testid="resumo-ticket">{formatCurrency(ticketMes)}</p>
               {varTicketPct != null && (
-                <span className={`text-[11px] font-semibold ${varTicketPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>{varTicketPct >= 0 ? "▲" : "▼"} {Math.abs(varTicketPct).toFixed(1)}% vs mês ant.</span>
+                <span className={`text-[11px] font-semibold ${varTicketPct >= 0 ? "text-emerald-600" : "text-red-600"}`}>{varTicketPct >= 0 ? "▲" : "▼"} {Math.abs(varTicketPct).toFixed(1)}% vs mês ant.</span>
               )}
             </CardContent></Card>
             {/* Comandas */}
@@ -1172,15 +1172,15 @@ export default function Dashboard() {
               {/* Clientes sumidos (60+ dias) — card de alerta */}
               {clientesMes.clientesSumidos && (
                 <Card className="bg-card border-amber-500/30"><CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-1"><AlertTriangle className="w-4 h-4 text-amber-400" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Sumidos (60+ dias)</span></div>
-                  <p className="text-xl font-bold text-amber-400" data-testid="clientes-sumidos">{clientesMes.clientesSumidos.total || 0}</p>
+                  <div className="flex items-center gap-2 mb-1"><AlertTriangle className="w-4 h-4 text-amber-600" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Sumidos (60+ dias)</span></div>
+                  <p className="text-xl font-bold text-amber-600" data-testid="clientes-sumidos">{clientesMes.clientesSumidos.total || 0}</p>
                   {(clientesMes.clientesSumidos.lista?.length || 0) > 0 ? (
                     <Popover>
                       <PopoverTrigger asChild>
                         <button className="text-[11px] text-primary underline underline-offset-2" data-testid="clientes-sumidos-ver">ver lista</button>
                       </PopoverTrigger>
                       <PopoverContent align="start" className="w-72 max-h-80 overflow-y-auto">
-                        <p className="text-xs font-semibold mb-2 flex items-center gap-1"><UserMinus className="w-3.5 h-3.5 text-amber-400" /> Mais recuperáveis primeiro</p>
+                        <p className="text-xs font-semibold mb-2 flex items-center gap-1"><UserMinus className="w-3.5 h-3.5 text-amber-600" /> Mais recuperáveis primeiro</p>
                         <div className="space-y-1">
                           {clientesMes.clientesSumidos.lista.map((c: any, i: number) => (
                             <div key={i} className="flex items-center justify-between gap-2 text-xs">
@@ -1254,8 +1254,8 @@ export default function Dashboard() {
                 {hoje && hoje.total > 0 && (
                   <div className="flex flex-wrap gap-1 mt-2">
                     {hoje.breakdown.pix > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary">Pix {formatCurrency(hoje.breakdown.pix)}</span>}
-                    {hoje.breakdown.cartao > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">Cartão {formatCurrency(hoje.breakdown.cartao)}</span>}
-                    {hoje.breakdown.dinheiro > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">Dinheiro {formatCurrency(hoje.breakdown.dinheiro)}</span>}
+                    {hoje.breakdown.cartao > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600">Cartão {formatCurrency(hoje.breakdown.cartao)}</span>}
+                    {hoje.breakdown.dinheiro > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600">Dinheiro {formatCurrency(hoje.breakdown.dinheiro)}</span>}
                     {hoje.breakdown.outros > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Outros {formatCurrency(hoje.breakdown.outros)}</span>}
                   </div>
                 )}
@@ -1330,10 +1330,10 @@ export default function Dashboard() {
                 <div
                   className={`w-9 h-9 rounded-lg flex items-center justify-center ${
                     hojeCompleto?.atingeMeta
-                      ? "bg-emerald-500/15 text-emerald-400"
+                      ? "bg-emerald-500/15 text-emerald-600"
                       : hojeCompleto && hojeCompleto.progressoPct >= 70
-                        ? "bg-amber-500/15 text-amber-400"
-                        : "bg-red-500/15 text-red-400"
+                        ? "bg-amber-500/15 text-amber-600"
+                        : "bg-red-500/15 text-red-600"
                   }`}
                 >
                   <Clock className="w-5 h-5" />
@@ -1376,10 +1376,10 @@ export default function Dashboard() {
                 {/* 4 métricas principais */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="p-2 rounded-md bg-emerald-500/5 border border-emerald-500/20">
-                    <p className="text-[10px] uppercase tracking-wide text-emerald-400 font-medium flex items-center gap-1">
+                    <p className="text-[10px] uppercase tracking-wide text-emerald-600 font-medium flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" /> Já fechado
                     </p>
-                    <p className="text-xl sm:text-2xl font-bold text-emerald-400" data-testid="hoje-fechado">
+                    <p className="text-xl sm:text-2xl font-bold text-emerald-600" data-testid="hoje-fechado">
                       {formatCurrency(hojeCompleto.fechado)}
                     </p>
                     <p className="text-[10px] text-muted-foreground">
@@ -1446,8 +1446,8 @@ export default function Dashboard() {
                     <div className="flex items-center gap-1.5">
                       {hojeCompleto.atingeMeta ? (
                         <>
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          <span className="text-xs font-medium text-emerald-400">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="text-xs font-medium text-emerald-600">
                             Dia vai bater a meta ({formatPercent(hojeCompleto.progressoPct)})
                           </span>
                         </>
@@ -1455,12 +1455,12 @@ export default function Dashboard() {
                         <>
                           <AlertTriangle
                             className={`w-3.5 h-3.5 ${
-                              hojeCompleto.progressoPct >= 70 ? "text-amber-400" : "text-red-400"
+                              hojeCompleto.progressoPct >= 70 ? "text-amber-600" : "text-red-600"
                             }`}
                           />
                           <span
                             className={`text-xs font-medium ${
-                              hojeCompleto.progressoPct >= 70 ? "text-amber-400" : "text-red-400"
+                              hojeCompleto.progressoPct >= 70 ? "text-amber-600" : "text-red-600"
                             }`}
                           >
                             {formatPercent(hojeCompleto.progressoPct)} previsto — falta{" "}
@@ -1514,7 +1514,7 @@ export default function Dashboard() {
                               </span>
                             </div>
                             <div className="flex items-center justify-between gap-2 mt-0.5">
-                              <span className="text-[11px] text-emerald-400 font-semibold">
+                              <span className="text-[11px] text-emerald-600 font-semibold">
                                 {formatCurrency(p.fechado)}
                               </span>
                               <span className="text-[10px] text-muted-foreground">
@@ -1575,7 +1575,7 @@ export default function Dashboard() {
                             <td className="p-2 truncate max-w-[160px]">{c.cliente}</td>
                             <td className="p-2 truncate max-w-[120px] text-muted-foreground">{c.profissional}</td>
                             <td className="p-2 text-[10px] text-muted-foreground uppercase">{c.meios.join(", ")}</td>
-                            <td className="p-2 text-right font-semibold whitespace-nowrap text-emerald-400">
+                            <td className="p-2 text-right font-semibold whitespace-nowrap text-emerald-600">
                               {formatCurrency(c.total)}
                             </td>
                           </tr>
@@ -1656,10 +1656,10 @@ export default function Dashboard() {
                 <div
                   className={`w-9 h-9 rounded-lg flex items-center justify-center ${
                     amanha?.atingeMeta
-                      ? "bg-emerald-500/15 text-emerald-400"
+                      ? "bg-emerald-500/15 text-emerald-600"
                       : amanha && amanha.progressoPct >= 70
-                        ? "bg-amber-500/15 text-amber-400"
-                        : "bg-red-500/15 text-red-400"
+                        ? "bg-amber-500/15 text-amber-600"
+                        : "bg-red-500/15 text-red-600"
                   }`}
                 >
                   <CalendarPlus className="w-5 h-5" />
@@ -1726,7 +1726,7 @@ export default function Dashboard() {
                     </p>
                     <p
                       className={`text-2xl sm:text-3xl font-bold ${
-                        amanha.atingeMeta ? "text-emerald-400" : "text-red-400"
+                        amanha.atingeMeta ? "text-emerald-600" : "text-red-600"
                       }`}
                       data-testid="amanha-falta"
                     >
@@ -1742,8 +1742,8 @@ export default function Dashboard() {
                     <div className="flex items-center gap-1.5">
                       {amanha.atingeMeta ? (
                         <>
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          <span className="text-xs font-medium text-emerald-400">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="text-xs font-medium text-emerald-600">
                             Meta atingida — {formatPercent(amanha.progressoPct)}
                           </span>
                         </>
@@ -1751,12 +1751,12 @@ export default function Dashboard() {
                         <>
                           <AlertTriangle
                             className={`w-3.5 h-3.5 ${
-                              amanha.progressoPct >= 70 ? "text-amber-400" : "text-red-400"
+                              amanha.progressoPct >= 70 ? "text-amber-600" : "text-red-600"
                             }`}
                           />
                           <span
                             className={`text-xs font-medium ${
-                              amanha.progressoPct >= 70 ? "text-amber-400" : "text-red-400"
+                              amanha.progressoPct >= 70 ? "text-amber-600" : "text-red-600"
                             }`}
                           >
                             {formatPercent(amanha.progressoPct)} da meta — falta{" "}
@@ -2242,7 +2242,7 @@ function TelegramCard({ apiBase }: { apiBase: string }) {
           <div className="text-xs text-muted-foreground">Carregando...</div>
         ) : !status.configured ? (
           <div className="p-3 rounded-md bg-amber-500/10 border border-amber-500/30 text-xs">
-            <p className="font-medium text-amber-400 mb-1">⚠️ Bot não configurado</p>
+            <p className="font-medium text-amber-600 mb-1">⚠️ Bot não configurado</p>
             <p className="text-muted-foreground">
               Configure a variável <code className="bg-muted/40 px-1 rounded">TELEGRAM_BOT_TOKEN</code>{" "}
               no Railway com o token do @fredgreco_bot (obtido no @BotFather) e redeploy.
@@ -2348,7 +2348,7 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
       <CardContent className="p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <div className="flex items-center gap-2">
-            <Package className="w-4 h-4 text-amber-400" />
+            <Package className="w-4 h-4 text-amber-600" />
             <span className="text-sm font-medium">Produtos sem giro</span>
             {data && (
               <span className="text-xs text-muted-foreground">
@@ -2374,7 +2374,7 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
                   </div>
                 </div>
                 <div className="text-right ml-3">
-                  <div className={`text-[10px] uppercase tracking-wide ${p.nivel === "critico" ? "text-red-400" : "text-amber-400"}`}>
+                  <div className={`text-[10px] uppercase tracking-wide ${p.nivel === "critico" ? "text-red-600" : "text-amber-600"}`}>
                     {p.nivel === "critico" ? "Parado +30d" : "Parado 14-30d"}
                   </div>
                 </div>
@@ -2469,7 +2469,7 @@ function RetencaoClientes() {
   return (
     <div className="rounded-lg border border-card-border bg-card p-4 space-y-3" data-testid="retencao-clientes">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-sm font-bold flex items-center gap-2"><Users className="w-4 h-4 text-sky-400" /> Retenção de Clientes (jan–jun)</h2>
+        <h2 className="text-sm font-bold flex items-center gap-2"><Users className="w-4 h-4 text-sky-600" /> Retenção de Clientes (jan–jun)</h2>
         <span className="text-[11px] text-muted-foreground">{d.totalClientes.toLocaleString("pt-BR")} clientes únicos no período</span>
       </div>
 
@@ -2477,17 +2477,17 @@ function RetencaoClientes() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div className="rounded border border-card-border/50 bg-background/30 p-2.5">
           <div className="text-[10px] text-muted-foreground">Vieram 1 vez só</div>
-          <div className="text-lg font-bold text-red-400">{d.frequencia.pctUmaVisita}%</div>
+          <div className="text-lg font-bold text-red-600">{d.frequencia.pctUmaVisita}%</div>
           <div className="text-[10px] text-muted-foreground">{d.frequencia.umaVisita} clientes — não voltaram</div>
         </div>
         <div className="rounded border border-card-border/50 bg-background/30 p-2.5">
           <div className="text-[10px] text-muted-foreground">Inativos (sumidos ≥2 meses)</div>
-          <div className="text-lg font-bold text-amber-400">{d.pctInativos}%</div>
+          <div className="text-lg font-bold text-amber-600">{d.pctInativos}%</div>
           <div className="text-[10px] text-muted-foreground">{d.inativos} clientes perdidos</div>
         </div>
         <div className="rounded border border-card-border/50 bg-background/30 p-2.5">
           <div className="text-[10px] text-muted-foreground">Fiéis (4+ meses)</div>
-          <div className="text-lg font-bold text-emerald-400">{d.pctFieis}%</div>
+          <div className="text-lg font-bold text-emerald-600">{d.pctFieis}%</div>
           <div className="text-[10px] text-muted-foreground">{d.fieis} clientes — sua base</div>
         </div>
         <div className="rounded border border-card-border/50 bg-background/30 p-2.5">
@@ -2515,9 +2515,9 @@ function RetencaoClientes() {
               <tr key={m.mes} className="border-b border-border/30">
                 <td className="p-1.5 font-medium">{rot(m.mes)}</td>
                 <td className="p-1.5 text-right tabular-nums">{m.ativos}</td>
-                <td className="p-1.5 text-right tabular-nums text-sky-400">{m.novos}</td>
-                <td className="p-1.5 text-right tabular-nums text-emerald-400">{m.retornaram}</td>
-                <td className="p-1.5 text-right tabular-nums text-red-400">{m.perdidos || "—"}</td>
+                <td className="p-1.5 text-right tabular-nums text-sky-600">{m.novos}</td>
+                <td className="p-1.5 text-right tabular-nums text-emerald-600">{m.retornaram}</td>
+                <td className="p-1.5 text-right tabular-nums text-red-600">{m.perdidos || "—"}</td>
                 <td className="p-1.5 text-right tabular-nums">{m.taxaRetorno}%</td>
               </tr>
             ))}
@@ -2527,13 +2527,13 @@ function RetencaoClientes() {
 
       <div className="text-[10px] text-muted-foreground space-y-0.5">
         <p>● <strong>Perderam*</strong> = clientes que foram no mês anterior e não voltaram no mês seguinte (~{Math.round(d.meses.slice(1).reduce((s: number, m: any) => s + m.perdidos, 0) / Math.max(1, d.meses.length - 1))}/mês em média).</p>
-        <p className="text-red-400">🎯 Gargalo: <strong>{d.frequencia.pctUmaVisita}% dos clientes vieram 1 vez só</strong>. Reduzir isso (1ª visita → 2ª) é onde está o maior ganho — campanha de retorno pra quem veio uma vez.</p>
+        <p className="text-red-600">🎯 Gargalo: <strong>{d.frequencia.pctUmaVisita}% dos clientes vieram 1 vez só</strong>. Reduzir isso (1ª visita → 2ª) é onde está o maior ganho — campanha de retorno pra quem veio uma vez.</p>
       </div>
 
       {/* v86: lista de clientes pra reativar (sumiram, ordenados por valor gasto) */}
       {Array.isArray(d.listaInativos) && d.listaInativos.length > 0 && (
         <details className="border-t border-border/50 pt-2">
-          <summary className="text-xs font-semibold cursor-pointer text-amber-400">📞 Clientes pra reativar — {d.listaInativos.length} sumidos que já vinham (do mais valioso)</summary>
+          <summary className="text-xs font-semibold cursor-pointer text-amber-600">📞 Clientes pra reativar — {d.listaInativos.length} sumidos que já vinham (do mais valioso)</summary>
           <div className="overflow-x-auto max-h-[320px] overflow-y-auto mt-2">
             <table className="w-full text-xs">
               <thead className="text-[10px] uppercase text-muted-foreground border-b border-border sticky top-0 bg-card">
@@ -2550,9 +2550,9 @@ function RetencaoClientes() {
                   <tr key={i} className="border-b border-border/20">
                     <td className="p-1.5 font-medium truncate max-w-[180px]" title={c.nome}>{c.nome}</td>
                     <td className="p-1.5 text-right tabular-nums">{c.visitas}</td>
-                    <td className="p-1.5 text-right tabular-nums text-emerald-400">{formatCurrency(c.valorTotal)}</td>
+                    <td className="p-1.5 text-right tabular-nums text-emerald-600">{formatCurrency(c.valorTotal)}</td>
                     <td className="p-1.5 text-right tabular-nums text-muted-foreground">{c.ultimaVisita ? `${c.ultimaVisita.slice(8, 10)}/${c.ultimaVisita.slice(5, 7)}` : "—"}</td>
-                    <td className="p-1.5 text-right tabular-nums text-amber-400">{c.mesesSemVir} {c.mesesSemVir === 1 ? "mês" : "meses"}</td>
+                    <td className="p-1.5 text-right tabular-nums text-amber-600">{c.mesesSemVir} {c.mesesSemVir === 1 ? "mês" : "meses"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2579,11 +2579,11 @@ function FaturamentoAno() {
   const melhor = meses.reduce((a, b) => (b.receita > a.receita ? b : a), meses[0]);
   const rot = (m: string) => (NOME_MES_RET[m.slice(5)] || m);
   return (
-    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/15 bg-black p-5" data-testid="faturamento-ano">
+    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-black/5 bg-white p-5" data-testid="faturamento-ano">
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.25em] text-red-400 font-semibold">Faturamento acumulado · 2026</div>
-          <div className="text-3xl font-bold text-white tabular-nums">{formatCurrency(total)}</div>
+          <div className="text-[11px] uppercase tracking-[0.25em] text-red-600 font-semibold">Faturamento acumulado · 2026</div>
+          <div className="text-3xl font-bold text-slate-900 tabular-nums">{formatCurrency(total)}</div>
           <div className="text-[11px] text-muted-foreground">
             {rot(meses[0].mes)}–{rot(meses[meses.length - 1].mes)} · {comandas.toLocaleString("pt-BR")} atendimentos
           </div>
@@ -2606,17 +2606,17 @@ function FaturamentoAno() {
           const varPct = ant > 0 ? ((m.receita - ant) / ant) * 100 : null;
           const subiu = varPct !== null && varPct >= 0;
           return (
-            <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-white/[0.03] border border-white/10 p-2" title={`${rot(m.mes)}: ${formatCurrency(m.receita)}`}>
+            <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-slate-50 border border-slate-200 p-2" title={`${rot(m.mes)}: ${formatCurrency(m.receita)}`}>
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{rot(m.mes)}</span>
-              <span className="text-[13px] font-bold text-white tabular-nums leading-tight">{formatCurrency(m.receita)}</span>
+              <span className="text-[13px] font-bold text-slate-900 tabular-nums leading-tight">{formatCurrency(m.receita)}</span>
               {varPct === null ? (
                 <span className="text-[10px] text-muted-foreground">—</span>
               ) : (
-                <span className={`text-[10px] font-semibold tabular-nums ${subiu ? "text-emerald-400" : "text-red-400"}`}>
+                <span className={`text-[10px] font-semibold tabular-nums ${subiu ? "text-emerald-600" : "text-red-600"}`}>
                   {subiu ? "▲" : "▼"} {subiu ? "+" : ""}{varPct.toFixed(0)}%
                 </span>
               )}
-              <div className="w-full bg-white/5 rounded h-1.5 overflow-hidden">
+              <div className="w-full bg-slate-50 rounded h-1.5 overflow-hidden">
                 <div className={`h-full rounded ${subiu || varPct === null ? "bg-emerald-500/50" : "bg-red-500/50"}`} style={{ width: `${Math.max(6, (m.receita / max) * 100)}%` }} />
               </div>
             </div>
@@ -2645,18 +2645,18 @@ function ClientesAtendidosMes() {
     if (!ant) return <span className="text-[10px] text-muted-foreground">—</span>;
     const v = ((atual - ant) / ant) * 100;
     const up = v >= 0;
-    return <span className={`text-[10px] font-semibold tabular-nums ${up ? "text-emerald-400" : "text-red-400"}`}>{up ? "▲" : "▼"} {up ? "+" : ""}{v.toFixed(0)}%</span>;
+    return <span className={`text-[10px] font-semibold tabular-nums ${up ? "text-emerald-600" : "text-red-600"}`}>{up ? "▲" : "▼"} {up ? "+" : ""}{v.toFixed(0)}%</span>;
   };
   return (
-    <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-5" data-testid="clientes-atendidos-mes">
+    <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-black/5 bg-white p-5" data-testid="clientes-atendidos-mes">
       <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">Clientes & Serviços · 2026</div>
+          <div className="text-[11px] uppercase tracking-[0.25em] text-sky-600 font-semibold">Clientes & Serviços · 2026</div>
           <div className="text-[11px] text-muted-foreground mt-0.5">Evolução de clientes atendidos e serviços executados, mês a mês.</div>
         </div>
         <div className="flex gap-4 text-xs">
-          <div className="text-right"><div className="text-[10px] text-muted-foreground">Clientes (Jan–Jun)</div><div className="font-semibold tabular-nums text-white">{totC.toLocaleString("pt-BR")}</div></div>
-          <div className="text-right"><div className="text-[10px] text-muted-foreground">Serviços (Jan–Jun)</div><div className="font-semibold tabular-nums text-white">{totA.toLocaleString("pt-BR")}</div></div>
+          <div className="text-right"><div className="text-[10px] text-muted-foreground">Clientes (Jan–Jun)</div><div className="font-semibold tabular-nums text-slate-900">{totC.toLocaleString("pt-BR")}</div></div>
+          <div className="text-right"><div className="text-[10px] text-muted-foreground">Serviços (Jan–Jun)</div><div className="font-semibold tabular-nums text-slate-900">{totA.toLocaleString("pt-BR")}</div></div>
         </div>
       </div>
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
@@ -2664,21 +2664,21 @@ function ClientesAtendidosMes() {
           const antC = idx > 0 ? meses[idx - 1].clientesUnicos : 0;
           const antA = idx > 0 ? meses[idx - 1].comandas : 0;
           return (
-            <div key={m.mes} className="flex flex-col gap-1.5 rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+            <div key={m.mes} className="flex flex-col gap-1.5 rounded-lg bg-slate-50 border border-slate-200 p-2.5">
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground text-center">{rot(m.mes)}</span>
               {/* clientes */}
               <div className="flex flex-col items-center">
-                <span className="text-[9px] text-sky-400/70 uppercase tracking-wide">👤 clientes</span>
-                <span className="text-base font-bold text-white tabular-nums leading-tight">{(m.clientesUnicos || 0).toLocaleString("pt-BR")}</span>
+                <span className="text-[9px] text-sky-600/70 uppercase tracking-wide">👤 clientes</span>
+                <span className="text-base font-bold text-slate-900 tabular-nums leading-tight">{(m.clientesUnicos || 0).toLocaleString("pt-BR")}</span>
                 {varBadge(m.clientesUnicos, antC)}
-                <div className="w-full bg-white/5 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-sky-500/50" style={{ width: `${Math.max(6, (m.clientesUnicos / maxC) * 100)}%` }} /></div>
+                <div className="w-full bg-slate-50 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-sky-500/50" style={{ width: `${Math.max(6, (m.clientesUnicos / maxC) * 100)}%` }} /></div>
               </div>
               {/* serviços/atendimentos */}
-              <div className="flex flex-col items-center pt-1.5 border-t border-white/10">
-                <span className="text-[9px] text-emerald-400/70 uppercase tracking-wide">✂️ serviços</span>
-                <span className="text-base font-bold text-white tabular-nums leading-tight">{(m.comandas || 0).toLocaleString("pt-BR")}</span>
+              <div className="flex flex-col items-center pt-1.5 border-t border-slate-200">
+                <span className="text-[9px] text-emerald-600/70 uppercase tracking-wide">✂️ serviços</span>
+                <span className="text-base font-bold text-slate-900 tabular-nums leading-tight">{(m.comandas || 0).toLocaleString("pt-BR")}</span>
                 {varBadge(m.comandas, antA)}
-                <div className="w-full bg-white/5 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-emerald-500/50" style={{ width: `${Math.max(6, (m.comandas / maxA) * 100)}%` }} /></div>
+                <div className="w-full bg-slate-50 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-emerald-500/50" style={{ width: `${Math.max(6, (m.comandas / maxA) * 100)}%` }} /></div>
               </div>
             </div>
           );
@@ -2700,13 +2700,13 @@ function OcupacaoMes() {
   const rot = (m: string) => (NOME_MES_RET[m.slice(5)] || m);
   const meses = d.meses;
   const media = meses.length ? meses.reduce((s: number, m: any) => s + m.ocupacaoPct, 0) / meses.length : 0;
-  const cor = (p: number) => (p >= 85 ? "text-red-400" : p >= 65 ? "text-emerald-400" : "text-sky-400");
+  const cor = (p: number) => (p >= 85 ? "text-red-600" : p >= 65 ? "text-emerald-600" : "text-sky-600");
   const corBar = (p: number) => (p >= 85 ? "bg-red-500/60" : p >= 65 ? "bg-emerald-500/60" : "bg-sky-500/60");
   return (
-    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/15 bg-black p-5" data-testid="ocupacao-mes">
+    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-black/5 bg-white p-5" data-testid="ocupacao-mes">
       <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.25em] text-red-400 font-semibold">Taxa de Ocupação · 2026</div>
+          <div className="text-[11px] uppercase tracking-[0.25em] text-red-600 font-semibold">Taxa de Ocupação · 2026</div>
           <div className="text-[11px] text-muted-foreground mt-0.5">Quanto da agenda dos barbeiros foi ocupada. Sobra capacidade = dá pra crescer.</div>
         </div>
         <div className="text-right">
@@ -2716,10 +2716,10 @@ function OcupacaoMes() {
       </div>
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
         {meses.map((m: any) => (
-          <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-white/[0.03] border border-white/10 p-2.5">
+          <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-slate-50 border border-slate-200 p-2.5">
             <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{rot(m.mes)}</span>
             <span className={`text-lg font-bold tabular-nums leading-tight ${cor(m.ocupacaoPct)}`}>{m.ocupacaoPct.toFixed(0)}%</span>
-            <div className="w-full bg-white/5 rounded h-1.5 overflow-hidden"><div className={`h-full ${corBar(m.ocupacaoPct)}`} style={{ width: `${Math.min(100, m.ocupacaoPct)}%` }} /></div>
+            <div className="w-full bg-slate-50 rounded h-1.5 overflow-hidden"><div className={`h-full ${corBar(m.ocupacaoPct)}`} style={{ width: `${Math.min(100, m.ocupacaoPct)}%` }} /></div>
             <span className="text-[9px] text-muted-foreground tabular-nums">{m.atendimentos} atend</span>
           </div>
         ))}
@@ -2785,19 +2785,19 @@ function FaturamentoPorFonte() {
   const servForaRanking = totServico - servNoRanking;
 
   return (
-    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/15 bg-black p-5 space-y-3" data-testid="faturamento-por-fonte">
+    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-black/5 bg-white p-5 space-y-3" data-testid="faturamento-por-fonte">
       <h2 className="text-sm font-bold flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> Faturamento por fonte — onde atacar</h2>
 
       {/* fatias por tipo */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-        <div className="rounded border border-card-border/50 bg-background/30 p-2.5"><div className="text-[10px] text-muted-foreground">Serviços</div><div className="text-lg font-bold text-sky-400">{formatCurrency(totServico)}</div><div className="text-[10px] text-muted-foreground">{fmtPct(totServico)} do total</div></div>
-        <div className="rounded border border-card-border/50 bg-background/30 p-2.5"><div className="text-[10px] text-muted-foreground">Planos (Clube)</div><div className="text-lg font-bold text-amber-400">{formatCurrency(totPlano)}</div><div className="text-[10px] text-muted-foreground">{fmtPct(totPlano)} do total</div></div>
-        <div className="rounded border border-card-border/50 bg-background/30 p-2.5"><div className="text-[10px] text-muted-foreground">Produtos</div><div className="text-lg font-bold text-emerald-400">{formatCurrency(totProduto)}</div><div className="text-[10px] text-muted-foreground">{fmtPct(totProduto)} do total</div></div>
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5"><div className="text-[10px] text-muted-foreground">Serviços</div><div className="text-lg font-bold text-sky-600">{formatCurrency(totServico)}</div><div className="text-[10px] text-muted-foreground">{fmtPct(totServico)} do total</div></div>
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5"><div className="text-[10px] text-muted-foreground">Planos (Clube)</div><div className="text-lg font-bold text-amber-600">{formatCurrency(totPlano)}</div><div className="text-[10px] text-muted-foreground">{fmtPct(totPlano)} do total</div></div>
+        <div className="rounded border border-card-border/50 bg-background/30 p-2.5"><div className="text-[10px] text-muted-foreground">Produtos</div><div className="text-lg font-bold text-emerald-600">{formatCurrency(totProduto)}</div><div className="text-[10px] text-muted-foreground">{fmtPct(totProduto)} do total</div></div>
       </div>
 
       {/* serviços divididos por função */}
       <div>
-        <div className="text-[11px] text-muted-foreground mb-1">Serviços por equipe {mesesComRanking.length < meses.length && <span className="text-amber-400">(ranking de {mesesComRanking.length} de {meses.length} meses — falta jan/fev)</span>}</div>
+        <div className="text-[11px] text-muted-foreground mb-1">Serviços por equipe {mesesComRanking.length < meses.length && <span className="text-amber-600">(ranking de {mesesComRanking.length} de {meses.length} meses — falta jan/fev)</span>}</div>
         <div className="space-y-1">
           {(["Barbeiros", "Assistentes", "Secretarias"] as const).map(f => (
             <div key={f} className="flex items-center gap-2 text-xs">
@@ -2822,7 +2822,7 @@ function FaturamentoPorFonte() {
                 {profs.slice(0, 12).map((p, i) => (
                   <tr key={i} className="border-b border-border/20">
                     <td className="py-1 pr-2 truncate max-w-[180px]">{p.nome}</td>
-                    <td className="py-1 pr-2"><span className={`text-[9px] px-1.5 py-0.5 rounded text-white ${corFunc[p.func] || "bg-slate-500"}/70`}>{p.func.slice(0, -1)}</span></td>
+                    <td className="py-1 pr-2"><span className={`text-[9px] px-1.5 py-0.5 rounded text-slate-900 ${corFunc[p.func] || "bg-slate-500"}/70`}>{p.func.slice(0, -1)}</span></td>
                     <td className="py-1 text-right tabular-nums font-semibold">{formatCurrency(p.servicos)}</td>
                   </tr>
                 ))}
@@ -2841,7 +2841,7 @@ function FaturamentoPorFonte() {
 // Cores Greco: fundo preto · consolidados BRANCO · positivo VERDE · negativo
 // VERMELHO · detalhe AZUL. Cada grupo na sua caixa colorida.
 const _dm = (s: string) => s ? `${s.slice(8, 10)}/${s.slice(5, 7)}` : "";
-const _corPct = (p: number) => p >= 100 ? "text-emerald-400" : p >= 70 ? "text-sky-400" : p >= 40 ? "text-amber-400" : "text-red-400";
+const _corPct = (p: number) => p >= 100 ? "text-emerald-600" : p >= 70 ? "text-sky-600" : p >= 40 ? "text-amber-600" : "text-red-600";
 const _corBar = (p: number) => p >= 100 ? "bg-emerald-500" : p >= 70 ? "bg-sky-500" : p >= 40 ? "bg-amber-500" : "bg-red-500";
 
 // Anel de progresso circular (SVG) — premium
@@ -2859,7 +2859,7 @@ function Anel({ pct, size = 76, stroke = 7 }: { pct: number; size?: number; stro
   );
 }
 function Barra({ pct }: { pct: number }) {
-  return <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden"><div className={`h-full ${_corBar(pct)} rounded-full`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>;
+  return <div className="w-full h-1.5 rounded-full bg-slate-50 overflow-hidden"><div className={`h-full ${_corBar(pct)} rounded-full`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>;
 }
 
 function PainelExecutivo() {
@@ -2887,7 +2887,7 @@ function PainelExecutivo() {
     // mais recente que o caixa CSV; preenche o card Hoje sem travar a tela.
     fetch(`${API_BASE}/api/dashboard/hoje`).then(r => r.json()).then(h => { if (h?.ok) setHojeVivo(h); }).catch(() => {});
   }, [API_BASE]);
-  if (carregando) return <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-6 text-sm text-white/40">Carregando painel…</div>;
+  if (carregando) return <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-black/5 bg-white p-6 text-sm text-slate-500">Carregando painel…</div>;
   if (!d) return null;
   // v79: o snapshot (último dia fechado pelo cron) substitui o "último dia do caixa"
   // quando é mais recente — ambos vêm do banco (0 token).
@@ -2903,25 +2903,25 @@ function PainelExecutivo() {
   const pctConsulta = resConsulta ? Math.round(((resConsulta.realizado || 0) / metaConsulta) * 100) : 0;
 
   const cats = [
-    { lbl: "Serviços", v: semana.servicos, m: semana.metaServicos, ring: "ring-sky-500/30", txt: "text-sky-400", bar: "bg-sky-500" },
-    { lbl: "Planos", v: semana.planos, m: semana.metaPlanos, ring: "ring-amber-500/30", txt: "text-amber-400", bar: "bg-amber-500" },
-    { lbl: "Produtos", v: semana.produtos, m: semana.metaProdutos, ring: "ring-emerald-500/30", txt: "text-emerald-400", bar: "bg-emerald-500" },
+    { lbl: "Serviços", v: semana.servicos, m: semana.metaServicos, ring: "ring-sky-500/30", txt: "text-sky-600", bar: "bg-sky-500" },
+    { lbl: "Planos", v: semana.planos, m: semana.metaPlanos, ring: "ring-amber-500/30", txt: "text-amber-600", bar: "bg-amber-500" },
+    { lbl: "Produtos", v: semana.produtos, m: semana.metaProdutos, ring: "ring-emerald-500/30", txt: "text-emerald-600", bar: "bg-emerald-500" },
   ];
 
   return (
    <div className="space-y-3">
     {/* ───── CONSULTA por dia / semana (v89) ───── */}
-    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-transparent p-4" data-testid="painel-busca">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4" data-testid="painel-busca">
       <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
         <div className="flex items-center gap-2">
-          <Search className="w-4 h-4 text-sky-400" />
-          <span className="text-[11px] uppercase tracking-[0.2em] text-white/60 font-semibold">Consultar período</span>
+          <Search className="w-4 h-4 text-sky-600" />
+          <span className="text-[11px] uppercase tracking-[0.2em] text-slate-600 font-semibold">Consultar período</span>
         </div>
         {/* toggle dia / semana */}
-        <div className="flex rounded-lg border border-white/15 overflow-hidden text-xs">
+        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
           {(["dia", "semana"] as const).map((m) => (
             <button key={m} onClick={() => buscarConsulta(m, dataConsulta || hojeStr)}
-              className={`px-3 py-1 transition-colors ${modoConsulta === m ? "bg-sky-500/20 text-sky-300 font-semibold" : "text-white/40 hover:text-white/70"}`}
+              className={`px-3 py-1 transition-colors ${modoConsulta === m ? "bg-sky-500/20 text-sky-300 font-semibold" : "text-slate-500 hover:text-slate-700"}`}
               data-testid={`consulta-modo-${m}`}>{m === "dia" ? "Dia" : "Semana"}</button>
           ))}
         </div>
@@ -2930,36 +2930,36 @@ function PainelExecutivo() {
       <div className="flex items-center gap-2 flex-wrap">
         {/* navegação ← data → */}
         <button onClick={() => dataConsulta && buscarConsulta(modoConsulta, addD(dataConsulta, modoConsulta === "dia" ? -1 : -7))}
-          className="w-8 h-8 rounded-lg border border-white/15 text-white/60 hover:bg-white/5 flex items-center justify-center" data-testid="consulta-prev">‹</button>
+          className="w-8 h-8 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center" data-testid="consulta-prev">‹</button>
         <input type="date" value={dataConsulta} max={hojeStr} onChange={(e) => buscarConsulta(modoConsulta, e.target.value)}
-          className="bg-white/[0.06] border border-white/20 rounded-lg px-3 py-1.5 text-sm text-white [color-scheme:dark]" data-testid="consulta-data" />
+          className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 [color-scheme:light]" data-testid="consulta-data" />
         <button onClick={() => dataConsulta && buscarConsulta(modoConsulta, addD(dataConsulta, modoConsulta === "dia" ? 1 : 7))}
           disabled={!dataConsulta || dataConsulta >= hojeStr}
-          className="w-8 h-8 rounded-lg border border-white/15 text-white/60 hover:bg-white/5 disabled:opacity-30 flex items-center justify-center" data-testid="consulta-next">›</button>
+          className="w-8 h-8 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-30 flex items-center justify-center" data-testid="consulta-next">›</button>
         {/* atalhos */}
         <div className="flex gap-1.5 ml-1 flex-wrap">
-          <button onClick={() => buscarConsulta("dia", addD(hojeStr, -1))} className="px-2.5 py-1 rounded-lg border border-white/15 text-[11px] text-white/60 hover:bg-white/5">Ontem</button>
-          <button onClick={() => buscarConsulta("semana", hojeStr)} className="px-2.5 py-1 rounded-lg border border-white/15 text-[11px] text-white/60 hover:bg-white/5">Últimos 7 dias</button>
-          <button onClick={() => buscarConsulta("semana", addD(hojeStr, -7))} className="px-2.5 py-1 rounded-lg border border-white/15 text-[11px] text-white/60 hover:bg-white/5">Semana passada</button>
+          <button onClick={() => buscarConsulta("dia", addD(hojeStr, -1))} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Ontem</button>
+          <button onClick={() => buscarConsulta("semana", hojeStr)} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Últimos 7 dias</button>
+          <button onClick={() => buscarConsulta("semana", addD(hojeStr, -7))} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Semana passada</button>
         </div>
       </div>
 
       {/* resultado em card */}
-      {buscandoConsulta && !resConsulta && <div className="text-xs text-white/40 mt-3">Buscando…</div>}
+      {buscandoConsulta && !resConsulta && <div className="text-xs text-slate-500 mt-3">Buscando…</div>}
       {resConsulta && (
-        <div className="mt-3 rounded-xl border border-sky-400/30 bg-black/40 p-4 flex items-center gap-4" data-testid="consulta-resultado">
+        <div className="mt-3 rounded-xl border border-sky-400/30 bg-slate-50 p-4 flex items-center gap-4" data-testid="consulta-resultado">
           {(resConsulta.tipo === "dia" && !resConsulta.encontrado) ? (
-            <div className="text-sm text-white/50">📭 {_dm(resConsulta.data)} — sem fechamento registrado nesse dia (domingo/segunda fechado, ou ainda não importado).</div>
+            <div className="text-sm text-slate-500">📭 {_dm(resConsulta.data)} — sem fechamento registrado nesse dia (domingo/segunda fechado, ou ainda não importado).</div>
           ) : (
             <>
               <Anel pct={pctConsulta} />
               <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-wide text-sky-400/70">
+                <div className="text-[10px] uppercase tracking-wide text-sky-600/70">
                   {resConsulta.tipo === "dia" ? `Dia ${_dm(resConsulta.data)}` : `Semana ${_dm(resConsulta.inicio)} – ${_dm(resConsulta.fim)}`}
                 </div>
-                <div className="text-2xl font-bold text-white tabular-nums leading-tight">{formatCurrency(resConsulta.realizado)}</div>
-                <div className="text-[11px] text-white/40">{pctConsulta}% da meta ({formatCurrency(metaConsulta)})
-                  {resConsulta.tipo === "dia" && resConsulta.atendimentos > 0 && <span className="text-sky-400/80"> · {resConsulta.atendimentos} atendimentos</span>}
+                <div className="text-2xl font-bold text-slate-900 tabular-nums leading-tight">{formatCurrency(resConsulta.realizado)}</div>
+                <div className="text-[11px] text-slate-500">{pctConsulta}% da meta ({formatCurrency(metaConsulta)})
+                  {resConsulta.tipo === "dia" && resConsulta.atendimentos > 0 && <span className="text-sky-600/80"> · {resConsulta.atendimentos} atendimentos</span>}
                 </div>
               </div>
             </>
@@ -2970,45 +2970,45 @@ function PainelExecutivo() {
 
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
       {/* ───── ÚLTIMO FECHAMENTO (ontem) ───── */}
-      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-5" data-testid="painel-hoje">
+      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-black/5 bg-white p-5" data-testid="painel-hoje">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">{hoje.ehHoje ? "Hoje" : "Último fechamento"}</span>
-          <span className={`text-[9px] px-2 py-0.5 rounded-full border ${hoje.ehHoje ? "border-emerald-500/40 text-emerald-400" : "border-sky-500/40 text-sky-400"}`}>
+          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-600 font-semibold">{hoje.ehHoje ? "Hoje" : "Último fechamento"}</span>
+          <span className={`text-[9px] px-2 py-0.5 rounded-full border ${hoje.ehHoje ? "border-emerald-500/40 text-emerald-600" : "border-sky-500/40 text-sky-600"}`}>
             {hoje.ehHoje ? "● hoje" : `${_dm(hoje.data)}`}
           </span>
         </div>
         <div className="flex items-center gap-4">
           <Anel pct={hoje.pct} />
           <div className="min-w-0">
-            <div className="text-2xl font-bold text-white tabular-nums leading-tight">{formatCurrency(hoje.realizado)}</div>
-            <div className="text-[11px] text-white/40">de {formatCurrency(hoje.meta)}</div>
-            <div className="text-[11px] text-sky-400/80 mt-1">{hoje.atendimentos} atendimentos</div>
+            <div className="text-2xl font-bold text-slate-900 tabular-nums leading-tight">{formatCurrency(hoje.realizado)}</div>
+            <div className="text-[11px] text-slate-500">de {formatCurrency(hoje.meta)}</div>
+            <div className="text-[11px] text-sky-600/80 mt-1">{hoje.atendimentos} atendimentos</div>
           </div>
         </div>
-        {hoje.trinks429 && <div className="text-[9px] text-amber-400/80 mt-3">⚠ Trinks indisponível — último dia fechado</div>}
+        {hoje.trinks429 && <div className="text-[9px] text-amber-600/80 mt-3">⚠ Trinks indisponível — último dia fechado</div>}
       </div>
 
       {/* ───── SEMANA ───── */}
-      <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/15 bg-black p-5" data-testid="painel-semana">
+      <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-black/5 bg-white p-5" data-testid="painel-semana">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">Semana</span>
-          <span className="text-[10px] text-white/40">{_dm(semana.inicio)}–{_dm(semana.fim)}</span>
+          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-600 font-semibold">Semana</span>
+          <span className="text-[10px] text-slate-500">{_dm(semana.inicio)}–{_dm(semana.fim)}</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold text-white tabular-nums">{formatCurrency(semana.realizado)}</span>
+          <span className="text-2xl font-bold text-slate-900 tabular-nums">{formatCurrency(semana.realizado)}</span>
           <span className={`text-sm font-bold tabular-nums ${_corPct(semana.pct)}`}>{semana.pct}%</span>
         </div>
-        <div className="text-[11px] text-white/40 mb-2">de {formatCurrency(semana.meta)}</div>
+        <div className="text-[11px] text-slate-500 mb-2">de {formatCurrency(semana.meta)}</div>
         <Barra pct={semana.pct} />
         <div className="grid grid-cols-3 gap-2 mt-3">
           {cats.map(c => {
             const p = c.m > 0 ? Math.round((c.v / c.m) * 100) : 0;
             return (
-              <div key={c.lbl} className={`rounded-lg bg-white/[0.03] ring-1 ${c.ring} p-2`}>
+              <div key={c.lbl} className={`rounded-lg bg-slate-50 ring-1 ${c.ring} p-2`}>
                 <div className={`text-[9px] uppercase tracking-wide ${c.txt} font-semibold`}>{c.lbl}</div>
-                <div className="text-sm font-bold text-white tabular-nums my-0.5">{formatCurrency(c.v)}</div>
-                <div className="h-1 rounded-full bg-white/10 overflow-hidden mb-1"><div className={`h-full ${c.bar} rounded-full`} style={{ width: `${Math.min(100, p)}%` }} /></div>
-                <div className="text-[9px] text-white/30 tabular-nums">{p}% · meta {formatCurrency(c.m)}</div>
+                <div className="text-sm font-bold text-slate-900 tabular-nums my-0.5">{formatCurrency(c.v)}</div>
+                <div className="h-1 rounded-full bg-slate-50 overflow-hidden mb-1"><div className={`h-full ${c.bar} rounded-full`} style={{ width: `${Math.min(100, p)}%` }} /></div>
+                <div className="text-[9px] text-slate-400 tabular-nums">{p}% · meta {formatCurrency(c.m)}</div>
               </div>
             );
           })}
@@ -3016,15 +3016,15 @@ function PainelExecutivo() {
       </div>
 
       {/* ───── MÊS ───── */}
-      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/15 bg-black p-5" data-testid="painel-mes">
+      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-black/5 bg-white p-5" data-testid="painel-mes">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-400 font-semibold">Mês · {mes.mes}</span>
+          <span className="text-[11px] uppercase tracking-[0.25em] text-sky-600 font-semibold">Mês · {mes.mes}</span>
           <span className={`text-sm font-bold tabular-nums ${_corPct(mes.pct)}`}>{mes.pct}%</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold text-white tabular-nums">{formatCurrency(mes.realizado)}</span>
+          <span className="text-2xl font-bold text-slate-900 tabular-nums">{formatCurrency(mes.realizado)}</span>
         </div>
-        <div className="text-[11px] text-white/40 mb-2">de {formatCurrency(mes.meta)}{mes.melhorDia && <> · melhor {_dm(mes.melhorDia.dia)} <span className="text-emerald-400">{formatCurrency(mes.melhorDia.valor)}</span></>}</div>
+        <div className="text-[11px] text-slate-500 mb-2">de {formatCurrency(mes.meta)}{mes.melhorDia && <> · melhor {_dm(mes.melhorDia.dia)} <span className="text-emerald-600">{formatCurrency(mes.melhorDia.valor)}</span></>}</div>
         <Barra pct={mes.pct} />
         <div className="flex items-end gap-[2px] mt-3 h-16">
           {(mes.porDia || []).map((x: any) => (
@@ -3033,7 +3033,7 @@ function PainelExecutivo() {
             </div>
           ))}
         </div>
-        <div className="flex justify-between text-[8px] text-white/25 mt-0.5"><span>{mes.porDia?.[0] && _dm(mes.porDia[0].dia)}</span><span className="text-emerald-400/60">▮ acima</span><span className="text-red-400/60">▮ abaixo R${Math.round(metaDiaMes)}/dia</span><span>{mes.porDia?.length ? _dm(mes.porDia[mes.porDia.length - 1].dia) : ""}</span></div>
+        <div className="flex justify-between text-[8px] text-slate-400 mt-0.5"><span>{mes.porDia?.[0] && _dm(mes.porDia[0].dia)}</span><span className="text-emerald-600/60">▮ acima</span><span className="text-red-600/60">▮ abaixo R${Math.round(metaDiaMes)}/dia</span><span>{mes.porDia?.length ? _dm(mes.porDia[mes.porDia.length - 1].dia) : ""}</span></div>
       </div>
     </div>
    </div>
@@ -3064,7 +3064,7 @@ function AvisoCSV() {
         <span>{atual ? "✓" : "📋"}</span>
         <span className="flex-1 truncate">
           {atual ? "CSVs em dia." : "Lembre de atualizar os CSVs"}
-          {partes.length > 0 && <span className="text-white/40"> · {partes.join(" · ")}</span>}
+          {partes.length > 0 && <span className="text-slate-500"> · {partes.join(" · ")}</span>}
         </span>
         <span className="text-[10px] opacity-70 whitespace-nowrap">Importar Trinks →</span>
       </div>

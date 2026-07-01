@@ -18,14 +18,15 @@
   --card: 0 0% 98%;
   --card-foreground: 0 0% 9%;
   --card-border: 0 0% 94%;
-  --sidebar: 0 0% 96%;
-  --sidebar-foreground: 0 0% 9%;
-  --sidebar-border: 0 0% 92%;
+  /* Sidebar (abas) sempre PRETA, mesmo no tema claro do conteúdo */
+  --sidebar: 0 0% 9%;
+  --sidebar-foreground: 0 0% 96%;
+  --sidebar-border: 0 0% 16%;
   --sidebar-primary: 213 52% 25%;
   --sidebar-primary-foreground: 0 0% 98%;
-  --sidebar-accent: 0 0% 89%;
-  --sidebar-accent-foreground: 0 0% 9%;
-  --sidebar-ring: 213 52% 25%;
+  --sidebar-accent: 213 38% 20%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-ring: 213 52% 40%;
   --popover: 0 0% 95%;
   --popover-foreground: 0 0% 9%;
   --popover-border: 0 0% 91%;
@@ -149,6 +150,12 @@
   --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
   --destructive-border: hsl(var(--destructive));
   --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+/* Sidebar preta: itens de nav (text-muted-foreground) precisam de cinza claro,
+   não o cinza escuro do tema claro do conteúdo. Escopado só na aside. */
+[data-testid="sidebar"] {
+  --muted-foreground: 0 0% 64%;
 }
 
 @layer base {

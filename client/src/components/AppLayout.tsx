@@ -135,7 +135,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                   `}
                   data-testid={`nav-${path.replace("/", "") || "dashboard"}`}
                 >
-                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-primary" : ""}`} />
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#5B8AC4]" : ""}`} />
                   <span>{label}</span>
                   {path === "/duplicados" && duplicadosCount !== null && duplicadosCount > 0 && (
                     <span
@@ -147,7 +147,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     </span>
                   )}
                   {isActive && !(path === "/duplicados" && duplicadosCount && duplicadosCount > 0) && (
-                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />
+                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#5B8AC4]" />
                   )}
                 </div>
               </Link>
@@ -165,7 +165,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         {/* Header */}
         <header className="h-14 border-b border-border flex items-center justify-between px-4 bg-background sticky top-0 z-30 flex-shrink-0">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               className="lg:hidden p-2.5 rounded-md hover:bg-muted"
               onClick={() => setSidebarOpen(true)}
@@ -173,7 +173,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <h1 className="text-base font-semibold truncate" data-testid="page-title">
+            <GrecoLogo />
+            <span className="text-base font-bold tracking-tight text-foreground hidden sm:block">
+              Greco Control
+            </span>
+            <span className="text-muted-foreground hidden sm:block" aria-hidden>·</span>
+            <h1 className="text-base font-medium text-muted-foreground truncate" data-testid="page-title">
               {getPageTitle(location)}
             </h1>
           </div>

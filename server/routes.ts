@@ -8569,12 +8569,18 @@ Regras CRÍTICAS:
       const mesOficial = Number(tmMes?.total || 0);
       const mesRealizado = mesOficial > 0 ? mesOficial : mesTotal;
 
-      // ── SEMANA (últimos 7 dias até hoje, do caixa) ──
-      const seteAtras = ymdAddDays(hoje, -6);
+      // ── SEMANA (terça→sábado, ancorada na terça; acumula dia a dia) ──
+      // A barbearia opera terça a sábado; a semana de trabalho começa SEMPRE na
+      // terça. Dom/seg (fechado) mostram a semana que terminou no sábado. Os dias
+      // futuros da semana ainda não têm caixa → somam 0 e vão entrando dia a dia.
+      const dowHojePainel = new Date(`${hoje}T12:00:00-03:00`).getUTCDay(); // 0=dom…6=sáb
+      const diasDesdeTerca = (dowHojePainel + 5) % 7; // ter→0 qua→1 … sáb→4 dom→5 seg→6
+      const inicioSemana = ymdAddDays(hoje, -diasDesdeTerca);
+      const fimSemana = ymdAddDays(inicioSemana, 4); // terça + 4 = sábado
       let semServ = 0, semProd = 0, semPlano = 0, semTotal = 0;
       for (const r of rows) {
         const dia = String(r.data || "").slice(0, 10);
-        if (dia >= seteAtras && dia <= hoje) {
+        if (dia >= inicioSemana && dia <= fimSemana) {
           semServ += Number(r.totalServico || 0); semProd += Number(r.totalProdutos || 0);
           semPlano += Number(r.totalPacotes || 0); semTotal += Number(r.totalGeral || 0);
         }
@@ -8603,7 +8609,7 @@ Regras CRÍTICAS:
           pct: metaDia > 0 ? Math.round((hojeRealizado / metaDia) * 100) : 0,
         },
         semana: {
-          inicio: seteAtras, fim: hoje, meta: metaSemana, realizado: r2(semTotal),
+          inicio: inicioSemana, fim: fimSemana, meta: metaSemana, realizado: r2(semTotal),
           pct: metaSemana > 0 ? Math.round((semTotal / metaSemana) * 100) : 0,
           servicos: r2(semServ), planos: r2(semPlano), produtos: r2(semProd),
           metaServicos: r2(metaSemana * PROP.serv), metaPlanos: r2(metaSemana * PROP.plano), metaProdutos: r2(metaSemana * PROP.prod),

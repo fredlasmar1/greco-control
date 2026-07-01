@@ -41,6 +41,7 @@ type Produto = {
   custoUnit: number;
   margemRS: number;
   margemPct: number;
+  bomboniere?: boolean; // v96: não comissiona
 };
 
 type Vendedor = {
@@ -48,6 +49,8 @@ type Vendedor = {
   nome: string;
   unidades: number;
   receita: number;
+  receitaComissionavel?: number; // v96
+  receitaBomboniere?: number;    // v96
   custoTotal: number;
   margemRS: number;
   margemPct: number;
@@ -68,6 +71,8 @@ type RespVendas = {
   totais: {
     unidades: number;
     receita: number;
+    receitaComissionavel?: number; // v96
+    receitaBomboniere?: number;    // v96
     custo: number;
     margemRS: number;
     margemPct: number;
@@ -147,7 +152,7 @@ export default function VendasProdutos() {
             <CardTitle className="flex items-center gap-2 text-base">
               <TrendingUp className="h-5 w-5" />
               Vendas de Produtos
-              <Badge variant="outline" className="text-xs">v22</Badge>
+              <Badge variant="outline" className="text-xs">v23</Badge>
             </CardTitle>
             <MonthSelector
               selectedMes={mes}
@@ -181,6 +186,24 @@ export default function VendasProdutos() {
               <Stat label="Produtos sem custo" valor={data.totais.produtosSemCusto} alerta={data.totais.produtosSemCusto > 0} />
             </div>
           )}
+
+          {/* v96: os DOIS diferenciais — comissionável (% equipe) vs bomboniere */}
+          {data && (() => {
+            const com = data.totais.receitaComissionavel ?? 0;
+            const bom = data.totais.receitaBomboniere ?? 0;
+            return (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="rounded-lg border-2 border-emerald-500/50 bg-emerald-500/5 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-emerald-600 font-semibold">Comissionável · dá % pra equipe</div>
+                  <div className="text-xl font-bold tabular-nums text-slate-900">R$ {fmtBRL(com)}</div>
+                </div>
+                <div className="rounded-lg border-2 border-amber-500/50 bg-amber-500/5 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-amber-600 font-semibold">Bomboniere · não comissiona</div>
+                  <div className="text-xl font-bold tabular-nums text-slate-900">R$ {fmtBRL(bom)}</div>
+                </div>
+              </div>
+            );
+          })()}
 
           {data && data.totais.produtosSemCusto > 0 && (
             <div className="mt-3 flex items-start gap-2 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-xs text-yellow-900">
@@ -350,7 +373,12 @@ export default function VendasProdutos() {
                           : i === 2 ? <span title="3º lugar">🥉</span>
                           : <span className="text-muted-foreground text-sm">{i + 1}</span>}
                       </td>
-                      <td className="py-2 px-2 font-medium">{p.nome}</td>
+                      <td className="py-2 px-2 font-medium">
+                        {p.nome}
+                        {p.bomboniere
+                          ? <Badge variant="outline" className="ml-2 text-[9px] h-4 border-amber-500/50 text-amber-600 bg-amber-500/10">bomboniere</Badge>
+                          : <Badge variant="outline" className="ml-2 text-[9px] h-4 border-emerald-500/50 text-emerald-600 bg-emerald-500/10">% equipe</Badge>}
+                      </td>
                       <td className="py-2 px-2 text-muted-foreground text-xs">{p.categoria || "—"}</td>
                       <td className="py-2 px-2 text-right tabular-nums font-semibold">{p.unidades}</td>
                       <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(p.precoVendaMedio)}</td>

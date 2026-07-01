@@ -12390,6 +12390,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         return mapaProf.get(id) || mapaIdLegado.get(id) || `Profissional ${id}`;
       };
 
+      // v96: flag de BOMBONIERE (produtos que NÃO dão % pra equipe). Separa o
+      // comissionável da bomboniere; a comissão sai só do comissionável.
+      const semComissao = await getProdutosSemComissao().catch(() => new Set<string>());
+
       // Agrega por produto
       type ProdAgg = {
         id: string;
@@ -12403,6 +12407,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         custoUnit: number;
         margemRS: number;
         margemPct: number;
+        bomboniere: boolean; // true = não comissiona
       };
       const porProduto = new Map<string, ProdAgg>();
 
@@ -12412,6 +12417,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         nome: string;
         unidades: number;
         receita: number;
+        receitaComissionavel: number; // v96: base da comissão (sem bomboniere)
+        receitaBomboniere: number;    // v96: bomboniere vendida (à parte)
         custoTotal: number;
         margemRS: number;
         margemPct: number;
@@ -12422,6 +12429,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
 
       let totalUnidades = 0;
       let totalReceita = 0;
+      let totalComissionavel = 0; // v96
+      let totalBomboniere = 0;    // v96
       let totalCusto = 0;
       const comandasComProduto = new Set<number>();
 
@@ -12441,9 +12450,11 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           const custoUnit = Number(custosMap[pid]?.custo || 0);
           const custoTotal = custoUnit * qtd;
           const idVend = Number(p.IdProfissionalQueRealizouAVenda || 0) || null;
+          const ehBomboniere = semComissao.has(pid); // v96
 
           totalUnidades += qtd;
           totalReceita += receita;
+          if (ehBomboniere) totalBomboniere += receita; else totalComissionavel += receita; // v96
           totalCusto += custoTotal;
 
           // produto
@@ -12459,10 +12470,12 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
             custoUnit,
             margemRS: 0,
             margemPct: 0,
+            bomboniere: ehBomboniere,
           };
           prod.unidades += qtd;
           prod.receita += receita;
           prod.custoTotal += custoTotal;
+          prod.bomboniere = ehBomboniere;
           if (vu > 0) prod.precoVendaMedio = vu;
           prod.custoUnit = custoUnit;
           porProduto.set(pid, prod);
@@ -12474,6 +12487,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
               nome: nomeVendedor(idVend),
               unidades: 0,
               receita: 0,
+              receitaComissionavel: 0,
+              receitaBomboniere: 0,
               custoTotal: 0,
               margemRS: 0,
               margemPct: 0,
@@ -12482,6 +12497,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
             };
             vd.unidades += qtd;
             vd.receita += receita;
+            if (ehBomboniere) vd.receitaBomboniere += receita; else vd.receitaComissionavel += receita; // v96
             vd.custoTotal += custoTotal;
             vd.produtosDistintos.add(pid);
             vd.comandas.add(Number(t.id));
@@ -12513,17 +12529,21 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       // Se 3 IDs distintos resolvem para "Carlos André", soma tudo numa linha só.
       const consolidadoPorNome = new Map<string, {
         ids: number[]; nome: string; unidades: number; receita: number;
+        receitaComissionavel: number; receitaBomboniere: number;
         custoTotal: number; produtosDistintos: Set<string>; comandas: Set<number>;
       }>();
       for (const v of porVendedor.values()) {
         const key = v.nome.trim().toUpperCase();
         const cur = consolidadoPorNome.get(key) || {
-          ids: [], nome: v.nome, unidades: 0, receita: 0, custoTotal: 0,
+          ids: [], nome: v.nome, unidades: 0, receita: 0,
+          receitaComissionavel: 0, receitaBomboniere: 0, custoTotal: 0,
           produtosDistintos: new Set<string>(), comandas: new Set<number>(),
         };
         cur.ids.push(v.id);
         cur.unidades += v.unidades;
         cur.receita += v.receita;
+        cur.receitaComissionavel += v.receitaComissionavel;
+        cur.receitaBomboniere += v.receitaBomboniere;
         cur.custoTotal += v.custoTotal;
         v.produtosDistintos.forEach(p => cur.produtosDistintos.add(p));
         v.comandas.forEach(c => cur.comandas.add(c));
@@ -12553,13 +12573,16 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         const margemRS = v.receita - v.custoTotal;
         const margemPct = v.receita > 0 ? (margemRS / v.receita) * 100 : 0;
         const { pct: pctComissao, fonte: pctFonte } = buscarPct(v.nome);
-        const comissaoRS = (v.receita * pctComissao) / 100;
+        // v96: comissão SÓ sobre o comissionável (bomboniere não dá %).
+        const comissaoRS = (v.receitaComissionavel * pctComissao) / 100;
         return {
           id: v.ids[0], // primeiro ID (para chave React)
           ids: v.ids,
           nome: v.nome,
           unidades: v.unidades,
           receita: v.receita,
+          receitaComissionavel: v.receitaComissionavel, // v96
+          receitaBomboniere: v.receitaBomboniere,       // v96
           custoTotal: v.custoTotal,
           margemRS,
           margemPct,
@@ -12588,6 +12611,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         totais: {
           unidades: totalUnidades,
           receita: totalReceita,
+          receitaComissionavel: totalComissionavel, // v96: dá % pra equipe (≈ R$ 4.641)
+          receitaBomboniere: totalBomboniere,        // v96: bomboniere (não comissiona)
           custo: totalCusto,
           margemRS: totalMargemRS,
           margemPct: totalMargemPct,

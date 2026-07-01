@@ -964,6 +964,46 @@ const CIRCUIT_OPEN_THRESHOLD_MS = 60_000;   // backoff > 60s = circuito abre
 const CIRCUIT_COOLDOWN_MS = 5 * 60_000;     // após abrir, espera 5 min antes de testar
 let circuitOpenUntil = 0;
 
+// ─── Hard-stop REAL de cota mensal (v55) ──────────────────
+// O contador em memória (rateLimiter.requestsThisMonth) é inútil como teto: mora
+// num arquivo local (.trinks-cache.json) que o Railway zera a cada deploy — em
+// junho/2026 foram 61 deploys, então nunca chegou a 4500 e passaram 35 mil
+// chamadas na conta compartilhada com o Greco Metas. Este teto lê o consumo REAL
+// do mês da auditoria persistente (trinks_audit no Postgres), que sobrevive a
+// deploys e é único entre instâncias. Ao atingir, para de bater na API e o painel
+// cai no fallback que já existe (snapshot + e-mail + CSV, modo csv-first).
+const TRINKS_HARD_CAP_DEFAULT = Number(process.env.TRINKS_HARD_CAP || 2000);
+let consumoMesCache = { at: 0, total: 0, lido: false };
+
+async function getTetoMensalTrinks(): Promise<number> {
+  try {
+    const v = await kvGet<number>("trinks_hard_cap");
+    if (typeof v === "number" && v > 0) return v;
+  } catch { /* usa default */ }
+  return TRINKS_HARD_CAP_DEFAULT;
+}
+
+// Consumo real do mês corrente (soma dos buckets trinks_audit do mês), cache 60s.
+async function getConsumoMesTrinks(): Promise<number> {
+  const agora = Date.now();
+  if (consumoMesCache.lido && agora - consumoMesCache.at < 60_000) {
+    return consumoMesCache.total;
+  }
+  try {
+    const buckets = await lerUltimosDias(32);
+    const d = new Date();
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const total = buckets
+      .filter((b) => (b.dia || "").startsWith(monthKey))
+      .reduce((s, b) => s + (b.total || 0), 0);
+    consumoMesCache = { at: agora, total, lido: true };
+    return total;
+  } catch {
+    // Falha de leitura: reusa o último valor conhecido (não derruba o painel).
+    return consumoMesCache.lido ? consumoMesCache.total : 0;
+  }
+}
+
 async function waitForRateLimit(): Promise<void> {
   // Serializa via mutex: cada chamada espera a anterior terminar.
   // Sem isso, múltiplas requisições paralelas verificam rateLimiter ao mesmo
@@ -999,7 +1039,15 @@ async function waitForRateLimit(): Promise<void> {
       rateLimiter.minuteStart = now;
     }
 
-    // Check monthly limit
+    // Hard-stop REAL (v55): consumo persistente do mês x teto da fatia do GC.
+    // Sobrevive a deploys e múltiplas instâncias (o de memória abaixo não).
+    const tetoMes = await getTetoMensalTrinks();
+    const consumoMes = await getConsumoMesTrinks();
+    if (consumoMes >= tetoMes) {
+      throw { status: 429, message: `Teto mensal do Greco Control atingido (${consumoMes}/${tetoMes}). Cota Trinks é compartilhada com o Greco Metas — usando e-mail/CSV até o mês virar.` };
+    }
+
+    // Check monthly limit (contador em memória — redundância; zera a cada deploy)
     if (rateLimiter.requestsThisMonth >= MAX_REQUESTS_PER_MONTH) {
       throw { status: 429, message: `Limite mensal de requisições atingido (${rateLimiter.requestsThisMonth}/${MAX_REQUESTS_PER_MONTH}). O limite reseta no 1º dia do próximo mês.` };
     }

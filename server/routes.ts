@@ -11641,10 +11641,18 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const _tmMesPag: any = await kvGet(`trinks_total_mes:${mes}`);
       const oficialTrinksMes = Number(_tmMesPag?.total || 0);
       const _rankConf = await getRankComissaoMap(mes);
-      // Plano/Clube VENDIDO no mês (valor cheio das assinaturas pagas) — decisão do
-      // dono: contar pelo valor vendido. Vem das Assinaturas (0 tokens).
+      // Plano/Clube no mês (0 tokens, das Assinaturas). Dois critérios:
+      //   - VENDIDO: valor cheio das assinaturas pagas no mês (Σ planValue).
+      //   - MENSAL: valor reconhecido no mês (Σ planValue ÷ meses de contrato).
       let planoVendidoMes = 0;
       for (const b of clubeBySeller.values()) planoVendidoMes += b.valorVendasRS;
+      let planoMensalMes = 0;
+      for (const c of assinaturaClientes) {
+        const pagou = (c.payments || []).some((p: any) => p.mes === mes && p.pago);
+        if (!pagou) continue;
+        const dm = Number(c.contractDurationMonths || 1) || 1;
+        planoMensalMes += Number(c.planValue || 0) / dm;
+      }
 
       return res.json({
         ok: true,
@@ -11660,6 +11668,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
           rankingServicos: _rankConf.producaoServicos,   // FONTE 2 (serviços): Σ Total Serviços do ranking
           rankingProdutos: periodo.totais?.produtosBruto || 0, // produtos (base da folha)
           planoVendido: planoVendidoMes,                 // planos/Clube vendidos no mês (valor cheio)
+          planoMensal: Math.round(planoMensalMes * 100) / 100, // planos reconhecidos no mês (÷ meses)
           apiPeriodo: periodo.totais?.reais || 0,        // FONTE 3: faturamento da API no período
           // aliases retrocompat
           producaoRankingServicos: _rankConf.producaoServicos,

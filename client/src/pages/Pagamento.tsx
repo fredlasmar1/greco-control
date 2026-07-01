@@ -120,6 +120,7 @@ type RespApi = {
     rankingServicos?: number;
     rankingProdutos?: number;
     planoVendido?: number;
+    planoMensal?: number;
     temRanking: boolean;
     apiPeriodo: number;
     temOficial: boolean;
@@ -407,8 +408,11 @@ export default function Pagamento() {
                 const conf = data.conferencia!;
                 const servicos = t.servicosBruto || 0;
                 const produtos = t.produtosBruto || 0;
-                const planos = conf.planoVendido || 0;
-                const totalComposto = servicos + produtos + planos;
+                const planoVendido = conf.planoVendido || 0;
+                const planoMensal = conf.planoMensal || 0;
+                const subtotal = servicos + produtos;
+                const totalMensal = subtotal + planoMensal;
+                const totalVendido = subtotal + planoVendido;
                 const apel = (n: string) => String(n).split(/[-–—]/)[0].trim();
                 const profs = (equipe.profissionais || [])
                   .map((p: any) => ({ nome: p.nome, servicos: p.faturamento?.servicos || 0, produtos: p.faturamento?.produtos || 0 }))
@@ -438,10 +442,18 @@ export default function Pagamento() {
                       <div className="space-y-1 text-sm">
                         <Row label="Serviços (ranking)" valor={servicos} />
                         <Row label="Produtos (ranking)" valor={produtos} />
-                        <Row label="Planos / Clube (vendidos no mês)" valor={planos} />
-                        <div className="border-t pt-1 mt-1 flex items-baseline justify-between font-semibold text-slate-900">
-                          <span>Total do mês</span>
-                          <span className="tabular-nums">R$ {fmtBRL(totalComposto)}</span>
+                        <div className="border-t pt-1 flex items-baseline justify-between text-slate-700 font-medium">
+                          <span>Subtotal (serviços + produtos)</span>
+                          <span className="tabular-nums">R$ {fmtBRL(subtotal)}</span>
+                        </div>
+                        <div className="pt-1.5 text-[11px] text-muted-foreground">+ Planos / Clube (dois critérios) → total do mês:</div>
+                        <div className="flex items-baseline justify-between">
+                          <span className="pl-2">mensal reconhecido (R$ {fmtBRL(planoMensal)})</span>
+                          <span className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(totalMensal)}</span>
+                        </div>
+                        <div className="flex items-baseline justify-between">
+                          <span className="pl-2">valor vendido (R$ {fmtBRL(planoVendido)})</span>
+                          <span className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(totalVendido)}</span>
                         </div>
                       </div>
                     </div>

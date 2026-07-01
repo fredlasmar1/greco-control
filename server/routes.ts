@@ -991,11 +991,16 @@ async function getConsumoMesTrinks(): Promise<number> {
   }
   try {
     const buckets = await lerUltimosDias(32);
-    const d = new Date();
-    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const total = buckets
-      .filter((b) => (b.dia || "").startsWith(monthKey))
-      .reduce((s, b) => s + (b.total || 0), 0);
+    // monthKey vem do ÚLTIMO bucket (hoje em fuso SP, mesmo fuso em que a auditoria
+    // é chaveada). Usar new Date() do servidor (UTC) erraria o mês na virada: das
+    // 21h às 23h59 de SP o UTC já está no dia/mês seguinte e o filtro zeraria.
+    const hojeSP = buckets.length ? (buckets[buckets.length - 1].dia || "") : "";
+    const monthKey = hojeSP.slice(0, 7); // "YYYY-MM"
+    const total = monthKey
+      ? buckets
+          .filter((b) => (b.dia || "").startsWith(monthKey))
+          .reduce((s, b) => s + (b.total || 0), 0)
+      : 0;
     consumoMesCache = { at: agora, total, lido: true };
     return total;
   } catch {

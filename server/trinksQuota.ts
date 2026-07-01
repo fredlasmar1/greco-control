@@ -4,14 +4,15 @@
  * do Greco Control (renova todo mês) e os TOKENS comprados avulsos no mês (somam
  * à fatia e zeram sozinhos no mês novo, pois a chave é por mês). Guardado no kv_store.
  *
- *  - trinks_fatia_base    → fatia mensal base do Greco Control (renova). Default 2500.
+ *  - trinks_fatia_base    → fatia mensal base do Greco Control (renova). Default 2000
+ *                           (plano 5000 dividido: GC 2000 + Greco Metas 3000).
  *  - trinks_tokens_extras → JSON { "YYYY-MM": qtdComprada }.
  */
 import { kvGet, kvSet } from "./db";
 
 const K_FATIA = "trinks_fatia_base";
 const K_EXTRAS = "trinks_tokens_extras";
-const DEFAULT_FATIA = Number(process.env.TRINKS_MONTHLY_BUDGET || 2500);
+const DEFAULT_FATIA = Number(process.env.TRINKS_MONTHLY_BUDGET || 2000);
 
 export function mesAtual(): string {
   return new Date().toISOString().slice(0, 7);

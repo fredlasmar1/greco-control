@@ -977,8 +977,13 @@ let consumoMesCache = { at: 0, total: 0, lido: false };
 
 async function getTetoMensalTrinks(): Promise<number> {
   try {
-    const v = await kvGet<number>("trinks_hard_cap");
-    if (typeof v === "number" && v > 0) return v;
+    // v95: UNIFICADO — o teto que BLOQUEIA = a fatia efetiva do GC (base + tokens
+    // comprados no mês), a MESMA que o dono vê/edita na tela de Cota. Um número só:
+    // não diverge mais do display (antes lia um `trinks_hard_cap` separado, que
+    // ficava em 2000 enquanto a tela mostrava 2500 — confuso). Fatia dividida com
+    // o Greco Metas: GC 2000 + GM 3000 = 5000 do plano.
+    const cota = await getTrinksCota();
+    if (cota.fatiaEfetiva > 0) return cota.fatiaEfetiva;
   } catch { /* usa default */ }
   return TRINKS_HARD_CAP_DEFAULT;
 }

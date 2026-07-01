@@ -13261,7 +13261,9 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       // grava o fechamento de ontem como snapshot OFICIAL (0 token Trinks). 7h SP.
       cron.schedule("0 7 * * *", async () => {
         try {
-          const r = await sincronizarEmailsTrinks({ dias: 3, max: 5 });
+          // dias:7 (não 3) — relê a semana toda p/ o "Total do mês" oficial nunca
+          // travar num e-mail antigo (bug de 30/06: total parou em 84.719 vs 89.932).
+          const r = await sincronizarEmailsTrinks({ dias: 7, max: 12 });
           log(`[cron-trinks-email] ${r.ok ? `processados ${r.processados}` : "erro: " + r.erro}`, "trinks-email");
         } catch (err: any) {
           log(`[cron-trinks-email] erro: ${err.message}`, "trinks-email");

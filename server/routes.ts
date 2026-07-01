@@ -1957,24 +1957,33 @@ export async function registerRoutes(
   // Honesto: mostra chamadas OK e recusadas (429) — o limite real é da conta Trinks.
   app.get("/api/trinks/contador", async (_req: Request, res: Response) => {
     try {
-      const hojeBuckets = await lerUltimosDias(1);
-      const h = hojeBuckets[hojeBuckets.length - 1] || { total: 0, ok: 0, rate429: 0, erros: 0 };
-      const mes = await resumoUltimosDias(31);
+      // v95: MÊS CALENDÁRIO corrente (não janela rolante de 31d, que incluía o mês
+      // anterior e assustava — mostrava 35k). É o MESMO recorte que o hard-stop usa
+      // (getConsumoMesTrinks): buckets do trinks_audit filtrados pelo mês de hoje (SP).
+      const buckets32 = await lerUltimosDias(32);
+      const h = buckets32[buckets32.length - 1] || { total: 0, ok: 0, rate429: 0, erros: 0 };
+      const monthKey = String(h.dia || "").slice(0, 7);
+      const mesBuckets = monthKey ? buckets32.filter(b => String(b.dia || "").startsWith(monthKey)) : [];
+      const mesTot = mesBuckets.reduce((a, b) => ({
+        ok: a.ok + (b.ok || 0), rate429: a.rate429 + (b.rate429 || 0),
+        erros: a.erros + (b.erros || 0), total: a.total + (b.total || 0),
+      }), { ok: 0, rate429: 0, erros: 0, total: 0 });
       const trinks429Agora = circuitOpenUntil > Date.now();
       const cota = await getTrinksCota();
       const fatiaMensal = cota.fatiaEfetiva; // base + tokens comprados no mês
       return res.json({
         ok: true,
         hoje: { ok: h.ok, rate429: h.rate429, erros: h.erros, total: h.total },
-        mes: { ok: mes.totais.ok, rate429: mes.totais.rate429, erros: mes.totais.erros, total: mes.totais.total },
+        mes: { ok: mesTot.ok, rate429: mesTot.rate429, erros: mesTot.erros, total: mesTot.total },
+        mesRef: monthKey,
         trinks429Agora,
         // Fatia mensal CONFIGURÁVEL do Greco Control (base + tokens comprados).
-        // Consumo real = total de requisições do mês (auditoria persistente).
+        // Consumo real = total de requisições DO MÊS CORRENTE (auditoria persistente).
         fatiaMensal,
         fatiaBase: cota.fatiaBase,
         tokensComprados: cota.extras,
-        consumoMes: mes.totais.total,
-        fatiaEstourada: mes.totais.total > fatiaMensal,
+        consumoMes: mesTot.total,
+        fatiaEstourada: mesTot.total > fatiaMensal,
         // contador interno (nossa contagem em memória) — referência secundária
         sessao: { requestsThisMonth: rateLimiter.requestsThisMonth, maxPerMonth: MAX_REQUESTS_PER_MONTH },
       });

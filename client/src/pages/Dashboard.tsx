@@ -1057,21 +1057,36 @@ export default function Dashboard() {
         <DashboardApiSummaryCard mes={selectedMes} />
         <DashboardImportSummaryCard mes={selectedMes} />
 
-        {/* v54: contador de consumo da Trinks (real) + fatia mensal (5000÷2 sistemas) */}
+        {/* v95: medidor de consumo da Trinks (fatia do mês, igual grecometas) */}
         {trinksContador && (() => {
+          const consumo = trinksContador.consumoMes || 0;
+          const fatia = trinksContador.fatiaMensal || 0;
           const estourou = trinksContador.fatiaEstourada;
-          const pct = trinksContador.fatiaMensal > 0 ? Math.round((trinksContador.consumoMes / trinksContador.fatiaMensal) * 100) : 0;
+          const pct = fatia > 0 ? Math.round((consumo / fatia) * 100) : 0;
+          const restam = Math.max(0, fatia - consumo);
+          const cor = estourou ? "bg-red-500" : pct >= 75 ? "bg-amber-500" : "bg-emerald-500";
+          const corTexto = estourou ? "text-red-600" : pct >= 75 ? "text-amber-600" : "text-emerald-600";
           return (
-            <div className={`rounded-md border p-2.5 text-[11px] ${estourou ? "border-red-500/50 bg-red-500/10" : trinksContador.trinks429Agora ? "border-amber-500/40 bg-amber-500/5" : "border-card-border bg-card"}`} data-testid="trinks-contador">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${estourou ? "bg-red-400" : trinksContador.trinks429Agora ? "bg-amber-400" : "bg-emerald-400"}`} />
-                <span className="text-muted-foreground">API Trinks · fatia do mês</span>
-                <span className={`font-bold ${estourou ? "text-red-600" : "text-foreground"}`}>{trinksContador.consumoMes.toLocaleString("pt-BR")} / {trinksContador.fatiaMensal.toLocaleString("pt-BR")}</span>
-                <span className={estourou ? "text-red-600" : "text-muted-foreground"}>({pct}%)</span>
-                <span className="text-muted-foreground hidden sm:inline">· hoje {trinksContador.hoje.ok} ok{trinksContador.hoje.rate429 > 0 && ` · ${trinksContador.hoje.rate429} recusadas`}</span>
+            <div className={`rounded-lg border p-3 ${estourou ? "border-red-500/50 bg-red-500/5" : trinksContador.trinks429Agora ? "border-amber-500/40 bg-amber-500/5" : "border-card-border bg-card"}`} data-testid="trinks-contador">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">API Trinks · fatia do mês</span>
+                <span className="text-[10px] text-muted-foreground">{trinksContador.mesRef || ""}</span>
               </div>
-              {estourou && <div className="text-red-600 mt-1 font-medium">⚠ Fatia estourada — consumindo a cota do grecometas. Reduza o uso da Trinks (use CSV).</div>}
-              {!estourou && trinksContador.trinks429Agora && <div className="text-amber-600 mt-1">⚠ Trinks recusando agora — usando CSV.</div>}
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className={`text-lg font-bold tabular-nums ${estourou ? "text-red-600" : "text-foreground"}`}>{consumo.toLocaleString("pt-BR")}</span>
+                <span className="text-sm text-muted-foreground tabular-nums">/ {fatia.toLocaleString("pt-BR")}</span>
+                <span className={`text-xs font-semibold ${corTexto}`}>{pct}%</span>
+                <span className="text-[11px] text-muted-foreground ml-auto tabular-nums">restam {restam.toLocaleString("pt-BR")}</span>
+              </div>
+              {/* barra de progresso */}
+              <div className="mt-2 h-2 rounded-full bg-slate-200 overflow-hidden">
+                <div className={`h-full rounded-full transition-all ${cor}`} style={{ width: `${Math.min(100, pct)}%` }} />
+              </div>
+              <div className="mt-1.5 text-[10px] text-muted-foreground">
+                hoje {trinksContador.hoje.ok} ok{trinksContador.hoje.rate429 > 0 ? ` · ${trinksContador.hoje.rate429} recusadas` : ""} · plano 5.000 dividido: Greco Control 2.000 + Greco Metas 3.000
+              </div>
+              {estourou && <div className="text-red-600 mt-1 text-[11px] font-medium">⚠ Fatia do mês atingida — o sistema parou de chamar a Trinks e está usando e-mail/CSV (0 token). A cota do Greco Metas está preservada.</div>}
+              {!estourou && trinksContador.trinks429Agora && <div className="text-amber-600 mt-1 text-[11px]">⚠ Trinks recusando agora (limite da conta) — usando CSV.</div>}
             </div>
           );
         })()}

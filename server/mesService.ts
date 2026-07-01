@@ -256,14 +256,21 @@ export async function getMesData(
   const ehMesFechado = mes < mesCorrente;
   const ignorarApi = opts?.ignorarApi || ehMesFechado;
 
-  // Coleta paralela das fontes permitidas para a janela
-  const [resApi, resCaixa, resFinanceiro, payloadCaixa, payloadFinanceiro] = await Promise.all([
-    ignorarApi ? Promise.resolve(null) : lerApiTrinksComTimeout(mes, deps.trinksFetchAllRange, deps.log),
+  // v94 (fiscalização de tokens): lê os CSVs PRIMEIRO (0 tokens). A API Trinks
+  // só é consultada no mês corrente QUANDO NÃO HÁ NENHUM CSV. Antes ela era
+  // chamada em paralelo e o resultado quase sempre DESCARTADO (a escolha abaixo
+  // já prefere CSV), gastando cota à toa — era o maior vazamento passivo. O
+  // "hoje ao vivo" vem dos endpoints dedicados de hoje, não deste agregado.
+  const [resCaixa, resFinanceiro, payloadCaixa, payloadFinanceiro] = await Promise.all([
     lerCsvCaixa(mes),
     lerCsvFinanceiro(mes),
     kvGet<any>(trinksImport.kvKeyFor("caixa", mes)),
     kvGet<any>(trinksImport.kvKeyFor("financeiro", mes)),
   ]);
+  const temCsv = !!(resFinanceiro || resCaixa);
+  const resApi = (ignorarApi || temCsv)
+    ? null
+    : await lerApiTrinksComTimeout(mes, deps.trinksFetchAllRange, deps.log);
 
   // Monta auditoria — sempre todas as fontes, com seus números
   const fontesAuditoria: FontesAuditoria = {

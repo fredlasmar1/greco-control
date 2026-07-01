@@ -433,7 +433,9 @@ export default function Pagamento() {
                       </div>
                       <div className="rounded border bg-white p-2">
                         <div className="text-[10px] text-muted-foreground">🔌 API Trinks (período)</div>
-                        <div className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(conf.apiPeriodo || 0)}</div>
+                        {(conf.apiPeriodo || 0) > 0
+                          ? <div className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(conf.apiPeriodo || 0)}</div>
+                          : <div className="text-xs font-medium text-emerald-600">não consultada · 0 tokens</div>}
                       </div>
                     </div>
                     {/* composição pra fechar */}

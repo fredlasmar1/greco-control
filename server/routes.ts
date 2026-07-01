@@ -11470,11 +11470,52 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         log(`[pagamento/${mes}] force=true — backup feito, caches invalidados`, "pagamento");
       }
 
-      const [periodo, metas, pagamentosMes] = await Promise.all([
-        calcularPeriodoPorProfissional(dataInicio, dataFim),
+      const [metas, pagamentosMes] = await Promise.all([
         getAllMetas(),
         getPagamentosDoMes(mes),
       ]);
+
+      // v93 — FOLHA SEM API quando há RANKING do mês (0 tokens, DETERMINÍSTICA).
+      // A produção por profissional vem do próprio ranking (montarEquipeDeRanking),
+      // igual à aba Equipe. A comissão de serviços já vinha do ranking; agora as
+      // BASES (serviços/produtos/plano p/ bônus e comissão de produto) também. Isso
+      // mata a lentidão E a instabilidade — o "A pagar" oscilava porque a API caía no
+      // 429 e devolvia produção parcial a cada carga. A API (calcularPeriodoPor
+      // Profissional) só entra quando NÃO há ranking (mês corrente antes do export).
+      const _eqRank = force ? null : await montarEquipeDeRanking(mes, metas);
+      let periodo: any;
+      let periodoSemApi = false;
+      if (_eqRank) {
+        periodoSemApi = true;
+        const porProfissional: Record<string, any> = {};
+        for (const [id, e] of _eqRank.byId) {
+          const sl = e.faturamento?.servicosLiquido || 0;
+          const pl = e.faturamento?.produtosLiquido || 0;
+          porProfissional[id] = {
+            nome: e.nome,
+            servicos: { liquido: sl },
+            // ranking não separa bomboniere → produtos comissionáveis = produtos do ranking
+            produtos: { liquido: pl, liquidoComissionavel: pl },
+            plano: { reais: e.faturamento?.plano || 0 },
+            taxaCartao: 0,
+            custoInsumos: 0,
+          };
+        }
+        const tr = _eqRank.totais;
+        periodo = {
+          porProfissional,
+          totais: {
+            reais: tr.faturamento || 0, count: tr.atendimentos || 0,
+            servicosBruto: tr.servicosBruto || 0, servicosLiquido: tr.servicosLiquido || 0,
+            produtosBruto: tr.produtosBruto || 0, produtosLiquido: tr.produtosLiquido || 0,
+            produtosLiquidoComissionavel: tr.produtosLiquido || 0,
+            planoReais: tr.planoReais || 0,
+          },
+        };
+      } else {
+        // Sem ranking (mês corrente antes do export) OU force=true → cálculo ao vivo (API).
+        periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
+      }
 
       // Detecção de refetch falho: se force=true E o periodo veio vazio mas o backup tinha dados,
       // restaura o backup e retorna 503 (provável rate limit).
@@ -11669,7 +11710,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
           rankingProdutos: periodo.totais?.produtosBruto || 0, // produtos (base da folha)
           planoVendido: planoVendidoMes,                 // planos/Clube vendidos no mês (valor cheio)
           planoMensal: Math.round(planoMensalMes * 100) / 100, // planos reconhecidos no mês (÷ meses)
-          apiPeriodo: periodo.totais?.reais || 0,        // FONTE 3: faturamento da API no período
+          apiPeriodo: periodoSemApi ? 0 : (periodo.totais?.reais || 0), // FONTE 3: API (0 = não consultada, folha veio do ranking)
           // aliases retrocompat
           producaoRankingServicos: _rankConf.producaoServicos,
           temRanking: _rankConf.temRanking,

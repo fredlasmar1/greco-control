@@ -233,8 +233,9 @@ export default function Compras() {
                             <div>
                               <span className="font-medium">{c.loja}</span>
                               {c.descricao && <div className="text-[10px] text-muted-foreground">{c.descricao}</div>}
-                              <div className="flex items-center gap-1 mt-0.5">
-                                {c.origem === "telegram" && <Badge variant="outline" className="text-[9px] h-4 border-sky-500/40 text-sky-500 bg-sky-500/10 gap-0.5"><Send className="w-2.5 h-2.5" />Telegram</Badge>}
+                              <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                                {c.origem === "telegram" && <Badge variant="outline" className="text-[9px] h-4 border-sky-500/40 text-sky-500 bg-sky-500/10 gap-0.5"><Send className="w-2.5 h-2.5" />{c.telegramFrom ? `via ${c.telegramFrom}` : "Telegram"}</Badge>}
+                                {c.origem === "manual" && <Badge variant="outline" className="text-[9px] h-4">manual</Badge>}
                                 {c.tipo === "pix" && <Badge variant="outline" className="text-[9px] h-4">PIX</Badge>}
                                 {c.confianca === "baixa" && <Badge variant="outline" className="text-[9px] h-4 border-amber-500/40 text-amber-500">confira</Badge>}
                               </div>

@@ -123,6 +123,11 @@ const APELIDO_CATEGORIA: Record<string, CategoriaComissao> = {
   "debora": "Assistente",
   "ellen": "Assistente",
   "patricia": "Assistente",
+  // Recepção: ganha comissão QUANDO faz um serviço da grade (regra do dono, 02/07).
+  // 40% sobre o Total Serviços (ex.: Bruna R$170 → R$68, bate com o fechamento).
+  // Produtos comissionam à parte (barber_product_sales / semComissao).
+  "bruna": "Assistente",
+  "camila": "Assistente",
   // Larissa: secretária de manhã, atende como assistente à tarde. A comissão
   // sai de `Total Serviços` (só a parte de atendimento, ~R$1.555 em jun/2026),
   // nunca de `Valor Total` — vendas de produto/recepção dela não comissionam.

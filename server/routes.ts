@@ -10545,14 +10545,19 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
 
   // Baixa o comprovante, extrai via IA, salva e responde no grupo.
   async function processarComprovanteTelegram(fileId: string, chatId: string, from: string): Promise<void> {
+    const traço = (etapa: string, extra?: any) => kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa, ...(extra || {}) }).catch(() => {});
+    await traço("recebido");
     const arq = await baixarArquivoTelegram(fileId);
-    if (!arq) { await enviarMensagemCompras("⚠️ Não consegui baixar a imagem. Tente reenviar.", chatId); return; }
+    if (!arq) { await traço("falha_download"); await enviarMensagemCompras("⚠️ Não consegui baixar a imagem. Tente reenviar.", chatId); return; }
+    await traço("baixado", { mime: arq.mime, bytes: arq.buffer.length });
     const dados = await extrairComprovanteIA(arq.buffer, arq.mime);
-    if (!dados) { await enviarMensagemCompras("⚠️ Não consegui ler o comprovante (IA indisponível). Registre manualmente no app.", chatId); return; }
+    if (!dados) { await traço("ia_indisponivel"); await enviarMensagemCompras("⚠️ Não consegui ler o comprovante (IA indisponível). Registre manualmente no app.", chatId); return; }
     if (dados.ehComprovante === false || !(Number(dados.valor) > 0)) {
+      await traço("nao_comprovante", { valor: dados.valor, ehComprovante: dados.ehComprovante });
       await enviarMensagemCompras("🤔 Isso não parece um comprovante de PIX ou nota de compra. Nada foi registrado.", chatId);
       return;
     }
+    await traço("extraido", { valor: dados.valor, loja: dados.loja, categoria: dados.categoria });
     const dataRe = /^\d{4}-\d{2}-\d{2}$/.test(String(dados.data || "")) ? String(dados.data) : dataHojeSP();
     const mes = dataRe.slice(0, 7);
     const valor = Math.abs(Number(dados.valor) || 0);
@@ -10561,6 +10566,7 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
     const tipo = ["pix", "compra", "boleto", "outro"].includes(dados.tipo) ? dados.tipo : "compra";
     const conf = ["alta", "media", "baixa"].includes(dados.confianca) ? dados.confianca : "media";
     await salvarCompra({ mes, data: dataRe, valor, loja, categoria, descricao: String(dados.descricao || ""), tipo, origem: "telegram", telegramFileId: fileId, telegramFrom: from, confianca: conf });
+    await traço("salvo", { valor, mes });
     const totalMes = resumoCompras(await listarCompras(mes)).total;
     const dataBR = dataRe.split("-").reverse().join("/");
     let msg = `✅ <b>Compra registrada</b>\n💰 <b>R$ ${fmtBRLc(valor)}</b>\n🏪 ${loja}\n🏷️ ${categoria}\n📅 ${dataBR}`;
@@ -10597,8 +10603,16 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
       } else if (msg.document && /^image\/|application\/pdf/.test(String(msg.document.mime_type || ""))) {
         fileId = msg.document.file_id;
       }
-      if (!fileId) return; // texto normal / outro tipo → ignora
-      await processarComprovanteTelegram(fileId, chatId, from).catch((e: any) => log(`[compras] processar erro: ${e.message}`, "compras"));
+      if (!fileId) {
+        // Sem foto/documento detectado. Registra o que veio (ajuda a debugar
+        // "mandei foto e não registrou") — sem poluir em texto puro.
+        if (msg.photo || msg.document) kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "sem_fileid", temPhoto: !!msg.photo, temDoc: !!msg.document, docMime: msg.document?.mime_type || null }).catch(() => {});
+        return;
+      }
+      await processarComprovanteTelegram(fileId, chatId, from).catch((e: any) => {
+        kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "excecao", erro: String(e?.message || e) }).catch(() => {});
+        log(`[compras] processar erro: ${e.message}`, "compras");
+      });
     } catch (err: any) {
       log(`[compras] webhook erro: ${err.message}`, "compras");
     }
@@ -10623,7 +10637,8 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
     const me = await getMeTelegram();
     const secret = await kvGet<string>("telegram_webhook_secret");
     const chatId = await kvGet<string>("compras_chat_id");
-    return res.json({ configured: isComprasBotConfigured(), botUsername: me?.username || null, webhookAtivo: !!secret, grupoConectado: !!chatId });
+    const ultimo = await kvGet<any>("compras_ultimo_evento");
+    return res.json({ configured: isComprasBotConfigured(), botUsername: me?.username || null, webhookAtivo: !!secret, grupoConectado: !!chatId, iaConfigurada: !!process.env.ANTHROPIC_API_KEY, ultimoEvento: ultimo || null });
   });
 
   // ─── CRUD de Compras (aba "Compras do Mês") ───

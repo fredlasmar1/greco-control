@@ -78,8 +78,12 @@ export const useTrinksStore = create<TrinksState>((set, get) => ({
           savedEstablishmentId: data.establishmentId || null,
           isLoadingConfig: false,
         });
-        // Auto-sync if config exists
-        await get().syncData(false);
+        // v100: NÃO auto-sincroniza mais. O auto-sync (/api/trinks/sync) puxava o
+        // MÊS INTEIRO de agendamentos+transações+clientes da API em TODA abertura do
+        // app (quando o cache de 1h esfria/restart) — era o MAIOR dreno de token
+        // (~1.100/2 dias). Agora cada aba busca sua própria fonte 0-token (Gmail
+        // snapshots / CSV) e a API só entra sob demanda. Sync manual segue no botão
+        // de Configurações (syncData(true)).
       } else {
         set({ isLoadingConfig: false });
       }

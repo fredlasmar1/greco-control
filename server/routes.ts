@@ -5272,7 +5272,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Mês inválido. Use YYYY-MM." });
       }
       const force = String(req.query.force || "") === "1";
-      const data = await getMesDataCanonical(mes, { trinksFetchAllRange, log }, { force });
+      const data = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes }, { force });
       return res.json(data);
     } catch (err: any) {
       log(`/api/mes/${req.params.mes}/canonico erro: ${err?.message}`, "mesService");
@@ -5292,7 +5292,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Mês inválido. Use YYYY-MM." });
       }
       const [data, ts] = await Promise.all([
-        getMesDataCanonical(mes, { trinksFetchAllRange, log }),
+        getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes }),
         resolverFonte(mes), // só p/ timestamps
       ]);
       const fonteUi =
@@ -5330,7 +5330,7 @@ export async function registerRoutes(
       // cai pra cascata legada que tem seus próprios fallbacks.
       try {
         const canonical = await Promise.race([
-          getMesDataCanonical(mes, { trinksFetchAllRange, log }),
+          getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes }),
           new Promise<null>((_, rej) => setTimeout(() => rej(new Error("mesService timeout 12s")), 12_000)),
         ]);
         if (canonical && canonical.fonte !== "vazio" && canonical.transacoes.length > 0) {
@@ -7572,7 +7572,7 @@ Regras CRÍTICAS:
 
       // Trinks (API + CSV) p/ comparação
       let md: any = null;
-      try { md = await getMesDataCanonical(mes, { trinksFetchAllRange, log }); } catch {}
+      try { md = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes }); } catch {}
       const fa = md?.fontesAuditoria || {};
       const trinks = {
         canonico: r2(md?.faturamento || 0),
@@ -7613,7 +7613,7 @@ Regras CRÍTICAS:
 
       // 1) Esperado — breakdown canônico (não zera em 429 se há CSV).
       let md: any = null;
-      try { md = await getMesDataCanonical(mes, { trinksFetchAllRange, log }); } catch { md = null; }
+      try { md = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes }); } catch { md = null; }
       const b = md?.breakdown || { pix: 0, cartaoCredito: 0, cartaoDebito: 0, dinheiro: 0, plano: 0, voucher: 0, outros: 0 };
       const esperado = { pix: b.pix || 0, cartao: (b.cartaoCredito || 0) + (b.cartaoDebito || 0), dinheiro: b.dinheiro || 0 };
       const clubeEsperado = b.plano || 0;
@@ -7713,7 +7713,7 @@ Regras CRÍTICAS:
   // batiam a API ao vivo mesmo em mês fechado (Pagamento/Conciliação/etc).
   async function transacoesMesCsvFirst(mes: string): Promise<any[]> {
     try {
-      const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log });
+      const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes });
       return Array.isArray(md?.transacoes) ? md.transacoes : [];
     } catch { return []; }
   }
@@ -7861,7 +7861,7 @@ Regras CRÍTICAS:
     const notas: string[] = [];
 
     let md: any = null;
-    try { md = await getMesDataCanonical(mes, { trinksFetchAllRange, log }); } catch { md = null; }
+    try { md = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes }); } catch { md = null; }
     const transacoes: any[] = Array.isArray(md?.transacoes) ? md.transacoes : [];
     const agendamentos: any[] = Array.isArray(md?.agendamentos) ? md.agendamentos : [];
     const fonteLabel = md?.fonte === "api-trinks" ? "Trinks (ao vivo)"
@@ -8314,7 +8314,7 @@ Regras CRÍTICAS:
       // houver; senão comandas × 50min (média assumida, igual grecometas).
       let comandas = 0, ocupacaoRealEstimada = 0, baseOcupacao = "sem dados";
       try {
-        const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log });
+        const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes });
         comandas = Number(md?.comandas || 0);
         const ags: any[] = Array.isArray(md?.agendamentos) ? md.agendamentos : [];
         const finalizados = ags.filter(a => (a.status?.nome || "").toLowerCase() === "finalizado");
@@ -8391,7 +8391,7 @@ Regras CRÍTICAS:
       if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "Mês inválido. Use YYYY-MM." });
       const r2 = (n: number) => Math.round(n * 100) / 100;
 
-      const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log });
+      const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes });
       const { entries, notas } = await construirEntradasAuto(mes);
       const totais = await computeTotaisDoMes(mes);
       const cfg = await getConfigFin();
@@ -12918,7 +12918,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       }
 
       // v41: anexa auditoria de fontes (informativo, lado a lado com o número exibido)
-      const canonicoAudit = await getMesDataCanonical(mes, { trinksFetchAllRange, log })
+      const canonicoAudit = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes })
         .then(c => ({ fonteEscolhida: c.fonte, faturamento: c.faturamento, comandas: c.comandas, fontesAuditoria: c.fontesAuditoria }))
         .catch(() => null);
 

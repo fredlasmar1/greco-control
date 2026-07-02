@@ -187,6 +187,37 @@ async function lerApiTrinksComTimeout(
   } catch { return null; }
 }
 
+/** v100: lê os snapshots diários do mês (GMAIL/e-mail, 0 token) como fonte agregada.
+ * Fonte PRIMÁRIA do mês corrente — cobre faturamento sem tocar a API. */
+async function lerSnapshotsFonte(
+  mes: string,
+  lerSnapshots: (mes: string) => Promise<any[]>,
+): Promise<ResultadoFonte | null> {
+  try {
+    const snaps = await lerSnapshots(mes);
+    const validos = (Array.isArray(snaps) ? snaps : []).filter((s: any) => Number(s?.faturamento?.total ?? 0) > 0);
+    if (validos.length === 0) return null;
+    const transacoes = validos.map((s: any) => {
+      const f = s.faturamento || {};
+      return {
+        id: `snap-${s.data}`, dataReferencia: s.data, dataHora: s.data,
+        totalPagar: Number(f.total || 0),
+        formasPagamentos: [
+          ...(Number(f.pix) > 0 ? [{ nome: "PIX", valor: Number(f.pix) }] : []),
+          ...(Number(f.cartao) > 0 ? [{ nome: "Cartão", valor: Number(f.cartao) }] : []),
+          ...(Number(f.dinheiro) > 0 ? [{ nome: "Dinheiro", valor: Number(f.dinheiro) }] : []),
+          ...(Number(f.plano) > 0 ? [{ nome: "Plano", valor: Number(f.plano) }] : []),
+          ...(Number(f.voucher) > 0 ? [{ nome: "Voucher", valor: Number(f.voucher) }] : []),
+          ...(Number(f.outros) > 0 ? [{ nome: "Outros", valor: Number(f.outros) }] : []),
+        ],
+      };
+    });
+    const faturamento = validos.reduce((a: number, s: any) => a + Number(s.faturamento?.total || 0), 0);
+    const comandas = validos.reduce((a: number, s: any) => a + Number(s.faturamento?.qtdTransacoes || 0), 0);
+    return { fonte: "snapshot", faturamento, comandas, transacoes, agendamentos: [] };
+  } catch { return null; }
+}
+
 // ─── Breakdown por forma de pagamento ──────────────────────────────────
 
 function calcularBreakdown(transacoes: any[]): BreakdownPagamento {
@@ -219,6 +250,7 @@ function calcularBreakdown(transacoes: any[]): BreakdownPagamento {
 export interface GetMesDataDeps {
   trinksFetchAllRange: (path: string, params: Record<string, string>) => Promise<any[]>;
   log?: (msg: string, source?: string) => void;
+  lerSnapshots?: (mes: string) => Promise<any[]>; // v100: snapshots diários (Gmail, 0 token)
 }
 
 /**
@@ -267,8 +299,12 @@ export async function getMesData(
     kvGet<any>(trinksImport.kvKeyFor("caixa", mes)),
     kvGet<any>(trinksImport.kvKeyFor("financeiro", mes)),
   ]);
+  // v100: snapshots diários (GMAIL, 0 token) — fonte primária do mês corrente.
+  const resSnapshot = deps.lerSnapshots ? await lerSnapshotsFonte(mes, deps.lerSnapshots) : null;
   const temCsv = !!(resFinanceiro || resCaixa);
-  const resApi = (ignorarApi || temCsv)
+  const temSnapshot = !!(resSnapshot && resSnapshot.faturamento > 0);
+  // API = ÚLTIMO recurso. Só quando NÃO há CSV NEM snapshot (Gmail).
+  const resApi = (ignorarApi || temCsv || temSnapshot)
     ? null
     : await lerApiTrinksComTimeout(mes, deps.trinksFetchAllRange, deps.log);
 
@@ -306,11 +342,14 @@ export async function getMesData(
   // fallback (pode vir incompleto, ex.: junho/2026 caixa = R$20,6k vs
   // financeiro = R$41k). A API só entra quando NÃO há nenhum CSV; o "hoje ao
   // vivo" fica nos endpoints dedicados de hoje, não neste agregado mensal.
+  // v100: ordem canônica do dono — GMAIL (snapshot) → CSV → API (último recurso).
+  // Mês fechado: CSV é a autoridade (mais rico/validado), snapshot como fallback.
+  // Mês corrente: snapshot (Gmail, 0 token, fresco) primeiro; CSV refina; API por último.
   let escolhida: ResultadoFonte | null = null;
   if (ehMesFechado) {
-    escolhida = resFinanceiro || resCaixa || null;
+    escolhida = resFinanceiro || resCaixa || resSnapshot || null;
   } else {
-    escolhida = resFinanceiro || resCaixa || ((resApi && resApi.comandas > 0) ? resApi : null);
+    escolhida = resSnapshot || resFinanceiro || resCaixa || ((resApi && resApi.comandas > 0) ? resApi : null);
   }
 
   const data: MesData = escolhida ? {

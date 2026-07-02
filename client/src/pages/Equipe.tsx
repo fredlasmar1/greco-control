@@ -271,16 +271,17 @@ export default function Equipe() {
   // agendamento.valor é vazio na resposta da Trinks).
   const [equipeData, setEquipeData] = useState<any | null>(null);
   const [equipeLoading, setEquipeLoading] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
+  // v103: normal = 0 token (Ranking / gap do dia). force=1 SÓ no botão "Buscar na
+  // API" (mês passado sem ranking → busca o mês inteiro da API, gasta token).
+  const carregarEquipe = (force = false) => {
     setEquipeLoading(true);
-    fetch(`${API_BASE}/api/equipe/mes/${selectedMes}`)
+    fetch(`${API_BASE}/api/equipe/mes/${selectedMes}${force ? "?force=1" : ""}`)
       .then(r => r.json())
-      .then(d => { if (!cancelled && d.ok) setEquipeData(d); })
+      .then(d => { if (d.ok) setEquipeData(d); })
       .catch(() => {})
-      .finally(() => { if (!cancelled) setEquipeLoading(false); });
-    return () => { cancelled = true; };
-  }, [selectedMes]);
+      .finally(() => setEquipeLoading(false));
+  };
+  useEffect(() => { carregarEquipe(false); /* eslint-disable-next-line */ }, [selectedMes]);
 
   const computedBarbers = useMemo((): ComputedBarber[] => {
     // v42.4 (#2): sem dado do endpoint → estado "sem dados" honesto. NUNCA demo
@@ -366,6 +367,23 @@ export default function Equipe() {
           <AddBarberDialog />
         </div>
       </div>
+
+      {/* v103: aviso quando o mês passado não tem Ranking (0 token — não bateu API) */}
+      {equipeData?.semRanking && (
+        <div className="flex items-start gap-2 text-sm text-amber-900 bg-amber-50 border border-amber-300 rounded-md px-3 py-2">
+          <span className="mt-0.5">⚠️</span>
+          <span>
+            O <strong>Ranking de Profissionais de {selectedMes}</strong> não foi importado — por isso a equipe está
+            vazia neste mês (e <strong>não gastou token</strong>). Suba o CSV em <em>Importar Trinks</em> pra ver a
+            produção por barbeiro (0 token), ou clique{" "}
+            <button onClick={() => carregarEquipe(true)} disabled={equipeLoading}
+              className="underline font-medium text-amber-900 hover:text-amber-700">
+              Buscar na API
+            </button>{" "}
+            pra uma consulta ao vivo (gasta token da fatia, só desta vez).
+          </span>
+        </div>
+      )}
 
       {/* ── Configuração financeira global (taxa cartão) ── */}
       <ConfigFinanceiraCard />

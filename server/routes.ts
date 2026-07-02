@@ -11544,8 +11544,25 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
             planoReais: tr.planoReais || 0,
           },
         };
+      } else if (mes < hoje.slice(0, 7) && !force) {
+        // v103: mês PASSADO sem ranking → NÃO bate na API automático (seria o mês
+        // inteiro). Folha vazia + flag semRanking pra a UI pedir o Ranking (0 token).
+        // Força só com ?force=true (botão "Atualizar Trinks").
+        const _tm: any = await kvGet(`trinks_total_mes:${mes}`);
+        return res.json({
+          ok: true, mes, dataInicio, dataFim, semRanking: true, linhas: [], clubeOrfaos: [],
+          totais: { totalBruto: 0, totalComissaoServicos: 0, totalComissaoProdutos: 0, totalComissaoPlano: 0,
+            totalComissaoClubeGreco: 0, totalBonusExcedente: 0, totalBonusRanking: 0, totalSalarioFixo: 0,
+            totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalTaxaCartao: 0, totalSaldo: 0 },
+          conferencia: { oficialTrinks: Number(_tm?.total || 0), producaoRankingServicos: 0, rankingServicos: 0,
+            rankingProdutos: 0, planoVendido: 0, planoMensal: 0, apiPeriodo: 0,
+            temRanking: false, temOficial: Number(_tm?.total || 0) > 0 },
+          faturamento: { totalReais: 0, totalAtendimentos: 0, servicosBruto: 0, servicosLiquido: 0,
+            produtosBruto: 0, produtosLiquido: 0, planoReais: 0 },
+          fetchedAt: new Date().toISOString(),
+        });
       } else {
-        // Sem ranking (mês corrente antes do export) OU force=true → cálculo ao vivo (API).
+        // Sem ranking (mês corrente antes do export) OU force=true → cálculo ao vivo (gap/API).
         periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
       }
 
@@ -12938,6 +12955,17 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           novosClientes: t.novosClientes, clientesDistintos: t.clientesDistintos,
           pctRetornoMedio: t.pctRetornoMedio,
         };
+      } else if (mes < hoje.slice(0, 7) && req.query.force !== "1") {
+        // v103: mês PASSADO sem ranking → NÃO bate na API automático (seria o mês
+        // inteiro, caro). Mostra prompt pra subir o Ranking do mês (0 token). O mês
+        // corrente cai no gap-fetch abaixo; a API forçada só com ?force=1.
+        return res.json({
+          ok: true, mes, dataInicio, dataFim, fonte: "sem-ranking", semRanking: true,
+          totais: { faturamento: 0, atendimentos: 0, ticketMedio: 0, profissionaisAtivos: 0,
+            servicosBruto: 0, servicosLiquido: 0, produtosBruto: 0, produtosLiquido: 0, planoReais: 0,
+            novosClientes: 0, clientesDistintos: 0, pctRetornoMedio: 0 },
+          profissionais: [], config: { taxaCartaoPct: 0 }, fetchedAt: new Date().toISOString(),
+        });
       } else {
         const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
         configOut = periodo.config;

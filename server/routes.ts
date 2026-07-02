@@ -3974,7 +3974,10 @@ export async function registerRoutes(
     //    fetch em background e retorna com transacoesPendente=true. Próxima
     //    request pega o cache atualizado.
     const transCacheKey = `transacoes_dia:${hoje}`;
-    const TRANS_CACHE_TTL_MS = 2 * 60 * 1000;
+    // v104: cache do dia corrente 2min→15min. O "hoje" do Dashboard não precisa de
+    // frescor de 2 minutos; 15min trava o teto de chamadas (máx ~4/hora mesmo com o
+    // painel reaberto o dia todo) sem prejudicar a leitura intradiária.
+    const TRANS_CACHE_TTL_MS = 15 * 60 * 1000;
     const cachedTrans = getCached(transCacheKey) as { data: any[]; at: number } | null;
     const cachedFresh = cachedTrans && (Date.now() - cachedTrans.at) < TRANS_CACHE_TTL_MS;
 

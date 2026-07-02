@@ -10538,7 +10538,8 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
       if (ini < 0 || fim < 0) return null;
       return JSON.parse(txt.slice(ini, fim + 1));
     } catch (err: any) {
-      log(`[compras] IA erro: ${err.message}`, "compras");
+      kvSet("compras_ia_erro", { at: new Date().toISOString(), msg: String(err?.message || err), status: err?.status ?? null, name: err?.name ?? null }).catch(() => {});
+      log(`[compras] IA erro: ${err?.status || ""} ${err.message}`, "compras");
       return null;
     }
   }
@@ -10638,7 +10639,8 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
     const secret = await kvGet<string>("telegram_webhook_secret");
     const chatId = await kvGet<string>("compras_chat_id");
     const ultimo = await kvGet<any>("compras_ultimo_evento");
-    return res.json({ configured: isComprasBotConfigured(), botUsername: me?.username || null, webhookAtivo: !!secret, grupoConectado: !!chatId, iaConfigurada: !!process.env.ANTHROPIC_API_KEY, ultimoEvento: ultimo || null });
+    const iaErro = await kvGet<any>("compras_ia_erro");
+    return res.json({ configured: isComprasBotConfigured(), botUsername: me?.username || null, webhookAtivo: !!secret, grupoConectado: !!chatId, iaConfigurada: !!process.env.ANTHROPIC_API_KEY, ultimoEvento: ultimo || null, iaErro: iaErro || null });
   });
 
   // ─── CRUD de Compras (aba "Compras do Mês") ───

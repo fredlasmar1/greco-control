@@ -190,8 +190,10 @@ export default function VendasProdutos() {
             </div>
           )}
 
-          {/* v96: os DOIS diferenciais — comissionável (% equipe) vs bomboniere */}
-          {data && (() => {
+          {/* v96: split comissionável vs bomboniere — SÓ como fallback da API quando
+              NÃO há o Ranking de Produtos CSV. Com CSV, a seção "Produtos (CSV)" abaixo
+              é a autoritativa (0 token) e este card fica escondido pra não duplicar. */}
+          {data && !csvProd?.temCsv && (() => {
             const com = data.totais.receitaComissionavel ?? 0;
             const bom = data.totais.receitaBomboniere ?? 0;
             return (

@@ -12,7 +12,7 @@
 
 // ─── Tipos públicos ───────────────────────────────────────────────────────────
 
-export type TrinksImportType = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos";
+export type TrinksImportType = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos" | "rankingProdutos";
 
 export interface FinanceiroRow {
   data: string;                  // YYYY-MM-DD (Data Atendimento/Venda)
@@ -196,7 +196,27 @@ export interface ProdutosPayload {
   produtos: ProdutoCatalogo[];
 }
 
-export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload | CaixaPayload | ClientesPayload | ProdutosPayload;
+// Ranking de Produtos (por produto, com categoria) — SEM vendedor. Fonte 0-token
+// pro ranking de produtos + classificação de bomboniere por categoria.
+export interface RankingProdutoItem {
+  posicao: number;
+  produto: string;
+  categoria: string;
+  quantidade: number;
+  valor: number;
+}
+export interface RankingProdutosPayload {
+  tipo: "rankingProdutos";
+  mes: string;
+  periodoInicio: string;
+  periodoFim: string;
+  geradoEm: string;
+  totalValor: number;
+  totalUnidades: number;
+  produtos: RankingProdutoItem[];
+}
+
+export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload | CaixaPayload | ClientesPayload | ProdutosPayload | RankingProdutosPayload;
 
 // ─── Utilidades ──────────────────────────────────────────────────────────────
 
@@ -323,6 +343,14 @@ export function detectTrinksType(text: string): TrinksImportType | null {
   if (head.includes("posição") && head.includes("nome cliente") &&
       head.includes("visitas com pagamento")) {
     return "clientes";
+  }
+
+  // Ranking de Produtos: "Posição;Produto;Categoria;Quantidade vendida;Valor Total".
+  // "quantidade vendida" é exclusivo (profissionais tem "quantidade de atendimentos";
+  // catálogo tem "valor de compra"). SEM vendedor.
+  if (head.includes("posição") && head.includes("quantidade vendida") &&
+      head.includes("valor total") && !head.includes("profissional")) {
+    return "rankingProdutos";
   }
 
   // Ranking: tem cabeçalho com "Posição;Profissional;Função;Quantidade de Atendimentos"
@@ -960,10 +988,63 @@ export function parseTrinksCsv(buf: Buffer): TrinksImportPayload {
   if (tipo === "caixa") return parseCaixa(text);
   if (tipo === "clientes") return parseClientes(text);
   if (tipo === "produtos") return parseProdutos(text);
+  if (tipo === "rankingProdutos") return parseRankingProdutos(text);
   return parseRanking(text);
 }
 
 // ─── Persistência (chaves kv_store) ──────────────────────────────────────────
+
+/** Ranking de Produtos: por produto (posição, categoria, qtd, valor). Sem vendedor. */
+export function parseRankingProdutos(text: string): RankingProdutosPayload {
+  const lines = splitLines(text);
+  let periodoInicio = "", periodoFim = "", geradoEm = "", headerIdx = -1;
+  for (let i = 0; i < Math.min(lines.length, 20); i++) {
+    const l = lines[i];
+    const ini = l.match(/Data In[ií]cio:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    const fim = l.match(/Data Fim:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if (ini) periodoInicio = parseDateBR(ini[1]);
+    if (fim) periodoFim = parseDateBR(fim[1]);
+    const g = l.match(/Relat[oó]rio gerado em\s*(.+)/i);
+    if (g) geradoEm = g[1].replace(/"/g, "").trim();
+    const low = l.toLowerCase();
+    if (low.includes("posição") && low.includes("produto") && low.includes("quantidade vendida")) {
+      headerIdx = i; break;
+    }
+  }
+  if (headerIdx === -1) throw new Error("Cabeçalho do Ranking de Produtos não encontrado.");
+  const header = parseCsvLine(lines[headerIdx]).map(c => c.trim().toLowerCase());
+  const col = (name: string) => header.findIndex(h => h.includes(name));
+  const iPos = col("posição"), iProd = col("produto"), iCat = col("categoria"),
+        iQtd = col("quantidade"), iVal = col("valor total");
+  const produtos: RankingProdutoItem[] = [];
+  let totalValor = 0, totalUnidades = 0;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cells = parseCsvLine(lines[i]);
+    if (cells.length < 3) continue;
+    const prod = (cells[iProd] || "").trim();
+    if (!prod || /^total/i.test(prod)) continue;
+    const posStr = (cells[iPos] || "").trim();
+    if (posStr.toLowerCase() === "posição") continue;
+    const qtd = parseBR(cells[iQtd] || "0");
+    const val = parseBR(cells[iVal] || "0");
+    produtos.push({
+      posicao: parseInt(posStr, 10) || (produtos.length + 1),
+      produto: prod,
+      categoria: (cells[iCat] || "").trim(),
+      quantidade: qtd,
+      valor: val,
+    });
+    totalValor += val; totalUnidades += qtd;
+  }
+  return {
+    tipo: "rankingProdutos",
+    mes: (periodoInicio || "").slice(0, 7),
+    periodoInicio, periodoFim, geradoEm,
+    totalValor: Math.round(totalValor * 100) / 100,
+    totalUnidades,
+    produtos,
+  };
+}
 
 /** Chave única por mês+tipo. Ranking pode salvar 2 chaves (1 por período). */
 export function kvKeyFor(tipo: TrinksImportType, mes: string): string {
@@ -1184,6 +1265,16 @@ export function summarize(payload: TrinksImportPayload, importadoEm: string, mes
       geradoEm: payload.geradoEm,
       importadoEm,
       descricao: `Produtos · ${payload.totalProdutos} no catálogo · ${payload.comCusto} com custo cadastrado`,
+    };
+  }
+  if (payload.tipo === "rankingProdutos") {
+    return {
+      tipo: "rankingProdutos",
+      mes: payload.mes,
+      totalValor: payload.totalValor,
+      totalLinhas: payload.produtos.length,
+      geradoEm: payload.geradoEm,
+      descricao: `Ranking de Produtos · ${payload.produtos.length} produtos · ${payload.totalUnidades} un · R$ ${payload.totalValor.toFixed(2).replace(".", ",")}`,
     };
   }
   // ranking — pode ter múltiplos meses; chamamos summarize por período fora

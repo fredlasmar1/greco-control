@@ -204,7 +204,20 @@ export function comissaoServicosRanking(
   const cat = categoriaPorApelidoRanking(profissional);
   if (!cat) return { categoria: null, pct: 0, comissao: 0, mapeado: false, naoComissionavel: false };
   const pct = pctDaCategoria(cat);
-  return { categoria: cat, pct, comissao: Math.round(ts * pct * 100) / 100, mapeado: true, naoComissionavel: false };
+  // v97: ESCALONAMENTO POR META (regra do dono, 02/07). Qualquer barbeiro do
+  // CLÁSSICO que passar de R$10.000 em serviços no mês ganha 45% NO EXCEDENTE
+  // (40% até 10k, 45% só no que passa — "só o que passa"). Demais categorias
+  // seguem a % fixa. ⚠️ A Trinks paga 45% sobre TUDO quando passa de 10k (config
+  // diferente); aqui seguimos a regra do dono (só o excedente).
+  const LIMITE_ESCALA = 10000;
+  const PCT_ESCALA = 0.45;
+  let comissao: number;
+  if (cat === "Classico" && ts > LIMITE_ESCALA) {
+    comissao = LIMITE_ESCALA * pct + (ts - LIMITE_ESCALA) * PCT_ESCALA;
+  } else {
+    comissao = ts * pct;
+  }
+  return { categoria: cat, pct, comissao: Math.round(comissao * 100) / 100, mapeado: true, naoComissionavel: false };
 }
 
 // Categoria textual (para logs/debug).

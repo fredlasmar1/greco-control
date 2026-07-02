@@ -12281,6 +12281,37 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     }
   });
 
+  // GET /api/ranking-produtos/:mes — ranking de produtos do CSV "Ranking de
+  // Produtos" (0 tokens). Separa comissionável vs BOMBONIERE pela CATEGORIA
+  // (BEBIDAS/DOCES = bomboniere) — sem tocar a API. Não tem vendedor.
+  app.get("/api/ranking-produtos/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes YYYY-MM" });
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const payload: any = await kvGet(`trinks_import:rankingProdutos:${mes}`);
+      if (!payload?.produtos?.length) return res.json({ ok: true, temCsv: false, mes });
+      const CAT_BOMBONIERE = new Set(["bebidas", "doces", "bomboniere"]);
+      const produtos = (payload.produtos as any[]).map(p => ({
+        ...p, bomboniere: CAT_BOMBONIERE.has(String(p.categoria || "").toLowerCase()),
+      })).sort((a, b) => b.valor - a.valor);
+      let comissionavel = 0, bomboniere = 0;
+      const porCategoria: Record<string, number> = {};
+      for (const p of produtos) {
+        if (p.bomboniere) bomboniere += p.valor; else comissionavel += p.valor;
+        const c = p.categoria || "(sem)"; porCategoria[c] = (porCategoria[c] || 0) + p.valor;
+      }
+      return res.json({
+        ok: true, temCsv: true, mes, geradoEm: payload.geradoEm,
+        total: r2(payload.totalValor || 0), unidades: payload.totalUnidades || 0,
+        comissionavel: r2(comissionavel), bomboniere: r2(bomboniere),
+        porCategoria, produtos,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // GET /api/vendas-produtos/:mes — agrega vendas de produtos de um mês
   // com custo cadastrado, margem, ranking de barbeiros e top produtos.
   // Reaproveita /v1/transacoes (mesma fonte da aba Estoque).

@@ -113,6 +113,7 @@ export default function VendasProdutos() {
     try { localStorage.setItem("vendas-produtos.selectedMes", mes); } catch {}
   }, [mes]);
   const [data, setData] = useState<RespVendas | null>(null);
+  const [csvProd, setCsvProd] = useState<any>(null); // v24: Ranking de Produtos (CSV, 0 tokens)
   const [loading, setLoading] = useState(false);
   const [showCustos, setShowCustos] = useState(false);
   const [ordemProdutos, setOrdemProdutos] = useState<"receita" | "unidades" | "margem">("receita");
@@ -135,6 +136,8 @@ export default function VendasProdutos() {
       const j = await r.json();
       if (!j.ok) throw new Error(j.error || "Erro");
       setData(j);
+      // v24: Ranking de Produtos do CSV (0 tokens) — comissionável × bomboniere por categoria
+      authFetch(`${API_BASE}/api/ranking-produtos/${mes}`).then(x => x.json()).then(x => { if (x?.ok) setCsvProd(x); }).catch(() => setCsvProd(null));
     } catch (e: any) {
       toast({ title: "Erro ao carregar", description: e.message, variant: "destructive" });
     } finally {
@@ -216,6 +219,66 @@ export default function VendasProdutos() {
           )}
         </CardContent>
       </Card>
+
+      {/* v24: Ranking de Produtos via CSV (0 tokens) — comissionável × bomboniere por categoria */}
+      {csvProd?.temCsv && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Package className="h-5 w-5" />
+              Produtos vendidos (CSV · 0 tokens)
+              <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-600">sem API</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+              <div className="rounded-lg border p-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Total vendido</div>
+                <div className="text-lg font-bold tabular-nums text-slate-900">R$ {fmtBRL(csvProd.total)}</div>
+              </div>
+              <div className="rounded-lg border-2 border-emerald-500/50 bg-emerald-500/5 p-3">
+                <div className="text-[10px] uppercase tracking-wide text-emerald-600 font-semibold">Comissionável · % equipe</div>
+                <div className="text-lg font-bold tabular-nums text-slate-900">R$ {fmtBRL(csvProd.comissionavel)}</div>
+              </div>
+              <div className="rounded-lg border-2 border-amber-500/50 bg-amber-500/5 p-3">
+                <div className="text-[10px] uppercase tracking-wide text-amber-600 font-semibold">Bomboniere · não comissiona</div>
+                <div className="text-lg font-bold tabular-nums text-slate-900">R$ {fmtBRL(csvProd.bomboniere)}</div>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="py-2 pr-2">Produto</th>
+                    <th className="py-2 px-2">Categoria</th>
+                    <th className="py-2 px-2 text-right">Qtd</th>
+                    <th className="py-2 px-2 text-right">Valor</th>
+                    <th className="py-2 px-2 text-center">Tipo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {csvProd.produtos.map((p: any, i: number) => (
+                    <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                      <td className="py-1.5 pr-2 font-medium">{p.produto}</td>
+                      <td className="py-1.5 px-2 text-muted-foreground text-xs">{p.categoria || "—"}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums">{p.quantidade}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums">R$ {fmtBRL(p.valor)}</td>
+                      <td className="py-1.5 px-2 text-center">
+                        {p.bomboniere
+                          ? <Badge variant="outline" className="text-[9px] h-4 border-amber-500/50 text-amber-600 bg-amber-500/10">bomboniere</Badge>
+                          : <Badge variant="outline" className="text-[9px] h-4 border-emerald-500/50 text-emerald-600 bg-emerald-500/10">% equipe</Badge>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-2 text-[10px] text-muted-foreground">
+              Fonte: relatório "Ranking de Produtos" da Trinks (importado, 0 tokens). Bomboniere = categorias BEBIDAS/DOCES. Este ranking é por produto (sem vendedor); "quem vendeu" está no ranking de vendedores abaixo.
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Ranking de vendedores */}
       <Card>

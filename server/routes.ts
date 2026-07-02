@@ -5337,6 +5337,7 @@ export async function registerRoutes(
           const fonteUi =
             canonical.fonte === "api-trinks" ? "trinks" :
             canonical.fonte === "csv-caixa" || canonical.fonte === "csv-financeiro" ? "csv" :
+            canonical.fonte === "snapshot" ? "gmail" :
             "nenhuma";
           // Fase 1: dias úteis (ter-sáb, TZ SP) p/ projeção no Dashboard.
           const ultimoDiaMes = ultimoDiaDoMes(`${mes}-01`);

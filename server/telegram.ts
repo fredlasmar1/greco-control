@@ -57,6 +57,65 @@ export async function enviarMensagem(
   }
 }
 
+/** Baixa um arquivo (foto/documento) do Telegram pelo file_id. */
+export async function baixarArquivoTelegram(
+  fileId: string,
+): Promise<{ buffer: Buffer; mime: string } | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
+    const j: any = await r.json();
+    if (!j.ok || !j.result?.file_path) return null;
+    const path = String(j.result.file_path);
+    const fr = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${path}`);
+    if (!fr.ok) return null;
+    const ab = await fr.arrayBuffer();
+    const lower = path.toLowerCase();
+    const mime = lower.endsWith(".png") ? "image/png"
+      : lower.endsWith(".pdf") ? "application/pdf"
+      : lower.endsWith(".webp") ? "image/webp"
+      : "image/jpeg";
+    return { buffer: Buffer.from(ab), mime };
+  } catch (err: any) {
+    log(`[telegram] baixarArquivo erro: ${err.message}`, "telegram");
+    return null;
+  }
+}
+
+/** Configura o webhook do bot (recebe mensagens do grupo de comprovantes). */
+export async function setWebhookTelegram(
+  url: string,
+  secretToken?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!BOT_TOKEN) return { ok: false, error: "TELEGRAM_BOT_TOKEN não configurado" };
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        secret_token: secretToken,
+        allowed_updates: ["message"],
+        drop_pending_updates: true,
+      }),
+    });
+    const j: any = await r.json();
+    return j.ok ? { ok: true } : { ok: false, error: j.description || `HTTP ${r.status}` };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/** Dados do bot (username etc.) — pra montar as instruções do grupo. */
+export async function getMeTelegram(): Promise<{ id: number; username?: string; first_name?: string } | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
+    const j: any = await r.json();
+    return j.ok ? j.result : null;
+  } catch { return null; }
+}
+
 // ─── Helpers de formatação ───────────────────────────────────────────
 export function formatCurrency(v: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })

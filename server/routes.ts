@@ -40,9 +40,21 @@ import {
   montarResumoManha,
   montarResumoNoite,
   montarAlertasEstoque,
+  baixarArquivoTelegram,
+  setWebhookTelegram,
+  getMeTelegram,
   type ResumoDiaData,
   type ResumoAmanhaData,
 } from "./telegram";
+import {
+  listarCompras,
+  salvarCompra,
+  atualizarCompra,
+  removerCompra,
+  resumoCompras,
+  normalizarCategoria,
+  CATEGORIAS_COMPRA,
+} from "./compras";
 import {
   getAllMetas,
   getMeta,
@@ -10489,6 +10501,172 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
         evening: "20:00 (terça a sábado)",
       },
     });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // COMPRAS DA BARBEARIA — comprovantes (PIX/nota) enviados no grupo do Telegram,
+  // lidos por IA (Claude vision) e registrados por mês. NÃO usa token da Trinks.
+  // ════════════════════════════════════════════════════════════════════════
+  const mesHojeSP = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }).slice(0, 7);
+  const dataHojeSP = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  const fmtBRLc = (n: number) => (Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const requireAdmin = (req: Request, res: Response): boolean => {
+    const u = getUserFromToken(extractToken(req));
+    if (!u || u.role !== "admin") { res.status(403).json({ ok: false, error: "Acesso negado." }); return false; }
+    return true;
+  };
+
+  // Lê um comprovante (imagem/pdf) com Claude vision → dados estruturados.
+  async function extrairComprovanteIA(buffer: Buffer, mime: string): Promise<any | null> {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return null;
+    const anthropic = new Anthropic({ apiKey });
+    const cats = CATEGORIAS_COMPRA.join(" | ");
+    const prompt = `Você lê comprovantes de PIX e notas/cupons de compra de uma BARBEARIA. Extraia os dados e responda APENAS JSON (sem markdown):
+{"ehComprovante": true, "valor": 84.00, "data": "YYYY-MM-DD", "loja": "beneficiário/estabelecimento", "tipo": "pix|compra|boleto|outro", "categoria": "${cats}", "descricao": "resumo curto", "confianca": "alta|media|baixa"}
+Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja = quem RECEBEU. Se a imagem NÃO for comprovante/nota, responda {"ehComprovante": false}. Categoria pela natureza: cosmético/pomada/shampoo/bebida/doce de revenda=Produtos & Insumos; produto de limpeza=Limpeza & Consumo; conserto/obra=Manutenção & Reparos; máquina/cadeira/móvel=Equipamentos; luz/água/imposto/boleto de conta=Contas & Impostos; anúncio/tráfego=Marketing; comida/lanche=Alimentação; resto=Outros. Sem data → null.`;
+    const isPdf = mime === "application/pdf";
+    const content: any[] = isPdf
+      ? [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: buffer.toString("base64") } }, { type: "text", text: prompt }]
+      : [{ type: "image", source: { type: "base64", media_type: mime, data: buffer.toString("base64") } }, { type: "text", text: prompt }];
+    try {
+      const resp = await anthropic.messages.create({ model: "claude-sonnet-4-20250514", max_tokens: 600, messages: [{ role: "user", content }] });
+      const txt = resp.content.find((b: any) => b.type === "text")?.text || "";
+      const ini = txt.indexOf("{"), fim = txt.lastIndexOf("}");
+      if (ini < 0 || fim < 0) return null;
+      return JSON.parse(txt.slice(ini, fim + 1));
+    } catch (err: any) {
+      log(`[compras] IA erro: ${err.message}`, "compras");
+      return null;
+    }
+  }
+
+  // Baixa o comprovante, extrai via IA, salva e responde no grupo.
+  async function processarComprovanteTelegram(fileId: string, chatId: string, from: string): Promise<void> {
+    const arq = await baixarArquivoTelegram(fileId);
+    if (!arq) { await enviarMensagem("⚠️ Não consegui baixar a imagem. Tente reenviar.", { chatId }); return; }
+    const dados = await extrairComprovanteIA(arq.buffer, arq.mime);
+    if (!dados) { await enviarMensagem("⚠️ Não consegui ler o comprovante (IA indisponível). Registre manualmente no app.", { chatId }); return; }
+    if (dados.ehComprovante === false || !(Number(dados.valor) > 0)) {
+      await enviarMensagem("🤔 Isso não parece um comprovante de PIX ou nota de compra. Nada foi registrado.", { chatId });
+      return;
+    }
+    const dataRe = /^\d{4}-\d{2}-\d{2}$/.test(String(dados.data || "")) ? String(dados.data) : dataHojeSP();
+    const mes = dataRe.slice(0, 7);
+    const valor = Math.abs(Number(dados.valor) || 0);
+    const categoria = normalizarCategoria(dados.categoria);
+    const loja = String(dados.loja || "").trim() || "—";
+    const tipo = ["pix", "compra", "boleto", "outro"].includes(dados.tipo) ? dados.tipo : "compra";
+    const conf = ["alta", "media", "baixa"].includes(dados.confianca) ? dados.confianca : "media";
+    await salvarCompra({ mes, data: dataRe, valor, loja, categoria, descricao: String(dados.descricao || ""), tipo, origem: "telegram", telegramFileId: fileId, telegramFrom: from, confianca: conf });
+    const totalMes = resumoCompras(await listarCompras(mes)).total;
+    const dataBR = dataRe.split("-").reverse().join("/");
+    let msg = `✅ <b>Compra registrada</b>\n💰 <b>R$ ${fmtBRLc(valor)}</b>\n🏪 ${loja}\n🏷️ ${categoria}\n📅 ${dataBR}`;
+    if (dados.descricao) msg += `\n📝 ${String(dados.descricao)}`;
+    if (conf === "baixa") msg += `\n⚠️ <i>Confira no app — não tive certeza dos dados.</i>`;
+    msg += `\n\n<i>Total de compras em ${mes.split("-").reverse().join("/")}: R$ ${fmtBRLc(totalMes)}</i>`;
+    await enviarMensagem(msg, { chatId });
+  }
+
+  // POST /api/telegram/webhook/:secret — receptor de mensagens do grupo.
+  app.post("/api/telegram/webhook/:secret", async (req: Request, res: Response) => {
+    try {
+      const secretKv = (await kvGet<string>("telegram_webhook_secret")) || "";
+      const secretHdr = String(req.headers["x-telegram-bot-api-secret-token"] || "");
+      if (!secretKv || (req.params.secret !== secretKv && secretHdr !== secretKv)) {
+        return res.status(403).json({ ok: false });
+      }
+      const msg = req.body?.message;
+      res.json({ ok: true }); // ACK imediato pro Telegram (processa em background)
+      if (!msg) return;
+      const chatId = String(msg.chat?.id || "");
+      const from = String(msg.from?.first_name || msg.from?.username || "alguém");
+      if (chatId) kvSet("compras_chat_id", chatId).catch(() => {});
+      // Comandos utilitários
+      const txt = String(msg.text || "").trim().toLowerCase();
+      if (txt === "/start" || txt === "/id") {
+        await enviarMensagem(`👋 Grupo conectado! Chat ID: <code>${chatId}</code>\n\nManda a foto de um comprovante de PIX ou nota de compra que eu registro sozinho. 📸`, { chatId });
+        return;
+      }
+      // Foto (pega a maior resolução) ou documento imagem/pdf
+      let fileId = "";
+      if (Array.isArray(msg.photo) && msg.photo.length > 0) {
+        fileId = msg.photo[msg.photo.length - 1].file_id;
+      } else if (msg.document && /^image\/|application\/pdf/.test(String(msg.document.mime_type || ""))) {
+        fileId = msg.document.file_id;
+      }
+      if (!fileId) return; // texto normal / outro tipo → ignora
+      await processarComprovanteTelegram(fileId, chatId, from).catch((e: any) => log(`[compras] processar erro: ${e.message}`, "compras"));
+    } catch (err: any) {
+      log(`[compras] webhook erro: ${err.message}`, "compras");
+    }
+  });
+
+  // POST /api/telegram/compras/setup — ativa o webhook (admin) e devolve instruções.
+  app.post("/api/telegram/compras/setup", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    if (!isTelegramConfigured()) return res.status(400).json({ ok: false, error: "TELEGRAM_BOT_TOKEN não configurado no servidor." });
+    let secret = await kvGet<string>("telegram_webhook_secret");
+    if (!secret) { secret = crypto.randomBytes(24).toString("hex"); await kvSet("telegram_webhook_secret", secret); }
+    const base = process.env.PUBLIC_BASE_URL || "https://grecocontrol.com.br";
+    const url = `${base}/api/telegram/webhook/${secret}`;
+    const r = await setWebhookTelegram(url, secret);
+    if (!r.ok) return res.status(502).json({ ok: false, error: r.error });
+    const me = await getMeTelegram();
+    return res.json({ ok: true, botUsername: me?.username || "seu bot", webhook: url });
+  });
+
+  // GET /api/telegram/compras/status — bot + se o webhook está ligado.
+  app.get("/api/telegram/compras/status", async (_req: Request, res: Response) => {
+    const me = await getMeTelegram();
+    const secret = await kvGet<string>("telegram_webhook_secret");
+    const chatId = await kvGet<string>("compras_chat_id");
+    return res.json({ configured: isTelegramConfigured(), botUsername: me?.username || null, webhookAtivo: !!secret, grupoConectado: !!chatId });
+  });
+
+  // ─── CRUD de Compras (aba "Compras do Mês") ───
+  app.get("/api/compras/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : mesHojeSP();
+      const compras = await listarCompras(mes);
+      return res.json({ ok: true, mes, compras, resumo: resumoCompras(compras), categorias: CATEGORIAS_COMPRA });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  app.post("/api/compras/:mes", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const b = req.body || {};
+      const data = /^\d{4}-\d{2}-\d{2}$/.test(String(b.data || "")) ? String(b.data) : dataHojeSP();
+      const nova = await salvarCompra({
+        mes: data.slice(0, 7), data, valor: Math.abs(Number(b.valor) || 0),
+        loja: String(b.loja || "—"), categoria: normalizarCategoria(b.categoria),
+        descricao: String(b.descricao || ""), tipo: b.tipo || "compra", origem: "manual",
+      });
+      return res.json({ ok: true, compra: nova });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  app.put("/api/compras/:mes/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const patch: any = {};
+      const b = req.body || {};
+      if (b.valor != null) patch.valor = Math.abs(Number(b.valor) || 0);
+      if (b.loja != null) patch.loja = String(b.loja);
+      if (b.categoria != null) patch.categoria = normalizarCategoria(b.categoria);
+      if (b.descricao != null) patch.descricao = String(b.descricao);
+      if (b.data != null && /^\d{4}-\d{2}-\d{2}$/.test(String(b.data))) patch.data = String(b.data);
+      if (b.tipo != null) patch.tipo = b.tipo;
+      const upd = await atualizarCompra(req.params.mes, req.params.id, patch);
+      if (!upd) return res.status(404).json({ ok: false, error: "não encontrada" });
+      return res.json({ ok: true, compra: upd });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  app.delete("/api/compras/:mes/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const ok = await removerCompra(req.params.mes, req.params.id);
+      return res.json({ ok });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
   // POST /api/telegram/testar — envia mensagem de teste

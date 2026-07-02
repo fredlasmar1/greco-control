@@ -21,6 +21,7 @@ import Fechamento from "@/pages/Fechamento";
 import Metas from "@/pages/Metas";
 import Configuracoes from "@/pages/Configuracoes";
 import ContasMensais from "@/pages/ContasMensais";
+import Compras from "@/pages/Compras";
 import ClientesDuplicados from "@/pages/ClientesDuplicados";
 import VendasProdutos from "@/pages/VendasProdutos";
 import Consolidacao from "@/pages/Consolidacao";
@@ -78,6 +79,7 @@ function AdminRoutes() {
           <Route path="/consolidacao">{() => <RedirectTo to="/lancamentos" />}</Route>
           <Route path="/conciliacao">{() => <RedirectTo to="/lancamentos" />}</Route>
           <Route path="/pagamento" component={Pagamento} />
+          <Route path="/compras" component={Compras} />
           <Route path="/assinaturas" component={Assinaturas} />
           <Route path="/fechamento" component={Fechamento} />
           <Route path="/metas" component={Metas} />

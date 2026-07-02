@@ -29,6 +29,7 @@ import {
   FileUp,
   Scale,
   Activity,
+  ShoppingCart,
 } from "lucide-react";
 
 const navItems = [
@@ -44,6 +45,7 @@ const navItems = [
   { path: "/financeiro", label: "Financeiro", icon: DollarSign },
   { path: "/estoque", label: "Estoque", icon: Package },
   { path: "/pagamento", label: "Pagamentos de Comissões", icon: Wallet },
+  { path: "/compras", label: "Compras do Mês", icon: ShoppingCart },
   { path: "/assinaturas", label: "Assinaturas", icon: Crown },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
   { path: "/metas", label: "Metas", icon: Target },

@@ -4028,10 +4028,14 @@ export async function registerRoutes(
       );
       const result = await Promise.race([fetchPromise, timeoutPromise]);
       if ((result as any).timedOut) {
-        // Background fetch continua rodando, vai popular o cache quando terminar
-        transacoesPendente = true;
+        // Background fetch continua rodando, vai popular o cache quando terminar.
+        // v104 ANTI-SANGRIA: só sinaliza "pendente" (que faz o Dashboard re-pingar)
+        // se a Trinks NÃO estiver rate-limited. Em 429, o polling não resolve e só
+        // alimenta a tempestade — retorna pendente=false pra o front parar.
+        const rateLimited = circuitOpenUntil > Date.now();
+        transacoesPendente = !rateLimited;
         transOk = false;
-        log(`calcularDiaCompleto: transacoes em background (timeout 2.5s)`, "trinks");
+        log(`calcularDiaCompleto: transacoes em background (timeout 1.5s)${rateLimited ? " — 429 ativo, não pede polling" : ""}`, "trinks");
       } else {
         transData = result.data;
         transOk = result.ok;

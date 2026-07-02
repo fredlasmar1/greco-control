@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { authFetch, useAuth } from "@/lib/authStore";
 import { useStore } from "@/lib/store";
 import { useToast } from "@/hooks/use-toast";
@@ -592,14 +592,20 @@ export default function Dashboard() {
   useEffect(() => { loadHojeCompleto(); }, [loadHojeCompleto]);
 
   // v35: Polling enquanto transações estão sendo carregadas em background.
-  // Sai do polling assim que transacoesPendente vira false (API respondeu).
+  // v104 ANTI-SANGRIA: quando a Trinks está no 429, transacoesPendente NUNCA
+  // zera (o dia corrente não tem CSV de caixa pra fechar o flag) → o polling de
+  // 5s virava tempestade (720 req/h com o Dashboard aberto). Agora: no MÁXIMO
+  // 4 tentativas, a cada 20s, e para. Reseta quando o pendente resolve sozinho.
+  const pollHojeRef = useRef(0);
   useEffect(() => {
-    if (!hojeCompleto?.transacoesPendente) return;
+    if (!hojeCompleto?.transacoesPendente) { pollHojeRef.current = 0; return; }
+    if (pollHojeRef.current >= 4) return; // teto rígido — nunca poll infinito
     const interval = setInterval(() => {
-      // Invalida o cache local pra forçar nova request
+      if (pollHojeRef.current >= 4) { clearInterval(interval); return; }
+      pollHojeRef.current += 1;
       delete dashFetchCache["hoje-completo"];
       loadHojeCompleto();
-    }, 5000);
+    }, 20000);
     return () => clearInterval(interval);
   }, [hojeCompleto?.transacoesPendente, loadHojeCompleto]);
 

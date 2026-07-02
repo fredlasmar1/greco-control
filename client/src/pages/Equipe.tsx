@@ -152,9 +152,10 @@ export default function Equipe() {
   const [loading, setLoading] = useState(false);
   const [buscandoApi, setBuscandoApi] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
-  const [edit, setEdit] = useState({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "" });
+  const [edit, setEdit] = useState({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "", horaExtra: "" });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
+  const VALOR_HORA = 10; // R$ 10,00 / hora extra (regra do dono)
 
   // Caminho normal = 0 token (Ranking / gap do dia). force=1 só no botão "Buscar na API".
   const carregar = async (force = false) => {
@@ -190,11 +191,19 @@ export default function Equipe() {
       ajusteNota: l.pagamento.ajusteNota || "",
       consumoInterno: String(l.pagamento.consumoInterno || 0),
       consumoInternoNota: l.pagamento.consumoInternoNota || "",
+      horaExtra: "",
     });
   };
   const cancelarEdicao = () => {
     setEditandoId(null);
-    setEdit({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "" });
+    setEdit({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "", horaExtra: "" });
+  };
+  // Converte horas extras (× R$10) direto no campo Ajuste, com nota automática.
+  const aplicarHoraExtra = () => {
+    const h = Number(String(edit.horaExtra).replace(",", ".")) || 0;
+    if (h <= 0) return;
+    const valor = Math.round(h * VALOR_HORA * 100) / 100;
+    setEdit(prev => ({ ...prev, ajuste: String(valor), ajusteNota: `${h}h extra × R$ ${VALOR_HORA},00` }));
   };
   const salvarEdicao = async (l: Linha) => {
     setSalvando(true);
@@ -391,7 +400,7 @@ export default function Equipe() {
             <div className="space-y-1 text-xs">
               <Row label="Fixo do mês" valor={data.totais.totalSalarioFixo || 0} />
               <div className="text-[10px] text-muted-foreground pt-1">
-                Salário fixo por pessoa (configurável em <strong>Metas</strong>). Horas extras entram como <strong>Ajuste</strong> (calculadas por fora).
+                Assistente: <strong>R$ 1.500 fixo</strong> + hora extra a <strong>R$ 10/h</strong> (lançada no Ajuste, pelo editor da linha). Fixo por pessoa configurável em <strong>Metas</strong>.
               </div>
             </div>
           </div>
@@ -581,10 +590,23 @@ export default function Equipe() {
                                 </div>
                               </div>
                               {editando && (
-                                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3" onClick={e => e.stopPropagation()}>
+                                <div className="mt-3 space-y-3" onClick={e => e.stopPropagation()}>
+                                {/* Hora extra: horas × R$10 → Ajuste */}
+                                <div className="flex items-end gap-2 flex-wrap rounded-md border border-sky-500/30 bg-sky-500/5 p-2">
+                                  <div>
+                                    <label className="text-[10px] text-muted-foreground block mb-1">Horas extras (× R$ {VALOR_HORA},00)</label>
+                                    <Input type="number" step="0.5" value={edit.horaExtra} onChange={e => setEdit({ ...edit, horaExtra: e.target.value })} className="h-8 text-xs w-28" placeholder="ex: 11.4" />
+                                  </div>
+                                  <Button size="sm" variant="outline" className="h-8" onClick={aplicarHoraExtra} disabled={!(Number(String(edit.horaExtra).replace(",", ".")) > 0)}>
+                                    = R$ {fmtBRL((Number(String(edit.horaExtra).replace(",", ".")) || 0) * VALOR_HORA)} no Ajuste
+                                  </Button>
+                                  <span className="text-[10px] text-muted-foreground">Assistente: R$ 1.500 fixo + hora extra a R$ {VALOR_HORA}/h</span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                   <div><label className="text-[10px] text-muted-foreground block mb-1">Nota do vale</label><Input value={edit.valeNota} onChange={e => setEdit({ ...edit, valeNota: e.target.value })} className="h-8 text-xs" placeholder="opcional" /></div>
                                   <div><label className="text-[10px] text-muted-foreground block mb-1">Nota do consumo</label><Input value={edit.consumoInternoNota} onChange={e => setEdit({ ...edit, consumoInternoNota: e.target.value })} className="h-8 text-xs" placeholder="ex: 2 cervejas" /></div>
                                   <div><label className="text-[10px] text-muted-foreground block mb-1">Nota do ajuste</label><Input value={edit.ajusteNota} onChange={e => setEdit({ ...edit, ajusteNota: e.target.value })} className="h-8 text-xs" placeholder="ex: horas extras, falta, prêmio" /></div>
+                                </div>
                                 </div>
                               )}
                               <div className="mt-3 pt-3 border-t flex items-center justify-end gap-6 text-sm">

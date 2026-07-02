@@ -2318,6 +2318,30 @@ export async function registerRoutes(
   /** Tenta capturar o snapshot de UM dia. Cascata: Trinks → CSV agendamentos → vazio.
    *  Sempre salva o resultado (mesmo vazio) — exceto quando "vazio" e já existe
    *  snapshot anterior com dados (aí preserva o anterior). */
+  // v102: captura o RAW (agendamentos+transacoes) de UM dia e grava no snapshot
+  // — 1×/dia no cron. Assim Equipe/Pagamento/Ocupação do mês corrente leem do
+  // snapshot (0 token) e a API só busca o dia que falta (hoje). ~3 páginas/dia.
+  async function capturarRawDoDia(data: string): Promise<void> {
+    try {
+      const transFim = ymdAddDays(data, 1);
+      const [ag, tr] = await Promise.all([
+        trinksFetchAll("agendamentos", { dataInicio: data, dataFim: data }).catch(() => [] as any[]),
+        trinksFetchAll("transacoes", { dataInicio: data, dataFim: transFim }).catch(() => [] as any[]),
+      ]);
+      const agArr = Array.isArray(ag) ? ag : []; const trArr = Array.isArray(tr) ? tr : [];
+      if (agArr.length === 0 && trArr.length === 0) return; // dia fechado/sem dado → não grava
+      const snap = (await getSnapshot(data)) || {
+        data, fonte: "trinks-api" as const, capturadoEm: new Date().toISOString(),
+        faturamento: { total: 0, pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, outros: 0, qtdTransacoes: 0 },
+        agendamentos: { finalizados: 0, confirmados: 0, cancelados: 0, noShow: 0 },
+      };
+      snap.agendamentosRaw = agArr; snap.transacoesRaw = trArr; // preserva faturamento do e-mail
+      snap.capturadoEm = new Date().toISOString();
+      await saveSnapshot(snap);
+      log(`[cron-raw] ${data}: agend=${agArr.length} trans=${trArr.length} gravados no snapshot`, "snapshot");
+    } catch (e: any) { log(`[cron-raw] ${data} erro: ${e?.message}`, "snapshot"); }
+  }
+
   async function capturarSnapshotDia(data: string, opts: { preferirCsv?: boolean } = {}): Promise<SnapshotDia> {
     const avisos: string[] = [];
     const transFim = ymdAddDays(data, 1);
@@ -4299,101 +4323,77 @@ export async function registerRoutes(
     // persistentes antes de bater na API Trinks. Se cobrirem o período inteiro,
     // evita 100% das chamadas Trinks (sistema continua funcionando mesmo com
     // API morta indefinidamente).
+    // v102 ECONOMIA MÁXIMA: usa o raw dos SNAPSHOTS (0 token) por dia e busca na
+    // API SÓ os dias que faltam (normalmente só hoje) — NUNCA repagina o mês.
     let snapshotsAgend: any[] = [];
     let snapshotsTrans: any[] = [];
-    let snapshotCobertura = 0;
-    let snapshotDias = 0;
+    const diasComRaw = new Set<string>();
+    const datas: string[] = [];
+    { let cur = dataInicio; while (cur <= dataFim) { datas.push(cur); cur = ymdAddDays(cur, 1); } }
     try {
-      // Gera lista de datas YYYY-MM-DD no intervalo
-      const datas: string[] = [];
-      let cur = dataInicio;
-      while (cur <= dataFim) {
-        datas.push(cur);
-        cur = ymdAddDays(cur, 1);
-      }
       const snaps = await Promise.all(datas.map(d => getSnapshot(d)));
-      for (const s of snaps) {
-        if (!s) continue;
-        if (s.fonte === "vazio") continue;
-        snapshotDias++;
-        if (Array.isArray(s.agendamentosRaw)) snapshotsAgend.push(...s.agendamentosRaw);
-        if (Array.isArray(s.transacoesRaw)) snapshotsTrans.push(...s.transacoesRaw);
+      for (let i = 0; i < datas.length; i++) {
+        const s = snaps[i];
+        if (!s || s.fonte === "vazio") continue;
+        const temAg = Array.isArray(s.agendamentosRaw) && s.agendamentosRaw.length > 0;
+        const temTr = Array.isArray(s.transacoesRaw) && s.transacoesRaw.length > 0;
+        if (temAg) snapshotsAgend.push(...s.agendamentosRaw!);
+        if (temTr) snapshotsTrans.push(...s.transacoesRaw!);
+        if (temAg || temTr) diasComRaw.add(datas[i]);
       }
-      snapshotCobertura = datas.length > 0 ? snapshotDias / datas.length : 0;
-      log(`[periodo ${dataInicio}..${dataFim}] snapshot cobertura: ${snapshotDias}/${datas.length} (${Math.round(snapshotCobertura * 100)}%) — agend=${snapshotsAgend.length} trans=${snapshotsTrans.length}`, "equipe");
+      log(`[periodo ${dataInicio}..${dataFim}] snapshot raw: ${diasComRaw.size}/${datas.length} dias — agend=${snapshotsAgend.length} trans=${snapshotsTrans.length}`, "equipe");
     } catch (err: any) {
       log(`[periodo ${dataInicio}..${dataFim}] erro lendo snapshots: ${err?.message}`, "equipe");
     }
 
-    // Pra meses passados, NUNCA confia 100% nos snapshots — eles podem ter sido
-    // capturados durante 429 da Trinks (dado parcial). Força a chamada pra API
-    // (já fica em cache estendido 7d/30d). Pro período corrente/futuro, mantém
-    // o snapshot-first pra evitar storm de 429 em uso ao vivo.
     const hojeSP_periodo = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
     const periodoEhPassado = dataFim < hojeSP_periodo;
-    // Se snapshots cobrem 100% do período E tem dado, NÃO chama Trinks — EXCETO
-    // se for mês passado (aí prefere API que tem o dado completo).
-    const cobreTudo = !periodoEhPassado
-      && snapshotCobertura >= 1
-      && (snapshotsAgend.length > 0 || snapshotsTrans.length > 0);
+    // Dias SEM raw, só até hoje (futuro não tem dado). A API busca só esses.
+    const diasSemRaw = datas.filter(d => !diasComRaw.has(d) && d <= hojeSP_periodo);
 
-    // Buscar serial p/ não estourar rate limit do Trinks.
-    // Timeout 5s pra não travar quando Trinks está rate-limited (retries com
-    // backoff somam 30s+ por chamada). Vai usar fallback de metas se vazio.
+    // profissionais (cache 24h → ~0 token) — mapa nome↔id. Fallback metas se vazio.
     const profData = await Promise.race([
-      trinksFetchAll("profissionais").catch((e: any) => {
-        log(`[periodo ${dataInicio}..${dataFim}] erro profissionais: ${e?.message} — fallback pra metas`, "equipe");
-        return [] as any[];
-      }),
-      new Promise<any[]>(resolve => setTimeout(() => {
-        log(`[periodo ${dataInicio}..${dataFim}] timeout Trinks profissionais — fallback pra metas`, "equipe");
-        resolve([]);
-      }, 5000)),
+      trinksFetchAll("profissionais").catch(() => [] as any[]),
+      new Promise<any[]>(resolve => setTimeout(() => resolve([]), 5000)),
     ]);
-    // v37.3: fallback — se profData vier vazio (API 429), monta lista a partir
-    // das metas persistidas. As metas têm profissionalId real (Trinks) + nome,
-    // o que permite que resolveProf relacione os agendamentos do CSV (que tem
-    // só nome) com o profissional real.
     let profListaEffective = Array.isArray(profData) ? profData : (profData?.data || []);
     if (profListaEffective.length === 0) {
       try {
         const metasMap = await getAllMetas();
-        profListaEffective = Object.values(metasMap).map((m: any) => ({
-          id: m.profissionalId, nome: m.nome, apelido: m.nome,
-        }));
-        log(`[periodo ${dataInicio}..${dataFim}] usando ${profListaEffective.length} profissionais das metas (Trinks vazio)`, "equipe");
-      } catch (e: any) {
-        log(`[periodo ${dataInicio}..${dataFim}] fallback metas falhou: ${e?.message}`, "equipe");
-      }
+        profListaEffective = Object.values(metasMap).map((m: any) => ({ id: m.profissionalId, nome: m.nome, apelido: m.nome }));
+      } catch { /* ignore */ }
     }
-    // Se snapshots cobrem tudo, usa direto sem chamar API. Senão chama com
-    // timeout de 5s — se Trinks demorar (rate limit + retries com backoff),
-    // abandona e usa o que tiver de snapshot pra não travar a página.
+
     const PERIODO_TRINKS_TIMEOUT_MS = 5000;
     const withTimeout = <T>(p: Promise<T>, fallback: T, label: string): Promise<T> =>
       Promise.race([
         p,
-        new Promise<T>(resolve => setTimeout(() => {
-          log(`[periodo ${dataInicio}..${dataFim}] timeout Trinks ${label} — usando snapshots`, "equipe");
-          resolve(fallback);
-        }, PERIODO_TRINKS_TIMEOUT_MS)),
+        new Promise<T>(resolve => setTimeout(() => { log(`[periodo ${dataInicio}..${dataFim}] timeout ${label} — usando snapshots`, "equipe"); resolve(fallback); }, PERIODO_TRINKS_TIMEOUT_MS)),
       ]);
-    const agendData = cobreTudo ? snapshotsAgend : await withTimeout(
-      trinksFetchAllRange("agendamentos", { dataInicio, dataFim }).catch((e: any) => {
-        log(`[periodo ${dataInicio}..${dataFim}] erro agendamentos: ${e?.message} — fallback pra snapshots`, "equipe");
-        return snapshotsAgend;
-      }),
-      snapshotsAgend,
-      "agendamentos",
-    );
-    const transData = cobreTudo ? snapshotsTrans : await withTimeout(
-      trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim }).catch((e: any) => {
-        log(`[periodo ${dataInicio}..${dataFim}] erro transacoes: ${e?.message} — fallback pra snapshots`, "equipe");
-        return snapshotsTrans;
-      }),
-      snapshotsTrans,
-      "transacoes",
-    );
+    // dedup por id (evita dupla contagem quando o gap sobrepõe dias já em snapshot)
+    const dedupe = (arr: any[], keyFn: (x: any) => string): any[] => {
+      const seen = new Set<string>(); const out: any[] = [];
+      for (const x of arr) { const k = keyFn(x); if (k && seen.has(k)) continue; if (k) seen.add(k); out.push(x); }
+      return out;
+    };
+    let agendData: any[] = snapshotsAgend;
+    let transData: any[] = snapshotsTrans;
+    if (periodoEhPassado) {
+      // Mês passado SEM ranking (raro — normalmente tem ranking) → API do range inteiro.
+      agendData = await withTimeout(trinksFetchAllRange("agendamentos", { dataInicio, dataFim }).catch(() => snapshotsAgend), snapshotsAgend, "agendamentos");
+      transData = await withTimeout(trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim }).catch(() => snapshotsTrans), snapshotsTrans, "transacoes");
+    } else if (diasSemRaw.length > 0) {
+      // Período CORRENTE: busca SÓ os dias sem raw (o gap, normalmente só hoje) e
+      // soma aos snapshots. Nunca repagina o mês inteiro → economia máxima de token.
+      const gapIni = diasSemRaw[0];
+      const gapFim = diasSemRaw[diasSemRaw.length - 1];
+      const gapTransFim = ymdAddDays(gapFim, 1);
+      log(`[periodo ${dataInicio}..${dataFim}] gap API: ${gapIni}..${gapFim} (${diasSemRaw.length} dia(s))`, "equipe");
+      const agGap = await withTimeout(trinksFetchAllRange("agendamentos", { dataInicio: gapIni, dataFim: gapFim }).catch(() => []), [], "agendamentos-gap");
+      const trGap = await withTimeout(trinksFetchAllRange("transacoes", { dataInicio: gapIni, dataFim: gapTransFim }).catch(() => []), [], "transacoes-gap");
+      agendData = dedupe([...snapshotsAgend, ...(Array.isArray(agGap) ? agGap : [])], (a) => String(a.id || `${a.dataHoraInicio || a.data}|${a.cliente?.id}`));
+      transData = dedupe([...snapshotsTrans, ...(Array.isArray(trGap) ? trGap : [])], (t) => String(t.id || `${t.dataHora}|${t.cliente?.id}`));
+    }
     const profLista = profListaEffective; // v37.3: usa fallback de metas se Trinks zerou
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
     const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
@@ -13439,6 +13439,18 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           const snapOntem = await capturarSnapshotDia(ontem, { preferirCsv });
           const snapHoje = await capturarSnapshotDia(hoje, { preferirCsv });
           log(`[cron-snapshot] ontem ${ontem}: fonte=${snapOntem.fonte} R$${snapOntem.faturamento.total.toFixed(2)} | hoje ${hoje}: fonte=${snapHoje.fonte} R$${snapHoje.faturamento.total.toFixed(2)}`, "snapshot");
+          // v102: captura o RAW (agend+transacoes) dos dias do MÊS CORRENTE que
+          // ainda NÃO têm (últimos 8, pulando os já capturados) → Equipe/Pagamento/
+          // Ocupação leem do snapshot (0 token on-demand). Auto-cura se o cron falhar
+          // um dia. Steady-state: só hoje falta → ~1 fetch/noite (~3 páginas).
+          const mesCorr = hoje.slice(0, 7);
+          const diasMesRaw: string[] = [];
+          { let c = `${mesCorr}-01`; while (c <= hoje) { diasMesRaw.push(c); c = ymdAddDays(c, 1); } }
+          for (const d of diasMesRaw.slice(-8)) {
+            const s = await getSnapshot(d);
+            if (s && Array.isArray(s.agendamentosRaw) && s.agendamentosRaw.length > 0) continue;
+            await capturarRawDoDia(d);
+          }
         } catch (err: any) {
           log(`[cron-snapshot] erro: ${err.message}`, "snapshot");
         }

@@ -113,8 +113,11 @@ export async function sincronizarEmailsTrinks(opts?: { dias?: number; max?: numb
         }
         if (!f.data || f.total <= 0) continue; // domingo/dia fechado = 0 → ignora (já é 0 no sistema)
         const anterior = await getSnapshot(f.data);
-        // pula só se já está gravado COM o caixa em dinheiro (senão regrava p/ backfill v86)
-        if (anterior?.fonte === "trinks-email" && anterior.caixaDinheiro && Math.abs((anterior.faturamento?.total || 0) - f.total) < 0.01) continue;
+        // pula só se já está gravado COM caixa em dinheiro E com serv/prod (v99 backfill).
+        // Se faltar qualquer um, regrava pra preencher (backfill de campo novo).
+        if (anterior?.fonte === "trinks-email" && anterior.caixaDinheiro &&
+            anterior.faturamento?.servicos != null &&
+            Math.abs((anterior.faturamento?.total || 0) - f.total) < 0.01) continue;
         const snap: SnapshotDia = {
           data: f.data,
           fonte: "trinks-email",
@@ -124,6 +127,8 @@ export async function sincronizarEmailsTrinks(opts?: { dias?: number; max?: numb
             pix: 0, cartao: 0, dinheiro: 0, plano: f.pacotes, voucher: 0,
             outros: Math.max(0, f.total - f.servicos - f.produtos - f.pacotes),
             qtdTransacoes: f.clientesPagantes || anterior?.faturamento?.qtdTransacoes || 0,
+            servicos: f.servicos, // v99: breakdown pro painel (mês corrente sem CSV)
+            produtos: f.produtos,
           },
           agendamentos: {
             finalizados: f.finalizados || anterior?.agendamentos?.finalizados || 0,

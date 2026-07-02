@@ -8572,21 +8572,39 @@ Regras CRÍTICAS:
       const metaMes = (metasHistorico.find(m => m.month === mes)?.target) || 100000;
       const PROP = { serv: 0.79, plano: 0.15, prod: 0.06 };
 
-      // ── MÊS (caixa CSV do mês corrente, dia a dia) ──
+      // ── Fonte por dia: MERGE caixa CSV (preferido, tem breakdown) + snapshots
+      //    diários do e-mail (0 token). v99: assim o mês CORRENTE aparece mesmo
+      //    ANTES de subir o CSV do Caixa — usa o fechamento diário do e-mail. ──
       const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
       const rows = (Array.isArray(caixa?.rows) ? caixa.rows : []).filter((r: any) => !String(r.tipo || "").toLowerCase().includes("estorno"));
-      const porDiaMap: Record<string, number> = {};
-      let mesServ = 0, mesProd = 0, mesPlano = 0, mesTotal = 0;
+      type DiaAgg = { total: number; serv: number; prod: number; plano: number; atend: number };
+      const porDiaAgg: Record<string, DiaAgg> = {};
       for (const r of rows) {
         const dia = String(r.data || "").slice(0, 10);
         if (!dia) continue;
-        porDiaMap[dia] = (porDiaMap[dia] || 0) + Number(r.totalGeral || 0);
-        mesServ += Number(r.totalServico || 0);
-        mesProd += Number(r.totalProdutos || 0);
-        mesPlano += Number(r.totalPacotes || 0);
-        mesTotal += Number(r.totalGeral || 0);
+        const a = porDiaAgg[dia] || (porDiaAgg[dia] = { total: 0, serv: 0, prod: 0, plano: 0, atend: 0 });
+        a.total += Number(r.totalGeral || 0); a.serv += Number(r.totalServico || 0);
+        a.prod += Number(r.totalProdutos || 0); a.plano += Number(r.totalPacotes || 0); a.atend += 1;
       }
-      const porDia = Object.entries(porDiaMap).map(([dia, valor]) => ({ dia, valor: r2(valor) })).sort((a, b) => a.dia.localeCompare(b.dia));
+      const snapDia = (s: any): DiaAgg => ({
+        total: Number(s?.faturamento?.total || 0), serv: Number(s?.faturamento?.servicos || 0),
+        prod: Number(s?.faturamento?.produtos || 0), plano: Number(s?.faturamento?.plano || 0),
+        atend: Number(s?.faturamento?.qtdTransacoes || s?.agendamentos?.finalizados || 0),
+      });
+      const snapsMes = await listSnapshotsDoMes(mes).catch(() => [] as any[]);
+      for (const s of snapsMes) {
+        const dia = String(s?.data || "").slice(0, 10);
+        if (!dia || porDiaAgg[dia] || !(Number(s?.faturamento?.total) > 0)) continue; // caixa CSV tem prioridade
+        porDiaAgg[dia] = snapDia(s);
+      }
+
+      // MÊS
+      let mesServ = 0, mesProd = 0, mesPlano = 0, mesTotal = 0;
+      const porDia: Array<{ dia: string; valor: number }> = [];
+      for (const [dia, a] of Object.entries(porDiaAgg).sort((x, y) => x[0].localeCompare(y[0]))) {
+        mesServ += a.serv; mesProd += a.prod; mesPlano += a.plano; mesTotal += a.total;
+        porDia.push({ dia, valor: r2(a.total) });
+      }
       const melhorDia = porDia.reduce((a: any, b: any) => (b.valor > (a?.valor || 0) ? b : a), null as any);
       const ultimoDiaCaixa = porDia.length ? porDia[porDia.length - 1].dia : null;
       // receita OFICIAL do mês (Total Mês do email) — corrige o caixa parcial
@@ -8594,35 +8612,28 @@ Regras CRÍTICAS:
       const mesOficial = Number(tmMes?.total || 0);
       const mesRealizado = mesOficial > 0 ? mesOficial : mesTotal;
 
-      // ── SEMANA (terça→sábado, ancorada na terça; acumula dia a dia) ──
-      // A barbearia opera terça a sábado; a semana de trabalho começa SEMPRE na
-      // terça. Dom/seg (fechado) mostram a semana que terminou no sábado. Os dias
-      // futuros da semana ainda não têm caixa → somam 0 e vão entrando dia a dia.
+      // ── SEMANA (terça→sábado, ancorada na terça). Pode CRUZAR o mês (ex.: 30/06
+      // em junho + 01–04/07 em julho) → busca cada dia por snapshot quando não está
+      // no mapa do mês corrente. Dias futuros somam 0 e entram conforme fecham. ──
       const dowHojePainel = new Date(`${hoje}T12:00:00-03:00`).getUTCDay(); // 0=dom…6=sáb
       const diasDesdeTerca = (dowHojePainel + 5) % 7; // ter→0 qua→1 … sáb→4 dom→5 seg→6
       const inicioSemana = ymdAddDays(hoje, -diasDesdeTerca);
       const fimSemana = ymdAddDays(inicioSemana, 4); // terça + 4 = sábado
       let semServ = 0, semProd = 0, semPlano = 0, semTotal = 0;
-      for (const r of rows) {
-        const dia = String(r.data || "").slice(0, 10);
-        if (dia >= inicioSemana && dia <= fimSemana) {
-          semServ += Number(r.totalServico || 0); semProd += Number(r.totalProdutos || 0);
-          semPlano += Number(r.totalPacotes || 0); semTotal += Number(r.totalGeral || 0);
-        }
+      for (let i = 0; i < 5; i++) {
+        const d = ymdAddDays(inicioSemana, i);
+        let a: DiaAgg | null = porDiaAgg[d] || null;
+        if (!a) { const s = await getSnapshot(d).catch(() => null); if (s && Number(s.faturamento?.total) > 0) a = snapDia(s); }
+        if (a) { semServ += a.serv; semProd += a.prod; semPlano += a.plano; semTotal += a.total; }
       }
 
-      // ── HOJE (v78: SÓ CSV — rápido, sem tocar a API). O "ao vivo" vem do
-      // endpoint separado /api/dashboard/hoje (assíncrono, não trava a tela). ──
+      // ── HOJE = último dia FECHADO (ontem, se hoje ainda não fechou). 0 token. ──
       let hojeRealizado = 0, hojeAtend = 0, hojeFonte: "csv" | "ultimo" = "csv", hojeDataRef = hoje;
-      const rowsHoje = rows.filter((r: any) => String(r.data || "").slice(0, 10) === hoje);
       let precisaAoVivo = false;
-      if (rowsHoje.length > 0) {
-        hojeRealizado = rowsHoje.reduce((s: number, r: any) => s + Number(r.totalGeral || 0), 0);
-        hojeAtend = rowsHoje.length; hojeFonte = "csv";
+      if (porDiaAgg[hoje]) {
+        hojeRealizado = porDiaAgg[hoje].total; hojeAtend = porDiaAgg[hoje].atend; hojeFonte = "csv";
       } else if (ultimoDiaCaixa) {
-        // sem caixa de hoje → mostra o último dia fechado e sinaliza buscar ao vivo
-        hojeRealizado = porDiaMap[ultimoDiaCaixa] || 0;
-        hojeAtend = rows.filter((r: any) => String(r.data || "").slice(0, 10) === ultimoDiaCaixa).length;
+        hojeRealizado = porDiaAgg[ultimoDiaCaixa].total; hojeAtend = porDiaAgg[ultimoDiaCaixa].atend;
         hojeFonte = "ultimo"; hojeDataRef = ultimoDiaCaixa; precisaAoVivo = true;
       }
 

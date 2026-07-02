@@ -37,6 +37,8 @@ export interface SnapshotDia {
     voucher: number;        // cortesia
     outros: number;
     qtdTransacoes: number;
+    servicos?: number;      // v99: breakdown do e-mail (pro painel mostrar serv/prod sem CSV)
+    produtos?: number;
   };
   // Agendamentos do dia (finalizados + confirmados que aconteceram)
   agendamentos: {

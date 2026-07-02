@@ -43,6 +43,8 @@ import {
   baixarArquivoTelegram,
   setWebhookTelegram,
   getMeTelegram,
+  enviarMensagemCompras,
+  isComprasBotConfigured,
   type ResumoDiaData,
   type ResumoAmanhaData,
 } from "./telegram";
@@ -10544,11 +10546,11 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
   // Baixa o comprovante, extrai via IA, salva e responde no grupo.
   async function processarComprovanteTelegram(fileId: string, chatId: string, from: string): Promise<void> {
     const arq = await baixarArquivoTelegram(fileId);
-    if (!arq) { await enviarMensagem("⚠️ Não consegui baixar a imagem. Tente reenviar.", { chatId }); return; }
+    if (!arq) { await enviarMensagemCompras("⚠️ Não consegui baixar a imagem. Tente reenviar.", chatId); return; }
     const dados = await extrairComprovanteIA(arq.buffer, arq.mime);
-    if (!dados) { await enviarMensagem("⚠️ Não consegui ler o comprovante (IA indisponível). Registre manualmente no app.", { chatId }); return; }
+    if (!dados) { await enviarMensagemCompras("⚠️ Não consegui ler o comprovante (IA indisponível). Registre manualmente no app.", chatId); return; }
     if (dados.ehComprovante === false || !(Number(dados.valor) > 0)) {
-      await enviarMensagem("🤔 Isso não parece um comprovante de PIX ou nota de compra. Nada foi registrado.", { chatId });
+      await enviarMensagemCompras("🤔 Isso não parece um comprovante de PIX ou nota de compra. Nada foi registrado.", chatId);
       return;
     }
     const dataRe = /^\d{4}-\d{2}-\d{2}$/.test(String(dados.data || "")) ? String(dados.data) : dataHojeSP();
@@ -10565,7 +10567,7 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
     if (dados.descricao) msg += `\n📝 ${String(dados.descricao)}`;
     if (conf === "baixa") msg += `\n⚠️ <i>Confira no app — não tive certeza dos dados.</i>`;
     msg += `\n\n<i>Total de compras em ${mes.split("-").reverse().join("/")}: R$ ${fmtBRLc(totalMes)}</i>`;
-    await enviarMensagem(msg, { chatId });
+    await enviarMensagemCompras(msg, chatId);
   }
 
   // POST /api/telegram/webhook/:secret — receptor de mensagens do grupo.
@@ -10585,7 +10587,7 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
       // Comandos utilitários
       const txt = String(msg.text || "").trim().toLowerCase();
       if (txt === "/start" || txt === "/id") {
-        await enviarMensagem(`👋 Grupo conectado! Chat ID: <code>${chatId}</code>\n\nManda a foto de um comprovante de PIX ou nota de compra que eu registro sozinho. 📸`, { chatId });
+        await enviarMensagemCompras(`👋 Grupo conectado! Chat ID: <code>${chatId}</code>\n\nManda a foto de um comprovante de PIX ou nota de compra que eu registro sozinho. 📸`, chatId);
         return;
       }
       // Foto (pega a maior resolução) ou documento imagem/pdf
@@ -10605,7 +10607,7 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
   // POST /api/telegram/compras/setup — ativa o webhook (admin) e devolve instruções.
   app.post("/api/telegram/compras/setup", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
-    if (!isTelegramConfigured()) return res.status(400).json({ ok: false, error: "TELEGRAM_BOT_TOKEN não configurado no servidor." });
+    if (!isComprasBotConfigured()) return res.status(400).json({ ok: false, error: "TELEGRAM_COMPRAS_BOT_TOKEN não configurado no servidor (adicione na Railway)." });
     let secret = await kvGet<string>("telegram_webhook_secret");
     if (!secret) { secret = crypto.randomBytes(24).toString("hex"); await kvSet("telegram_webhook_secret", secret); }
     const base = process.env.PUBLIC_BASE_URL || "https://grecocontrol.com.br";
@@ -10621,7 +10623,7 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
     const me = await getMeTelegram();
     const secret = await kvGet<string>("telegram_webhook_secret");
     const chatId = await kvGet<string>("compras_chat_id");
-    return res.json({ configured: isTelegramConfigured(), botUsername: me?.username || null, webhookAtivo: !!secret, grupoConectado: !!chatId });
+    return res.json({ configured: isComprasBotConfigured(), botUsername: me?.username || null, webhookAtivo: !!secret, grupoConectado: !!chatId });
   });
 
   // ─── CRUD de Compras (aba "Compras do Mês") ───

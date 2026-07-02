@@ -8,9 +8,35 @@ import { log } from "./index";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "5565354217";
+// Bot DEDICADO pro grupo de compras/comprovantes (@grecocontrol_bot). Separado
+// do bot do resumo matinal (@fredgreco_bot). Cai no BOT_TOKEN se não configurado.
+const COMPRAS_BOT_TOKEN = process.env.TELEGRAM_COMPRAS_BOT_TOKEN || BOT_TOKEN;
 
 export function isTelegramConfigured(): boolean {
   return !!BOT_TOKEN;
+}
+
+export function isComprasBotConfigured(): boolean {
+  return !!COMPRAS_BOT_TOKEN;
+}
+
+/** Envia mensagem pelo bot de COMPRAS (grupo de comprovantes). */
+export async function enviarMensagemCompras(
+  texto: string,
+  chatId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!COMPRAS_BOT_TOKEN) return { ok: false, error: "TELEGRAM_COMPRAS_BOT_TOKEN não configurado" };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${COMPRAS_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: "HTML", disable_web_page_preview: true }),
+    });
+    const data: any = await res.json();
+    return data.ok ? { ok: true } : { ok: false, error: data.description || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
 }
 
 export function getChatId(): string {
@@ -61,13 +87,13 @@ export async function enviarMensagem(
 export async function baixarArquivoTelegram(
   fileId: string,
 ): Promise<{ buffer: Buffer; mime: string } | null> {
-  if (!BOT_TOKEN) return null;
+  if (!COMPRAS_BOT_TOKEN) return null;
   try {
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
+    const r = await fetch(`https://api.telegram.org/bot${COMPRAS_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
     const j: any = await r.json();
     if (!j.ok || !j.result?.file_path) return null;
     const path = String(j.result.file_path);
-    const fr = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${path}`);
+    const fr = await fetch(`https://api.telegram.org/file/bot${COMPRAS_BOT_TOKEN}/${path}`);
     if (!fr.ok) return null;
     const ab = await fr.arrayBuffer();
     const lower = path.toLowerCase();
@@ -87,9 +113,9 @@ export async function setWebhookTelegram(
   url: string,
   secretToken?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!BOT_TOKEN) return { ok: false, error: "TELEGRAM_BOT_TOKEN não configurado" };
+  if (!COMPRAS_BOT_TOKEN) return { ok: false, error: "TELEGRAM_COMPRAS_BOT_TOKEN não configurado" };
   try {
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
+    const r = await fetch(`https://api.telegram.org/bot${COMPRAS_BOT_TOKEN}/setWebhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -108,9 +134,9 @@ export async function setWebhookTelegram(
 
 /** Dados do bot (username etc.) — pra montar as instruções do grupo. */
 export async function getMeTelegram(): Promise<{ id: number; username?: string; first_name?: string } | null> {
-  if (!BOT_TOKEN) return null;
+  if (!COMPRAS_BOT_TOKEN) return null;
   try {
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
+    const r = await fetch(`https://api.telegram.org/bot${COMPRAS_BOT_TOKEN}/getMe`);
     const j: any = await r.json();
     return j.ok ? j.result : null;
   } catch { return null; }

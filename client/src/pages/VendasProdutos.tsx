@@ -128,11 +128,12 @@ export default function VendasProdutos() {
     return arr;
   }, [data, ordemProdutos]);
 
-  const carregar = async () => {
+  const carregar = async (force = false) => {
     if (!/^\d{4}-\d{2}$/.test(mes)) return;
     setLoading(true);
     try {
-      const r = await authFetch(`${API_BASE}/api/vendas-produtos/${mes}`);
+      // v101: normal = 0 token (Ranking CSV). force=1 SÓ no botão Atualizar (busca API).
+      const r = await authFetch(`${API_BASE}/api/vendas-produtos/${mes}${force ? "?force=1" : ""}`);
       const j = await r.json();
       if (!j.ok) throw new Error(j.error || "Erro");
       setData(j);
@@ -169,9 +170,13 @@ export default function VendasProdutos() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-3">
-            <Button onClick={carregar} disabled={loading} variant="outline" size="sm">
+            <Button onClick={() => carregar(false)} disabled={loading} variant="outline" size="sm">
               {loading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
-              Atualizar
+              Recarregar (0 token)
+            </Button>
+            <Button onClick={() => carregar(true)} disabled={loading} variant="outline" size="sm" title="Busca ao vivo na API da Trinks (gasta token). Use só se não tiver o Ranking do mês.">
+              <RefreshCw className="h-4 w-4 mr-1" />
+              Buscar na API
             </Button>
             <Button onClick={() => setShowCustos(true)} variant="outline" size="sm" data-testid="abrir-custos">
               <Settings className="h-4 w-4 mr-1" />
@@ -221,6 +226,23 @@ export default function VendasProdutos() {
           )}
         </CardContent>
       </Card>
+
+      {/* v101: aviso quando não há Ranking do mês (0 token — não bateu na API) */}
+      {data && (data as any).semRanking && (
+        <Card>
+          <CardContent className="py-4">
+            <div className="flex items-start gap-2 text-sm text-amber-900 bg-amber-50 border border-amber-300 rounded-md px-3 py-2">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                Ainda não há o <strong>Ranking de Produtos</strong> + <strong>Ranking de Profissionais</strong> deste mês
+                importados — por isso a aba está vazia (e <strong>não gastou token</strong>). Suba os dois CSVs em
+                <em> Importar Trinks</em> pro ranking de vendedores aparecer (0 token). Ou clique em <strong>Buscar na API</strong>
+                pra uma consulta ao vivo (gasta token da fatia).
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* v24: Ranking de Produtos via CSV (0 tokens) — comissionável × bomboniere por categoria */}
       {csvProd?.temCsv && (

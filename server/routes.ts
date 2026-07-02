@@ -12343,6 +12343,64 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const dataFim = ultimoDia < hoje ? ultimoDia : hoje;
       const transFim = ymdAddDays(dataFim, 1); // intervalo semi-aberto
 
+      // v101: 0-TOKEN primeiro. "Quem vendeu" vem do Ranking de Profissionais
+      // (Total Produtos por barbeiro) e "o que vendeu / bomboniere" do Ranking de
+      // Produtos (por categoria). NÃO toca a API. API só com ?force=1 (fallback
+      // manual). O e-mail não traz produto por vendedor — esta é a fonte 0-token.
+      if (req.query.force !== "1") {
+        const r2b = (n: number) => Math.round(n * 100) / 100;
+        const rkProd: any = await kvGet(`trinks_import:rankingProdutos:${mes}`);
+        const rkEquipe = await montarEquipeDeRanking(mes, await getAllMetas());
+        if (rkProd?.produtos?.length && rkEquipe) {
+          const CAT_BOMB = new Set(["bebidas", "doces", "bomboniere"]);
+          const pctProd = Number(storeData.settings?.comissaoProdutoPadraoPct ?? 10);
+          let totRec = 0, totUn = 0, totCom = 0, totBomb = 0;
+          const produtosArr = (rkProd.produtos as any[]).map((p: any) => {
+            const bomb = CAT_BOMB.has(String(p.categoria || "").toLowerCase());
+            const val = Number(p.valor || 0), qt = Number(p.quantidade || 0);
+            totRec += val; totUn += qt; if (bomb) totBomb += val; else totCom += val;
+            return { id: String(p.produto), nome: p.produto, categoria: p.categoria || "", fabricante: "",
+              unidades: qt, receita: r2b(val), custoTotal: 0, precoVendaMedio: qt > 0 ? r2b(val / qt) : 0,
+              custoUnit: 0, margemRS: 0, margemPct: 0, bomboniere: bomb };
+          }).sort((a, b) => b.receita - a.receita);
+          const ratio = totRec > 0 ? totCom / totRec : 1; // rateio de bomboniere por barbeiro (estimado)
+          const ranking = Array.from(rkEquipe.byId.values())
+            .map((v: any) => {
+              const prodB = Number(v.faturamento?.produtos || 0);
+              const comB = prodB * ratio;
+              return { id: v.id, ids: [v.id], nome: v.nome, unidades: Number(v.atendimentos?.produtos || 0),
+                receita: r2b(prodB), receitaComissionavel: r2b(comB), receitaBomboniere: r2b(prodB - comB),
+                custoTotal: 0, margemRS: 0, margemPct: 0, produtosDistintos: 0, comandas: 0, ticketMedio: 0,
+                pctComissao: pctProd, pctComissaoFonte: "default" as const,
+                comissaoRS: r2b(comB * pctProd / 100),
+                historico: /ex.?func|hist[oó]rico|profissional \d+/i.test(v.nome) };
+            })
+            .filter((v: any) => v.receita > 0)
+            .sort((a, b) => b.receita - a.receita);
+          const resp = {
+            ok: true, mes, dataInicio, dataFim, fonte: "csv-0token",
+            totais: { unidades: totUn, receita: r2b(totRec), receitaComissionavel: r2b(totCom),
+              receitaBomboniere: r2b(totBomb), custo: 0, margemRS: 0, margemPct: 0,
+              comandasComProduto: 0, produtosDistintos: produtosArr.length, produtosSemCusto: 0 },
+            produtos: produtosArr, ranking: ranking.filter((v: any) => !v.historico),
+            rankingHistorico: ranking.filter((v: any) => v.historico),
+            atualizadoEm: new Date().toISOString(),
+          };
+          setCache(ck, resp, 30 * 60 * 1000);
+          return res.json(resp);
+        }
+      }
+
+      // Sem ranking do mês E sem ?force=1 → 0 TOKEN: mostra aviso pra subir o CSV.
+      // A API (código abaixo) SÓ roda no refresh manual (?force=1). Assim abrir a
+      // aba nunca gasta token — o "quem vendeu" vem do Ranking (0 token).
+      if (req.query.force !== "1") {
+        return res.json({ ok: true, mes, dataInicio, dataFim, fonte: "sem-ranking", semRanking: true,
+          totais: { unidades: 0, receita: 0, receitaComissionavel: 0, receitaBomboniere: 0, custo: 0,
+            margemRS: 0, margemPct: 0, comandasComProduto: 0, produtosDistintos: 0, produtosSemCusto: 0 },
+          produtos: [], ranking: [], rankingHistorico: [], atualizadoEm: new Date().toISOString() });
+      }
+
       // Janela menor para agendamentos (heurística de IDs legados)
       const d14 = new Date();
       d14.setDate(d14.getDate() - 14);

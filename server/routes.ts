@@ -11368,6 +11368,13 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const metaReais = Number(meta?.metaReais || 0);
     const salarioFixo = Number(meta?.salarioFixo || 0);
 
+    // Sócio NÃO ganha bônus (nem excedente de meta, nem top-1). André é sócio.
+    // Lista configurável em settings.profissionaisSocio (default: Carlos André).
+    const _normSocio = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+    const _nomeSocio = _normSocio(profMes?.nome || meta?.nome || "");
+    const _listaSocios = ((storeData.settings?.profissionaisSocio as string[] | undefined) || ["carlos andré"]).map(_normSocio).filter(Boolean);
+    const isSocio = _listaSocios.some((s) => _nomeSocio === s || _nomeSocio.includes(s) || s.includes(_nomeSocio));
+
     // Modo de comissão: 'bruto' = sobre serviços líquido (atual)
     //                   'liquido' = sobre serviços líquido − custo de insumos
     // Hierarquia: meta.modoComissao (override por prof) → settings.modoComissaoDefault → 'bruto'
@@ -11404,7 +11411,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const comissaoPlano = _rankMap.temRanking ? 0 : (planoReais * pctPlano) / 100;
     const comissaoClubeGreco = Number(clubeGreco?.comissaoRS || 0);
     const excedente = Math.max(0, servicosLiquido - metaReais);
-    const bonusExcedente = (excedente * pctBonusExcedente) / 100;
+    const bonusExcedente = isSocio ? 0 : (excedente * pctBonusExcedente) / 100;
     const totalBruto = comissaoServicos + comissaoProdutos + comissaoPlano + comissaoClubeGreco + bonusExcedente + salarioFixo;
 
     const vale = Number(pagto?.vale || 0);
@@ -11436,6 +11443,8 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       modoFonte: modoMeta === 'bruto' || modoMeta === 'liquido' ? 'profissional' : 'global' as 'profissional' | 'global',
       // Categoria de ranking (preenchida pelo caller a partir da lista de assistentes)
       categoriaRanking: 'barbeiro' as 'barbeiro' | 'assistente',
+      // Sócio (não compete por bônus top-1 nem ganha excedente de meta)
+      socio: isSocio,
       // Posição no ranking da categoria (1 = top, null = fora do ranking)
       posicaoRanking: null as number | null,
       // Componentes calculados
@@ -11667,11 +11676,12 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       }
       // Top 1 de cada categoria = mais faturamento em SERVIÇOS no mês.
       // Linhas com 0 serviços não entram no ranking (evita prêmio acidental).
+      // Sócio fica FORA do ranking de bônus (não ganha e não bloqueia o top-1 real).
       const ordBarbeiros = linhas
-        .filter(l => l.categoriaRanking === 'barbeiro' && l.bases.servicosLiquido > 0)
+        .filter(l => l.categoriaRanking === 'barbeiro' && !l.socio && l.bases.servicosLiquido > 0)
         .sort((a, b) => b.bases.servicosLiquido - a.bases.servicosLiquido);
       const ordAssistentes = linhas
-        .filter(l => l.categoriaRanking === 'assistente' && l.bases.servicosLiquido > 0)
+        .filter(l => l.categoriaRanking === 'assistente' && !l.socio && l.bases.servicosLiquido > 0)
         .sort((a, b) => b.bases.servicosLiquido - a.bases.servicosLiquido);
       ordBarbeiros.forEach((l, i) => { l.posicaoRanking = i + 1; });
       ordAssistentes.forEach((l, i) => { l.posicaoRanking = i + 1; });

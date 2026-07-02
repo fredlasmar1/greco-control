@@ -62,6 +62,7 @@ type Linha = {
   };
   modoComissao?: "bruto" | "liquido";
   categoriaRanking?: "barbeiro" | "assistente";
+  socio?: boolean;
   posicaoRanking?: number | null;
   calculos: {
     comissaoServicos: number;
@@ -279,9 +280,9 @@ export default function Equipe() {
   };
 
   return (
-    <div className="space-y-4 max-w-[1400px]">
+    <div className="space-y-6 max-w-[1400px]">
       {/* ── Header ── */}
-      <Card>
+      <Card className="bg-card border-card-border">
         <CardHeader className="pb-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
@@ -390,7 +391,7 @@ export default function Equipe() {
             <div className="space-y-1 text-xs">
               <Row label="Fixo do mês" valor={data.totais.totalSalarioFixo || 0} />
               <div className="text-[10px] text-muted-foreground pt-1">
-                R$ 1.500 fixo por assistente. Horas extras entram como <strong>Ajuste</strong> (calculadas por fora).
+                Salário fixo por pessoa (configurável em <strong>Metas</strong>). Horas extras entram como <strong>Ajuste</strong> (calculadas por fora).
               </div>
             </div>
           </div>
@@ -406,12 +407,17 @@ export default function Equipe() {
       )}
 
       {/* ── Tabela por pessoa ── */}
-      <Card>
+      <Card className="bg-card border-card-border">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Users className="w-4 h-4 text-primary" />
-            Folha por pessoa — {monthLabel}
-          </CardTitle>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Users className="w-4 h-4 text-primary" />
+              Folha por pessoa — {monthLabel}
+            </CardTitle>
+            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+              <Pencil className="w-3 h-3" /> Para lançar <strong>vale / consumo / ajuste</strong>, clique no lápis na linha da pessoa
+            </span>
+          </div>
         </CardHeader>
         <CardContent>
           {loading && !data ? (
@@ -462,6 +468,9 @@ export default function Equipe() {
                               )}
                               {l.categoriaRanking === "assistente" && (
                                 <Badge variant="outline" className="text-[9px] h-5 border-pink-500/40 text-pink-500 bg-pink-500/10">Assist.</Badge>
+                              )}
+                              {l.socio && (
+                                <Badge variant="outline" className="text-[9px] h-5 border-purple-500/40 text-purple-500 bg-purple-500/10" title="Sócio — não recebe bônus">Sócio · sem bônus</Badge>
                               )}
                             </div>
                             <div className="text-[10px] text-muted-foreground mt-0.5">
@@ -533,8 +542,8 @@ export default function Equipe() {
                                 </>
                               ) : (
                                 !l.pagamento.fechado && (
-                                  <Button size="sm" variant="outline" onClick={() => iniciarEdicao(l)} className="h-8 px-2" title="Editar vale/ajuste">
-                                    <Pencil className="w-3 h-3" />
+                                  <Button size="sm" variant="outline" onClick={() => iniciarEdicao(l)} className="h-8 px-2 gap-1" title="Lançar vale / consumo / ajuste">
+                                    <Pencil className="w-3 h-3" /><span className="text-[11px]">Vale/Desc</span>
                                   </Button>
                                 )
                               )}
@@ -626,7 +635,7 @@ export default function Equipe() {
 // ── Helpers ──
 function KpiCard({ icon, label, valor, valorTexto, sub, destaque }: { icon: ReactNode; label: string; valor?: number; valorTexto?: string; sub?: string; destaque?: boolean }) {
   return (
-    <Card className={destaque ? "border-primary/40 bg-primary/5" : ""}>
+    <Card className={`bg-card border-card-border ${destaque ? "border-primary/40" : ""}`}>
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-2 text-muted-foreground">
           <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center text-primary">{icon}</div>

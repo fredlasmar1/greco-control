@@ -1,794 +1,654 @@
-import { useState, useMemo, useEffect } from "react";
-import { useStore } from "@/lib/store";
-import { MonthSelector } from "@/components/MonthSelector";
-import { useTrinksMonth } from "@/hooks/useTrinksMonth";
-import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
-import { formatCurrency, formatPercent } from "@/lib/demoData";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
-  Users,
-  TrendingUp,
-  Trophy,
-  Medal,
+  Loader2,
+  RefreshCw,
+  Pencil,
+  Save,
+  X as XIcon,
+  ChevronRight,
   ChevronDown,
-  ChevronUp,
-  Star,
-  DollarSign,
-  UserCheck,
-  Award,
-  Plus,
-  Info,
+  Crown,
+  AlertTriangle,
+  CheckCircle2,
+  Printer,
+  Download,
+  Users,
+  Wallet,
+  TrendingUp,
+  Percent,
+  Scissors,
+  Package,
 } from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
-import { Link } from "wouter";
-import type { Barber } from "@shared/schema";
-import MetasEquipePainel from "@/components/equipe/MetasEquipePainel";
+import { useToast } from "@/hooks/use-toast";
+import { authFetch } from "@/lib/authStore";
+import { MonthSelector } from "@/components/MonthSelector";
+import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 import ProdutosSemComissaoCard from "@/components/equipe/ProdutosSemComissaoCard";
 import ConfigFinanceiraCard from "@/components/equipe/ConfigFinanceiraCard";
 
-const API_BASE = (globalThis as any).__API_BASE__ || "";
+// ─────────────────────────────────────────────────────────────────────────
+// Aba PAGAMENTO DA EQUIPE (refeita do zero — v1)
+// Objetivo: fechar o pagamento da equipe num lugar só, com a lógica de dados
+// GMAIL → CSV → API (0 token no caminho normal). Puxa do /api/pagamento (folha
+// completa: comissões, bônus, salário fixo, Clube, saldo) e do /api/equipe/mes
+// (produção por barbeiro). Não bate na API da Trinks no caminho normal.
+//
+//   1. Resumo geral (topo): produção da equipe, total a pagar, % da folha
+//   2. Composição da folha: comissões | bônus | salário fixo | descontos
+//   3. Tabela por pessoa: produção · % · comissões · bônus · fixo · vale/ajuste · a pagar
+//   4. Exportar / Imprimir a folha do mês
+// ─────────────────────────────────────────────────────────────────────────
 
-// ─── Extended barber type for computed fields ────────────
-interface ComputedBarber extends Barber {
-  apelido?: string;
-  paymentBreakdown?: Record<string, number>;
-  topServices?: { name: string; count: number }[];
-  comissaoServicos?: number;          // v42.4: comissão real (ranking×categoria) — não revenue×0.4
-  comissaoServicosFonte?: "ranking-csv" | "ao-vivo";
-}
-
-// ─── Rank badge component ────────────────────────────────
-function RankBadge({ rank }: { rank: number }) {
-  if (rank === 1) {
-    return (
-      <div className="w-8 h-8 rounded-full bg-yellow-500/20 border border-yellow-500/40 flex items-center justify-center flex-shrink-0">
-        <span className="text-xs font-bold text-yellow-400">1</span>
-      </div>
-    );
-  }
-  if (rank === 2) {
-    return (
-      <div className="w-8 h-8 rounded-full bg-slate-400/20 border border-slate-400/40 flex items-center justify-center flex-shrink-0">
-        <span className="text-xs font-bold text-slate-300">2</span>
-      </div>
-    );
-  }
-  if (rank === 3) {
-    return (
-      <div className="w-8 h-8 rounded-full bg-amber-700/20 border border-amber-700/40 flex items-center justify-center flex-shrink-0">
-        <span className="text-xs font-bold text-amber-600">3</span>
-      </div>
-    );
-  }
-  return (
-    <div className="w-8 h-8 rounded-full bg-muted/30 flex items-center justify-center flex-shrink-0">
-      <span className="text-xs text-muted-foreground">{rank}</span>
-    </div>
-  );
-}
-
-// ─── Add Barber Dialog ───────────────────────────────────
-function AddBarberDialog() {
-  const { addBarber, barbers } = useStore();
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", commission: "40" });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const names = form.name.split(" ");
-    const initials =
-      names.length >= 2
-        ? `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase()
-        : form.name.slice(0, 2).toUpperCase();
-    const barber: Barber = {
-      id: String(barbers.length + 1),
-      name: form.name,
-      initials,
-      commission: Number(form.commission),
-      revenue: 0,
-      clients: 0,
-      avgTicket: 0,
-      occupationRate: 0,
-      active: true,
-    };
-    addBarber(barber);
-    setOpen(false);
-    setForm({ name: "", commission: "40" });
+type Linha = {
+  profissionalId: string;
+  nome: string;
+  bases: {
+    servicosLiquido: number;
+    produtosLiquidoComissionavel: number;
+    produtosLiquidoTotal: number;
+    planoReais: number;
+    custoInsumos?: number;
+    baseComissaoServicos?: number;
+    taxaCartaoEstimada?: number;
   };
+  percentuais: {
+    pctServico: number; pctProduto: number; pctPlano: number; pctBonusExcedente: number;
+    metaReais: number; salarioFixo: number;
+  };
+  modoComissao?: "bruto" | "liquido";
+  categoriaRanking?: "barbeiro" | "assistente";
+  posicaoRanking?: number | null;
+  calculos: {
+    comissaoServicos: number;
+    comissaoProdutos: number;
+    comissaoPlano: number;
+    comissaoClubeGreco: number;
+    excedenteMeta: number;
+    bonusExcedente: number;
+    bonusRanking: number;
+    salarioFixo: number;
+    totalBruto: number;
+  };
+  clubeGreco?: {
+    assinantes: number;
+    valorVendasRS: number;
+    comissaoRS: number;
+    pctEfetivo: number;
+  };
+  pagamento: {
+    vale: number;
+    valeNota: string;
+    ajuste: number;
+    ajusteNota: string;
+    consumoInterno: number;
+    consumoInternoNota: string;
+    saldoAReceber: number;
+    fechado: boolean;
+  };
+};
 
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          className="bg-primary hover:bg-primary/80 text-white"
-          data-testid="add-barber-btn"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Adicionar Barbeiro
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="bg-card border-card-border max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Novo Barbeiro</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label className="text-xs">Nome Completo</Label>
-            <Input
-              value={form.name}
-              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-              placeholder="Nome do barbeiro"
-              data-testid="input-barber-name"
-            />
-          </div>
-          <div>
-            <Label className="text-xs">Comissão (%)</Label>
-            <Input
-              type="number"
-              value={form.commission}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, commission: e.target.value }))
-              }
-              data-testid="input-barber-commission"
-            />
-          </div>
-          <Button
-            type="submit"
-            className="w-full bg-primary hover:bg-primary/80 text-white"
-            data-testid="btn-save-barber"
-          >
-            Salvar
-          </Button>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
+type RespApi = {
+  ok: boolean;
+  mes: string;
+  dataInicio: string;
+  dataFim: string;
+  linhas: Linha[];
+  totais: {
+    totalBruto: number;
+    totalComissaoServicos?: number;
+    totalComissaoProdutos?: number;
+    totalComissaoPlano?: number;
+    totalComissaoClubeGreco?: number;
+    totalBonusExcedente?: number;
+    totalBonusRanking?: number;
+    totalSalarioFixo?: number;
+    totalVale: number;
+    totalAjuste: number;
+    totalConsumoInterno: number;
+    totalTaxaCartao: number;
+    totalSaldo: number;
+  };
+  faturamento?: {
+    totalReais: number;
+    totalAtendimentos: number;
+    servicosBruto: number;
+    produtosBruto: number;
+    planoReais: number;
+  };
+  conferencia?: {
+    oficialTrinks: number;
+    producaoRankingServicos: number;
+    planoVendido?: number;
+    planoMensal?: number;
+    temRanking: boolean;
+    apiPeriodo: number;
+    temOficial: boolean;
+  };
+};
 
-// ─── Expandable Details Panel ────────────────────────────
-function ExpandedDetails({ barber }: { barber: ComputedBarber }) {
-  const hasPayments =
-    barber.paymentBreakdown &&
-    Object.keys(barber.paymentBreakdown).length > 0;
-  const hasServices =
-    barber.topServices && barber.topServices.length > 0;
+const fmtBRL = (n: number) =>
+  (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  if (!hasPayments && !hasServices) {
-    return (
-      <div className="mt-3 pt-3 border-t border-card-border">
-        <p className="text-xs text-muted-foreground text-center">
-          Detalhes disponíveis somente com dados Trinks
-        </p>
-      </div>
-    );
-  }
-
-  const payments = barber.paymentBreakdown || {};
-  const paymentTotal = Object.values(payments).reduce((s, v) => s + v, 0);
-
-  return (
-    <div className="mt-3 pt-3 border-t border-card-border space-y-4">
-      {hasPayments && (
-        <div>
-          <p className="text-[11px] font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
-            Formas de Pagamento
-          </p>
-          <div className="space-y-1.5">
-            {Object.entries(payments).map(([method, amount]) => {
-              const pct = paymentTotal > 0 ? (amount / paymentTotal) * 100 : 0;
-              return (
-                <div key={method} className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground w-24 flex-shrink-0 truncate">
-                    {method}
-                  </span>
-                  <Progress value={pct} className="h-1.5 flex-1" />
-                  <span className="text-xs font-medium w-20 text-right flex-shrink-0">
-                    {formatCurrency(amount)}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground w-10 text-right flex-shrink-0">
-                    {pct.toFixed(0)}%
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {hasServices && (
-        <div>
-          <p className="text-[11px] font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
-            Top Serviços
-          </p>
-          <div className="space-y-1">
-            {(barber.topServices || []).slice(0, 3).map((svc) => (
-              <div
-                key={svc.name}
-                className="flex items-center justify-between text-xs"
-              >
-                <span className="text-foreground truncate">{svc.name}</span>
-                <Badge
-                  variant="secondary"
-                  className="ml-2 text-[10px] bg-primary/15 text-primary border-0"
-                >
-                  {svc.count}x
-                </Badge>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Main component ──────────────────────────────────────
 export default function Equipe() {
-  const { barbers: demoBarbers } = useStore();
-
+  const { toast } = useToast();
   const mesCorrente = useMemo(() => mesAtualSP(), []);
-  const [selectedMes, setSelectedMes] = useState<string>(() => {
+  const [mes, setMes] = useState<string>(() => {
     if (typeof window === "undefined") return mesCorrente;
     return localStorage.getItem("equipe.selectedMes") || mesCorrente;
   });
   useEffect(() => {
-    try { localStorage.setItem("equipe.selectedMes", selectedMes); } catch {}
-  }, [selectedMes]);
+    try { localStorage.setItem("equipe.selectedMes", mes); } catch {}
+  }, [mes]);
+  const isMesCorrente = mes === mesCorrente;
 
-  const {
-    trinks, hasTrinksData, loading, error,
-    fonte, trinksAt, csvAt, isMesCorrente,
-  } = useTrinksMonth(selectedMes);
+  const [data, setData] = useState<RespApi | null>(null);
+  const [equipe, setEquipe] = useState<any>(null);   // /api/equipe/mes — fonte + semRanking
+  const [loading, setLoading] = useState(false);
+  const [buscandoApi, setBuscandoApi] = useState(false);
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [edit, setEdit] = useState({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "" });
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
 
-  // Per-barber expansion state (by id)
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const toggleExpand = (id: string) =>
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
-
-  // ─── Fetch dados oficiais do mês (mesma fonte do Pagamento) ─────────
-  // Substitui o cálculo frontend antigo (que zerava revenue porque
-  // agendamento.valor é vazio na resposta da Trinks).
-  const [equipeData, setEquipeData] = useState<any | null>(null);
-  const [equipeLoading, setEquipeLoading] = useState(false);
-  // v103: normal = 0 token (Ranking / gap do dia). force=1 SÓ no botão "Buscar na
-  // API" (mês passado sem ranking → busca o mês inteiro da API, gasta token).
-  const carregarEquipe = (force = false) => {
-    setEquipeLoading(true);
-    fetch(`${API_BASE}/api/equipe/mes/${selectedMes}${force ? "?force=1" : ""}`)
-      .then(r => r.json())
-      .then(d => { if (d.ok) setEquipeData(d); })
-      .catch(() => {})
-      .finally(() => setEquipeLoading(false));
+  // Caminho normal = 0 token (Ranking / gap do dia). force=1 só no botão "Buscar na API".
+  const carregar = async (force = false) => {
+    if (force) setBuscandoApi(true); else setLoading(true);
+    try {
+      const qs = force ? "?force=true" : "";
+      const [r1, r2] = await Promise.all([
+        authFetch(`/api/pagamento/${mes}${qs}`),
+        authFetch(`/api/equipe/mes/${mes}${force ? "?force=1" : ""}`).catch(() => null),
+      ]);
+      const j1: RespApi = await r1.json();
+      if (!j1.ok) throw new Error((j1 as any).error || "Erro ao carregar a folha");
+      setData(j1);
+      if (r2) { try { setEquipe(await r2.json()); } catch { setEquipe(null); } }
+      if (force) toast({ title: "Atualizado", description: "Dados frescos da Trinks para este mês." });
+    } catch (err: any) {
+      toast({ title: "Erro", description: err.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+      setBuscandoApi(false);
+    }
   };
-  useEffect(() => { carregarEquipe(false); /* eslint-disable-next-line */ }, [selectedMes]);
 
-  const computedBarbers = useMemo((): ComputedBarber[] => {
-    // v42.4 (#2): sem dado do endpoint → estado "sem dados" honesto. NUNCA demo
-    // data (mostrar número fictício como real era o pior caso).
-    if (!equipeData) return [];
-    const profissionais = trinks?.profissionais || [];
-    const profMap = new Map<string, any>(profissionais.map((p: any) => [String(p.id), p]));
+  useEffect(() => { carregar(false); /* eslint-disable-next-line */ }, [mes]);
 
-    return (equipeData.profissionais || []).map((p: any): ComputedBarber => {
-      const profCadastro = profMap.get(String(p.id));
-      const apelido = profCadastro?.apelido || "";
-      const names = (p.nome || "").split(" ");
-      const initials =
-        names.length >= 2
-          ? `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase()
-          : (p.nome || "XX").slice(0, 2).toUpperCase();
-      return {
-        id: String(p.id),
-        name: p.nome || apelido || "Profissional",
-        apelido: apelido || names[0] || "",
-        initials,
-        revenue: p.faturamento.total,
-        clients: p.atendimentos.total,
-        avgTicket: p.ticketMedio,
-        commission: 40,
-        active: true,
-        occupationRate: 0,
-        paymentBreakdown: {}, // payment breakdown não vem do endpoint atual; expansion mostra zeros
-        topServices: [],
-        comissaoServicos: Number(p.comissaoServicos || 0),
-        comissaoServicosFonte: p.comissaoServicosFonte || equipeData.fonte || "ao-vivo",
-      } as ComputedBarber;
+  const iniciarEdicao = (l: Linha) => {
+    if (l.pagamento.fechado) return;
+    setEditandoId(l.profissionalId);
+    setEdit({
+      vale: String(l.pagamento.vale || 0),
+      valeNota: l.pagamento.valeNota || "",
+      ajuste: String(l.pagamento.ajuste || 0),
+      ajusteNota: l.pagamento.ajusteNota || "",
+      consumoInterno: String(l.pagamento.consumoInterno || 0),
+      consumoInternoNota: l.pagamento.consumoInternoNota || "",
     });
-  }, [equipeData, hasTrinksData, trinks, demoBarbers, isMesCorrente]);
+  };
+  const cancelarEdicao = () => {
+    setEditandoId(null);
+    setEdit({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "" });
+  };
+  const salvarEdicao = async (l: Linha) => {
+    setSalvando(true);
+    try {
+      const r = await authFetch(`/api/pagamento/${mes}/${l.profissionalId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vale: Number(edit.vale.replace(",", ".")) || 0,
+          valeNota: edit.valeNota,
+          ajuste: Number(edit.ajuste.replace(",", ".")) || 0,
+          ajusteNota: edit.ajusteNota,
+          consumoInterno: Number(edit.consumoInterno.replace(",", ".")) || 0,
+          consumoInternoNota: edit.consumoInternoNota,
+        }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Erro ao salvar");
+      toast({ title: "Salvo", description: `${l.nome} atualizado.` });
+      cancelarEdicao();
+      await carregar();
+    } catch (err: any) {
+      toast({ title: "Erro", description: err.message, variant: "destructive" });
+    } finally {
+      setSalvando(false);
+    }
+  };
 
-  // ─── Summary KPIs ─────────────────────────────────────
-  const totalRevenue = computedBarbers.reduce((s, b) => s + b.revenue, 0);
-  const totalAtendimentos = computedBarbers.reduce((s, b) => s + b.clients, 0);
-  const avgTicket =
-    totalAtendimentos > 0 ? totalRevenue / totalAtendimentos : 0;
-  const activeProfCount = computedBarbers.filter((b) => b.active).length;
+  const monthLabel = labelMesPtBR(mes);
+  const fonte = equipe?.fonte as string | undefined;
+  const semRanking = !!equipe?.semRanking;
 
-  const topBarber = computedBarbers[0] ?? null;
+  // ── Linhas com movimento (esconde profissionais zerados) ──
+  const linhas = useMemo(() => {
+    if (!data) return [];
+    return data.linhas
+      .map(l => ({
+        ...l,
+        _producao: (l.bases.servicosLiquido || 0) + (l.bases.produtosLiquidoTotal || 0),
+        _comissaoTotal: l.calculos.comissaoServicos + l.calculos.comissaoProdutos + l.calculos.comissaoPlano + l.calculos.comissaoClubeGreco,
+        _bonus: l.calculos.bonusExcedente + l.calculos.bonusRanking,
+      }))
+      .filter(l =>
+        l.calculos.totalBruto > 0 || l._producao > 0 ||
+        l.percentuais.metaReais > 0 || l.percentuais.salarioFixo > 0 ||
+        l.pagamento.vale > 0 || l.pagamento.ajuste !== 0 || l.pagamento.consumoInterno > 0)
+      .sort((a, b) => b._producao - a._producao);
+  }, [data]);
 
-  // ─── Chart data ───────────────────────────────────────
-  const chartData = computedBarbers.map((b) => ({
-    name: (b.name || "").split(" ")[0],
-    revenue: b.revenue,
-  }));
+  const producaoEquipe = linhas.reduce((s, l) => s + l._producao, 0);
+  const faturamentoMes = data?.faturamento?.totalReais || 0;
+  const totalPagar = data?.totais.totalSaldo || 0;
+  const totalBruto = data?.totais.totalBruto || 0;
+  // % da folha = custo de pessoal (bruto, antes de vale/ajuste) sobre o faturamento oficial do mês
+  const baseFolhaPct = faturamentoMes > 0 ? faturamentoMes : producaoEquipe;
+  const pctFolha = baseFolhaPct > 0 ? (totalBruto / baseFolhaPct) * 100 : 0;
 
-  // ─── Selected month label ──────────────────────────────
-  const monthLabelCapital = labelMesPtBR(selectedMes);
+  // ── Exportar CSV da folha ──
+  const exportarCSV = () => {
+    if (!linhas.length) return;
+    const head = ["Profissional", "Categoria", "Producao", "% do total", "Com. Servicos", "Com. Produtos", "Com. Pacotes/Clube", "Bonus", "Salario fixo", "Vale", "Consumo", "Ajuste", "A pagar"];
+    const rows = linhas.map(l => {
+      const pct = producaoEquipe > 0 ? (l._producao / producaoEquipe) * 100 : 0;
+      return [
+        l.nome,
+        l.categoriaRanking === "assistente" ? "Assistente" : "Barbeiro",
+        fmtBRL(l._producao), pct.toFixed(1) + "%",
+        fmtBRL(l.calculos.comissaoServicos), fmtBRL(l.calculos.comissaoProdutos),
+        fmtBRL(l.calculos.comissaoPlano + l.calculos.comissaoClubeGreco),
+        fmtBRL(l._bonus), fmtBRL(l.percentuais.salarioFixo),
+        fmtBRL(l.pagamento.vale), fmtBRL(l.pagamento.consumoInterno), fmtBRL(l.pagamento.ajuste),
+        fmtBRL(l.pagamento.saldoAReceber),
+      ];
+    });
+    const csv = [head, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pagamento-equipe-${mes}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
-    <div className="space-y-6 max-w-[1400px]">
+    <div className="space-y-4 max-w-[1400px]">
       {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-lg font-semibold">Ranking de Equipe</h2>
-          <p className="text-sm text-muted-foreground">
-            {activeProfCount} barbeiro{activeProfCount !== 1 ? "s" : ""} ativo
-            {activeProfCount !== 1 ? "s" : ""}
-            {/* v42.4 (#8): fonte da comissão — definitivo (ranking CSV) vs provisório (ao vivo) */}
-            {equipeData?.fonte === "ranking-csv" ? (
-              <span className="text-emerald-400 ml-1">• Comissão definitiva (CSV)</span>
-            ) : equipeData?.fonte === "ao-vivo" ? (
-              <span className="text-amber-400 ml-1">• Provisório (ao vivo)</span>
-            ) : null}
-          </p>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <MonthSelector
-            selectedMes={selectedMes}
-            onChange={setSelectedMes}
-            mesCorrente={mesCorrente}
-            isMesCorrente={isMesCorrente}
-            loading={loading}
-            error={error}
-            fonte={fonte}
-            trinksAt={trinksAt}
-            csvAt={csvAt}
-          />
-          <AddBarberDialog />
-        </div>
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Wallet className="w-4 h-4 text-primary" />
+                Pagamento da Equipe
+                <Badge variant="outline" className="text-xs">{monthLabel}</Badge>
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Feito pra fechar o pagamento — dados <strong>Gmail → CSV → API</strong> (0 token no caminho normal).
+                {fonte === "ranking-csv" && <span className="text-emerald-500 ml-1">• Comissão definitiva (Ranking CSV)</span>}
+                {fonte === "ao-vivo" && <span className="text-amber-500 ml-1">• Provisório (ao vivo)</span>}
+              </p>
+            </div>
+            <MonthSelector
+              selectedMes={mes}
+              onChange={setMes}
+              mesCorrente={mesCorrente}
+              isMesCorrente={isMesCorrente}
+              loading={loading}
+              extraInfo={isMesCorrente ? "Mês atual · fecha ao vivo" : "Mês fechado"}
+            />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => carregar(false)} disabled={loading || buscandoApi}>
+              {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+              Recarregar (0 token)
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportarCSV} disabled={!linhas.length}>
+              <Download className="w-4 h-4 mr-2" />Exportar CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!linhas.length}>
+              <Printer className="w-4 h-4 mr-2" />Imprimir folha
+            </Button>
+            {data?.conferencia && (
+              <div className="ml-auto">
+                {(() => {
+                  const c = data.conferencia!;
+                  const ratio = c.oficialTrinks > 0 ? c.producaoRankingServicos / c.oficialTrinks : 0;
+                  if (!c.temRanking || !c.temOficial)
+                    return <Badge variant="outline" className="gap-1"><AlertTriangle className="w-3 h-3" />Conferência parcial</Badge>;
+                  return ratio >= 0.55
+                    ? <Badge className="gap-1 bg-emerald-600 hover:bg-emerald-700"><CheckCircle2 className="w-3 h-3" />Bate com a Trinks</Badge>
+                    : <Badge variant="destructive" className="gap-1"><AlertTriangle className="w-3 h-3" />Ranking parece incompleto</Badge>;
+                })()}
+              </div>
+            )}
+          </div>
+
+          {/* Aviso: mês passado sem Ranking (0 token — não bateu na API) */}
+          {semRanking && (
+            <div className="mt-3 flex items-start gap-2 text-sm text-amber-900 bg-amber-50 border border-amber-300 rounded-md px-3 py-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <span>
+                O <strong>Ranking de Profissionais de {monthLabel}</strong> não foi importado — a folha deste mês está
+                vazia (e <strong>não gastou token</strong>). Suba o CSV em <em>Importar Trinks</em> (0 token) ou clique{" "}
+                <button onClick={() => carregar(true)} disabled={buscandoApi}
+                  className="underline font-medium text-amber-900 hover:text-amber-700">Buscar na API</button>{" "}
+                pra uma consulta ao vivo (gasta token, só desta vez).
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Resumo geral (topo) ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <KpiCard icon={<TrendingUp className="w-4 h-4" />} label="Produção da equipe" valor={producaoEquipe}
+          sub={faturamentoMes > 0 ? `Oficial Trinks: R$ ${fmtBRL(faturamentoMes)}` : "serviços + produtos"} />
+        <KpiCard icon={<Wallet className="w-4 h-4" />} label="Total a pagar (folha)" valor={totalPagar} destaque
+          sub={`${linhas.length} pessoa${linhas.length !== 1 ? "s" : ""}`} />
+        <KpiCard icon={<Percent className="w-4 h-4" />} label="Folha sobre faturamento" valorTexto={`${pctFolha.toFixed(1)}%`}
+          sub={`Custo bruto: R$ ${fmtBRL(totalBruto)}`} />
+        <KpiCard icon={<Users className="w-4 h-4" />} label="Comissão de serviços" valor={data?.totais.totalComissaoServicos || 0}
+          sub={`Produtos: R$ ${fmtBRL(data?.totais.totalComissaoProdutos || 0)}`} />
       </div>
 
-      {/* v103: aviso quando o mês passado não tem Ranking (0 token — não bateu API) */}
-      {equipeData?.semRanking && (
-        <div className="flex items-start gap-2 text-sm text-amber-900 bg-amber-50 border border-amber-300 rounded-md px-3 py-2">
-          <span className="mt-0.5">⚠️</span>
-          <span>
-            O <strong>Ranking de Profissionais de {selectedMes}</strong> não foi importado — por isso a equipe está
-            vazia neste mês (e <strong>não gastou token</strong>). Suba o CSV em <em>Importar Trinks</em> pra ver a
-            produção por barbeiro (0 token), ou clique{" "}
-            <button onClick={() => carregarEquipe(true)} disabled={equipeLoading}
-              className="underline font-medium text-amber-900 hover:text-amber-700">
-              Buscar na API
-            </button>{" "}
-            pra uma consulta ao vivo (gasta token da fatia, só desta vez).
-          </span>
+      {/* ── Composição da folha (4 blocos) ── */}
+      {data && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+            <div className="text-[10px] uppercase tracking-wide text-emerald-500 font-semibold mb-2">Comissões</div>
+            <div className="space-y-1 text-xs">
+              <Row label="Serviços" valor={data.totais.totalComissaoServicos || 0} />
+              <Row label="Produtos" valor={data.totais.totalComissaoProdutos || 0} />
+              <Row label="Planos (Trinks)" valor={data.totais.totalComissaoPlano || 0} />
+              {(data.totais.totalComissaoClubeGreco || 0) > 0 && (
+                <Row label={<span className="flex items-center gap-1"><Crown className="w-3 h-3 text-purple-400" />Clube Greco</span>} valor={data.totais.totalComissaoClubeGreco || 0} />
+              )}
+            </div>
+          </div>
+          <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3">
+            <div className="text-[10px] uppercase tracking-wide text-yellow-500 font-semibold mb-2">Bônus</div>
+            <div className="space-y-1 text-xs">
+              <Row label="🥇 Top 1 (barbeiro + assist.)" valor={data.totais.totalBonusRanking || 0} />
+              <Row label="Excedente de meta" valor={data.totais.totalBonusExcedente || 0} />
+              {(data.totais.totalBonusRanking || 0) + (data.totais.totalBonusExcedente || 0) === 0 && (
+                <div className="text-muted-foreground italic">Sem bônus.</div>
+              )}
+            </div>
+          </div>
+          <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-3">
+            <div className="text-[10px] uppercase tracking-wide text-sky-500 font-semibold mb-2">Salário fixo (assistentes)</div>
+            <div className="space-y-1 text-xs">
+              <Row label="Fixo do mês" valor={data.totais.totalSalarioFixo || 0} />
+              <div className="text-[10px] text-muted-foreground pt-1">
+                R$ 1.500 fixo por assistente. Horas extras entram como <strong>Ajuste</strong> (calculadas por fora).
+              </div>
+            </div>
+          </div>
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+            <div className="text-[10px] uppercase tracking-wide text-red-500 font-semibold mb-2">Descontos</div>
+            <div className="space-y-1 text-xs">
+              <Row label="Vales" valor={-(data.totais.totalVale || 0)} />
+              <Row label="Consumo interno" valor={-(data.totais.totalConsumoInterno || 0)} />
+              <Row label="Ajustes" valor={data.totais.totalAjuste || 0} />
+            </div>
+          </div>
         </div>
       )}
 
-      {/* ── Configuração financeira global (taxa cartão) ── */}
-      <ConfigFinanceiraCard />
-
-      {/* ── v20: Produtos sem comissão (bebidas/doces) ── */}
-      <ProdutosSemComissaoCard />
-
-      {/* ── Painel individual de metas e desempenho por profissional ── */}
-      <MetasEquipePainel />
-
-      {/* ── Demo mode warning ── */}
-      {!hasTrinksData && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-500">
-          <Info className="w-4 h-4 flex-shrink-0" />
-          <p className="text-xs">
-            Dados de demonstração —{" "}
-            <Link href="/configuracoes" className="underline hover:text-amber-400">
-              conecte a Trinks nas Configurações
-            </Link>
-          </p>
-        </div>
-      )}
-
-      {/* ── KPI Cards ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4" data-testid="kpi-cards">
-        <Card className="bg-card border-card-border">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center">
-                <DollarSign className="w-3.5 h-3.5 text-primary" />
-              </div>
-              <p className="text-xs text-muted-foreground">Faturamento Total</p>
+      {/* ── Tabela por pessoa ── */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Users className="w-4 h-4 text-primary" />
+            Folha por pessoa — {monthLabel}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading && !data ? (
+            <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+          ) : linhas.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground text-sm">
+              {semRanking ? "Suba o Ranking de Profissionais deste mês (0 token) para ver a folha." : "Sem profissionais com movimento neste mês."}
             </div>
-            <p className="text-xl font-bold" data-testid="kpi-total-revenue">
-              {formatCurrency(totalRevenue)}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-card-border">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center">
-                <UserCheck className="w-3.5 h-3.5 text-primary" />
-              </div>
-              <p className="text-xs text-muted-foreground">Total Atendimentos</p>
-            </div>
-            <p className="text-xl font-bold" data-testid="kpi-total-atendimentos">
-              {totalAtendimentos}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-card-border">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center">
-                <TrendingUp className="w-3.5 h-3.5 text-primary" />
-              </div>
-              <p className="text-xs text-muted-foreground">Ticket Médio</p>
-            </div>
-            <p className="text-xl font-bold" data-testid="kpi-avg-ticket">
-              {formatCurrency(avgTicket)}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-card-border">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center">
-                <Users className="w-3.5 h-3.5 text-primary" />
-              </div>
-              <p className="text-xs text-muted-foreground">Profissionais Ativos</p>
-            </div>
-            <p className="text-xl font-bold" data-testid="kpi-active-profs">
-              {activeProfCount}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── Destaque do Mês ── */}
-      {topBarber && (
-        <Card
-          className="bg-gradient-to-r from-primary/20 to-primary/10 border border-primary/30"
-          data-testid="destaque-card"
-        >
-          <CardContent className="p-4 sm:p-5">
-            <div className="flex items-start sm:items-center gap-3 sm:gap-4">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-yellow-500/20 border-2 border-yellow-500/40 flex items-center justify-center flex-shrink-0">
-                <Trophy className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-[10px] sm:text-[11px] font-semibold text-primary uppercase tracking-widest">
-                    Destaque do Mês
-                  </p>
-                  <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px]">
-                    #1 Ranking
-                  </Badge>
-                </div>
-                <p className="text-sm sm:text-base font-bold mt-0.5">{topBarber.name}</p>
-                <p className="text-[11px] sm:text-xs text-muted-foreground mt-0.5 hidden sm:block">
-                  Parabéns pelo desempenho incrível este mês! Continue assim.
-                </p>
-                <div className="flex gap-4 mt-2 sm:hidden">
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Faturamento</p>
-                    <p className="text-sm font-bold text-primary">
-                      {formatCurrency(topBarber.revenue)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Atendimentos</p>
-                    <p className="text-sm font-bold">{topBarber.clients}</p>
-                  </div>
-                </div>
-              </div>
-              <div className="hidden sm:flex gap-6 flex-shrink-0">
-                <div className="text-right">
-                  <p className="text-[10px] text-muted-foreground">Faturamento</p>
-                  <p className="text-base font-bold text-primary">
-                    {formatCurrency(topBarber.revenue)}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] text-muted-foreground">Atendimentos</p>
-                  <p className="text-base font-bold">{topBarber.clients}</p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Performance Bar Chart ── */}
-      {chartData.length > 0 && (
-        <Card className="bg-card border-card-border">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Award className="w-4 h-4 text-primary" />
-              Faturamento por Profissional — {monthLabelCapital}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[220px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={chartData}
-                  layout="horizontal"
-                  margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                  <XAxis dataKey="name" stroke="#666" fontSize={11} tickLine={false} />
-                  <YAxis
-                    stroke="#666"
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(v) =>
-                      v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)
-                    }
-                  />
-                  <Tooltip
-                    formatter={(value: number) => [formatCurrency(value), "Faturamento"]}
-                    contentStyle={{
-                      backgroundColor: "#1a1a1a",
-                      border: "1px solid #333",
-                      borderRadius: "8px",
-                      fontSize: "12px",
-                    }}
-                    cursor={{ fill: "rgba(1,105,111,0.08)" }}
-                  />
-                  <Bar dataKey="revenue" radius={[4, 4, 0, 0]}>
-                    {chartData.map((_, i) => (
-                      <Cell
-                        key={i}
-                        fill={
-                          i === 0
-                            ? "#1E3A5F"
-                            : i === 1
-                            ? "#018a91"
-                            : i === 2
-                            ? "#152D4A"
-                            : "#1a3a3c"
-                        }
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Ranking Table (desktop) ── */}
-      <div className="hidden md:block">
-        <Card className="bg-card border-card-border overflow-hidden">
-          <CardHeader className="pb-2 border-b border-card-border">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Star className="w-4 h-4 text-primary" />
-              Ranking de Performance
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <table className="w-full" data-testid="ranking-table">
-              <thead>
-                <tr className="border-b border-card-border">
-                  <th className="text-left text-[10px] text-muted-foreground font-medium px-4 py-3 w-10">
-                    #
-                  </th>
-                  <th className="text-left text-[10px] text-muted-foreground font-medium px-4 py-3">
-                    Profissional
-                  </th>
-                  <th className="text-right text-[10px] text-muted-foreground font-medium px-4 py-3">
-                    Faturamento
-                  </th>
-                  <th className="text-right text-[10px] text-muted-foreground font-medium px-4 py-3">
-                    Atendimentos
-                  </th>
-                  <th className="text-right text-[10px] text-muted-foreground font-medium px-4 py-3">
-                    Ticket Médio
-                  </th>
-                  <th className="text-left text-[10px] text-muted-foreground font-medium px-4 py-3 min-w-[140px]">
-                    % do Total
-                  </th>
-                  <th className="text-right text-[10px] text-muted-foreground font-medium px-4 py-3">
-                    Comissão Est.
-                  </th>
-                  <th className="w-8 px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {computedBarbers.map((barber, index) => {
-                  const pct =
-                    totalRevenue > 0
-                      ? (barber.revenue / totalRevenue) * 100
-                      : 0;
-                  const commission = barber.comissaoServicos ?? 0;
-                  const isExpanded = !!expanded[barber.id];
-
-                  return (
-                    <>
-                      <tr
-                        key={barber.id}
-                        className="border-b border-card-border/50 hover:bg-muted/5 transition-colors cursor-pointer"
-                        onClick={() => toggleExpand(barber.id)}
-                        data-testid={`ranking-row-${barber.id}`}
-                      >
-                        <td className="px-4 py-3">
-                          <RankBadge rank={index + 1} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center text-[11px] font-bold text-primary flex-shrink-0">
-                              {barber.initials}
-                            </div>
-                            <span className="text-sm font-medium">
-                              {barber.name}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="text-sm font-semibold">
-                            {formatCurrency(barber.revenue)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="text-sm">{barber.clients}</span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="text-sm">
-                            {formatCurrency(barber.avgTicket)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <Progress
-                              value={pct}
-                              className="h-1.5 flex-1 max-w-[80px]"
-                            />
-                            <span className="text-xs text-muted-foreground w-10 text-right">
-                              {pct.toFixed(1)}%
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="text-sm text-primary font-medium">
-                            {formatCurrency(commission)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          {isExpanded ? (
-                            <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                          )}
-                        </td>
-                      </tr>
-                      {isExpanded && (
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="py-2 pr-3">Profissional</th>
+                    <th className="py-2 px-2 text-right">Produção</th>
+                    <th className="py-2 px-2 text-left min-w-[110px]">% do total</th>
+                    <th className="py-2 px-2 text-right bg-emerald-500/5">Comissões</th>
+                    <th className="py-2 px-2 text-right bg-yellow-500/5">Bônus</th>
+                    <th className="py-2 px-2 text-right bg-sky-500/5">Fixo</th>
+                    <th className="py-2 px-2 text-right bg-red-500/5">Vale/Ajuste</th>
+                    <th className="py-2 px-2 text-right font-semibold">A pagar</th>
+                    <th className="py-2 pl-2 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linhas.map(l => {
+                    const editando = editandoId === l.profissionalId;
+                    const expandido = expandedId === l.profissionalId;
+                    const pct = producaoEquipe > 0 ? (l._producao / producaoEquipe) * 100 : 0;
+                    const descontos = l.pagamento.vale + l.pagamento.consumoInterno - l.pagamento.ajuste;
+                    return (
+                      <Fragment key={l.profissionalId}>
                         <tr
-                          key={`${barber.id}-details`}
-                          className="border-b border-card-border/50 bg-muted/5"
+                          className={`border-b ${expandido ? "bg-muted/10" : "hover:bg-muted/5"} cursor-pointer`}
+                          onClick={(e) => {
+                            const t = e.target as HTMLElement;
+                            if (t.closest("button") || t.closest("input")) return;
+                            setExpandedId(expandido ? null : l.profissionalId);
+                          }}
                         >
-                          <td colSpan={8} className="px-6 pb-4 pt-2">
-                            <ExpandedDetails barber={barber} />
+                          {/* Profissional */}
+                          <td className="py-2 pr-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {expandido ? <ChevronDown className="w-3 h-3 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
+                              <span className="font-medium">{l.nome}</span>
+                              {l.posicaoRanking === 1 && l._bonus > 0 && (
+                                <Badge variant="outline" className="text-[9px] h-5 border-yellow-500/50 text-yellow-600 bg-yellow-500/15">🥇 Top 1</Badge>
+                              )}
+                              {l.categoriaRanking === "assistente" && (
+                                <Badge variant="outline" className="text-[9px] h-5 border-pink-500/40 text-pink-500 bg-pink-500/10">Assist.</Badge>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              Meta R$ {fmtBRL(l.percentuais.metaReais)} · {l.percentuais.pctServico}%/{l.percentuais.pctProduto}%/{l.percentuais.pctPlano}%
+                            </div>
+                          </td>
+                          {/* Produção */}
+                          <td className="py-2 px-2 text-right tabular-nums">
+                            <div className="font-semibold">R$ {fmtBRL(l._producao)}</div>
+                            <div className="text-[10px] text-muted-foreground">
+                              serv {fmtBRL(l.bases.servicosLiquido)} · prod {fmtBRL(l.bases.produtosLiquidoTotal)}
+                            </div>
+                          </td>
+                          {/* % do total */}
+                          <td className="py-2 px-2">
+                            <div className="flex items-center gap-2">
+                              <Progress value={pct} className="h-1.5 flex-1 max-w-[70px]" />
+                              <span className="text-xs text-muted-foreground w-10 text-right">{pct.toFixed(1)}%</span>
+                            </div>
+                          </td>
+                          {/* Comissões */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-emerald-500/5">
+                            <div className="text-emerald-500 font-semibold">R$ {fmtBRL(l._comissaoTotal)}</div>
+                            <div className="text-[10px] text-muted-foreground">
+                              serv {fmtBRL(l.calculos.comissaoServicos)} · prod {fmtBRL(l.calculos.comissaoProdutos)}
+                            </div>
+                          </td>
+                          {/* Bônus */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-yellow-500/5">
+                            <span className={l._bonus > 0 ? "text-yellow-600 font-semibold" : "text-muted-foreground"}>
+                              {l._bonus > 0 ? `R$ ${fmtBRL(l._bonus)}` : "—"}
+                            </span>
+                          </td>
+                          {/* Fixo */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-sky-500/5">
+                            <span className={l.percentuais.salarioFixo > 0 ? "text-sky-600 font-semibold" : "text-muted-foreground"}>
+                              {l.percentuais.salarioFixo > 0 ? `R$ ${fmtBRL(l.percentuais.salarioFixo)}` : "—"}
+                            </span>
+                          </td>
+                          {/* Vale/Ajuste (inline edit) */}
+                          <td className="py-2 px-2 text-right tabular-nums bg-red-500/5">
+                            {editando ? (
+                              <div className="flex flex-col items-end gap-1" onClick={e => e.stopPropagation()}>
+                                <Input type="number" step="0.01" value={edit.vale} onChange={e => setEdit({ ...edit, vale: e.target.value })} className="w-24 h-7 text-right text-xs" placeholder="vale" />
+                                <Input type="number" step="0.01" value={edit.ajuste} onChange={e => setEdit({ ...edit, ajuste: e.target.value })} className="w-24 h-7 text-right text-xs" placeholder="ajuste ±" />
+                              </div>
+                            ) : (
+                              <div className="text-[11px]">
+                                {l.pagamento.vale > 0 && <div className="text-red-500">−{fmtBRL(l.pagamento.vale)} vale</div>}
+                                {l.pagamento.consumoInterno > 0 && <div className="text-red-500">−{fmtBRL(l.pagamento.consumoInterno)} cons.</div>}
+                                {l.pagamento.ajuste !== 0 && <div className={l.pagamento.ajuste > 0 ? "text-emerald-500" : "text-red-500"}>{l.pagamento.ajuste > 0 ? "+" : "−"}{fmtBRL(Math.abs(l.pagamento.ajuste))} aj.</div>}
+                                {descontos === 0 && l.pagamento.ajuste === 0 && <span className="text-muted-foreground">—</span>}
+                              </div>
+                            )}
+                          </td>
+                          {/* A pagar */}
+                          <td className="py-2 px-2 text-right tabular-nums font-bold text-base">
+                            R$ {fmtBRL(l.pagamento.saldoAReceber)}
+                          </td>
+                          {/* Ações */}
+                          <td className="py-2 pl-2 text-right">
+                            <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                              {editando ? (
+                                <>
+                                  <Button size="sm" variant="default" onClick={() => salvarEdicao(l)} disabled={salvando} className="h-8">
+                                    {salvando ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={cancelarEdicao} className="h-8 px-2"><XIcon className="w-3 h-3" /></Button>
+                                </>
+                              ) : (
+                                !l.pagamento.fechado && (
+                                  <Button size="sm" variant="outline" onClick={() => iniciarEdicao(l)} className="h-8 px-2" title="Editar vale/ajuste">
+                                    <Pencil className="w-3 h-3" />
+                                  </Button>
+                                )
+                              )}
+                            </div>
                           </td>
                         </tr>
-                      )}
-                    </>
-                  );
-                })}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-      </div>
 
-      {/* ── Ranking Cards (mobile) ── */}
-      <div className="md:hidden space-y-3" data-testid="ranking-cards-mobile">
-        {computedBarbers.map((barber, index) => {
-          const pct =
-            totalRevenue > 0 ? (barber.revenue / totalRevenue) * 100 : 0;
-          const commission = barber.comissaoServicos ?? 0;
-          const isExpanded = !!expanded[barber.id];
+                        {/* Detalhe expandido — memória de cálculo */}
+                        {expandido && (
+                          <tr className="bg-muted/10 border-b">
+                            <td colSpan={9} className="py-3 px-4">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                                <div className="space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wide text-emerald-500 font-semibold mb-1 flex items-center gap-1"><Scissors className="w-3 h-3" />Comissões</div>
+                                  <Row label={`Serviços (${l.percentuais.pctServico}% × ${fmtBRL(l.bases.baseComissaoServicos || l.bases.servicosLiquido)})`} valor={l.calculos.comissaoServicos} />
+                                  <Row label={`Produtos (${l.percentuais.pctProduto}% × ${fmtBRL(l.bases.produtosLiquidoComissionavel)})`} valor={l.calculos.comissaoProdutos} />
+                                  <Row label={`Planos (${l.percentuais.pctPlano}% × ${fmtBRL(l.bases.planoReais)})`} valor={l.calculos.comissaoPlano} />
+                                  {(l.clubeGreco?.assinantes || 0) > 0 && (
+                                    <Row label={<span className="flex items-center gap-1"><Crown className="w-3 h-3 text-purple-400" />Clube Greco ({l.clubeGreco?.assinantes})</span>} valor={l.calculos.comissaoClubeGreco} />
+                                  )}
+                                </div>
+                                <div className="space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wide text-yellow-500 font-semibold mb-1">Bônus & Fixo</div>
+                                  {l.calculos.bonusRanking > 0 && <Row label={`🥇 Top 1 ${l.categoriaRanking === "assistente" ? "Assistente" : "Barbeiro"}`} valor={l.calculos.bonusRanking} />}
+                                  {l.percentuais.pctBonusExcedente > 0 && <Row label={`Excedente meta (${l.percentuais.pctBonusExcedente}% × ${fmtBRL(l.calculos.excedenteMeta)})`} valor={l.calculos.bonusExcedente} />}
+                                  {l.percentuais.salarioFixo > 0 && <Row label="Salário fixo" valor={l.percentuais.salarioFixo} />}
+                                  {l._bonus === 0 && l.percentuais.salarioFixo === 0 && <div className="text-muted-foreground italic">Sem bônus/fixo.</div>}
+                                </div>
+                                <div className="space-y-1">
+                                  <div className="text-[10px] uppercase tracking-wide text-red-500 font-semibold mb-1 flex items-center gap-1"><Package className="w-3 h-3" />Descontos / Ajustes</div>
+                                  {l.pagamento.vale > 0 && <Row label={`Vale${l.pagamento.valeNota ? ` — ${l.pagamento.valeNota}` : ""}`} valor={-l.pagamento.vale} />}
+                                  {l.pagamento.consumoInterno > 0 && <Row label={`Consumo${l.pagamento.consumoInternoNota ? ` — ${l.pagamento.consumoInternoNota}` : ""}`} valor={-l.pagamento.consumoInterno} />}
+                                  {l.pagamento.ajuste !== 0 && <Row label={`Ajuste${l.pagamento.ajusteNota ? ` — ${l.pagamento.ajusteNota}` : ""}`} valor={l.pagamento.ajuste} />}
+                                  {l.pagamento.vale === 0 && l.pagamento.consumoInterno === 0 && l.pagamento.ajuste === 0 && <div className="text-muted-foreground italic">Sem descontos.</div>}
+                                </div>
+                              </div>
+                              {editando && (
+                                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3" onClick={e => e.stopPropagation()}>
+                                  <div><label className="text-[10px] text-muted-foreground block mb-1">Nota do vale</label><Input value={edit.valeNota} onChange={e => setEdit({ ...edit, valeNota: e.target.value })} className="h-8 text-xs" placeholder="opcional" /></div>
+                                  <div><label className="text-[10px] text-muted-foreground block mb-1">Nota do consumo</label><Input value={edit.consumoInternoNota} onChange={e => setEdit({ ...edit, consumoInternoNota: e.target.value })} className="h-8 text-xs" placeholder="ex: 2 cervejas" /></div>
+                                  <div><label className="text-[10px] text-muted-foreground block mb-1">Nota do ajuste</label><Input value={edit.ajusteNota} onChange={e => setEdit({ ...edit, ajusteNota: e.target.value })} className="h-8 text-xs" placeholder="ex: horas extras, falta, prêmio" /></div>
+                                </div>
+                              )}
+                              <div className="mt-3 pt-3 border-t flex items-center justify-end gap-6 text-sm">
+                                <span className="text-muted-foreground">Bruto: <strong className="text-foreground">R$ {fmtBRL(l.calculos.totalBruto)}</strong></span>
+                                <span className="text-muted-foreground">Descontos: <strong className="text-red-500">−R$ {fmtBRL(descontos)}</strong></span>
+                                <span className="text-base"><strong>A pagar: R$ {fmtBRL(l.pagamento.saldoAReceber)}</strong></span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                  {/* Linha de total */}
+                  <tr className="border-t-2 font-semibold bg-muted/20">
+                    <td className="py-2 pr-3">Total da equipe</td>
+                    <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(producaoEquipe)}</td>
+                    <td className="py-2 px-2 text-left text-muted-foreground text-xs">100%</td>
+                    <td className="py-2 px-2 text-right tabular-nums bg-emerald-500/5 text-emerald-600">R$ {fmtBRL((data?.totais.totalComissaoServicos || 0) + (data?.totais.totalComissaoProdutos || 0) + (data?.totais.totalComissaoPlano || 0) + (data?.totais.totalComissaoClubeGreco || 0))}</td>
+                    <td className="py-2 px-2 text-right tabular-nums bg-yellow-500/5 text-yellow-600">R$ {fmtBRL((data?.totais.totalBonusRanking || 0) + (data?.totais.totalBonusExcedente || 0))}</td>
+                    <td className="py-2 px-2 text-right tabular-nums bg-sky-500/5 text-sky-600">R$ {fmtBRL(data?.totais.totalSalarioFixo || 0)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums bg-red-500/5 text-red-500">−R$ {fmtBRL((data?.totais.totalVale || 0) + (data?.totais.totalConsumoInterno || 0) - (data?.totais.totalAjuste || 0))}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-base">R$ {fmtBRL(totalPagar)}</td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-          return (
-            <Card
-              key={barber.id}
-              className="bg-card border-card-border"
-              data-testid={`barber-card-${barber.id}`}
-            >
-              <CardContent className="p-4">
-                {/* Card header row */}
-                <div className="flex items-center gap-3 mb-3">
-                  <RankBadge rank={index + 1} />
-                  <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center text-[11px] font-bold text-primary flex-shrink-0">
-                    {barber.initials}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate">{barber.name}</p>
-                    <p className="text-[10px] text-muted-foreground">
-                      Comissão: {barber.commission}%
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="p-1 h-auto"
-                    onClick={() => toggleExpand(barber.id)}
-                    data-testid={`expand-btn-${barber.id}`}
-                  >
-                    {isExpanded ? (
-                      <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                    )}
-                  </Button>
-                </div>
+      {/* ── Configurações da folha (recolhível) ── */}
+      <details className="rounded-lg border bg-card">
+        <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium flex items-center gap-2">
+          <Percent className="w-4 h-4 text-muted-foreground" />
+          Configurações da folha (taxa de cartão · produtos sem comissão)
+        </summary>
+        <div className="px-4 pb-4 space-y-4">
+          <ConfigFinanceiraCard />
+          <ProdutosSemComissaoCard />
+        </div>
+      </details>
+    </div>
+  );
+}
 
-                {/* Stats grid */}
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Faturamento</p>
-                    <p className="text-sm font-semibold">
-                      {formatCurrency(barber.revenue)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Atendimentos</p>
-                    <p className="text-sm font-medium">{barber.clients}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">Ticket Médio</p>
-                    <p className="text-sm font-medium">
-                      {formatCurrency(barber.avgTicket)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground">
-                      Comissão Est.
-                    </p>
-                    <p className="text-sm font-medium text-primary">
-                      {formatCurrency(commission)}
-                    </p>
-                  </div>
-                </div>
+// ── Helpers ──
+function KpiCard({ icon, label, valor, valorTexto, sub, destaque }: { icon: ReactNode; label: string; valor?: number; valorTexto?: string; sub?: string; destaque?: boolean }) {
+  return (
+    <Card className={destaque ? "border-primary/40 bg-primary/5" : ""}>
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-2 text-muted-foreground">
+          <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center text-primary">{icon}</div>
+          <p className="text-xs">{label}</p>
+        </div>
+        <p className={`font-bold ${destaque ? "text-2xl text-primary" : "text-xl"}`}>
+          {valorTexto != null ? valorTexto : `R$ ${fmtBRL(valor || 0)}`}
+        </p>
+        {sub && <p className="text-[11px] text-muted-foreground mt-0.5">{sub}</p>}
+      </CardContent>
+    </Card>
+  );
+}
 
-                {/* % do total */}
-                <div className="mt-2.5 flex items-center gap-2">
-                  <Progress value={pct} className="h-1.5 flex-1" />
-                  <span className="text-[10px] text-muted-foreground w-12 text-right flex-shrink-0">
-                    {pct.toFixed(1)}% do total
-                  </span>
-                </div>
-
-                {/* Expandable details */}
-                {isExpanded && <ExpandedDetails barber={barber} />}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+function Row({ label, valor, bold }: { label: ReactNode; valor: number; bold?: boolean }) {
+  const positivo = valor >= 0;
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className={`text-muted-foreground ${bold ? "text-foreground" : ""}`}>{label}</span>
+      <span className={`tabular-nums ${bold ? "font-bold" : ""} ${positivo ? "text-emerald-500" : "text-red-500"}`}>
+        {positivo ? "" : "−"}R$ {fmtBRL(Math.abs(valor))}
+      </span>
     </div>
   );
 }

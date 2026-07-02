@@ -10531,17 +10531,33 @@ Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja 
     const content: any[] = isPdf
       ? [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: buffer.toString("base64") } }, { type: "text", text: prompt }]
       : [{ type: "image", source: { type: "base64", media_type: mime, data: buffer.toString("base64") } }, { type: "text", text: prompt }];
-    try {
-      const resp = await anthropic.messages.create({ model: "claude-sonnet-4-20250514", max_tokens: 600, messages: [{ role: "user", content }] });
-      const txt = resp.content.find((b: any) => b.type === "text")?.text || "";
-      const ini = txt.indexOf("{"), fim = txt.lastIndexOf("}");
-      if (ini < 0 || fim < 0) return null;
-      return JSON.parse(txt.slice(ini, fim + 1));
-    } catch (err: any) {
-      kvSet("compras_ia_erro", { at: new Date().toISOString(), msg: String(err?.message || err), status: err?.status ?? null, name: err?.name ?? null }).catch(() => {});
-      log(`[compras] IA erro: ${err?.status || ""} ${err.message}`, "compras");
-      return null;
+    // Lista de modelos candidatos (vision). Tenta na ordem; pula o que der 404
+    // (modelo indisponível pra chave) e guarda o que funcionar pra próxima vez.
+    const jaOk = await kvGet<string>("compras_ia_model_ok");
+    const candidatos = [jaOk, process.env.COMPRAS_IA_MODEL,
+      "claude-sonnet-4-5-20250929", "claude-sonnet-4-5",
+      "claude-3-5-sonnet-20241022", "claude-3-5-sonnet-latest",
+      "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307",
+    ].filter((m, i, a) => !!m && a.indexOf(m) === i) as string[];
+    let ultimoErro: any = null;
+    for (const model of candidatos) {
+      try {
+        const resp = await anthropic.messages.create({ model, max_tokens: 600, messages: [{ role: "user", content }] });
+        kvSet("compras_ia_model_ok", model).catch(() => {});
+        kvSet("compras_ia_erro", null).catch(() => {});
+        const txt = resp.content.find((b: any) => b.type === "text")?.text || "";
+        const ini = txt.indexOf("{"), fim = txt.lastIndexOf("}");
+        if (ini < 0 || fim < 0) return null;
+        return JSON.parse(txt.slice(ini, fim + 1));
+      } catch (err: any) {
+        ultimoErro = err;
+        if (err?.status === 404) continue;   // modelo não existe pra a chave → próximo
+        break;                                // outro erro (auth/imagem) → para
+      }
     }
+    kvSet("compras_ia_erro", { at: new Date().toISOString(), msg: String(ultimoErro?.message || ultimoErro), status: ultimoErro?.status ?? null, modelosTentados: candidatos }).catch(() => {});
+    log(`[compras] IA erro: ${ultimoErro?.status || ""} ${ultimoErro?.message}`, "compras");
+    return null;
   }
 
   // Baixa o comprovante, extrai via IA, salva e responde no grupo.

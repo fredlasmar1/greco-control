@@ -639,6 +639,9 @@ export default function Equipe() {
         </CardContent>
       </Card>
 
+      {/* ── Vouchers do mês (dono decide comissão caso a caso) ── */}
+      <VoucherCard mes={mes} />
+
       {/* ── Configurações da folha (recolhível) ── */}
       <details className="rounded-lg border bg-card">
         <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium flex items-center gap-2">
@@ -667,6 +670,82 @@ function KpiCard({ icon, label, valor, valorTexto, sub, destaque }: { icon: Reac
           {valorTexto != null ? valorTexto : `R$ ${fmtBRL(valor || 0)}`}
         </p>
         {sub && <p className="text-[11px] text-muted-foreground mt-0.5">{sub}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function TogglePill({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <div className={`inline-flex rounded-md border border-card-border overflow-hidden text-[10px] ${disabled ? "opacity-40 pointer-events-none" : ""}`}>
+      <button onClick={() => onChange(true)} className={`px-2 py-0.5 ${on ? "bg-emerald-500 text-white" : "text-muted-foreground"}`}>SIM</button>
+      <button onClick={() => onChange(false)} className={`px-2 py-0.5 ${!on ? "bg-red-500 text-white" : "text-muted-foreground"}`}>NÃO</button>
+    </div>
+  );
+}
+
+function KpiMini({ label, valor, valorTexto, cor, destaque }: { label: string; valor?: number; valorTexto?: string; cor?: string; destaque?: boolean }) {
+  return (
+    <div className={`rounded-lg border p-2 ${destaque ? "border-red-500/30 bg-red-500/5" : "border-card-border"}`}>
+      <p className="text-[10px] text-muted-foreground uppercase">{label}</p>
+      <p className={`text-lg font-bold ${cor || ""}`}>{valorTexto != null ? valorTexto : `R$ ${fmtBRL(valor || 0)}`}</p>
+    </div>
+  );
+}
+
+function VoucherCard({ mes }: { mes: string }) {
+  const [d, setD] = useState<any>(null);
+  const carregar = () => { authFetch(`/api/voucher/${mes}`).then(r => r.json()).then(x => { if (x?.ok) setD(x); }).catch(() => {}); };
+  useEffect(() => { carregar(); /* eslint-disable-next-line */ }, [mes]);
+  const toggle = async (id: string, campo: "ehVoucher" | "pagaComissao", valor: boolean) => {
+    setD((prev: any) => prev ? { ...prev, itens: prev.itens.map((it: any) => it.id === id ? { ...it, [campo]: valor } : it) } : prev);
+    await authFetch(`/api/voucher/${mes}/${encodeURIComponent(id)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [campo]: valor }) }).catch(() => {});
+    carregar();
+  };
+  if (!d) return null;
+  const t = d.totais || {};
+  return (
+    <Card className="bg-card border-card-border">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">🎟️ Vouchers do mês — {labelMesPtBR(mes)}</CardTitle>
+        <p className="text-xs text-muted-foreground">Candidatos: pagos por <strong>voucher/pré-pago/cortesia</strong> ou <strong>R$ 0</strong>. Marque <strong>é voucher?</strong> e <strong>paga comissão?</strong> — o custo aparece em cima.</p>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <KpiMini label="Vouchers" valorTexto={String(t.nVouchers || 0)} />
+          <KpiMini label="Valor de tabela" valor={t.valorTabela} cor="text-amber-500" />
+          <KpiMini label="Comissão a pagar" valor={t.comissaoAPagar} cor="text-amber-500" />
+          <KpiMini label="Custo total do voucher" valor={t.custoTotal} cor="text-red-500" destaque />
+        </div>
+        {d.itens.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">Nenhum candidato a voucher neste mês (nenhum atendimento por voucher/cortesia ou R$ 0).</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="py-2 pr-2">Data</th><th className="py-2 px-2">Cliente / serviço</th><th className="py-2 px-2">Profissional</th><th className="py-2 px-2 text-right">Valor tabela</th><th className="py-2 px-2 text-center">É voucher?</th><th className="py-2 px-2 text-center">Paga comissão?</th>
+              </tr></thead>
+              <tbody>{d.itens.map((it: any) => (
+                <tr key={it.id} className={`border-b ${it.ehVoucher ? "" : "opacity-50"}`}>
+                  <td className="py-1.5 pr-2 whitespace-nowrap">{(it.data || "").split("-").reverse().join("/")}</td>
+                  <td className="py-1.5 px-2"><div className="font-medium">{it.cliente}</div><div className="text-[10px] text-muted-foreground">{it.servico} · {it.forma}</div></td>
+                  <td className="py-1.5 px-2">{it.profissional}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums">R$ {fmtBRL(it.valorTabela)}<div className="text-[10px] text-muted-foreground">com. R$ {fmtBRL(it.comissaoPotencial)}</div></td>
+                  <td className="py-1.5 px-2 text-center"><TogglePill on={it.ehVoucher} onChange={v => toggle(it.id, "ehVoucher", v)} /></td>
+                  <td className="py-1.5 px-2 text-center"><TogglePill on={it.pagaComissao} disabled={!it.ehVoucher} onChange={v => toggle(it.id, "pagaComissao", v)} /></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+        {d.porBarbeiro?.length > 0 && (
+          <div className="mt-3 border-t border-card-border pt-2">
+            <p className="text-[10px] uppercase text-muted-foreground mb-1">Resumo por profissional (só os marcados como voucher)</p>
+            {d.porBarbeiro.map((p: any) => (
+              <div key={p.nome} className="flex justify-between text-xs py-0.5"><span>{p.nome} · {p.qtd} atend.</span><span className="tabular-nums text-muted-foreground">tabela R$ {fmtBRL(p.valorTabela)} · comissão a pagar R$ {fmtBRL(p.comissao)}</span></div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

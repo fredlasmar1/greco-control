@@ -112,6 +112,7 @@ import {
   calcularMargemServico,
   comissaoServicosRanking,
   categoriaPorApelidoRanking,
+  pctDaCategoria,
 } from "./comissaoCategoria";
 import {
   getOverrides,
@@ -10863,6 +10864,86 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         ticketMedioConsumo: atendimentosTotal > 0 ? Math.round((consumidoTotal / atendimentosTotal) * 100) / 100 : 0,
         porBarbeiro,
       });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  // ─── VOUCHER (item 2): atendimentos "candidatos a voucher" (forma voucher/pré-pago/
+  // cortesia OU total R$0), o dono marca É-voucher + paga-comissão, e vê o custo. ──
+  const FORMA_VOUCHER_RE = /voucher|pre.?pago|pré.?pago|cortesia|brinde|gift|vale.?presente/i;
+  app.get("/api/voucher/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : ymdHoje().slice(0, 7);
+      const dataInicio = `${mes}-01`;
+      const ultimoDia = ultimoDiaDoMes(`${mes}-01`);
+      const hoje = ymdHoje();
+      const dataFim = ultimoDia < hoje ? ultimoDia : hoje;
+      const datas: string[] = []; { let c = dataInicio; while (c <= dataFim) { datas.push(c); c = ymdAddDays(c, 1); } }
+      const trans: any[] = [];
+      for (const dd of datas) { const s: any = await getSnapshot(dd); if (Array.isArray(s?.transacoesRaw)) trans.push(...s.transacoesRaw); }
+      const metas = await getAllMetas().catch(() => ({} as any));
+      const conhecidos = await getProfsConhecidos().catch(() => ({} as any));
+      const nomePorId = new Map<string, string>();
+      for (const m of Object.values(metas) as any[]) if (m?.profissionalId) nomePorId.set(String(m.profissionalId), m.nome);
+      for (const [id, nome] of Object.entries(conhecidos)) nomePorId.set(String(id), String(nome));
+      const decisoes: any = (await kvGet(`voucher_decisoes:${mes}`)) || {};
+      const pctBarbeiro = (nome: string) => { try { const cat = categoriaPorApelidoRanking(nome); return cat ? pctDaCategoria(cat) : 0.4; } catch { return 0.4; } };
+      const itens: any[] = [];
+      const seen = new Set<string>();
+      for (const t of trans) {
+        const formas = t.formasPagamentos || [];
+        const temVoucher = formas.some((f: any) => FORMA_VOUCHER_RE.test(String(f?.nome || "")));
+        const total = Number(t.totalPagar || 0);
+        const servicos = t.servicos || [];
+        if (servicos.length === 0) continue;
+        const candidato = temVoucher || total === 0;
+        if (!candidato) continue;
+        const svcOrd = [...servicos].sort((a: any, b: any) => Number(b.preco || b.valor || 0) - Number(a.preco || a.valor || 0));
+        const profId = String(svcOrd[0]?.idProfissionalQueRealizouServico || svcOrd[0]?.IdProfissionalQueRealizouOServico || t.profissionalId || "");
+        const profNome = nomePorId.get(profId) || (profId ? `Profissional ${profId.slice(0, 6)}` : "—");
+        const valorTabela = Math.round((servicos.reduce((s: number, x: any) => s + Number(x.preco || x.valor || 0), 0) || total) * 100) / 100;
+        const servico = servicos.map((x: any) => x.nome || x.servico || "").filter(Boolean).join(", ") || "Atendimento";
+        const itemId = String(t.id || `${t.dataHora}|${t.cliente?.id || t.cliente?.nome || ""}`);
+        if (seen.has(itemId)) continue; seen.add(itemId);
+        const dec = decisoes[itemId] || {};
+        const formaNome = formas.map((f: any) => f.nome).filter(Boolean).join(" + ") || (total === 0 ? "R$ 0 (sem pagamento)" : "—");
+        const pct = pctBarbeiro(profNome);
+        itens.push({
+          id: itemId, data: (t.dataHora || "").slice(0, 10), cliente: t.cliente?.nome || "—", servico, valorTabela, forma: formaNome,
+          temVoucherAuto: temVoucher, totalZero: total === 0, profissional: profNome,
+          ehVoucher: dec.ehVoucher !== undefined ? !!dec.ehVoucher : true,          // candidato → default É voucher
+          pagaComissao: dec.pagaComissao !== undefined ? !!dec.pagaComissao : false, // default NÃO paga comissão
+          comissaoPotencial: Math.round(valorTabela * pct * 100) / 100,
+        });
+      }
+      itens.sort((a, b) => (a.data < b.data ? 1 : -1));
+      const porBarbeiro: Record<string, any> = {};
+      let totValor = 0, totComissao = 0, nVouchers = 0;
+      for (const it of itens) {
+        if (!it.ehVoucher) continue;
+        nVouchers++; totValor += it.valorTabela;
+        const com = it.pagaComissao ? it.comissaoPotencial : 0; totComissao += com;
+        if (!porBarbeiro[it.profissional]) porBarbeiro[it.profissional] = { nome: it.profissional, qtd: 0, valorTabela: 0, comissao: 0 };
+        porBarbeiro[it.profissional].qtd++; porBarbeiro[it.profissional].valorTabela += it.valorTabela; porBarbeiro[it.profissional].comissao += com;
+      }
+      return res.json({
+        ok: true, mes, itens,
+        porBarbeiro: Object.values(porBarbeiro).map((p: any) => ({ ...p, valorTabela: Math.round(p.valorTabela * 100) / 100, comissao: Math.round(p.comissao * 100) / 100 })).sort((a: any, b: any) => b.valorTabela - a.valorTabela),
+        totais: { nVouchers, valorTabela: Math.round(totValor * 100) / 100, comissaoAPagar: Math.round(totComissao * 100) / 100, custoTotal: Math.round((totValor + totComissao) * 100) / 100 },
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  app.post("/api/voucher/:mes/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const decisoes: any = (await kvGet(`voucher_decisoes:${req.params.mes}`)) || {};
+      const cur = decisoes[req.params.id] || {};
+      const b = req.body || {};
+      if (b.ehVoucher !== undefined) cur.ehVoucher = !!b.ehVoucher;
+      if (b.pagaComissao !== undefined) cur.pagaComissao = !!b.pagaComissao;
+      decisoes[req.params.id] = cur;
+      await kvSet(`voucher_decisoes:${req.params.mes}`, decisoes);
+      return res.json({ ok: true });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 

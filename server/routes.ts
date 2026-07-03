@@ -12666,11 +12666,31 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
               unidades: qt, receita: r2b(val), custoTotal: 0, precoVendaMedio: qt > 0 ? r2b(val / qt) : 0,
               custoUnit: 0, margemRS: 0, margemPct: 0, bomboniere: bomb };
           }).sort((a, b) => b.receita - a.receita);
-          const ratio = totRec > 0 ? totCom / totRec : 1; // rateio de bomboniere por barbeiro (estimado)
+          const ratio = totRec > 0 ? totCom / totRec : 1; // rede de segurança (rateio agregado)
+          // v107 EXATO (igual à folha): comissionável por pessoa vem das TRANSAÇÕES
+          // (bomboniere real de cada um). Compartilha o cache de calcularPeriodoPor-
+          // Profissional com a folha → se a folha já rodou, custa 0 token. Só confia
+          // se as transações cobrem ~o total do ranking (senão parcial → cai no ratio).
+          const normNmVP = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+          const exatoVP = new Map<string, number>();
+          let exatoOkVP = false;
+          try {
+            const ptxVP = await calcularPeriodoPorProfissional(dataInicio, dataFim);
+            const txPB = ptxVP.totais?.produtosBruto || 0;
+            const rkPB = (rkEquipe.totais as any)?.produtosBruto || totRec;
+            exatoOkVP = rkPB > 0 && txPB >= 0.85 * rkPB;
+            if (exatoOkVP) for (const pp of Object.values(ptxVP.porProfissional) as any[]) { const nn = normNmVP(pp.nome); if (nn) exatoVP.set(nn, pp.produtos?.liquidoComissionavel || 0); }
+          } catch { /* cai no ratio */ }
           const ranking = Array.from(rkEquipe.byId.values())
             .map((v: any) => {
               const prodB = Number(v.faturamento?.produtos || 0);
-              const comB = prodB * ratio;
+              let comB = prodB * ratio; // fallback ratio
+              if (exatoOkVP) {
+                const nr = normNmVP(v.nome).split(/[-–—]/)[0].trim();
+                let ex = exatoVP.get(nr);
+                if (ex == null) { const tok = nr.split(/\s+/)[0]; for (const [k, vv] of exatoVP) if (k === tok || k.startsWith(tok + " ") || k.includes(" " + tok)) { ex = vv; break; } }
+                if (ex != null) comB = ex;
+              }
               return { id: v.id, ids: [v.id], nome: v.nome, unidades: Number(v.atendimentos?.produtos || 0),
                 receita: r2b(prodB), receitaComissionavel: r2b(comB), receitaBomboniere: r2b(prodB - comB),
                 custoTotal: 0, margemRS: 0, margemPct: 0, produtosDistintos: 0, comandas: 0, ticketMedio: 0,
@@ -12681,7 +12701,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
             .filter((v: any) => v.receita > 0)
             .sort((a, b) => b.receita - a.receita);
           const resp = {
-            ok: true, mes, dataInicio, dataFim, fonte: "csv-0token",
+            ok: true, mes, dataInicio, dataFim, fonte: "csv-0token", comissaoFonte: exatoOkVP ? "exato-transacao" : "ratio",
             totais: { unidades: totUn, receita: r2b(totRec), receitaComissionavel: r2b(totCom),
               receitaBomboniere: r2b(totBomb), custo: 0, margemRS: 0, margemPct: 0,
               comandasComProduto: 0, produtosDistintos: produtosArr.length, produtosSemCusto: 0 },

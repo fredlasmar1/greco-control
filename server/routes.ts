@@ -11757,6 +11757,21 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       let periodoSemApi = false;
       if (_eqRank) {
         periodoSemApi = true;
+        // v105: BOMBONIERE FORA DA COMISSÃO. O Ranking de Profissionais só traz o
+        // "Total Produtos" por vendedor (bomboniere junto). Pra pagar 10% só sobre
+        // cosmético, aplica o ratio comissionável AGREGADO do Ranking de Produtos
+        // (categoria BEBIDAS/DOCES = 0%). Mesma lógica da aba Vendas de Produtos.
+        // Sem Ranking de Produtos do mês → ratio=1 (paga tudo, como antes).
+        let ratioCom = 1;
+        try {
+          const rkProd: any = await kvGet(`trinks_import:rankingProdutos:${mes}`);
+          if (rkProd?.produtos?.length) {
+            const CAT_BOMB = new Set(["bebidas", "doces", "bomboniere"]);
+            let tRec = 0, tCom = 0;
+            for (const p of rkProd.produtos) { const v = Number(p.valor || 0); tRec += v; if (!CAT_BOMB.has(String(p.categoria || "").toLowerCase())) tCom += v; }
+            if (tRec > 0) ratioCom = tCom / tRec;
+          }
+        } catch { /* ratio=1 */ }
         const porProfissional: Record<string, any> = {};
         for (const [id, e] of _eqRank.byId) {
           const sl = e.faturamento?.servicosLiquido || 0;
@@ -11764,8 +11779,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           porProfissional[id] = {
             nome: e.nome,
             servicos: { liquido: sl },
-            // ranking não separa bomboniere → produtos comissionáveis = produtos do ranking
-            produtos: { liquido: pl, liquidoComissionavel: pl },
+            // comissionável = produtos − bomboniere (ratio agregado)
+            produtos: { liquido: pl, liquidoComissionavel: pl * ratioCom },
             plano: { reais: e.faturamento?.plano || 0 },
             taxaCartao: 0,
             custoInsumos: 0,
@@ -11778,7 +11793,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
             reais: tr.faturamento || 0, count: tr.atendimentos || 0,
             servicosBruto: tr.servicosBruto || 0, servicosLiquido: tr.servicosLiquido || 0,
             produtosBruto: tr.produtosBruto || 0, produtosLiquido: tr.produtosLiquido || 0,
-            produtosLiquidoComissionavel: tr.produtosLiquido || 0,
+            produtosLiquidoComissionavel: (tr.produtosLiquido || 0) * ratioCom,
             planoReais: tr.planoReais || 0,
           },
         };

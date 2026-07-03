@@ -276,43 +276,64 @@ export default function VendasProdutos() {
                     <th className="py-2 pr-2">Produto</th>
                     <th className="py-2 px-2">Categoria</th>
                     <th className="py-2 px-2 text-right">Qtd</th>
-                    <th className="py-2 px-2 text-right">Valor</th>
+                    <th className="py-2 px-2 text-right">Valor bruto</th>
+                    <th className="py-2 px-2 text-right">Ganho equipe (10%)</th>
+                    <th className="py-2 px-2 text-right">% do total</th>
                     <th className="py-2 px-2 text-center">Tipo</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {csvProd.produtos.map((p: any, i: number) => (
-                    <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
-                      <td className="py-1.5 pr-2 font-medium">{p.produto}</td>
-                      <td className="py-1.5 px-2 text-muted-foreground text-xs">{p.categoria || "—"}</td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">{p.quantidade}</td>
-                      <td className="py-1.5 px-2 text-right tabular-nums">R$ {fmtBRL(p.valor)}</td>
-                      <td className="py-1.5 px-2 text-center">
-                        {p.bomboniere
-                          ? <Badge variant="outline" className="text-[9px] h-4 border-amber-500/50 text-amber-600 bg-amber-500/10">bomboniere</Badge>
-                          : <Badge variant="outline" className="text-[9px] h-4 border-emerald-500/50 text-emerald-600 bg-emerald-500/10">% equipe</Badge>}
-                      </td>
-                    </tr>
-                  ))}
+                  {csvProd.produtos.map((p: any, i: number) => {
+                    const ganho = p.bomboniere ? 0 : Number(p.valor || 0) * 0.10;
+                    const pctTot = csvProd.total > 0 ? (Number(p.valor || 0) / csvProd.total) * 100 : 0;
+                    return (
+                      <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                        <td className="py-1.5 pr-2 font-medium">{p.produto}</td>
+                        <td className="py-1.5 px-2 text-muted-foreground text-xs">{p.categoria || "—"}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums">{p.quantidade}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums font-semibold">R$ {fmtBRL(p.valor)}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-emerald-600 font-medium">{ganho > 0 ? `R$ ${fmtBRL(ganho)}` : "—"}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-muted-foreground">{pctTot.toFixed(1)}%</td>
+                        <td className="py-1.5 px-2 text-center">
+                          {p.bomboniere
+                            ? <Badge variant="outline" className="text-[9px] h-4 border-amber-500/50 text-amber-600 bg-amber-500/10">bomboniere</Badge>
+                            : <Badge variant="outline" className="text-[9px] h-4 border-emerald-500/50 text-emerald-600 bg-emerald-500/10">% equipe</Badge>}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t-2 font-semibold bg-muted/20">
+                    <td className="py-2 pr-2" colSpan={3}>Total do mês</td>
+                    <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(csvProd.total)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-emerald-600">R$ {fmtBRL(Number(csvProd.comissionavel || 0) * 0.10)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">100%</td>
+                    <td />
+                  </tr>
+                </tfoot>
               </table>
             </div>
             <div className="mt-2 text-[10px] text-muted-foreground">
-              Fonte: relatório "Ranking de Produtos" da Trinks (importado, 0 tokens). Bomboniere = categorias BEBIDAS/DOCES. Este ranking é por produto (sem vendedor); "quem vendeu" está no ranking de vendedores abaixo.
+              Fonte: relatório "Ranking de Produtos" da Trinks (importado, 0 tokens). Bomboniere (BEBIDAS/DOCES) = 0% de comissão. "Ganho equipe" = 10% sobre o comissionável. Este ranking é por produto (sem vendedor); <strong>quem vendeu</strong> está no ranking de colaboradores abaixo — e é de lá que a comissão vai pra <strong>Pagamento da Equipe</strong>. Margem por item precisa do custo cadastrado (aba Margem de Produtos).
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Ranking de vendedores */}
+      {/* Ranking de colaboradores (vai pra folha) */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <Trophy className="h-5 w-5" />
-            Ranking de vendedores
+            Ranking de venda por colaborador
+            <Badge variant="outline" className="text-[10px] border-primary/50 text-primary">→ Pagamento da Equipe</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="mb-3 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
+            💰 A coluna <strong>Comissão R$</strong> (10% sobre o comissionável, <strong>sem bomboniere</strong>) é o que vai automático pra <strong>Pagamento da Equipe</strong>, somar com serviços + bônus.
+          </div>
           {!data || data.ranking.length === 0 ? (
             <p className="text-sm text-muted-foreground">Sem vendas no período.</p>
           ) : (
@@ -346,9 +367,9 @@ export default function VendasProdutos() {
                       <td className="py-2 px-2 text-right tabular-nums">{v.comandas}</td>
                       <td className="py-2 px-2 text-right tabular-nums">{v.unidades}</td>
                       <td className="py-2 px-2 text-right tabular-nums font-semibold">R$ {fmtBRL(v.receita)}</td>
-                      <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">R$ {fmtBRL(v.custoTotal)}</td>
-                      <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(v.margemRS)}</td>
-                      <td className="py-2 px-2 text-right tabular-nums">{v.margemPct.toFixed(1)}%</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{v.custoTotal > 0 ? `R$ ${fmtBRL(v.custoTotal)}` : <span title="Sem custo cadastrado dos produtos">—</span>}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">{v.custoTotal > 0 ? `R$ ${fmtBRL(v.margemRS)}` : "—"}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">{v.custoTotal > 0 ? `${v.margemPct.toFixed(1)}%` : "—"}</td>
                       <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(v.ticketMedio)}</td>
                       <td className="py-2 px-2 text-right tabular-nums">
                         {v.pctComissao !== undefined ? (
@@ -364,6 +385,14 @@ export default function VendasProdutos() {
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t-2 font-semibold bg-muted/20">
+                    <td className="py-2 px-2" colSpan={4}>Total da equipe</td>
+                    <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(data.ranking.reduce((s, v) => s + (v.receita || 0), 0))}</td>
+                    <td colSpan={5} />
+                    <td className="py-2 px-2 text-right tabular-nums text-emerald-500 text-base">R$ {fmtBRL(data.ranking.reduce((s, v) => s + (v.comissaoRS || 0), 0))}</td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}

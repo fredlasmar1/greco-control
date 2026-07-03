@@ -122,6 +122,46 @@ function formatMonthBR(s: string): string {
   return `${names[parseInt(m) - 1]}/${y}`;
 }
 
+// ─── Contador do Clube: receita das mensalidades × valor de tabela consumido ──
+function ContadorClube() {
+  const [d, setD] = useState<any>(null);
+  const mes = useMemo(() => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }).slice(0, 7), []);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/clube-greco/contador/${mes}`).then(r => r.json()).then(x => { if (x?.ok) setD(x); }).catch(() => {});
+  }, [mes]);
+  const fmt = (n: number) => (Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (!d) return null;
+  const prej = d.prejuizo;
+  return (
+    <Card className={`border ${prej ? "bg-red-500/5 border-red-500/30" : "bg-emerald-500/5 border-emerald-500/30"}`}>
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <Crown className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold">Contador do Clube — {mes.split("-").reverse().join("/")}</span>
+          <span className="text-[10px] text-muted-foreground">receita das mensalidades × valor de tabela consumido</span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><p className="text-[10px] text-muted-foreground uppercase">Receita do Clube</p><p className="text-lg font-bold text-emerald-500">R$ {fmt(d.receitaMensal)}</p><p className="text-[10px] text-muted-foreground">{d.assinantesAtivos} ativos</p></div>
+          <div><p className="text-[10px] text-muted-foreground uppercase">Consumido (tabela)</p><p className="text-lg font-bold text-amber-500">R$ {fmt(d.consumidoTotal)}</p><p className="text-[10px] text-muted-foreground">{d.atendimentosTotal} atend. · ticket R$ {fmt(d.ticketMedioConsumo)}</p></div>
+          <div className="col-span-2"><p className="text-[10px] text-muted-foreground uppercase">{prej ? "Prejuízo (furo)" : "Sobra"}</p><p className={`text-2xl font-bold ${prej ? "text-red-500" : "text-emerald-500"}`}>{prej ? "−" : "+"}R$ {fmt(Math.abs(d.saldo))}</p><p className="text-[10px] text-muted-foreground">{prej ? "assinantes consumiram MAIS do que a mensalidade arrecada" : "o Clube está no azul este mês"}</p></div>
+        </div>
+        {d.porBarbeiro?.length > 0 && (
+          <div className="border-t border-card-border pt-2">
+            <p className="text-[10px] uppercase text-muted-foreground mb-1">Consumo por profissional (valor de tabela)</p>
+            <div className="overflow-x-auto"><table className="w-full text-xs">
+              <thead><tr className="text-left text-muted-foreground"><th className="py-1">Profissional</th><th className="py-1 text-right">Atend.</th><th className="py-1 text-right">Valor de tabela</th></tr></thead>
+              <tbody>{d.porBarbeiro.map((p: any) => (
+                <tr key={p.nome} className="border-t border-card-border/40"><td className="py-1">{p.nome}</td><td className="py-1 text-right tabular-nums">{p.atendimentos}</td><td className="py-1 text-right tabular-nums">R$ {fmt(p.valorTabela)}</td></tr>
+              ))}</tbody>
+            </table></div>
+          </div>
+        )}
+        <p className="mt-2 text-[10px] text-muted-foreground">Fonte: mensalidades ativas × atendimentos de plano (agenda Gmail/API/CSV, 0 token no mês corrente). "Furo" = consumo de tabela maior que a receita.</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Page ─────────────────────────────────────────────
 export default function Assinaturas() {
   const { toast } = useToast();
@@ -261,6 +301,9 @@ export default function Assinaturas() {
           </Button>
         </div>
       </div>
+
+      {/* Contador do Clube: receita vs valor de tabela consumido (furo/prejuízo) */}
+      <ContadorClube />
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">

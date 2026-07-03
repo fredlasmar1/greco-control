@@ -10836,6 +10836,36 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     } catch { return res.status(500).send("erro"); }
   });
 
+  // GET /api/clube-greco/contador/:mes — RECEITA do Clube (mensalidades ativas)
+  // MENOS o VALOR DE TABELA consumido pelos assinantes (atendimentos de plano),
+  // por barbeiro. Mostra se o Clube tem furo/prejuízo (item 3 do dono).
+  app.get("/api/clube-greco/contador/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : ymdHoje().slice(0, 7);
+      const ativos = assinaturaClientes.filter((c: any) => c.status === "active");
+      const receitaMensal = ativos.reduce((s: number, c: any) => s + (Number(c.planValue) || 0), 0);
+      const dataInicio = `${mes}-01`;
+      const ultimoDia = ultimoDiaDoMes(`${mes}-01`);
+      const hoje = ymdHoje();
+      const dataFim = ultimoDia < hoje ? ultimoDia : hoje;
+      const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim).catch(() => null);
+      const porBarbeiro = periodo ? (Object.values(periodo.porProfissional) as any[])
+        .map((p: any) => ({ nome: p.nome, atendimentos: p.plano?.count || 0, valorTabela: Math.round((p.plano?.reais || 0) * 100) / 100 }))
+        .filter((p: any) => p.atendimentos > 0 || p.valorTabela > 0)
+        .sort((a: any, b: any) => b.valorTabela - a.valorTabela) : [];
+      const consumidoTotal = Math.round(porBarbeiro.reduce((s: number, p: any) => s + p.valorTabela, 0) * 100) / 100;
+      const atendimentosTotal = porBarbeiro.reduce((s: number, p: any) => s + p.atendimentos, 0);
+      const saldo = Math.round((receitaMensal - consumidoTotal) * 100) / 100;
+      return res.json({
+        ok: true, mes,
+        receitaMensal, assinantesAtivos: ativos.length,
+        consumidoTotal, atendimentosTotal, saldo, prejuizo: saldo < 0,
+        ticketMedioConsumo: atendimentosTotal > 0 ? Math.round((consumidoTotal / atendimentosTotal) * 100) / 100 : 0,
+        porBarbeiro,
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   // POST /api/telegram/testar — envia mensagem de teste
   app.post("/api/telegram/testar", async (_req: Request, res: Response) => {
     const agora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });

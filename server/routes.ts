@@ -10983,7 +10983,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     if (!requireHubKey(req, res)) return;
     try {
       const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : ymdHoje().slice(0, 7);
-      const oficial = Number((await kvGet<number>(`trinks_total_mes:${mes}`)) || 0);
+      const _tm: any = await kvGet(`trinks_total_mes:${mes}`);
+      const oficial = Number(_tm?.total || 0); // kv guarda { total, ... }
       const eq = await montarEquipeDeRanking(mes, await getAllMetas()).catch(() => null);
       const porBarbeiro = eq ? Array.from((eq as any).byId.values()).map((v: any) => ({
         nome: v.nome,

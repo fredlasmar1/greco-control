@@ -10622,8 +10622,17 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     };
   }
 
+  // Guarda a imagem da nota em kv e marca temFoto na compra (item 1 do dono).
+  async function guardarFotoCompra(nova: any, foto?: { b64: string; mime: string }): Promise<void> {
+    if (!nova?.id || !foto?.b64) return;
+    try {
+      await kvSet(`compras_foto:${nova.id}`, foto);
+      await atualizarCompra(nova.mes, nova.id, { temFoto: true, fotoMime: foto.mime } as any);
+    } catch { /* segue sem foto */ }
+  }
+
   // Decide: NOTA de produtos (tem itens) → pede confirmação; senão → salva direto.
-  async function finalizarCompra(dados: any, ctx: { chatId: string; from: string; fileId?: string }): Promise<void> {
+  async function finalizarCompra(dados: any, ctx: { chatId: string; from: string; fileId?: string; foto?: { b64: string; mime: string } }): Promise<void> {
     const { chatId, from } = ctx;
     if (dados.ehComprovante === false || !(Number(dados.valor) > 0)) {
       await traçoCompras(from, "nao_comprovante", { valor: dados.valor });
@@ -10635,7 +10644,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       ? dados.itens.filter((it: any) => String(it?.produto || "").trim() && Number(it?.custoUnitario || 0) > 0)
       : [];
     if (itens.length > 0) {
-      await kvSet(`compras_pending:${chatId}`, { compra, itens, criadoEm: new Date().toISOString() });
+      await kvSet(`compras_pending:${chatId}`, { compra, itens, foto: ctx.foto || null, criadoEm: new Date().toISOString() });
       let msg = `📦 <b>Nota de compra lida</b> — confira antes de eu salvar os custos:\n💰 Total: <b>R$ ${fmtBRLc(compra.valor)}</b> · 🏪 ${compra.loja}\n\n<b>Itens (custo unitário):</b>\n`;
       for (const it of itens.slice(0, 20)) msg += `· ${String(it.produto)} — ${Number(it.quantidade || 1)}× R$ ${fmtBRLc(Number(it.custoUnitario))}\n`;
       if (itens.length > 20) msg += `· <i>+${itens.length - 20} itens…</i>\n`;
@@ -10644,7 +10653,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       await traçoCompras(from, "pendente_confirmacao", { itens: itens.length, valor: compra.valor });
       return;
     }
-    await salvarCompra(compra as any);
+    const nova = await salvarCompra(compra as any);
+    await guardarFotoCompra(nova, ctx.foto);
     await traçoCompras(from, "salvo", { valor: compra.valor, mes: compra.mes });
     const totalMes = resumoCompras(await listarCompras(compra.mes)).total;
     let msg = `✅ <b>Compra registrada</b>\n💰 <b>R$ ${fmtBRLc(compra.valor)}</b>\n🏪 ${compra.loja}\n🏷️ ${compra.categoria}\n📅 ${compra.data.split("-").reverse().join("/")}`;
@@ -10662,7 +10672,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     await traçoCompras(from, "baixado", { mime: arq.mime, bytes: arq.buffer.length });
     const dados = await extrairComprovanteIA(arq.buffer, arq.mime);
     if (!dados) { await traçoCompras(from, "ia_indisponivel"); await enviarMensagemCompras("⚠️ Não consegui ler (IA indisponível). Registre manualmente no app.", chatId); return; }
-    await finalizarCompra(dados, { chatId, from, fileId });
+    await finalizarCompra(dados, { chatId, from, fileId, foto: { b64: arq.buffer.toString("base64"), mime: arq.mime } });
   }
 
   async function processarTextoCompra(texto: string, chatId: string, from: string): Promise<void> {
@@ -10678,7 +10688,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     if (!pend?.compra) { await enviarMensagemCompras("Não há nota pendente pra confirmar. Manda a foto/nota de novo.", chatId); return; }
     await kvSet(`compras_pending:${chatId}`, null);
     const { atualizados, naoAchados } = await atualizarCustosDeItens(pend.itens || []);
-    await salvarCompra(pend.compra as any);
+    const novaP = await salvarCompra(pend.compra as any);
+    await guardarFotoCompra(novaP, pend.foto);
     await traçoCompras(from, "confirmado_salvo", { valor: pend.compra.valor, custos: atualizados.length });
     let msg = `✅ <b>Confirmado e salvo!</b>\n💰 Compra R$ ${fmtBRLc(pend.compra.valor)} · 🏪 ${pend.compra.loja} registrada.\n`;
     if (atualizados.length) msg += `\n📈 <b>${atualizados.length} custo(s) atualizado(s)</b> (margem preenchida):\n${atualizados.slice(0, 20).map((s: string) => `· ${s}`).join("\n")}\n`;
@@ -10808,8 +10819,21 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     if (!requireAdmin(req, res)) return;
     try {
       const ok = await removerCompra(req.params.mes, req.params.id);
+      kvSet(`compras_foto:${req.params.id}`, null).catch(() => {}); // limpa a imagem junto
       return res.json({ ok });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  // GET /api/compras/:mes/:id/foto — serve a imagem da nota guardada (item 1).
+  app.get("/api/compras/:mes/:id/foto", async (req: Request, res: Response) => {
+    try {
+      const foto: any = await kvGet(`compras_foto:${req.params.id}`);
+      if (!foto?.b64) return res.status(404).send("sem foto");
+      const buf = Buffer.from(String(foto.b64), "base64");
+      res.setHeader("Content-Type", foto.mime || "image/jpeg");
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      return res.send(buf);
+    } catch { return res.status(500).send("erro"); }
   });
 
   // POST /api/telegram/testar — envia mensagem de teste

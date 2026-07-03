@@ -16,8 +16,9 @@ import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 type Compra = {
   id: string; mes: string; data: string; valor: number; loja: string;
   categoria: string; descricao?: string; tipo: string; origem: string;
-  telegramFrom?: string; confianca?: string;
+  telegramFrom?: string; confianca?: string; temFoto?: boolean;
 };
+const API_BASE = (globalThis as any).__API_BASE__ || "";
 type Resp = {
   ok: boolean; mes: string; compras: Compra[];
   resumo: { total: number; count: number; categorias: { nome: string; total: number; count: number }[] };
@@ -238,6 +239,7 @@ export default function Compras() {
                                 {c.origem === "manual" && <Badge variant="outline" className="text-[9px] h-4">manual</Badge>}
                                 {c.tipo === "pix" && <Badge variant="outline" className="text-[9px] h-4">PIX</Badge>}
                                 {c.confianca === "baixa" && <Badge variant="outline" className="text-[9px] h-4 border-amber-500/40 text-amber-500">confira</Badge>}
+                                {c.temFoto && <a href={`${API_BASE}/api/compras/${mes}/${c.id}/foto`} target="_blank" rel="noreferrer" className="text-[9px] h-4 px-1 rounded border border-primary/40 text-primary hover:bg-primary/10 inline-flex items-center gap-0.5">📷 nota</a>}
                               </div>
                             </div>
                           )}

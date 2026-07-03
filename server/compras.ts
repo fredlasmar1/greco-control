@@ -38,6 +38,8 @@ export interface Compra {
   telegramFileId?: string;
   telegramFrom?: string; // quem mandou no grupo
   confianca?: "alta" | "media" | "baixa";
+  temFoto?: boolean;     // imagem da nota guardada em kv compras_foto:${id}
+  fotoMime?: string;
   criadoEm: string;
   atualizadoEm: string;
 }

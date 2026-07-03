@@ -8,15 +8,20 @@
  */
 import { kvGet, kvSet } from "./db";
 
-// Categorias de compra (alinhadas às despesas do sistema). A IA escolhe uma.
+// Categorias de compra — os principais gastos de uma barbearia. A IA escolhe uma.
 export const CATEGORIAS_COMPRA = [
-  "Produtos & Insumos",
-  "Limpeza & Consumo",
-  "Manutenção & Reparos",
-  "Equipamentos",
-  "Contas & Impostos",
-  "Marketing",
-  "Alimentação",
+  "Salários & Equipe",       // PIX/pagamento a barbeiros, assistentes, secretárias
+  "Produtos & Insumos",      // cosméticos, pomada, shampoo, tinta, navalha, lâmina
+  "Bebidas & Bomboniere",    // cerveja, refri, energético, água, doces (revenda)
+  "Limpeza & Higiene",       // produtos de limpeza, papel, descartáveis
+  "Manutenção & Reparos",    // conserto, obra, elétrica, hidráulica, pintura
+  "Equipamentos & Móveis",   // máquina, cadeira, secador, espelho, móveis
+  "Aluguel",                 // aluguel do ponto
+  "Contas & Utilidades",     // água, luz, energia, internet, telefone
+  "Impostos & Contador",     // impostos, taxas, DAS/Simples, honorário contábil
+  "Software & Sistemas",     // Trinks, sistemas, apps, assinaturas de software
+  "Marketing & Publicidade", // anúncio, tráfego, gráfica, panfleto, brinde
+  "Alimentação",             // comida/lanche da equipe
   "Outros",
 ] as const;
 
@@ -99,13 +104,18 @@ export function normalizarCategoria(cat: string | undefined | null): string {
   const n = String(cat).toLowerCase();
   const match = CATEGORIAS_COMPRA.find(c => c.toLowerCase() === n);
   if (match) return match;
-  // heurística leve por palavra-chave
-  if (/limp|higien/.test(n)) return "Limpeza & Consumo";
-  if (/manut|conserto|reparo|obra/.test(n)) return "Manutenção & Reparos";
-  if (/equip|máquina|maquina|cadeira|movel|móvel/.test(n)) return "Equipamentos";
-  if (/conta|luz|água|agua|imposto|taxa|boleto/.test(n)) return "Contas & Impostos";
-  if (/market|anúncio|anuncio|impuls|tráfego|trafego/.test(n)) return "Marketing";
-  if (/comida|lanche|aliment|refei/.test(n)) return "Alimentação";
-  if (/produto|insumo|cosmetic|cosmétic|pomada|shampoo|bebida|doce/.test(n)) return "Produtos & Insumos";
+  // heurística leve por palavra-chave (fallback quando a IA devolve algo fora da lista)
+  if (/salári|salario|comiss|vale|equipe|barbeiro|assistente|funcion|secretár|secretar/.test(n)) return "Salários & Equipe";
+  if (/limp|higien|papel|detergen|desinfe|descartáv|descartav/.test(n)) return "Limpeza & Higiene";
+  if (/manut|conserto|reparo|obra|elétric|eletric|hidrául|hidraul|pintura|encanad/.test(n)) return "Manutenção & Reparos";
+  if (/equip|máquina|maquina|cadeira|secador|espelho|móvel|movel|mobíli|mobili/.test(n)) return "Equipamentos & Móveis";
+  if (/aluguel|locaç|locac/.test(n)) return "Aluguel";
+  if (/conta|luz|energia|água|agua|internet|telefone|celular|utilidad/.test(n)) return "Contas & Utilidades";
+  if (/imposto|taxa|contador|contábil|contabil|\bdas\b|simples/.test(n)) return "Impostos & Contador";
+  if (/software|sistema|assinatura|trinks|\bapp\b|licenç|licenc/.test(n)) return "Software & Sistemas";
+  if (/market|anúncio|anuncio|impuls|tráfego|trafego|publicid|gráfic|grafic|panfleto|brinde/.test(n)) return "Marketing & Publicidade";
+  if (/comida|lanche|aliment|refei|restaurante|ifood|padaria/.test(n)) return "Alimentação";
+  if (/bebida|cerveja|refri|energétic|energetic|doce|choc|bombon/.test(n)) return "Bebidas & Bomboniere";
+  if (/produto|insumo|cosmétic|cosmetic|pomada|shampoo|condicion|óleo|oleo|tinta|navalha|lâmina|lamina|pente/.test(n)) return "Produtos & Insumos";
   return "Outros";
 }

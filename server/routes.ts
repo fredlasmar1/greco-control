@@ -10524,9 +10524,18 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     if (!apiKey) return null;
     const anthropic = new Anthropic({ apiKey });
     const cats = CATEGORIAS_COMPRA.join(" | ");
+    // Injeta os nomes da equipe → PIX/pagamento a eles = "Salários & Equipe".
+    let equipeHint = "";
+    try {
+      const metas = await getAllMetas();
+      const nomes = Object.values(metas).map((m: any) => String(m?.nome || "").trim()).filter(Boolean);
+      const uniq = Array.from(new Set(nomes));
+      if (uniq.length) equipeHint = `\nEQUIPE (se o beneficiário do PIX/pagamento for uma destas pessoas, a categoria É "Salários & Equipe"): ${uniq.join(", ")}.`;
+    } catch { /* segue sem hint */ }
     const prompt = `Você lê comprovantes de PIX e notas/cupons de compra de uma BARBEARIA. Extraia os dados e responda APENAS JSON (sem markdown):
-{"ehComprovante": true, "valor": 84.00, "data": "YYYY-MM-DD", "loja": "beneficiário/estabelecimento", "tipo": "pix|compra|boleto|outro", "categoria": "${cats}", "descricao": "resumo curto", "confianca": "alta|media|baixa"}
-Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja = quem RECEBEU. Se a imagem NÃO for comprovante/nota, responda {"ehComprovante": false}. Categoria pela natureza: cosmético/pomada/shampoo/bebida/doce de revenda=Produtos & Insumos; produto de limpeza=Limpeza & Consumo; conserto/obra=Manutenção & Reparos; máquina/cadeira/móvel=Equipamentos; luz/água/imposto/boleto de conta=Contas & Impostos; anúncio/tráfego=Marketing; comida/lanche=Alimentação; resto=Outros. Sem data → null.`;
+{"ehComprovante": true, "valor": 84.00, "data": "YYYY-MM-DD", "loja": "beneficiário/estabelecimento", "tipo": "pix|compra|boleto|outro", "categoria": "<uma de: ${cats}>", "descricao": "resumo curto", "confianca": "alta|media|baixa"}
+Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja = quem RECEBEU. Se a imagem NÃO for comprovante/nota, responda {"ehComprovante": false}.${equipeHint}
+Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; cosmético/pomada/shampoo/tinta/navalha/pente=Produtos & Insumos; cerveja/refri/energético/água/doce de revenda=Bebidas & Bomboniere; produto de limpeza/papel/descartável=Limpeza & Higiene; conserto/obra/elétrica/hidráulica/pintura=Manutenção & Reparos; máquina/cadeira/secador/espelho/móvel=Equipamentos & Móveis; aluguel do ponto=Aluguel; água/luz/energia/internet/telefone=Contas & Utilidades; imposto/DAS/Simples/taxa/contador=Impostos & Contador; Trinks/sistema/app/assinatura de software=Software & Sistemas; anúncio/tráfego/gráfica/panfleto/brinde=Marketing & Publicidade; comida/lanche=Alimentação; resto=Outros. Sem data → null.`;
     const isPdf = mime === "application/pdf";
     const content: any[] = isPdf
       ? [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: buffer.toString("base64") } }, { type: "text", text: prompt }]

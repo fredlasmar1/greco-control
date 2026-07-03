@@ -4386,10 +4386,10 @@ export async function registerRoutes(
     }
 
     const PERIODO_TRINKS_TIMEOUT_MS = 5000;
-    const withTimeout = <T>(p: Promise<T>, fallback: T, label: string): Promise<T> =>
+    const withTimeout = <T>(p: Promise<T>, fallback: T, label: string, ms = PERIODO_TRINKS_TIMEOUT_MS): Promise<T> =>
       Promise.race([
         p,
-        new Promise<T>(resolve => setTimeout(() => { log(`[periodo ${dataInicio}..${dataFim}] timeout ${label} — usando snapshots`, "equipe"); resolve(fallback); }, PERIODO_TRINKS_TIMEOUT_MS)),
+        new Promise<T>(resolve => setTimeout(() => { log(`[periodo ${dataInicio}..${dataFim}] timeout ${label} (${ms}ms) — usando fallback`, "equipe"); resolve(fallback); }, ms)),
       ]);
     // dedup por id (evita dupla contagem quando o gap sobrepõe dias já em snapshot)
     const dedupe = (arr: any[], keyFn: (x: any) => string): any[] => {
@@ -4399,19 +4399,19 @@ export async function registerRoutes(
     };
     let agendData: any[] = snapshotsAgend;
     let transData: any[] = snapshotsTrans;
-    if (periodoEhPassado) {
-      // Mês passado SEM ranking (raro — normalmente tem ranking) → API do range inteiro.
-      agendData = await withTimeout(trinksFetchAllRange("agendamentos", { dataInicio, dataFim }).catch(() => snapshotsAgend), snapshotsAgend, "agendamentos");
-      transData = await withTimeout(trinksFetchAllRange("transacoes", { dataInicio, dataFim: transFim }).catch(() => snapshotsTrans), snapshotsTrans, "transacoes");
-    } else if (diasSemRaw.length > 0) {
-      // Período CORRENTE: busca SÓ os dias sem raw (o gap, normalmente só hoje) e
-      // soma aos snapshots. Nunca repagina o mês inteiro → economia máxima de token.
+    // UNIFICADO (v108): qualquer mês lê o RAW dos snapshots (0 token) e busca na API
+    // SÓ os dias sem raw (o gap). Mês corrente → gap = hoje. Mês passado com raw
+    // (capturado pelo cron / backfill) → gap vazio = 0 token. Mês passado sem raw →
+    // gap = mês todo (5s timeout → parcial → o chamador cai no ratio, seguro). Antes
+    // o mês passado repaginava o mês inteiro sempre, e o timeout curto o zerava.
+    if (diasSemRaw.length > 0) {
       const gapIni = diasSemRaw[0];
       const gapFim = diasSemRaw[diasSemRaw.length - 1];
       const gapTransFim = ymdAddDays(gapFim, 1);
+      const gapMs = periodoEhPassado ? 20000 : 5000; // mês passado: mais tempo pro fetch
       log(`[periodo ${dataInicio}..${dataFim}] gap API: ${gapIni}..${gapFim} (${diasSemRaw.length} dia(s))`, "equipe");
-      const agGap = await withTimeout(trinksFetchAllRange("agendamentos", { dataInicio: gapIni, dataFim: gapFim }).catch(() => []), [], "agendamentos-gap");
-      const trGap = await withTimeout(trinksFetchAllRange("transacoes", { dataInicio: gapIni, dataFim: gapTransFim }).catch(() => []), [], "transacoes-gap");
+      const agGap = await withTimeout(trinksFetchAllRange("agendamentos", { dataInicio: gapIni, dataFim: gapFim }).catch(() => []), [], "agendamentos-gap", gapMs);
+      const trGap = await withTimeout(trinksFetchAllRange("transacoes", { dataInicio: gapIni, dataFim: gapTransFim }).catch(() => []), [], "transacoes-gap", gapMs);
       agendData = dedupe([...snapshotsAgend, ...(Array.isArray(agGap) ? agGap : [])], (a) => String(a.id || `${a.dataHoraInicio || a.data}|${a.cliente?.id}`));
       transData = dedupe([...snapshotsTrans, ...(Array.isArray(trGap) ? trGap : [])], (t) => String(t.id || `${t.dataHora}|${t.cliente?.id}`));
     }

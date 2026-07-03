@@ -10519,12 +10519,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
   };
 
   // Lê um comprovante (imagem/pdf) com Claude vision → dados estruturados.
-  async function extrairComprovanteIA(buffer: Buffer, mime: string): Promise<any | null> {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return null;
-    const anthropic = new Anthropic({ apiKey });
+  // Prompt compartilhado (imagem OU texto). Extrai comprovante + itens de compra.
+  async function promptComprasIA(): Promise<string> {
     const cats = CATEGORIAS_COMPRA.join(" | ");
-    // Injeta os nomes da equipe → PIX/pagamento a eles = "Salários & Equipe".
     let equipeHint = "";
     try {
       const metas = await getAllMetas();
@@ -10532,16 +10529,18 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       const uniq = Array.from(new Set(nomes));
       if (uniq.length) equipeHint = `\nEQUIPE (se o beneficiário do PIX/pagamento for uma destas pessoas, a categoria É "Salários & Equipe"): ${uniq.join(", ")}.`;
     } catch { /* segue sem hint */ }
-    const prompt = `Você lê comprovantes de PIX e notas/cupons de compra de uma BARBEARIA. Extraia os dados e responda APENAS JSON (sem markdown):
-{"ehComprovante": true, "valor": 84.00, "data": "YYYY-MM-DD", "loja": "beneficiário/estabelecimento", "tipo": "pix|compra|boleto|outro", "categoria": "<uma de: ${cats}>", "descricao": "resumo curto", "confianca": "alta|media|baixa"}
-Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja = quem RECEBEU. Se a imagem NÃO for comprovante/nota, responda {"ehComprovante": false}.${equipeHint}
+    return `Você lê comprovantes de PIX, notas de compra e mensagens de compra de uma BARBEARIA. Responda APENAS JSON (sem markdown):
+{"ehComprovante": true, "tipoDoc": "pagamento|nota_produtos|texto_compra", "valor": 84.00, "data": "YYYY-MM-DD", "loja": "beneficiário/estabelecimento/fornecedor", "tipo": "pix|compra|boleto|outro", "categoria": "<uma de: ${cats}>", "descricao": "resumo curto", "confianca": "alta|media|baixa", "itens": [{"produto": "nome", "quantidade": 1, "custoUnitario": 15.00}]}
+Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56). PIX → loja = quem RECEBEU. Se NÃO for comprovante/nota/compra, responda {"ehComprovante": false}.${equipeHint}
+ITENS: preencha SÓ quando for NOTA DE COMPRA DE PRODUTOS (fornecedor, com itens e preços) OU texto de compra de produtos. custoUnitario = preço de CUSTO unitário pago (não o de venda). Para PIX/pagamento/comprovante simples, itens=[]. tipoDoc="nota_produtos" se tem itens de produto; "texto_compra" se veio de mensagem escrita; senão "pagamento".
 Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; cosmético/pomada/shampoo/tinta/navalha/pente=Produtos & Insumos; cerveja/refri/energético/água/doce de revenda=Bebidas & Bomboniere; produto de limpeza/papel/descartável=Limpeza & Higiene; conserto/obra/elétrica/hidráulica/pintura=Manutenção & Reparos; máquina/cadeira/secador/espelho/móvel=Equipamentos & Móveis; aluguel do ponto=Aluguel; água/luz/energia/internet/telefone=Contas & Utilidades; imposto/DAS/Simples/taxa/contador=Impostos & Contador; Trinks/sistema/app/assinatura de software=Software & Sistemas; anúncio/tráfego/gráfica/panfleto/brinde=Marketing & Publicidade; comida/lanche=Alimentação; resto=Outros. Sem data → null.`;
-    const isPdf = mime === "application/pdf";
-    const content: any[] = isPdf
-      ? [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: buffer.toString("base64") } }, { type: "text", text: prompt }]
-      : [{ type: "image", source: { type: "base64", media_type: mime, data: buffer.toString("base64") } }, { type: "text", text: prompt }];
-    // Lista de modelos candidatos (vision). Tenta na ordem; pula o que der 404
-    // (modelo indisponível pra chave) e guarda o que funcionar pra próxima vez.
+  }
+
+  // Loop de modelos candidatos (vision). Pula 404, cacheia o que funcionar.
+  async function chamarIACompras(content: any[]): Promise<any | null> {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return null;
+    const anthropic = new Anthropic({ apiKey });
     const jaOk = await kvGet<string>("compras_ia_model_ok");
     const candidatos = [jaOk, process.env.COMPRAS_IA_MODEL,
       "claude-sonnet-4-5-20250929", "claude-sonnet-4-5",
@@ -10551,7 +10550,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     let ultimoErro: any = null;
     for (const model of candidatos) {
       try {
-        const resp = await anthropic.messages.create({ model, max_tokens: 600, messages: [{ role: "user", content }] });
+        const resp = await anthropic.messages.create({ model, max_tokens: 1200, messages: [{ role: "user", content }] });
         kvSet("compras_ia_model_ok", model).catch(() => {});
         kvSet("compras_ia_erro", null).catch(() => {});
         const txt = resp.content.find((b: any) => b.type === "text")?.text || "";
@@ -10560,8 +10559,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         return JSON.parse(txt.slice(ini, fim + 1));
       } catch (err: any) {
         ultimoErro = err;
-        if (err?.status === 404) continue;   // modelo não existe pra a chave → próximo
-        break;                                // outro erro (auth/imagem) → para
+        if (err?.status === 404) continue;
+        break;
       }
     }
     kvSet("compras_ia_erro", { at: new Date().toISOString(), msg: String(ultimoErro?.message || ultimoErro), status: ultimoErro?.status ?? null, modelosTentados: candidatos }).catch(() => {});
@@ -10569,36 +10568,122 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     return null;
   }
 
-  // Baixa o comprovante, extrai via IA, salva e responde no grupo.
-  async function processarComprovanteTelegram(fileId: string, chatId: string, from: string): Promise<void> {
-    const traço = (etapa: string, extra?: any) => kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa, ...(extra || {}) }).catch(() => {});
-    await traço("recebido");
-    const arq = await baixarArquivoTelegram(fileId);
-    if (!arq) { await traço("falha_download"); await enviarMensagemCompras("⚠️ Não consegui baixar a imagem. Tente reenviar.", chatId); return; }
-    await traço("baixado", { mime: arq.mime, bytes: arq.buffer.length });
-    const dados = await extrairComprovanteIA(arq.buffer, arq.mime);
-    if (!dados) { await traço("ia_indisponivel"); await enviarMensagemCompras("⚠️ Não consegui ler o comprovante (IA indisponível). Registre manualmente no app.", chatId); return; }
+  async function extrairComprovanteIA(buffer: Buffer, mime: string): Promise<any | null> {
+    const prompt = await promptComprasIA();
+    const isPdf = mime === "application/pdf";
+    const content: any[] = isPdf
+      ? [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: buffer.toString("base64") } }, { type: "text", text: prompt }]
+      : [{ type: "image", source: { type: "base64", media_type: mime, data: buffer.toString("base64") } }, { type: "text", text: prompt }];
+    return chamarIACompras(content);
+  }
+
+  async function extrairCompraTextoIA(texto: string): Promise<any | null> {
+    const prompt = await promptComprasIA();
+    return chamarIACompras([{ type: "text", text: `${prompt}\n\nMENSAGEM ESCRITA (compra sem nota): "${texto}"\nSe descrever uma compra de produtos, preencha itens com custoUnitario e tipoDoc="texto_compra". Se não for compra, ehComprovante=false.` }]);
+  }
+
+  // Casa itens da nota com o catálogo (nome→id) e atualiza o custo dos produtos.
+  async function atualizarCustosDeItens(itens: any[]): Promise<{ atualizados: string[]; naoAchados: string[] }> {
+    const norm = (s: any) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    let catalogo: any[] = [];
+    try { catalogo = await trinksFetchAll("produtos").catch(() => []); } catch { catalogo = []; }
+    const byNorm = new Map<string, any>();
+    for (const p of (Array.isArray(catalogo) ? catalogo : [])) { const n = norm(p?.nome); if (n) byNorm.set(n, p); }
+    const atualizados: string[] = [], naoAchados: string[] = [];
+    for (const it of (itens || [])) {
+      const nomeIt = String(it?.produto || "").trim();
+      const custo = Number(it?.custoUnitario || 0);
+      if (!nomeIt || !(custo > 0)) continue;
+      const nn = norm(nomeIt);
+      let prod = byNorm.get(nn);
+      if (!prod) {
+        const toks = nn.split(" ").filter(t => t.length >= 3);
+        if (toks.length) for (const [k, p] of byNorm) { if (toks.every(t => k.includes(t)) || nn.includes(k)) { prod = p; break; } }
+      }
+      if (prod) { try { await setProdutoCusto(String(prod.id), custo, "telegram"); atualizados.push(`${prod.nome} → R$ ${fmtBRLc(custo)}`); } catch { naoAchados.push(`${nomeIt} (erro ao salvar)`); } }
+      else naoAchados.push(`${nomeIt} · R$ ${fmtBRLc(custo)}`);
+    }
+    return { atualizados, naoAchados };
+  }
+
+  const traçoCompras = (from: string, etapa: string, extra?: any) => kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa, ...(extra || {}) }).catch(() => {});
+
+  function montarCompraDeDados(dados: any, ctx: { fileId?: string; from: string }) {
+    const dataRe = /^\d{4}-\d{2}-\d{2}$/.test(String(dados.data || "")) ? String(dados.data) : dataHojeSP();
+    return {
+      mes: dataRe.slice(0, 7), data: dataRe,
+      valor: Math.abs(Number(dados.valor) || 0),
+      loja: String(dados.loja || "").trim() || "—",
+      categoria: normalizarCategoria(dados.categoria),
+      descricao: String(dados.descricao || ""),
+      tipo: (["pix", "compra", "boleto", "outro"].includes(dados.tipo) ? dados.tipo : "compra") as any,
+      confianca: (["alta", "media", "baixa"].includes(dados.confianca) ? dados.confianca : "media") as any,
+      telegramFileId: ctx.fileId, telegramFrom: ctx.from, origem: "telegram" as const,
+    };
+  }
+
+  // Decide: NOTA de produtos (tem itens) → pede confirmação; senão → salva direto.
+  async function finalizarCompra(dados: any, ctx: { chatId: string; from: string; fileId?: string }): Promise<void> {
+    const { chatId, from } = ctx;
     if (dados.ehComprovante === false || !(Number(dados.valor) > 0)) {
-      await traço("nao_comprovante", { valor: dados.valor, ehComprovante: dados.ehComprovante });
-      await enviarMensagemCompras("🤔 Isso não parece um comprovante de PIX ou nota de compra. Nada foi registrado.", chatId);
+      await traçoCompras(from, "nao_comprovante", { valor: dados.valor });
+      await enviarMensagemCompras("🤔 Isso não parece um comprovante, nota ou compra. Nada foi registrado.", chatId);
       return;
     }
-    await traço("extraido", { valor: dados.valor, loja: dados.loja, categoria: dados.categoria });
-    const dataRe = /^\d{4}-\d{2}-\d{2}$/.test(String(dados.data || "")) ? String(dados.data) : dataHojeSP();
-    const mes = dataRe.slice(0, 7);
-    const valor = Math.abs(Number(dados.valor) || 0);
-    const categoria = normalizarCategoria(dados.categoria);
-    const loja = String(dados.loja || "").trim() || "—";
-    const tipo = ["pix", "compra", "boleto", "outro"].includes(dados.tipo) ? dados.tipo : "compra";
-    const conf = ["alta", "media", "baixa"].includes(dados.confianca) ? dados.confianca : "media";
-    await salvarCompra({ mes, data: dataRe, valor, loja, categoria, descricao: String(dados.descricao || ""), tipo, origem: "telegram", telegramFileId: fileId, telegramFrom: from, confianca: conf });
-    await traço("salvo", { valor, mes });
-    const totalMes = resumoCompras(await listarCompras(mes)).total;
-    const dataBR = dataRe.split("-").reverse().join("/");
-    let msg = `✅ <b>Compra registrada</b>\n💰 <b>R$ ${fmtBRLc(valor)}</b>\n🏪 ${loja}\n🏷️ ${categoria}\n📅 ${dataBR}`;
-    if (dados.descricao) msg += `\n📝 ${String(dados.descricao)}`;
-    if (conf === "baixa") msg += `\n⚠️ <i>Confira no app — não tive certeza dos dados.</i>`;
-    msg += `\n\n<i>Total de compras em ${mes.split("-").reverse().join("/")}: R$ ${fmtBRLc(totalMes)}</i>`;
+    const compra = montarCompraDeDados(dados, ctx);
+    const itens = Array.isArray(dados.itens)
+      ? dados.itens.filter((it: any) => String(it?.produto || "").trim() && Number(it?.custoUnitario || 0) > 0)
+      : [];
+    if (itens.length > 0) {
+      await kvSet(`compras_pending:${chatId}`, { compra, itens, criadoEm: new Date().toISOString() });
+      let msg = `📦 <b>Nota de compra lida</b> — confira antes de eu salvar os custos:\n💰 Total: <b>R$ ${fmtBRLc(compra.valor)}</b> · 🏪 ${compra.loja}\n\n<b>Itens (custo unitário):</b>\n`;
+      for (const it of itens.slice(0, 20)) msg += `· ${String(it.produto)} — ${Number(it.quantidade || 1)}× R$ ${fmtBRLc(Number(it.custoUnitario))}\n`;
+      if (itens.length > 20) msg += `· <i>+${itens.length - 20} itens…</i>\n`;
+      msg += `\n✅ Responda <b>SIM</b> pra eu salvar os custos (a margem preenche) e registrar a compra. Ou <b>NÃO</b> pra cancelar.`;
+      await enviarMensagemCompras(msg, chatId);
+      await traçoCompras(from, "pendente_confirmacao", { itens: itens.length, valor: compra.valor });
+      return;
+    }
+    await salvarCompra(compra as any);
+    await traçoCompras(from, "salvo", { valor: compra.valor, mes: compra.mes });
+    const totalMes = resumoCompras(await listarCompras(compra.mes)).total;
+    let msg = `✅ <b>Compra registrada</b>\n💰 <b>R$ ${fmtBRLc(compra.valor)}</b>\n🏪 ${compra.loja}\n🏷️ ${compra.categoria}\n📅 ${compra.data.split("-").reverse().join("/")}`;
+    if (compra.descricao) msg += `\n📝 ${compra.descricao}`;
+    if (compra.confianca === "baixa") msg += `\n⚠️ <i>Confira no app.</i>`;
+    if (compra.telegramFrom) msg += `\n👤 via ${compra.telegramFrom}`;
+    msg += `\n\n<i>Total de compras em ${compra.mes.split("-").reverse().join("/")}: R$ ${fmtBRLc(totalMes)}</i>`;
+    await enviarMensagemCompras(msg, chatId);
+  }
+
+  async function processarComprovanteTelegram(fileId: string, chatId: string, from: string): Promise<void> {
+    await traçoCompras(from, "recebido");
+    const arq = await baixarArquivoTelegram(fileId);
+    if (!arq) { await traçoCompras(from, "falha_download"); await enviarMensagemCompras("⚠️ Não consegui baixar a imagem. Tente reenviar.", chatId); return; }
+    await traçoCompras(from, "baixado", { mime: arq.mime, bytes: arq.buffer.length });
+    const dados = await extrairComprovanteIA(arq.buffer, arq.mime);
+    if (!dados) { await traçoCompras(from, "ia_indisponivel"); await enviarMensagemCompras("⚠️ Não consegui ler (IA indisponível). Registre manualmente no app.", chatId); return; }
+    await finalizarCompra(dados, { chatId, from, fileId });
+  }
+
+  async function processarTextoCompra(texto: string, chatId: string, from: string): Promise<void> {
+    await traçoCompras(from, "texto_recebido");
+    const dados = await extrairCompraTextoIA(texto);
+    if (!dados) { await enviarMensagemCompras("⚠️ Não consegui interpretar a mensagem (IA indisponível).", chatId); return; }
+    await finalizarCompra(dados, { chatId, from });
+  }
+
+  // Confirmação (SIM): atualiza custos (casa por nome) + registra a compra.
+  async function aplicarPendenteCompras(chatId: string, from: string): Promise<void> {
+    const pend: any = await kvGet(`compras_pending:${chatId}`);
+    if (!pend?.compra) { await enviarMensagemCompras("Não há nota pendente pra confirmar. Manda a foto/nota de novo.", chatId); return; }
+    await kvSet(`compras_pending:${chatId}`, null);
+    const { atualizados, naoAchados } = await atualizarCustosDeItens(pend.itens || []);
+    await salvarCompra(pend.compra as any);
+    await traçoCompras(from, "confirmado_salvo", { valor: pend.compra.valor, custos: atualizados.length });
+    let msg = `✅ <b>Confirmado e salvo!</b>\n💰 Compra R$ ${fmtBRLc(pend.compra.valor)} · 🏪 ${pend.compra.loja} registrada.\n`;
+    if (atualizados.length) msg += `\n📈 <b>${atualizados.length} custo(s) atualizado(s)</b> (margem preenchida):\n${atualizados.slice(0, 20).map((s: string) => `· ${s}`).join("\n")}\n`;
+    if (naoAchados.length) msg += `\n⚠️ <b>${naoAchados.length} não achei no catálogo</b> — cadastre na aba <i>Margem de Produtos</i>:\n${naoAchados.slice(0, 20).map((s: string) => `· ${s}`).join("\n")}\n`;
+    if (!atualizados.length && !naoAchados.length) msg += `\n<i>(Sem itens de custo pra atualizar.)</i>`;
     await enviarMensagemCompras(msg, chatId);
   }
 
@@ -10616,29 +10701,43 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const chatId = String(msg.chat?.id || "");
       const from = String(msg.from?.first_name || msg.from?.username || "alguém");
       if (chatId) kvSet("compras_chat_id", chatId).catch(() => {});
-      // Comandos utilitários
-      const txt = String(msg.text || "").trim().toLowerCase();
+      const erroTrace = (e: any) => { kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "excecao", erro: String(e?.message || e) }).catch(() => {}); log(`[compras] processar erro: ${e.message}`, "compras"); };
+      const txtRaw = String(msg.text || "").trim();
+      const txt = txtRaw.toLowerCase();
       if (txt === "/start" || txt === "/id") {
-        await enviarMensagemCompras(`👋 Grupo conectado! Chat ID: <code>${chatId}</code>\n\nManda a foto de um comprovante de PIX ou nota de compra que eu registro sozinho. 📸`, chatId);
+        await enviarMensagemCompras(`👋 Grupo conectado! Chat ID: <code>${chatId}</code>\n\nManda a <b>foto de um comprovante de PIX</b> (eu registro sozinho) ou a <b>foto/texto de uma nota de compra de produtos</b> (eu leio os custos e peço sua confirmação). 📸`, chatId);
         return;
       }
-      // Foto (pega a maior resolução) ou documento imagem/pdf
+
+      // 1) Confirmação de uma nota de produtos pendente
+      const pend = await kvGet(`compras_pending:${chatId}`);
+      if (pend && txtRaw) {
+        if (/^(sim|s|confirmo|confirmar|confirma|isso|ok|correto|pode|positivo|👍|✅)$/.test(txt)) {
+          await aplicarPendenteCompras(chatId, from).catch(erroTrace);
+          return;
+        }
+        if (/^(n[aã]o|nao|cancela|cancelar|errado|negativo|❌)$/.test(txt)) {
+          await kvSet(`compras_pending:${chatId}`, null);
+          await enviarMensagemCompras("❌ Ok, cancelei. Nada foi salvo.", chatId);
+          return;
+        }
+        // outra coisa → segue (foto/nova compra substitui o pendente lá dentro)
+      }
+
+      // 2) Foto/documento (comprovante ou nota)
       let fileId = "";
-      if (Array.isArray(msg.photo) && msg.photo.length > 0) {
-        fileId = msg.photo[msg.photo.length - 1].file_id;
-      } else if (msg.document && /^image\/|application\/pdf/.test(String(msg.document.mime_type || ""))) {
-        fileId = msg.document.file_id;
-      }
-      if (!fileId) {
-        // Sem foto/documento detectado. Registra o que veio (ajuda a debugar
-        // "mandei foto e não registrou") — sem poluir em texto puro.
-        if (msg.photo || msg.document) kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "sem_fileid", temPhoto: !!msg.photo, temDoc: !!msg.document, docMime: msg.document?.mime_type || null }).catch(() => {});
+      if (Array.isArray(msg.photo) && msg.photo.length > 0) fileId = msg.photo[msg.photo.length - 1].file_id;
+      else if (msg.document && /^image\/|application\/pdf/.test(String(msg.document.mime_type || ""))) fileId = msg.document.file_id;
+      if (fileId) { await processarComprovanteTelegram(fileId, chatId, from).catch(erroTrace); return; }
+
+      // 3) Texto de compra sem nota (heurística: palavra de compra + número)
+      if (txtRaw.length >= 6 && /\d/.test(txtRaw) && /(compr|paguei|gastei|pagamos|custou|custo|nota|fornecedor)/i.test(txtRaw)) {
+        await processarTextoCompra(txtRaw, chatId, from).catch(erroTrace);
         return;
       }
-      await processarComprovanteTelegram(fileId, chatId, from).catch((e: any) => {
-        kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "excecao", erro: String(e?.message || e) }).catch(() => {});
-        log(`[compras] processar erro: ${e.message}`, "compras");
-      });
+
+      // senão: chat normal → ignora (mas registra se veio mídia não reconhecida)
+      if (msg.photo || msg.document) kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "sem_fileid", temPhoto: !!msg.photo, temDoc: !!msg.document, docMime: msg.document?.mime_type || null }).catch(() => {});
     } catch (err: any) {
       log(`[compras] webhook erro: ${err.message}`, "compras");
     }

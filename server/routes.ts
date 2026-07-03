@@ -10960,6 +10960,57 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
+  // ════════════════════════════════════════════════════════════════════════
+  // HUB (integração Greco Metas ⇄ Greco Control) — Fase 1
+  // Metas = fonte da Trinks AO VIVO; Control = fonte OFFLINE (Gmail/CSV, 0 token).
+  // Aqui o Control EXPÕE seu faturamento do Gmail pro Metas consumir (mata o
+  // "realizado 55%" do Metas sem ele bater no /v1/vendas). Chave: HUB_API_KEY.
+  // ════════════════════════════════════════════════════════════════════════
+  const requireHubKey = (req: Request, res: Response): boolean => {
+    const expected = process.env.HUB_API_KEY || "";
+    const got = String(req.headers["x-hub-key"] || req.query.key || "");
+    if (!expected) { res.status(503).json({ ok: false, error: "HUB_API_KEY não configurada no servidor." }); return false; }
+    if (got !== expected) { res.status(403).json({ ok: false, error: "chave do hub inválida." }); return false; }
+    return true;
+  };
+
+  app.get("/api/hub/status", (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    res.json({ ok: true, sistema: "greco-control", papel: "fonte offline (Gmail/CSV)", uptimeSec: Math.round(process.uptime()) });
+  });
+
+  app.get("/api/hub/faturamento/:mes", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : ymdHoje().slice(0, 7);
+      const oficial = Number((await kvGet<number>(`trinks_total_mes:${mes}`)) || 0);
+      const eq = await montarEquipeDeRanking(mes, await getAllMetas()).catch(() => null);
+      const porBarbeiro = eq ? Array.from((eq as any).byId.values()).map((v: any) => ({
+        nome: v.nome,
+        servicos: Math.round((v.faturamento?.servicos || 0) * 100) / 100,
+        produtos: Math.round((v.faturamento?.produtos || 0) * 100) / 100,
+        plano: Math.round((v.faturamento?.plano || 0) * 100) / 100,
+        total: Math.round((v.faturamento?.total || 0) * 100) / 100,
+        atendimentos: v.atendimentos?.total || 0,
+      })).filter((v: any) => v.total > 0).sort((a: any, b: any) => b.total - a.total) : [];
+      const snaps = await listSnapshotsDoMes(mes).catch(() => [] as any[]);
+      const porDia = (snaps || []).map((s: any) => ({
+        dia: s.data,
+        total: Math.round((s.faturamento?.total || 0) * 100) / 100,
+        servicos: Math.round((s.faturamento?.servicos || 0) * 100) / 100,
+        produtos: Math.round((s.faturamento?.produtos || 0) * 100) / 100,
+      })).sort((a: any, b: any) => (a.dia < b.dia ? -1 : 1));
+      const caixaMes = Math.round(porDia.reduce((sum: number, d: any) => sum + d.total, 0) * 100) / 100;
+      return res.json({
+        ok: true, mes, fonte: "greco-control-gmail",
+        oficial,          // "Total do mês" do e-mail Trinks (0 token) = o realizado CERTO
+        caixaMes,         // soma dos snapshots diários (o que passou pelo caixa)
+        porBarbeiro, porDia,
+        atualizadoEm: new Date().toISOString(),
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   // POST /api/telegram/testar — envia mensagem de teste
   app.post("/api/telegram/testar", async (_req: Request, res: Response) => {
     const agora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });

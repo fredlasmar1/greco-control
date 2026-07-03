@@ -12694,15 +12694,20 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         }
       }
 
-      // Sem ranking do mês E sem ?force=1 → 0 TOKEN: mostra aviso pra subir o CSV.
-      // A API (código abaixo) SÓ roda no refresh manual (?force=1). Assim abrir a
-      // aba nunca gasta token — o "quem vendeu" vem do Ranking (0 token).
-      if (req.query.force !== "1") {
+      // Sem ranking do mês E sem ?force=1:
+      //  - Mês PASSADO → 0 TOKEN, mostra aviso pra subir o CSV (buscar o mês inteiro
+      //    na API seria caro; o dono sobe o Ranking semanal).
+      //  - Mês CORRENTE → cai na API automático (poucos dias = barato). Assim a aba
+      //    nunca mostra "zero" no começo do mês antes de o CSV chegar (decisão do
+      //    dono 03/07). Cacheado 30min; frontend não faz polling.
+      const mesCorrenteVP = ymdHoje().slice(0, 7);
+      if (req.query.force !== "1" && mes < mesCorrenteVP) {
         return res.json({ ok: true, mes, dataInicio, dataFim, fonte: "sem-ranking", semRanking: true,
           totais: { unidades: 0, receita: 0, receitaComissionavel: 0, receitaBomboniere: 0, custo: 0,
             margemRS: 0, margemPct: 0, comandasComProduto: 0, produtosDistintos: 0, produtosSemCusto: 0 },
           produtos: [], ranking: [], rankingHistorico: [], atualizadoEm: new Date().toISOString() });
       }
+      // Mês corrente sem CSV (ou ?force=1) → segue pro cálculo via API abaixo.
 
       // Janela menor para agendamentos (heurística de IDs legados)
       const d14 = new Date();
@@ -13029,7 +13034,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         rankingHistorico: vendedoresHistorico, // v38.1: ex-funcionários separados
         atualizadoEm: new Date().toISOString(),
       };
-      setCache(ck, resp, 5 * 60 * 1000);
+      setCache(ck, resp, 30 * 60 * 1000); // 30min: protege token no auto-fetch do mês corrente
       return res.json(resp);
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });

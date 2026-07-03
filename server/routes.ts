@@ -130,6 +130,8 @@ import {
   setProdutoCusto,
   setProdutosCustosBulk,
   setProdutoMinimo,
+  setProdutoComissaoPct,
+  getComissaoPctOf,
   getCustoOf,
   getMinimoOf,
 } from "./produtosCustos";
@@ -3777,6 +3779,7 @@ export async function registerRoutes(
         minimo,
         custoMedio: custoUnit, // preço de COMPRA cadastrado manualmente
         custo: custoUnit,
+        comissaoPct: typeof custoEntry?.comissaoPct === "number" ? custoEntry.comissaoPct : null, // % comissão do barbeiro no produto
         precoVendaManual: precoVendaManual || null,
         precoVendaCatalogo,
         precoVendaObservado: valorVendaObs,
@@ -4525,7 +4528,7 @@ export async function registerRoutes(
         avulso:    { reais: 0, count: 0 },
         plano:     { reais: 0, count: 0 },
         servicos:  { reais: 0, count: 0, bruto: 0, liquido: 0 },
-        produtos:  { reais: 0, count: 0, bruto: 0, liquido: 0, liquidoComissionavel: 0, brutoComissionavel: 0 },
+        produtos:  { reais: 0, count: 0, bruto: 0, liquido: 0, liquidoComissionavel: 0, brutoComissionavel: 0, comissaoRS: 0 },
         taxaCartao: 0,
         custoInsumos: 0,
         total:     { reais: 0, count: 0 },
@@ -4546,6 +4549,10 @@ export async function registerRoutes(
     // Bruto/Líquido continuam contando para rastreabilidade; o que muda é o
     // valor que vai para a base de comissão do profissional.
     const semComissao = await getProdutosSemComissao();
+    // v109: % de comissão POR PRODUTO (do catálogo/Margem de Produtos). Se o produto
+    // não tem % própria, usa o padrão global. Comissão de produto = Σ (líquido × %doProduto).
+    const custosMapPeriodo = await getProdutosCustos();
+    const defaultPctProdFrac = Number(storeData.settings?.comissaoProdutoPadraoPct ?? 10) / 100;
 
     // Índice de nomes de cliente em transações por dia (p/ heurística de plano)
     const transKeysPorDia: Map<string, Set<string>> = new Map();
@@ -4669,6 +4676,9 @@ export async function registerRoutes(
         if (produtoIdStr && !semComissao.has(produtoIdStr)) {
           pr.produtos.brutoComissionavel   += valorBruto;
           pr.produtos.liquidoComissionavel += valorLiquido;
+          // comissão real deste produto = líquido × (% do produto ?? padrão global)
+          const pctFrac = getComissaoPctOf(custosMapPeriodo, produtoIdStr) ?? defaultPctProdFrac;
+          pr.produtos.comissaoRS += valorLiquido * pctFrac;
         }
       });
     });
@@ -4734,8 +4744,9 @@ export async function registerRoutes(
         produtosBruto: acc.produtosBruto + p.produtos.bruto, produtosLiquido: acc.produtosLiquido + p.produtos.liquido,
         produtosBrutoComissionavel: acc.produtosBrutoComissionavel + p.produtos.brutoComissionavel,
         produtosLiquidoComissionavel: acc.produtosLiquidoComissionavel + p.produtos.liquidoComissionavel,
+        produtosComissaoRS: acc.produtosComissaoRS + (p.produtos.comissaoRS || 0),
       }),
-      { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0, produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0, produtosBrutoComissionavel: 0, produtosLiquidoComissionavel: 0 }
+      { reais: 0, count: 0, avulsoReais: 0, avulsoCount: 0, planoReais: 0, planoCount: 0, servicosReais: 0, servicosCount: 0, servicosBruto: 0, servicosLiquido: 0, produtosReais: 0, produtosCount: 0, produtosBruto: 0, produtosLiquido: 0, produtosBrutoComissionavel: 0, produtosLiquidoComissionavel: 0, produtosComissaoRS: 0 }
     );
 
     const result = {
@@ -11866,7 +11877,11 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       if (val != null) { comissaoServicos = val; comissaoServicosFonte = 'ranking-csv'; }
       // não-casou com ranking → mantém ao vivo (não força 0; evita zerar por falha de join)
     }
-    const comissaoProdutos = (produtosLiquidoComissionavel * pctProduto) / 100;
+    // v109: se veio a comissão EXATA por produto (cálculo por transação, que usa a %
+    // de cada produto do catálogo), usa ela. Senão, cai no % único sobre o comissionável.
+    const comissaoProdutos = (profMes?.produtos?.comissaoRS != null)
+      ? Number(profMes.produtos.comissaoRS)
+      : (produtosLiquidoComissionavel * pctProduto) / 100;
     // v91: Ranking é a fonte ÚNICA de serviços (decisão do dono, 30/06). Quando há
     // ranking do mês, os serviços do cliente de plano JÁ entram na produção do
     // ranking (Total Serviços) — pagar comissão de plano por agendamento dobraria a
@@ -12012,7 +12027,9 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         // (dono autorizou o token pra exatidão). Só confia se as transações cobrem
         // ~todo o produto do ranking (senão veio parcial no 429 → cai no ratio).
         const normNm = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
-        const exatoPorNome = new Map<string, number>();
+        // v109: além do comissionável, captura a COMISSÃO EXATA por transação (que já
+        // usa a % de CADA produto do catálogo). Assim a folha paga a % por produto.
+        const exatoPorNome = new Map<string, { comissionavel: number; comissaoRS: number }>();
         let exatoConfiavel = false;
         try {
           const ptx = await calcularPeriodoPorProfissional(dataInicio, dataFim);
@@ -12022,10 +12039,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           if (exatoConfiavel) {
             for (const pp of Object.values(ptx.porProfissional) as any[]) {
               const nn = normNm(pp.nome);
-              if (nn) exatoPorNome.set(nn, pp.produtos?.liquidoComissionavel || 0);
+              if (nn) exatoPorNome.set(nn, { comissionavel: pp.produtos?.liquidoComissionavel || 0, comissaoRS: pp.produtos?.comissaoRS || 0 });
             }
           }
-          log(`[pagamento ${mes}] produto comissionável: ${exatoConfiavel ? "EXATO por transação" : "ratio (tx parcial/ausente)"} — tx=${txProdBruto.toFixed(0)} rank=${rkProdBruto.toFixed(0)}`, "pagamento");
+          log(`[pagamento ${mes}] produto comissionável: ${exatoConfiavel ? "EXATO por transação (% por produto)" : "ratio (tx parcial/ausente)"} — tx=${txProdBruto.toFixed(0)} rank=${rkProdBruto.toFixed(0)}`, "pagamento");
         } catch (e: any) { log(`[pagamento ${mes}] exato produto falhou: ${e?.message} — usando ratio`, "pagamento"); }
 
         const porProfissional: Record<string, any> = {};
@@ -12033,21 +12050,22 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         for (const [id, e] of _eqRank.byId) {
           const sl = e.faturamento?.servicosLiquido || 0;
           const pl = e.faturamento?.produtosLiquido || 0;
-          let comiss = pl * ratioCom; // fallback
+          let comiss = pl * ratioCom; // comissionável (fallback ratio)
+          let comissaoRS: number | undefined = undefined; // comissão exata (% por produto)
           if (exatoConfiavel) {
-            const nomeRank = normNm(e.nome).split(/[-–—]/)[0].trim(); // apelido antes do hífen
+            const nomeRank = normNm(e.nome).split(/[-–—]/)[0].trim();
             let ex = exatoPorNome.get(nomeRank);
             if (ex == null) {
               const tok = nomeRank.split(/\s+/)[0];
               for (const [k, v] of exatoPorNome) { if (k === tok || k.startsWith(tok + " ") || k.includes(" " + tok)) { ex = v; break; } }
             }
-            if (ex != null) comiss = ex; // casou → valor exato; senão mantém ratio
+            if (ex != null) { comiss = ex.comissionavel; comissaoRS = ex.comissaoRS; }
           }
           somaComiss += comiss;
           porProfissional[id] = {
             nome: e.nome,
             servicos: { liquido: sl },
-            produtos: { liquido: pl, liquidoComissionavel: comiss },
+            produtos: { liquido: pl, liquidoComissionavel: comiss, ...(comissaoRS != null ? { comissaoRS } : {}) },
             plano: { reais: e.faturamento?.plano || 0 },
             taxaCartao: 0,
             custoInsumos: 0,
@@ -12698,6 +12716,13 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       }
       const atualizadoPor = (req as any).user?.username || "admin";
       await setProdutoCusto(id, custo, atualizadoPor, precoVenda);
+      // % de comissão do barbeiro no produto (0..100). null limpa; ausente mantém.
+      if (body.comissaoPct === null) await setProdutoComissaoPct(id, null, atualizadoPor);
+      else if (body.comissaoPct !== undefined) {
+        const c = Number(body.comissaoPct);
+        if (Number.isNaN(c)) return res.status(400).json({ ok: false, error: "comissaoPct deve ser numérico ou null" });
+        await setProdutoComissaoPct(id, c, atualizadoPor);
+      }
       invalidateCache("vendas-produtos");
       invalidateCache("estoque");
       return res.json({ ok: true });

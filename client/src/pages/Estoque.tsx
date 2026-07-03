@@ -706,12 +706,18 @@ function EditarProdutoModal({
   const [precoVenda, setPrecoVenda] = useState<string>(
     produto.precoVendaManual && produto.precoVendaManual > 0 ? String(produto.precoVendaManual) : ""
   );
+  const [comissao, setComissao] = useState<string>(
+    (produto as any).comissaoPct != null ? String((produto as any).comissaoPct) : ""
+  );
   const [salvando, setSalvando] = useState(false);
 
   const parse = (v: string) => Number(String(v).replace(",", ".")) || 0;
   const custoNum = parse(custo);
   const vendaNum = parse(precoVenda);
-  const margem = vendaNum > 0 && custoNum >= 0 ? ((vendaNum - custoNum) / vendaNum) * 100 : 0;
+  const comNum = parse(comissao);
+  const comissaoRS = vendaNum * (comNum / 100);
+  // margem real = venda − custo − comissão do barbeiro
+  const margem = vendaNum > 0 ? ((vendaNum - custoNum - comissaoRS) / vendaNum) * 100 : 0;
 
   const salvar = async () => {
     setSalvando(true);
@@ -722,6 +728,7 @@ function EditarProdutoModal({
       } else {
         body.precoVenda = vendaNum;
       }
+      body.comissaoPct = comissao.trim() === "" ? null : comNum;
       const r = await authFetch(`${API_BASE}/api/produtos/custos/${produto.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -798,12 +805,33 @@ function EditarProdutoModal({
             </p>
           </div>
 
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">% de comissão do barbeiro</label>
+            <Input
+              type="number"
+              step="1"
+              min="0"
+              max="100"
+              value={comissao}
+              onChange={(e) => setComissao(e.target.value)}
+              placeholder="ex: 10 (branco = padrão global)"
+              data-testid="input-comissao-produto"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Quanto o barbeiro ganha ao vender ESTE produto. Bomboniere = 0. Em branco usa os 10% padrão.
+            </p>
+          </div>
+
           {custoNum > 0 && vendaNum > 0 && (
-            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs space-y-1">
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Margem</span>
+                <span className="text-muted-foreground">Comissão do barbeiro ({comNum || 0}%)</span>
+                <span className="tabular-nums">{comissaoRS.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Margem real (venda − custo − comissão)</span>
                 <span className={`font-semibold ${margem < 30 ? "text-red-400" : margem < 50 ? "text-amber-400" : "text-emerald-400"}`}>
-                  {(vendaNum - custoNum).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ({margem.toFixed(1)}%)
+                  {(vendaNum - custoNum - comissaoRS).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ({margem.toFixed(1)}%)
                 </span>
               </div>
             </div>

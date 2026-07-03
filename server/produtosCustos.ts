@@ -22,6 +22,7 @@ export type CustoProduto = {
   custo: number;
   precoVenda?: number;
   minimo?: number;
+  comissaoPct?: number;   // % de comissão do barbeiro NAQUELE produto (0..100). Undefined = usa o padrão global.
   atualizadoEm: string;
   atualizadoPor?: string;
 };
@@ -62,23 +63,47 @@ export async function setProdutoCusto(
   const valor = Math.max(0, Number(custo) || 0);
   const all = await getProdutosCustos();
   const prev = all[id] || ({} as CustoProduto);
+  // Preserva campos anteriores (minimo, comissaoPct, precoVenda) — antes reconstruía
+  // do zero e apagava minimo/comissaoPct ao só atualizar o custo.
   const next: CustoProduto = {
+    ...prev,
     custo: valor,
     atualizadoEm: new Date().toISOString(),
     atualizadoPor,
   };
-  // precoVenda: se vier null, limpa; se vier undefined, mantém anterior; se vier número, atualiza
-  if (precoVenda === null) {
-    // limpa
-  } else if (typeof precoVenda === "number" && !Number.isNaN(precoVenda)) {
-    next.precoVenda = Math.max(0, precoVenda);
-  } else if (typeof prev.precoVenda === "number") {
-    next.precoVenda = prev.precoVenda;
-  }
+  // precoVenda: null limpa; undefined mantém anterior; número atualiza
+  if (precoVenda === null) delete next.precoVenda;
+  else if (typeof precoVenda === "number" && !Number.isNaN(precoVenda)) next.precoVenda = Math.max(0, precoVenda);
   all[id] = next;
   await kvSet(KV_KEY, all);
   invalidateProdutosCustosCache();
   return all;
+}
+
+/** Define a % de comissão do barbeiro num produto (0..100). null/undefined limpa. */
+export async function setProdutoComissaoPct(
+  produtoId: string,
+  comissaoPct: number | null,
+  atualizadoPor?: string,
+): Promise<MapaCustos> {
+  const id = String(produtoId || "").trim();
+  if (!id) throw new Error("produtoId obrigatório");
+  const all = await getProdutosCustos();
+  const prev = all[id] || ({ custo: 0 } as CustoProduto);
+  const next: CustoProduto = { ...prev, custo: Number(prev.custo || 0), atualizadoEm: new Date().toISOString(), atualizadoPor };
+  if (comissaoPct === null || comissaoPct === undefined || Number.isNaN(Number(comissaoPct))) delete next.comissaoPct;
+  else next.comissaoPct = Math.max(0, Math.min(100, Number(comissaoPct)));
+  all[id] = next;
+  await kvSet(KV_KEY, all);
+  invalidateProdutosCustosCache();
+  return all;
+}
+
+/** % de comissão do produto (fração 0..1) ou undefined se não definida. */
+export function getComissaoPctOf(map: MapaCustos, produtoId: string | number): number | undefined {
+  const id = String(produtoId || "");
+  const v = map[id]?.comissaoPct;
+  return typeof v === "number" && v >= 0 ? v / 100 : undefined;
 }
 
 export async function setProdutosCustosBulk(

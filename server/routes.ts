@@ -11757,11 +11757,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       let periodoSemApi = false;
       if (_eqRank) {
         periodoSemApi = true;
-        // v105: BOMBONIERE FORA DA COMISSÃO. O Ranking de Profissionais só traz o
-        // "Total Produtos" por vendedor (bomboniere junto). Pra pagar 10% só sobre
-        // cosmético, aplica o ratio comissionável AGREGADO do Ranking de Produtos
-        // (categoria BEBIDAS/DOCES = 0%). Mesma lógica da aba Vendas de Produtos.
-        // Sem Ranking de Produtos do mês → ratio=1 (paga tudo, como antes).
+        // Ratio agregado de comissionável (do Ranking de Produtos, BEBIDAS/DOCES=0%).
+        // REDE DE SEGURANÇA: só é usado se o cálculo exato por transação não vier.
         let ratioCom = 1;
         try {
           const rkProd: any = await kvGet(`trinks_import:rankingProdutos:${mes}`);
@@ -11772,15 +11769,49 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
             if (tRec > 0) ratioCom = tCom / tRec;
           }
         } catch { /* ratio=1 */ }
+
+        // v106 EXATO (decisão do dono 03/07): o comissionável de produto por pessoa
+        // vem das TRANSAÇÕES (bomboniere real de cada um, set `semComissao`), não do
+        // ratio. Fonte: snapshot raw (0 token) no mês corrente + API no gap/mês passado
+        // (dono autorizou o token pra exatidão). Só confia se as transações cobrem
+        // ~todo o produto do ranking (senão veio parcial no 429 → cai no ratio).
+        const normNm = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+        const exatoPorNome = new Map<string, number>();
+        let exatoConfiavel = false;
+        try {
+          const ptx = await calcularPeriodoPorProfissional(dataInicio, dataFim);
+          const txProdBruto = ptx.totais?.produtosBruto || 0;
+          const rkProdBruto = _eqRank.totais?.produtosBruto || 0;
+          exatoConfiavel = rkProdBruto > 0 && txProdBruto >= 0.85 * rkProdBruto;
+          if (exatoConfiavel) {
+            for (const pp of Object.values(ptx.porProfissional) as any[]) {
+              const nn = normNm(pp.nome);
+              if (nn) exatoPorNome.set(nn, pp.produtos?.liquidoComissionavel || 0);
+            }
+          }
+          log(`[pagamento ${mes}] produto comissionável: ${exatoConfiavel ? "EXATO por transação" : "ratio (tx parcial/ausente)"} — tx=${txProdBruto.toFixed(0)} rank=${rkProdBruto.toFixed(0)}`, "pagamento");
+        } catch (e: any) { log(`[pagamento ${mes}] exato produto falhou: ${e?.message} — usando ratio`, "pagamento"); }
+
         const porProfissional: Record<string, any> = {};
+        let somaComiss = 0;
         for (const [id, e] of _eqRank.byId) {
           const sl = e.faturamento?.servicosLiquido || 0;
           const pl = e.faturamento?.produtosLiquido || 0;
+          let comiss = pl * ratioCom; // fallback
+          if (exatoConfiavel) {
+            const nomeRank = normNm(e.nome).split(/[-–—]/)[0].trim(); // apelido antes do hífen
+            let ex = exatoPorNome.get(nomeRank);
+            if (ex == null) {
+              const tok = nomeRank.split(/\s+/)[0];
+              for (const [k, v] of exatoPorNome) { if (k === tok || k.startsWith(tok + " ") || k.includes(" " + tok)) { ex = v; break; } }
+            }
+            if (ex != null) comiss = ex; // casou → valor exato; senão mantém ratio
+          }
+          somaComiss += comiss;
           porProfissional[id] = {
             nome: e.nome,
             servicos: { liquido: sl },
-            // comissionável = produtos − bomboniere (ratio agregado)
-            produtos: { liquido: pl, liquidoComissionavel: pl * ratioCom },
+            produtos: { liquido: pl, liquidoComissionavel: comiss },
             plano: { reais: e.faturamento?.plano || 0 },
             taxaCartao: 0,
             custoInsumos: 0,
@@ -11789,11 +11820,12 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         const tr = _eqRank.totais;
         periodo = {
           porProfissional,
+          produtoComissaoFonte: exatoConfiavel ? "exato-transacao" : "ratio-csv",
           totais: {
             reais: tr.faturamento || 0, count: tr.atendimentos || 0,
             servicosBruto: tr.servicosBruto || 0, servicosLiquido: tr.servicosLiquido || 0,
             produtosBruto: tr.produtosBruto || 0, produtosLiquido: tr.produtosLiquido || 0,
-            produtosLiquidoComissionavel: (tr.produtosLiquido || 0) * ratioCom,
+            produtosLiquidoComissionavel: exatoConfiavel ? somaComiss : (tr.produtosLiquido || 0) * ratioCom,
             planoReais: tr.planoReais || 0,
           },
         };

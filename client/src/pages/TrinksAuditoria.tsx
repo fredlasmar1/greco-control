@@ -50,6 +50,8 @@ export default function TrinksAuditoria() {
   const [data, setData] = useState<AuditResponse | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [uni, setUni] = useState<any>(null);
+  const [conf, setConf] = useState<any>(null);
+  const [mesConf, setMesConf] = useState<string>(() => new Date().toISOString().slice(0, 7));
 
   const carregar = async (n: number) => {
     setLoading(true);
@@ -75,6 +77,12 @@ export default function TrinksAuditoria() {
   useEffect(() => {
     fetch(`/api/trinks/quota-unificada`).then(r => r.json()).then(j => { if (j?.ok) setUni(j); }).catch(() => {});
   }, []);
+
+  // Conferência de números Control × Metas — Passo 4.
+  useEffect(() => {
+    setConf(null);
+    fetch(`/api/trinks/conferencia/${mesConf}`).then(r => r.json()).then(j => { if (j?.ok) setConf(j); }).catch(() => {});
+  }, [mesConf]);
 
   const formatarData = (iso: string | null) => {
     if (!iso) return "—";
@@ -164,6 +172,77 @@ export default function TrinksAuditoria() {
           </Card>
         );
       })()}
+
+      {/* Conferência de números Control × Metas — Passo 4 */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Activity className="h-4 w-4 text-muted-foreground" /> Conferência de números — Control × Metas
+            </CardTitle>
+            <input type="month" value={mesConf} onChange={(e) => setMesConf(e.target.value)}
+              className="border rounded px-2 py-1 text-xs bg-background" />
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1">Cada número na sua fonte canônica. Faturamento vem do Gmail (tudo); ranking/atendimento do CSV (mais completo). O Metas (ao vivo) só conta serviço finalizado — por isso fica menor.</p>
+        </CardHeader>
+        <CardContent>
+          {!conf ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">Carregando conferência…</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Faturamento oficial · <b className="text-emerald-600">canônico</b></p>
+                  <p className="text-xl font-bold tabular-nums">R$ {(conf.faturamento.oficialGmail || 0).toLocaleString("pt-BR")}</p>
+                  <p className="text-[10px] text-muted-foreground">{conf.faturamento.fonte}</p>
+                </div>
+                <div className="rounded-lg border border-card-border p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Serviço (Metas, ref.)</p>
+                  <p className="text-xl font-bold tabular-nums text-muted-foreground">R$ {(conf.faturamento.servicoMetas || 0).toLocaleString("pt-BR")}</p>
+                  <p className="text-[10px] text-muted-foreground">sem produto/plano</p>
+                </div>
+                <div className="rounded-lg border border-card-border p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Atendimentos</p>
+                  <p className="text-xl font-bold tabular-nums">{conf.atendimentos.control ?? "—"} <span className="text-xs font-normal text-muted-foreground">CSV</span></p>
+                  <p className="text-[10px] text-muted-foreground">Metas (ao vivo): {conf.atendimentos.metas ?? "—"}</p>
+                </div>
+              </div>
+              {!conf.metasDisponivel && (
+                <p className="text-[11px] text-amber-500">⚠ Metas não respondeu — mostrando só os números do Control.</p>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="text-left py-2 px-2 font-medium">Barbeiro</th>
+                      <th className="text-right py-2 px-2 font-medium">Atend. Control</th>
+                      <th className="text-right py-2 px-2 font-medium">Atend. Metas</th>
+                      <th className="text-right py-2 px-2 font-medium">Gap</th>
+                      <th className="text-right py-2 px-2 font-medium">Total Control</th>
+                      <th className="text-right py-2 px-2 font-medium">Serviço Metas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {conf.porBarbeiro.map((b: any, i: number) => (
+                      <tr key={i} className="border-b border-border/40">
+                        <td className="py-1.5 px-2">
+                          {b.nome}
+                          {!b.casou && <span className="ml-1 text-[9px] text-amber-500" title="só aparece em um dos sistemas">só 1 sistema</span>}
+                        </td>
+                        <td className="py-1.5 px-2 text-right tabular-nums">{b.atControl ?? "—"}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-muted-foreground">{b.atMetas ?? "—"}</td>
+                        <td className={`py-1.5 px-2 text-right tabular-nums ${b.gapAt != null && Math.abs(b.gapAt) > 20 ? "text-rose-500 font-semibold" : "text-muted-foreground"}`}>{b.gapAt ?? "—"}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums font-semibold">{b.totalControl != null ? `R$ ${b.totalControl.toLocaleString("pt-BR")}` : "—"}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-muted-foreground">{b.servicoMetas != null ? `R$ ${b.servicoMetas.toLocaleString("pt-BR")}` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {data && (
         <>

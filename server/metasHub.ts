@@ -56,6 +56,24 @@ export async function getMetasTrinks(recurso: string, params: Record<string, str
   }
 }
 
+// PASSO 4 — resumo do mês do Metas (atendimentos + serviço por barbeiro, dos
+// appointments). O Control usa pra conferir contra a fonte dele (Gmail + CSV).
+export interface MetasResumoMes {
+  atendimentos: number;
+  servicoRS: number;
+  porBarbeiro: Array<{ nome: string; atendimentos: number; servicoRS: number }>;
+}
+export async function getMetasResumoMes(mes: string): Promise<MetasResumoMes | null> {
+  if (!KEY) return null;
+  try {
+    const r = await fetch(`${BASE}/api/hub/resumo-mes/${encodeURIComponent(mes)}`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return null;
+    const j = (await r.json()) as any;
+    if (!j?.ok) return null;
+    return { atendimentos: Number(j.atendimentos || 0), servicoRS: Number(j.servicoRS || 0), porBarbeiro: Array.isArray(j.porBarbeiro) ? j.porBarbeiro : [] };
+  } catch { return null; }
+}
+
 // PASSO 3 — quota do Metas (consumo Trinks dele + teto do plano da conta).
 export interface MetasQuota { usados: number; plano: number; cotaConta: number; erro429: number; }
 let mqCache: { at: number; data: MetasQuota } | null = null;

@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
@@ -2071,6 +2071,76 @@ export async function registerRoutes(
         controlUsados, metasUsados, metasDisponivel: metas != null,
         total, teto, restante: Math.max(0, teto - total),
         percent: Math.round(percent * 10) / 10, alerta,
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err?.message || "erro" }); }
+  });
+
+  // ─── PASSO 4: CONFERÊNCIA DE NÚMEROS (Control × Metas) ───
+  // Crava a fonte canônica de cada número e confere que batem:
+  //  · Faturamento oficial = Gmail (Control, 0 token) — a receita CERTA (tudo).
+  //  · Atendimentos = comparável entre os dois (Control CSV × Metas appointments).
+  //  · Serviço (Metas) × Total (Control) por barbeiro — escopos rotulados.
+  // Normaliza o nome do barbeiro ("APELIDO - NOME" do CSV × "NOME" da Trinks).
+  app.get("/api/trinks/conferencia/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : ymdHoje().slice(0, 7);
+      const normBarb = (s: string): string => {
+        let x = String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+        if (x.includes(" - ")) x = (x.split(" - ").pop() || "").trim(); // tira "APELIDO - "
+        return x.replace(/\s+/g, " ");
+      };
+      const casa = (a: string, b: string): boolean => {
+        if (!a || !b) return false;
+        const [s, l] = a.length <= b.length ? [a, b] : [b, a];
+        return s.length >= 6 && l.startsWith(s);
+      };
+      const _tm: any = await kvGet(`trinks_total_mes:${mes}`);
+      const faturamentoOficial = Number(_tm?.total || 0);
+      const metas = await getMetasResumoMes(mes).catch(() => null);
+      const eq: any = await montarEquipeDeRanking(mes, await getAllMetas()).catch(() => null);
+      const ctrlBarb = eq ? Array.from(eq.byId.values()).map((v: any) => ({
+        nome: v.nome, atendimentos: v.atendimentos?.total || 0,
+        totalRS: Math.round((v.faturamento?.total || 0) * 100) / 100,
+      })).filter((v: any) => v.atendimentos > 0 || v.totalRS > 0) : [];
+      const metasBarb = metas?.porBarbeiro || [];
+      // casa Metas → Control por nome normalizado (prefixo)
+      const usadosCtrl = new Set<number>();
+      const linhas = metasBarb.map((mb) => {
+        const nm = normBarb(mb.nome);
+        let ci = -1;
+        for (let i = 0; i < ctrlBarb.length; i++) {
+          if (usadosCtrl.has(i)) continue;
+          if (casa(nm, normBarb(ctrlBarb[i].nome))) { ci = i; break; }
+        }
+        const cb: any = ci >= 0 ? ctrlBarb[ci] : null;
+        if (ci >= 0) usadosCtrl.add(ci);
+        return {
+          nome: cb?.nome || mb.nome,
+          atMetas: mb.atendimentos, atControl: cb?.atendimentos ?? null,
+          gapAt: cb ? mb.atendimentos - cb.atendimentos : null,
+          servicoMetas: mb.servicoRS, totalControl: cb?.totalRS ?? null,
+          casou: !!cb,
+        };
+      });
+      // barbeiros que só o Control tem (não casaram)
+      const soControl = ctrlBarb.filter((_, i) => !usadosCtrl.has(i)).map((cb: any) => ({
+        nome: cb.nome, atMetas: null, atControl: cb.atendimentos, gapAt: null,
+        servicoMetas: null, totalControl: cb.totalRS, casou: false,
+      }));
+      const todas = [...linhas, ...soControl].sort((a, b) => (b.totalControl || b.servicoMetas || 0) - (a.totalControl || a.servicoMetas || 0));
+      return res.json({
+        ok: true, mes,
+        faturamento: {
+          oficialGmail: faturamentoOficial,     // CANÔNICO (tudo: serviço+produto+plano)
+          servicoMetas: metas?.servicoRS ?? null, // só serviço (referência)
+          fonte: "Gmail (e-mail Trinks, 0 token)",
+        },
+        atendimentos: {
+          metas: metas?.atendimentos ?? null,
+          control: ctrlBarb.reduce((s: number, b: any) => s + (b.atendimentos || 0), 0),
+        },
+        metasDisponivel: metas != null,
+        porBarbeiro: todas,
       });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err?.message || "erro" }); }
   });

@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas, getMetasAgendamentos } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
@@ -1348,6 +1348,23 @@ async function trinksFetchAll(
       log(`HUB Metas sem resposta p/ agendamentos — fallback Trinks ao vivo`, "trinks");
     } catch (e: any) {
       log(`HUB agendamentos erro (${e?.message}) — fallback Trinks ao vivo`, "trinks");
+    }
+  }
+
+  // BOCA ÚNICA (Passo 2): transações vêm pelo PROXY do Metas (uma boca só + cache
+  // no HUB). Mata o burst combinado 80/min e a mesma consulta repetida custa 0.
+  // Fallback: se o HUB não responder, cai na paginação Trinks. Desliga com TRANSACOES_VIA_HUB=0.
+  if (endpointPath === "transacoes" && process.env.TRANSACOES_VIA_HUB !== "0" && queryParams?.dataInicio) {
+    try {
+      const viaHub = await getMetasTrinks("transacoes", queryParams);
+      if (viaHub) {
+        log(`transacoes via HUB Metas (cache): ${viaHub.length} itens [${queryParams.dataInicio}..${queryParams.dataFim || queryParams.dataInicio}]`, "trinks");
+        setCache(cacheKey, viaHub, 15 * 60 * 1000);
+        return viaHub;
+      }
+      log(`HUB Metas sem resposta p/ transacoes — fallback Trinks ao vivo`, "trinks");
+    } catch (e: any) {
+      log(`HUB transacoes erro (${e?.message}) — fallback Trinks ao vivo`, "trinks");
     }
   }
 

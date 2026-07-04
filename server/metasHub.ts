@@ -35,6 +35,27 @@ export async function getMetasAgendamentos(dataInicio: string, dataFim: string):
   }
 }
 
+// BOCA ÚNICA (Passo 2) — pega um recurso da Trinks pelo PROXY do Metas (uma boca
+// só + cache no HUB). Retorna os itens no formato cru da Trinks, ou null se o HUB
+// não responder (chamador cai no fallback ao vivo). Ex.: transacoes.
+export async function getMetasTrinks(recurso: string, params: Record<string, string>): Promise<any[] | null> {
+  if (!KEY) return null;
+  try {
+    const qs = new URLSearchParams();
+    for (const k of ["dataInicio", "dataFim", "data", "profissionalId"]) {
+      if (params[k]) qs.set(k, params[k]);
+    }
+    const url = `${BASE}/api/hub/trinks/${encodeURIComponent(recurso)}?${qs.toString()}`;
+    const r = await fetch(url, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(30000) });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { ok: boolean; items?: any[] };
+    if (!j?.ok || !Array.isArray(j.items)) return null;
+    return j.items;
+  } catch {
+    return null;
+  }
+}
+
 export async function getMetasVisitas(phones: string[], mes: string): Promise<Record<string, UsoMetas>> {
   if (!KEY || !phones.length) return {};
   const key = `${mes}|${phones.length}`;

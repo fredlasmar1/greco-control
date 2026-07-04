@@ -12,3 +12,9 @@ dist/
 
 # dumps temporários locais
 .consolidacao-transacoes.json
+
+# Cópias de conflito do iCloud/Finder (arquivo " 2")
+* 2.ts
+* 2.tsx
+* 2.js
+* 2.json

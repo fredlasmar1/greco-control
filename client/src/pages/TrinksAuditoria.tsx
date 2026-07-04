@@ -244,6 +244,56 @@ export default function TrinksAuditoria() {
         </CardContent>
       </Card>
 
+      {/* Fontes canônicas — Fase C: de onde vem cada número (definição fechada) */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-500" /> Fontes canônicas dos números
+          </CardTitle>
+          <p className="text-[11px] text-muted-foreground mt-1">Cada número tem UMA fonte oficial. Só o Greco Metas fala ao vivo com a Trinks; o Control é offline (Gmail/CSV, 0 token) e complementa.</p>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="text-left py-2 px-2 font-medium">Número</th>
+                  <th className="text-left py-2 px-2 font-medium">Fonte canônica</th>
+                  <th className="text-left py-2 px-2 font-medium">Sistema</th>
+                  <th className="text-center py-2 px-2 font-medium">Token</th>
+                  <th className="text-left py-2 px-2 font-medium hidden md:table-cell">Por quê</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["Faturamento oficial (dia/mês, tudo)", "E-mail Trinks (Gmail)", "Control", "0", "Trinks manda o total certo por e-mail; a API dava só ~55% em 429"],
+                  ["Ranking / atendimento por barbeiro", "CSV de ranking", "Control", "0", "Trinks pré-agrega (credita assistente e status final); a API só vê o profissional agendado"],
+                  ["Vendas de produto (item / % ganho)", "CSV (fechado) · API (ao vivo)", "Control · Metas", "0", "CSV pro mês fechado; product_sales do Metas pro corrente"],
+                  ["Agendamento / ocupação ao vivo", "API /v1/agendamentos", "Metas", "1ª vez", "Metas captura no banco; o Control lê do HUB (0 token na repetição)"],
+                  ["Transações (comandas ao vivo)", "API /v1/transacoes", "Metas", "1ª vez", "Proxy do Metas com cache; mês fechado usa CSV (0 token)"],
+                  ["Clientes / recorrência / ficha", "rec_clients", "Metas", "sim", "O Metas é o CRM ao vivo (dedup, recorrência, ficha)"],
+                  ["Assinantes Clube Greco", "Contratos do Clube", "Control", "0", "O Control gerencia os contratos (plano, valor, vendedor)"],
+                  ["Consumo de token Trinks", "Contador unificado", "Ambos", "—", "Metas + Control somam na MESMA conta (teto ~5.000/mês)"],
+                ].map((r, i) => (
+                  <tr key={i} className="border-b border-border/40 align-top">
+                    <td className="py-1.5 px-2 font-medium">{r[0]}</td>
+                    <td className="py-1.5 px-2">{r[1]}</td>
+                    <td className="py-1.5 px-2">{r[2]}</td>
+                    <td className="py-1.5 px-2 text-center">
+                      <span className={r[3] === "0" ? "text-emerald-600 font-semibold" : r[3] === "—" ? "text-muted-foreground" : "text-amber-600"}>{r[3]}</span>
+                    </td>
+                    <td className="py-1.5 px-2 text-muted-foreground hidden md:table-cell">{r[4]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-3 rounded-lg bg-amber-500/5 border border-amber-500/20 p-2.5 text-[11px] text-muted-foreground">
+            <b className="text-amber-600">Ressalva importante:</b> o <b>total</b> canônico é o do Gmail (inclui serviço + produto + plano/Clube). A <b>soma por barbeiro</b> (CSV) pode ficar um pouco menor porque a receita de <b>plano/Clube não é rateada</b> por barbeiro no ranking da Trinks. Não é erro — são recortes diferentes: use o Gmail pro total, o CSV pra atribuição por pessoa.
+          </div>
+        </CardContent>
+      </Card>
+
       {data && (
         <>
           {/* Cards de totais */}

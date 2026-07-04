@@ -18,6 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
+import { getMetasVisitas } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
@@ -9960,6 +9961,22 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que nÃ
       };
     });
     return res.json(enriched.sort((a, b) => a.name.localeCompare(b.name)));
+  });
+
+  // FASE B â€” uso REAL de cada assinante vindo do Metas (por telefone).
+  // Retorna { [phoneNormalizado]: {totalVisitas, ultimaVisita, visitasMes} }.
+  app.get("/api/assinaturas/uso-metas", async (req: Request, res: Response) => {
+    const mes = typeof req.query.mes === "string" && /^\d{4}-\d{2}$/.test(req.query.mes)
+      ? req.query.mes : new Date().toISOString().slice(0, 7);
+    const phones = Array.from(new Set(
+      assinaturaClientes.map(c => (c.phone || "").replace(/[^0-9]/g, "")).filter(p => p.length >= 8)
+    ));
+    try {
+      const uso = await getMetasVisitas(phones, mes);
+      return res.json({ ok: true, mes, uso });
+    } catch (e: any) {
+      return res.json({ ok: false, mes, uso: {}, error: e?.message || "erro" });
+    }
   });
 
   // GET /api/assinaturas/clientes/:id

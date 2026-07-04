@@ -183,6 +183,7 @@ export default function Assinaturas() {
   const [showBulk, setShowBulk] = useState(false);
   const [sugestoes, setSugestoes] = useState<SugestaoExtrato[]>([]);
   const [aplicandoSugestoes, setAplicandoSugestoes] = useState(false);
+  const [usoMetas, setUsoMetas] = useState<Record<string, { totalVisitas: number; ultimaVisita: string | null; visitasMes: number }>>({});
   const loadData = () => {
     setLoading(true);
     const mesAtual = new Date().toISOString().slice(0, 7);
@@ -196,6 +197,9 @@ export default function Assinaturas() {
       setSugestoes(sug?.sugestoes || []);
       setLoading(false);
     }).catch(() => setLoading(false));
+    // Uso real vindo do Metas (best-effort, não bloqueia a tela).
+    fetch(`${API_BASE}/api/assinaturas/uso-metas?mes=${mesAtual}`)
+      .then(r => r.json()).then(d => setUsoMetas(d?.uso || {})).catch(() => {});
   };
   useEffect(() => { loadData(); }, []);
 
@@ -648,6 +652,7 @@ export default function Assinaturas() {
                   <th className="text-right p-3 text-muted-foreground font-medium">Bônus venda</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Contrato</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Vencimento</th>
+                  <th className="text-center p-3 text-muted-foreground font-medium" title="Dados ao vivo do Greco Metas (Trinks), cruzados por telefone">Uso real</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Dia Pgto</th>
                   <th className="text-center p-3 text-muted-foreground font-medium">Situação</th>
                   <th className="text-right p-3 text-muted-foreground font-medium">Ações</th>
@@ -655,9 +660,9 @@ export default function Assinaturas() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={10} className="py-12 text-center text-muted-foreground">Carregando...</td></tr>
+                  <tr><td colSpan={11} className="py-12 text-center text-muted-foreground">Carregando...</td></tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan={10} className="py-12 text-center text-muted-foreground">
+                  <tr><td colSpan={11} className="py-12 text-center text-muted-foreground">
                     {clientes.length === 0 ? "Nenhum assinante cadastrado. Clique em 'Novo Assinante' para começar." : "Nenhum resultado encontrado."}
                   </td></tr>
                 ) : (
@@ -704,6 +709,24 @@ export default function Assinaturas() {
                           ) : c.status === "active" ? (
                             <span className="text-[10px] text-red-400 font-semibold">Expirado</span>
                           ) : <span className="text-[10px] text-muted-foreground">—</span>}
+                        </td>
+                        <td className="p-3 text-center">
+                          {(() => {
+                            const u = usoMetas[normPhone(c.phone)];
+                            if (!u) return <span className="text-[10px] text-muted-foreground">—</span>;
+                            const dias = u.ultimaVisita ? Math.floor((Date.now() - new Date(u.ultimaVisita).getTime()) / 86400000) : null;
+                            const churn = dias != null && dias > 45;
+                            return (
+                              <div className="leading-tight">
+                                <div className={`text-[11px] font-semibold ${churn ? "text-red-400" : dias != null && dias <= 15 ? "text-emerald-400" : "text-foreground"}`}>
+                                  {dias == null ? "sem visita" : dias === 0 ? "hoje" : `há ${dias}d`}
+                                </div>
+                                <div className="text-[9px] text-muted-foreground tabular-nums">
+                                  {u.visitasMes} no mês · {u.totalVisitas} total
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="p-3 text-center">Dia {c.paymentDay}</td>
                         <td className="p-3 text-center">

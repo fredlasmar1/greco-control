@@ -122,6 +122,12 @@ function formatMonthBR(s: string): string {
   return `${names[parseInt(m) - 1]}/${y}`;
 }
 
+// Telefone normalizado (só dígitos, 11 últimos) — chave de duplicidade.
+function normPhone(p?: string): string {
+  const x = (p || "").replace(/[^0-9]/g, "");
+  return x.length >= 8 ? x.slice(-11) : "";
+}
+
 // ─── Contador do Clube: receita das mensalidades × valor de tabela consumido ──
 function ContadorClube() {
   const [d, setD] = useState<any>(null);
@@ -170,7 +176,7 @@ export default function Assinaturas() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [filtro, setFiltro] = useState<"todos" | "em_dia" | "inadimplente" | "cancelado">("todos");
+  const [filtro, setFiltro] = useState<"todos" | "em_dia" | "inadimplente" | "cancelado" | "duplicados">("todos");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -250,13 +256,33 @@ export default function Assinaturas() {
 
   const filtered = useMemo(() => {
     let list = clientes;
-    if (filtro !== "todos") list = list.filter(c => c.paymentStatus === filtro);
+    if (filtro !== "todos" && filtro !== "duplicados") list = list.filter(c => c.paymentStatus === filtro);
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(c => c.name.toLowerCase().includes(q) || c.phone?.includes(q));
     }
     return list;
   }, [clientes, filtro, search]);
+
+  // Grupos de assinantes duplicados pelo MESMO telefone (chave = 11 últimos dígitos).
+  // Resolução é 100% manual — o dono decide qual manter/excluir caso a caso.
+  const dupGroups = useMemo(() => {
+    const map = new Map<string, Cliente[]>();
+    for (const c of clientes) {
+      const key = normPhone(c.phone);
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(c);
+    }
+    return Array.from(map.entries())
+      .filter(([, arr]) => arr.length > 1)
+      .map(([phone, arr]) => ({
+        phone,
+        // ordena por mais antigo primeiro (provável cadastro original)
+        registros: [...arr].sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || "")),
+      }));
+  }, [clientes]);
+  const dupCount = dupGroups.length;
 
   const cancelar = async (id: string) => {
     if (!confirm("Cancelar esta assinatura?")) return;
@@ -587,9 +613,10 @@ export default function Assinaturas() {
             { key: "em_dia", label: "Em dia" },
             { key: "inadimplente", label: `Inadimplentes${inadCount > 0 ? ` (${inadCount})` : ""}` },
             { key: "cancelado", label: "Cancelados" },
+            { key: "duplicados", label: `Duplicados${dupCount > 0 ? ` (${dupCount})` : ""}` },
           ] as const).map(t => (
             <button key={t.key} onClick={() => setFiltro(t.key)}
-              className={`text-xs px-3 py-1 rounded ${filtro === t.key ? (t.key === "inadimplente" ? "bg-red-600 text-white" : "bg-primary text-white") : "text-muted-foreground hover:text-foreground"}`}
+              className={`text-xs px-3 py-1 rounded ${filtro === t.key ? (t.key === "inadimplente" ? "bg-red-600 text-white" : t.key === "duplicados" ? "bg-amber-600 text-white" : "bg-primary text-white") : (t.key === "duplicados" && dupCount > 0 ? "text-amber-400 hover:text-amber-300" : "text-muted-foreground hover:text-foreground")}`}
             >{t.label}</button>
           ))}
         </div>
@@ -599,7 +626,15 @@ export default function Assinaturas() {
         </div>
       </div>
 
-      {/* Tabela */}
+      {/* Painel de resolução de duplicados (manual, caso a caso) */}
+      {filtro === "duplicados" ? (
+        <DuplicadosResolver
+          grupos={dupGroups}
+          onExcluir={excluir}
+          onEditar={(id) => { setEditingId(id); setShowForm(true); }}
+          onDetalhe={(id) => setDetailId(id)}
+        />
+      ) : (
       <Card className="bg-card border-card-border">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -709,6 +744,7 @@ export default function Assinaturas() {
           </div>
         </CardContent>
       </Card>
+      )}
 
 
       {/* Dialog: Novo/Editar Assinante */}
@@ -735,6 +771,126 @@ export default function Assinaturas() {
         onClose={() => setShowBulk(false)}
         onSaved={() => { setShowBulk(false); loadData(); }}
       />
+    </div>
+  );
+}
+
+// ─── Resolução de duplicados (manual, caso a caso) ─────────────
+function DuplicadosResolver({ grupos, onExcluir, onEditar, onDetalhe }: {
+  grupos: { phone: string; registros: Cliente[] }[];
+  onExcluir: (id: string) => void;
+  onEditar: (id: string) => void;
+  onDetalhe: (id: string) => void;
+}) {
+  if (grupos.length === 0) {
+    return (
+      <Card className="bg-card border-card-border">
+        <CardContent className="py-12 text-center">
+          <Crown className="w-8 h-8 text-emerald-400/60 mx-auto mb-3" />
+          <p className="text-sm font-medium">Nenhuma assinatura duplicada 🎉</p>
+          <p className="text-xs text-muted-foreground mt-1">Não há dois assinantes com o mesmo telefone. Nada a resolver.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+  const pagos = (c: Cliente) => c.payments.filter(p => p.pago);
+  const totalPago = (c: Cliente) => pagos(c).reduce((s, p) => s + (p.valor || 0), 0);
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">
+        <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          <strong className="text-amber-400">{grupos.length} telefone(s) com mais de um assinante.</strong> Cada card abaixo é um cadastro. Compare vendedor, plano, contrato e pagamentos e <strong>exclua o que sobra</strong> — o que fica mantém o histórico. Nada é apagado automaticamente. Marquei o mais antigo como <em>provável original</em>, mas a decisão é sua.
+        </p>
+      </div>
+
+      {grupos.map(g => {
+        // campos que divergem dentro do grupo → destaco em âmbar
+        const sellers = new Set(g.registros.map(r => (r.seller || "").trim().toLowerCase()));
+        const plans = new Set(g.registros.map(r => (r.plan || "").trim().toLowerCase()));
+        const sellerDiverge = sellers.size > 1;
+        const planDiverge = plans.size > 1;
+        return (
+          <Card key={g.phone} className="bg-card border-amber-500/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <span className="tabular-nums">📱 {g.phone}</span>
+                <span className="text-[10px] font-normal text-muted-foreground">{g.registros.length} cadastros</span>
+                {sellerDiverge && <span className="text-[10px] text-amber-400 font-normal">• vendedores diferentes</span>}
+                {planDiverge && <span className="text-[10px] text-amber-400 font-normal">• planos diferentes</span>}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {g.registros.map((c, i) => (
+                  <div key={c.id} className="border border-card-border rounded-lg p-3 flex flex-col gap-2 bg-background/40">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate" title={c.name}>{c.name}</p>
+                        <p className="text-[10px] text-muted-foreground">criado {formatDateBR(c.createdAt)} {c.createdAt?.slice(11, 16)}</p>
+                      </div>
+                      {i === 0 && (
+                        <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">provável original</span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                      <div>
+                        <span className="text-muted-foreground block">Vendedor</span>
+                        <span className={sellerDiverge ? "text-amber-400 font-semibold" : ""}>{c.seller || "—"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block">Valor</span>
+                        <span className="font-semibold tabular-nums">{formatCurrency(c.planValue)}</span>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-muted-foreground block">Plano</span>
+                        <span className={planDiverge ? "text-amber-400" : ""} title={c.plan}>{c.plan || "—"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block">Situação</span>
+                        <span>{c.status === "active" ? "ativo" : c.status === "cancelled" ? "cancelado" : "expirado"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block">Pagamentos</span>
+                        <span className="tabular-nums">{pagos(c).length} pagos · {formatCurrency(totalPago(c))}</span>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-muted-foreground block">Meses pagos</span>
+                        <span className="tabular-nums text-[10px]">{pagos(c).map(p => formatMonthBR(p.mes)).join(", ") || "nenhum"}</span>
+                      </div>
+                      {(c.contractUrl || c.contractFileName) && (
+                        <div className="col-span-2">
+                          <button
+                            className="text-primary text-[10px] inline-flex items-center gap-1 hover:underline"
+                            onClick={() => {
+                              if (c.contractFileName) window.open(`${API_BASE}/api/assinaturas/contratos/${c.contractFileName}`, "_blank");
+                              else if (c.contractUrl) window.open(c.contractUrl!, "_blank");
+                            }}
+                          ><FileText className="w-3 h-3" /> ver contrato</button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1 pt-2 mt-auto border-t border-card-border/50">
+                      <Button size="sm" variant="ghost" className="h-7 text-[10px] flex-1" onClick={() => onDetalhe(c.id)}>
+                        <Eye className="w-3 h-3 mr-1" /> Detalhes
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-[10px] flex-1" onClick={() => onEditar(c.id)}>
+                        <Pencil className="w-3 h-3 mr-1" /> Editar
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-[10px] flex-1 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        onClick={() => { if (confirm(`Excluir o cadastro "${c.name}" (criado ${formatDateBR(c.createdAt)})?\n\nO histórico de pagamentos deste cadastro será removido. Esta ação não pode ser desfeita.`)) onExcluir(c.id); }}>
+                        <Trash2 className="w-3 h-3 mr-1" /> Excluir
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }

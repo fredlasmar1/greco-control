@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
@@ -2042,6 +2042,37 @@ export async function registerRoutes(
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }
+  });
+
+  // ─── PASSO 3: CONTA TRINKS UNIFICADA (Control + Metas na MESMA conta) ───
+  // Junta o consumo direto do Control (audit) com o do Metas (via HUB) e mede
+  // contra o teto do PLANO da conta (~5000). Alerta em 75%/90%/100%.
+  app.get("/api/trinks/quota-unificada", async (_req: Request, res: Response) => {
+    try {
+      const buckets32 = await lerUltimosDias(32);
+      const monthKey = ymdHoje().slice(0, 7);
+      const controlUsados = buckets32
+        .filter(b => String(b.dia || "").startsWith(monthKey))
+        .reduce((a, b) => a + (b.total || 0), 0);
+      const metas = await getMetasQuota().catch(() => null);
+      const metasUsados = metas?.usados ?? 0;
+      const cota = await getTrinksCota();
+      // teto da conta = plano do Metas (fonte do teto real). Se o Metas não
+      // responder, cai no dobro da fatia do Control como estimativa conservadora.
+      const teto = metas?.cotaConta || metas?.plano || cota.fatiaEfetiva * 2 || 5000;
+      const total = controlUsados + metasUsados;
+      const percent = teto > 0 ? (total / teto) * 100 : 0;
+      let alerta: "ok" | "atencao" | "critico" | "estourou" = "ok";
+      if (total >= teto) alerta = "estourou";
+      else if (percent >= 90) alerta = "critico";
+      else if (percent >= 75) alerta = "atencao";
+      return res.json({
+        ok: true, mes: monthKey,
+        controlUsados, metasUsados, metasDisponivel: metas != null,
+        total, teto, restante: Math.max(0, teto - total),
+        percent: Math.round(percent * 10) / 10, alerta,
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err?.message || "erro" }); }
   });
 
   // ─── Cota Trinks CONFIGURÁVEL (fatia base + tokens comprados) ───
@@ -11028,6 +11059,21 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   app.get("/api/hub/status", (req: Request, res: Response) => {
     if (!requireHubKey(req, res)) return;
     res.json({ ok: true, sistema: "greco-control", papel: "fonte offline (Gmail/CSV)", uptimeSec: Math.round(process.uptime()) });
+  });
+
+  // PASSO 3 — quota: consumo Trinks DIRETO do Control neste mês (audit persistente)
+  // + a fatia configurada. O Metas soma com o dele pra mostrar a conta combinada.
+  app.get("/api/hub/quota", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const buckets32 = await lerUltimosDias(32);
+      const monthKey = ymdHoje().slice(0, 7);
+      const mesTot = buckets32
+        .filter(b => String(b.dia || "").startsWith(monthKey))
+        .reduce((a, b) => a + (b.total || 0), 0);
+      const cota = await getTrinksCota();
+      return res.json({ ok: true, sistema: "greco-control", mes: monthKey, usados: mesTot, fatia: cota.fatiaEfetiva });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
   app.get("/api/hub/faturamento/:mes", async (req: Request, res: Response) => {

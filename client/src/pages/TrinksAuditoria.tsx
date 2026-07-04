@@ -49,6 +49,7 @@ export default function TrinksAuditoria() {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<AuditResponse | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [uni, setUni] = useState<any>(null);
 
   const carregar = async (n: number) => {
     setLoading(true);
@@ -69,6 +70,11 @@ export default function TrinksAuditoria() {
     void carregar(dias);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dias]);
+
+  // Conta Trinks UNIFICADA (Control + Metas, mesma conta) — Passo 3.
+  useEffect(() => {
+    fetch(`/api/trinks/quota-unificada`).then(r => r.json()).then(j => { if (j?.ok) setUni(j); }).catch(() => {});
+  }, []);
 
   const formatarData = (iso: string | null) => {
     if (!iso) return "—";
@@ -124,6 +130,40 @@ export default function TrinksAuditoria() {
           </CardContent>
         </Card>
       )}
+
+      {/* Conta Trinks UNIFICADA — Control + Metas na mesma conta (Passo 3) */}
+      {uni && (() => {
+        const tone = uni.alerta === "estourou" || uni.alerta === "critico" ? "bg-rose-500"
+          : uni.alerta === "atencao" ? "bg-amber-500" : "bg-emerald-500";
+        const pct = Math.min(100, uni.percent);
+        return (
+          <Card>
+            <CardContent className="pt-5">
+              <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2">
+                <span className="text-sm font-semibold flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-muted-foreground" />
+                  Conta Trinks — total real do mês <span className="text-[11px] font-normal text-muted-foreground">(Greco Control + Greco Metas, mesma conta)</span>
+                </span>
+                <span className="text-sm tabular-nums"><b>{uni.total.toLocaleString("pt-BR")}</b> / {uni.teto.toLocaleString("pt-BR")} <span className="text-muted-foreground">({uni.percent.toFixed(0)}%)</span></span>
+              </div>
+              <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 mt-1.5 text-[11px] text-muted-foreground">
+                <span>
+                  Control <b className="text-foreground">{uni.controlUsados.toLocaleString("pt-BR")}</b> ·
+                  Metas <b className="text-foreground">{uni.metasDisponivel ? uni.metasUsados.toLocaleString("pt-BR") : "—"}</b> ·
+                  restam <b className="text-foreground">{uni.restante.toLocaleString("pt-BR")}</b>
+                </span>
+                {uni.alerta === "estourou" ? <span className="text-rose-600 font-semibold">✖ conta estourada</span>
+                  : uni.alerta === "critico" ? <span className="text-rose-600 font-semibold">⚠ passou de 90%</span>
+                  : uni.alerta === "atencao" ? <span className="text-amber-600 font-semibold">⚠ passou de 75%</span>
+                  : <span className="text-emerald-600 font-semibold">✓ dentro do limite</span>}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {data && (
         <>

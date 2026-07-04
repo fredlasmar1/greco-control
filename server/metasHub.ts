@@ -56,6 +56,23 @@ export async function getMetasTrinks(recurso: string, params: Record<string, str
   }
 }
 
+// PASSO 3 — quota do Metas (consumo Trinks dele + teto do plano da conta).
+export interface MetasQuota { usados: number; plano: number; cotaConta: number; erro429: number; }
+let mqCache: { at: number; data: MetasQuota } | null = null;
+export async function getMetasQuota(): Promise<MetasQuota | null> {
+  if (!KEY) return null;
+  if (mqCache && Date.now() - mqCache.at < 2 * 60 * 1000) return mqCache.data;
+  try {
+    const r = await fetch(`${BASE}/api/hub/quota`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return mqCache?.data || null;
+    const j = (await r.json()) as any;
+    if (!j?.ok) return mqCache?.data || null;
+    const data = { usados: Number(j.usados || 0), plano: Number(j.plano || 0), cotaConta: Number(j.cotaConta || 0), erro429: Number(j.erro429 || 0) };
+    mqCache = { at: Date.now(), data };
+    return data;
+  } catch { return mqCache?.data || null; }
+}
+
 export async function getMetasVisitas(phones: string[], mes: string): Promise<Record<string, UsoMetas>> {
   if (!KEY || !phones.length) return {};
   const key = `${mes}|${phones.length}`;

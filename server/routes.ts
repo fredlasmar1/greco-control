@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
@@ -1332,6 +1332,23 @@ async function trinksFetchAll(
   if (cached !== null) {
     log(`Cache HIT for ${endpointPath} (${Array.isArray(cached) ? cached.length + ' items' : 'object'})`, "trinks");
     return cached;
+  }
+
+  // BOCA ÚNICA (Passo 1): agendamentos vêm do HUB do Metas (servidos do banco, 0
+  // token Trinks). Só o Metas fala ao vivo com a Trinks. Fallback: se o HUB não
+  // responder, cai na paginação Trinks abaixo. Desliga com AGENDAMENTOS_VIA_HUB=0.
+  if (endpointPath === "agendamentos" && process.env.AGENDAMENTOS_VIA_HUB !== "0" && queryParams?.dataInicio) {
+    try {
+      const viaHub = await getMetasAgendamentos(queryParams.dataInicio, queryParams.dataFim || queryParams.dataInicio);
+      if (viaHub) {
+        log(`agendamentos via HUB Metas (0 token): ${viaHub.length} itens [${queryParams.dataInicio}..${queryParams.dataFim || queryParams.dataInicio}]`, "trinks");
+        setCache(cacheKey, viaHub, 15 * 60 * 1000);
+        return viaHub;
+      }
+      log(`HUB Metas sem resposta p/ agendamentos — fallback Trinks ao vivo`, "trinks");
+    } catch (e: any) {
+      log(`HUB agendamentos erro (${e?.message}) — fallback Trinks ao vivo`, "trinks");
+    }
   }
 
   const allItems: any[] = [];

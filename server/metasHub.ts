@@ -18,6 +18,23 @@ export interface UsoMetas {
 // Cache curto por mês (5min) — o Metas é ao vivo, mas não precisa martelar.
 const cache = new Map<string, { at: number; data: Record<string, UsoMetas> }>();
 
+// BOCA ÚNICA (Passo 1) — busca agendamentos do HUB do Metas (servidos do banco,
+// 0 token Trinks), no mesmo formato do /v1/agendamentos. Retorna null se o HUB
+// não responder, pra o chamador cair no fallback (Trinks ao vivo).
+export async function getMetasAgendamentos(dataInicio: string, dataFim: string): Promise<any[] | null> {
+  if (!KEY) return null;
+  try {
+    const url = `${BASE}/api/hub/agendamentos?dataInicio=${encodeURIComponent(dataInicio)}&dataFim=${encodeURIComponent(dataFim)}`;
+    const r = await fetch(url, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(9000) });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { ok: boolean; agendamentos?: any[] };
+    if (!j?.ok || !Array.isArray(j.agendamentos)) return null;
+    return j.agendamentos;
+  } catch {
+    return null;
+  }
+}
+
 export async function getMetasVisitas(phones: string[], mes: string): Promise<Record<string, UsoMetas>> {
   if (!KEY || !phones.length) return {};
   const key = `${mes}|${phones.length}`;

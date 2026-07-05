@@ -8,7 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Loader2, ShoppingCart, Trash2, Pencil, Save, X as XIcon, Plus,
   Send, MessageCircle, CheckCircle2, Bot, CalendarClock, AlertTriangle,
-  RefreshCw, Repeat, Wallet,
+  RefreshCw, Repeat, Wallet, CalendarDays, List as ListIcon,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
@@ -380,6 +380,11 @@ function Agenda({ mes, monthLabel, cats, naturezaPadrao, onPago }: {
   const [loading, setLoading] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [gerando, setGerando] = useState(false);
+  const [view, setView] = useState<"calendario" | "lista">(() => {
+    if (typeof window === "undefined") return "calendario";
+    return (localStorage.getItem("agenda.view") as any) || "calendario";
+  });
+  useEffect(() => { try { localStorage.setItem("agenda.view", view); } catch {} }, [view]);
   const catInicial = cats[0] || "Aluguel";
   const [novo, setNovo] = useState({ descricao: "", beneficiario: "", valor: "", vencimento: "", categoria: catInicial, natureza: "" as "" | Natureza, recorrente: true });
 
@@ -526,7 +531,11 @@ function Agenda({ mes, monthLabel, cats, naturezaPadrao, onPago }: {
         <CardHeader className="pb-2">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <CardTitle className="text-base flex items-center gap-2"><CalendarClock className="w-4 h-4 text-primary" />Agenda de pagamentos — {monthLabel}</CardTitle>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="inline-flex rounded-md border overflow-hidden">
+                <button type="button" onClick={() => setView("calendario")} className={`text-xs h-8 px-2.5 inline-flex items-center gap-1 ${view === "calendario" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted/40"}`}><CalendarDays className="w-3.5 h-3.5" />Calendário</button>
+                <button type="button" onClick={() => setView("lista")} className={`text-xs h-8 px-2.5 inline-flex items-center gap-1 border-l ${view === "lista" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted/40"}`}><ListIcon className="w-3.5 h-3.5" />Lista</button>
+              </div>
               <Button size="sm" variant="outline" onClick={gerarRecorrentes} disabled={gerando} title="Trazer aluguel, luz, DAS, salário… do mês passado">
                 {gerando ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}Recorrentes do mês passado
               </Button>
@@ -542,6 +551,8 @@ function Agenda({ mes, monthLabel, cats, naturezaPadrao, onPago }: {
             <div className="text-center py-12 text-muted-foreground text-sm">
               Nenhum pagamento agendado neste mês. Clique em <strong>Novo</strong> para adicionar, ou em <strong>Recorrentes do mês passado</strong> para trazer os fixos (aluguel, luz, salário…).
             </div>
+          ) : view === "calendario" ? (
+            <CalendarioPagamentos mes={mes} itens={itens} hoje={hoje} onMarcarPago={marcarPago} onDesmarcar={desmarcar} />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -607,5 +618,137 @@ function Agenda({ mes, monthLabel, cats, naturezaPadrao, onPago }: {
         </CardContent>
       </Card>
     </>
+  );
+}
+
+// ── Calendário do mês com todos os pagamentos ──────────────────────────────
+function CalendarioPagamentos({ mes, itens, hoje, onMarcarPago, onDesmarcar }: {
+  mes: string; itens: ItemAgenda[]; hoje: string;
+  onMarcarPago: (it: ItemAgenda) => void; onDesmarcar: (it: ItemAgenda) => void;
+}) {
+  const [sel, setSel] = useState<string | null>(null);
+  const [y, m] = mes.split("-").map(Number);
+  const primeiroDow = new Date(y, m - 1, 1).getDay();
+  const diasNoMes = new Date(y, m, 0).getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < primeiroDow; i++) cells.push(null);
+  for (let d = 1; d <= diasNoMes; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks: (number | null)[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+
+  const ymd = (d: number) => `${mes}-${String(d).padStart(2, "0")}`;
+  const porDia: Record<string, ItemAgenda[]> = {};
+  for (const it of itens) {
+    const key = (it.vencimento || "").slice(0, 10);
+    if (!key.startsWith(mes)) continue;
+    (porDia[key] ||= []).push(it);
+  }
+  const st = (it: ItemAgenda): "pago" | "atrasado" | "hoje" | "pendente" =>
+    it.status === "pago" ? "pago" : it.vencimento < hoje ? "atrasado" : it.vencimento === hoje ? "hoje" : "pendente";
+  const chipCls = (s: string) => s === "pago" ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 line-through"
+    : s === "atrasado" ? "bg-red-500/15 text-red-600 border-red-500/40"
+    : s === "hoje" ? "bg-amber-500/15 text-amber-600 border-amber-500/40"
+    : "bg-sky-500/15 text-sky-600 border-sky-500/30";
+  const totalDia = (arr: ItemAgenda[]) => arr.reduce((s, it) => s + (Number(it.valor) || 0), 0);
+  const pendenteDia = (arr: ItemAgenda[]) => arr.filter(it => it.status !== "pago").reduce((s, it) => s + (Number(it.valor) || 0), 0);
+  const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  const selItens = sel ? (porDia[sel] || []) : [];
+
+  return (
+    <div className="space-y-3">
+      {/* Legenda */}
+      <div className="flex items-center gap-3 flex-wrap text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" />Atrasado</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block" />Vence hoje</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-500 inline-block" />Pendente</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block" />Pago</span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <div className="min-w-[680px]">
+          {/* Cabeçalho dos dias da semana */}
+          <div className="grid grid-cols-7 gap-1 mb-1">
+            {weekdays.map(w => <div key={w} className="text-[10px] font-medium text-muted-foreground text-center py-1">{w}</div>)}
+          </div>
+          {/* Semanas */}
+          <div className="space-y-1">
+            {weeks.map((week, wi) => (
+              <div key={wi} className="grid grid-cols-7 gap-1">
+                {week.map((d, di) => {
+                  if (d == null) return <div key={di} className="min-h-[92px] rounded-md bg-muted/10" />;
+                  const key = ymd(d);
+                  const arr = porDia[key] || [];
+                  const isHoje = key === hoje;
+                  const temAtrasado = arr.some(it => st(it) === "atrasado");
+                  const pend = pendenteDia(arr);
+                  return (
+                    <button
+                      key={di} type="button" onClick={() => setSel(sel === key ? null : key)}
+                      className={`min-h-[92px] rounded-md border p-1 text-left flex flex-col gap-0.5 transition-colors hover:bg-muted/30
+                        ${isHoje ? "ring-2 ring-primary border-primary/40" : ""}
+                        ${temAtrasado ? "bg-red-500/5" : ""}
+                        ${sel === key ? "bg-muted/40" : ""}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[11px] font-semibold ${isHoje ? "text-primary" : ""}`}>{d}</span>
+                        {pend > 0 && <span className="text-[9px] tabular-nums text-muted-foreground">R$ {fmtBRL(pend)}</span>}
+                      </div>
+                      {arr.slice(0, 3).map(it => (
+                        <div key={it.id} title={`${it.descricao} — R$ ${fmtBRL(it.valor)}`}
+                          className={`text-[9px] leading-tight px-1 py-0.5 rounded border truncate ${chipCls(st(it))}`}>
+                          {it.descricao}
+                        </div>
+                      ))}
+                      {arr.length > 3 && <span className="text-[9px] text-muted-foreground pl-0.5">+{arr.length - 3} mais</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Detalhe do dia selecionado */}
+      {sel && (
+        <Card className="bg-muted/20 border-card-border">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-semibold flex items-center gap-1.5"><CalendarDays className="w-4 h-4 text-primary" />Pagamentos de {dataBR(sel)}</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Total do dia: <strong className="text-foreground">R$ {fmtBRL(totalDia(selItens))}</strong></span>
+                <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => setSel(null)}><XIcon className="w-3 h-3" /></Button>
+              </div>
+            </div>
+            {!selItens.length ? (
+              <p className="text-xs text-muted-foreground py-2">Nenhum pagamento neste dia.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {selItens.map(it => {
+                  const s = st(it);
+                  return (
+                    <div key={it.id} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1.5">
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${s === "pago" ? "bg-emerald-500" : s === "atrasado" ? "bg-red-500" : s === "hoje" ? "bg-amber-500" : "bg-sky-500"}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">{it.descricao}{it.recorrente && <Badge variant="outline" className="ml-1.5 text-[9px] h-4 gap-0.5"><Repeat className="w-2.5 h-2.5" />mensal</Badge>}</div>
+                        {it.beneficiario && it.beneficiario !== "—" && <div className="text-[10px] text-muted-foreground truncate">{it.beneficiario} · {it.categoria}</div>}
+                      </div>
+                      <span className="text-sm font-semibold tabular-nums whitespace-nowrap">R$ {fmtBRL(it.valor)}</span>
+                      {it.status === "pago" ? (
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => onDesmarcar(it)}>Desfazer</Button>
+                      ) : (
+                        <Button size="sm" variant="default" className="h-7 px-2 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={() => onMarcarPago(it)}><CheckCircle2 className="w-3 h-3 mr-1" />Pago</Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {!sel && <p className="text-[11px] text-muted-foreground text-center">Clique em um dia para ver os pagamentos e dar baixa.</p>}
+    </div>
   );
 }

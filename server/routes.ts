@@ -12416,7 +12416,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   // e o saldo batem exatamente entre a tabela e o holerite.
   async function construirPeriodoFolha(
     mes: string, metas: any, dataInicio: string, dataFim: string, hoje: string, force: boolean,
-  ): Promise<{ periodo: any; periodoSemApi: boolean; semRanking: boolean }> {
+  ): Promise<{ periodo: any; periodoSemApi: boolean; semRanking: boolean; aguardandoRanking: boolean }> {
     const _eqRank = force ? null : await montarEquipeDeRanking(mes, metas);
     if (_eqRank) {
       // Ratio agregado de comissionável (Ranking de Produtos, BEBIDAS/DOCES=0%) —
@@ -12489,14 +12489,23 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           planoReais: tr.planoReais || 0,
         },
       };
-      return { periodo, periodoSemApi: true, semRanking: false };
+      return { periodo, periodoSemApi: true, semRanking: false, aguardandoRanking: false };
     }
     if (mes < hoje.slice(0, 7) && !force) {
-      return { periodo: null, periodoSemApi: false, semRanking: true };
+      return { periodo: null, periodoSemApi: false, semRanking: true, aguardandoRanking: false };
     }
-    // Sem ranking (mês corrente antes do export) OU force → cálculo ao vivo (snapshot+gap).
+    if (!force) {
+      // MÊS CORRENTE sem ranking: o Gmail NÃO traz produção por profissional (só o
+      // TOTAL da loja); a produção por barbeiro só vem do Ranking de Profissionais CSV
+      // (0 token). Em vez de derivar números frágeis dos agendamentos (que não têm
+      // valor por barbeiro) e acabar inventando gente, mostra a equipe das metas com
+      // produção 0 + aviso pra subir o ranking. O botão "Buscar na API" (force) faz o
+      // cálculo ao vivo por transação.
+      return { periodo: { porProfissional: {}, totais: null }, periodoSemApi: true, semRanking: false, aguardandoRanking: true };
+    }
+    // force=true ("Buscar na API") → cálculo ao vivo (snapshot raw + API gap).
     const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
-    return { periodo, periodoSemApi: false, semRanking: false };
+    return { periodo, periodoSemApi: false, semRanking: false, aguardandoRanking: false };
   }
 
   // GET /api/pagamento/:mes — linha de pagamento de TODOS os profissionais com meta
@@ -12543,7 +12552,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       // mata a lentidão E a instabilidade — o "A pagar" oscilava porque a API caía no
       // 429 e devolvia produção parcial a cada carga. A API (calcularPeriodoPor
       // Profissional) só entra quando NÃO há ranking (mês corrente antes do export).
-      const { periodo, periodoSemApi, semRanking } = await construirPeriodoFolha(mes, metas, dataInicio, dataFim, hoje, force);
+      const { periodo, periodoSemApi, semRanking, aguardandoRanking } = await construirPeriodoFolha(mes, metas, dataInicio, dataFim, hoje, force);
       if (semRanking) {
         // v103: mês PASSADO sem ranking → NÃO bate na API automático (seria o mês
         // inteiro). Folha vazia + flag semRanking pra a UI pedir o Ranking (0 token).
@@ -12780,6 +12789,9 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           produtosLiquido: periodo.totais?.produtosLiquido || 0,
           planoReais: periodo.totais?.planoReais || 0,
         },
+        // Mês corrente sem Ranking CSV: a UI mostra a equipe com produção 0 + aviso
+        // pra subir o Ranking de Profissionais (produção por barbeiro = 0 token).
+        aguardandoRanking: !!aguardandoRanking,
         fetchedAt: new Date().toISOString(),
       });
     } catch (err: any) {

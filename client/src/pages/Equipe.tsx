@@ -143,6 +143,7 @@ type RespApi = {
     apiPeriodo: number;
     temOficial: boolean;
   };
+  aguardandoRanking?: boolean;
 };
 
 const fmtBRL = (n: number) =>
@@ -388,6 +389,26 @@ export default function Equipe() {
           )}
         </CardContent>
       </Card>
+
+      {/* Aviso: mês corrente sem Ranking de Profissionais → produção por barbeiro = 0 */}
+      {data?.aguardandoRanking && (
+        <Card className="bg-amber-500/5 border-amber-500/40">
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold">Produção por barbeiro ainda não disponível para {monthLabel}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  O e-mail diário (Gmail) traz só o <strong>total da loja</strong> — a produção e a comissão por barbeiro vêm do <strong>Ranking de Profissionais</strong> (CSV, 0 token). Suba o ranking deste mês em <strong>Importar Trinks</strong> pra ver os números por pessoa. Salário fixo, vale, multas e descontos já funcionam abaixo.
+                </p>
+              </div>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => carregar(true)} disabled={buscandoApi} className="flex-shrink-0">
+              {buscandoApi ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}Buscar na API (gasta token)
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Resumo geral (topo) ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

@@ -1802,7 +1802,26 @@ export async function registerRoutes(
     const syncCache = getCached("full_sync") || loadSyncCacheFromDisk();
     const profissionais = syncCache?.profissionais || [];
     const agendamentos = syncCache?.agendamentos || [];
-    const transacoes = syncCache?.transacoes || [];
+    // v106 — faturamento (dia/semana) na fonte canônica: transações do SNAPSHOT
+    // (raw da API, 0 token) dos dias do período + hoje ao vivo (gap). Cai pro cache
+    // full_sync se não houver snapshot. (agendamentos p/ contagem de clientes seguem
+    // no full_sync — é o shape de status que o isCompleted espera.)
+    let transacoes: any[] = [];
+    {
+      const hoje0 = new Date().toISOString().slice(0, 10);
+      const mStart0 = hoje0.slice(0, 7) + "-01";
+      const wStart0 = ymdAddDays(hoje0, -7);
+      const ini0 = wStart0 < mStart0 ? wStart0 : mStart0; // cobre a semana que cruza o mês
+      for (let d = ini0; d <= hoje0; d = ymdAddDays(d, 1)) {
+        const s: any = await getSnapshot(d);
+        if (Array.isArray(s?.transacoesRaw)) transacoes.push(...s.transacoesRaw);
+      }
+      // hoje normalmente não tem snapshot → completa com a API (1 dia, barato).
+      if (!transacoes.some((t: any) => String(t.dataHora || t.data || "").slice(0, 10) === hoje0)) {
+        try { const tj: any = await trinksFetchAll("transacoes", { dataInicio: hoje0, dataFim: ymdAddDays(hoje0, 1) }); if (Array.isArray(tj)) transacoes.push(...tj); } catch { /* segue */ }
+      }
+      if (!transacoes.length) transacoes = syncCache?.transacoes || []; // fallback total
+    }
 
     const prof = profissionais.find((p: any) => String(p.id) === user.barberId);
 
@@ -8711,14 +8730,40 @@ Regras CRÍTICAS:
       const fim = new Date(Date.UTC(ano, m, 0)).toISOString().slice(0, 10); // último dia do mês
       // keywords de estética desta barbearia (validadas com a agenda real)
       const EST_RE = /barboterap|spa|sobrancelh|pigment|limpez|hidrat|massag|pestan|depilac|peeling|micropigment|design|p[eé]s\b/i;
-      let ags: any[] = [];
-      try {
-        ags = await trinksFetchAll("agendamentos", { dataInicio: ini, dataFim: fim });
-      } catch (e: any) {
-        if (e?.status === 429 || /limit|429/i.test(e?.message || "")) {
-          return res.status(503).json({ ok: false, error: "Trinks recusou (429) agora. Tente daqui a pouco." });
+      // v106 — fonte canônica GMAIL/snapshot → API. Usa a agenda do SNAPSHOT (raw,
+      // 0 token) nos dias que já têm o shape da API (serviço+valor); a API só é
+      // consultada nos dias sem cobertura (normalmente só hoje, ou nada num mês
+      // fechado já capturado). Dedup por dia evita dupla contagem.
+      const ags: any[] = [];
+      const diasCobertos = new Set<string>();
+      { let d = ini; while (d <= fim) {
+        const s: any = await getSnapshot(d);
+        const raw = Array.isArray(s?.agendamentosRaw) ? s.agendamentosRaw : [];
+        if (raw.length && raw.some((a: any) => a?.servico?.nome != null)) { ags.push(...raw); diasCobertos.add(d); }
+        d = ymdAddDays(d, 1);
+      } }
+      const hojeEst = ymdHoje();
+      const fimGap = fim < hojeEst ? fim : hojeEst;
+      let precisaApi = false;
+      { let d = ini; while (d <= fimGap) { if (!diasCobertos.has(d)) { precisaApi = true; break; } d = ymdAddDays(d, 1); } }
+      if (precisaApi) {
+        try {
+          const apiAgs = await trinksFetchAll("agendamentos", { dataInicio: ini, dataFim: fim });
+          if (Array.isArray(apiAgs)) {
+            for (const a of apiAgs) {
+              const dd = String(a?.dataHoraInicio || a?.dataHora || a?.data || "").slice(0, 10);
+              if (dd && !diasCobertos.has(dd)) ags.push(a); // só os dias ainda não cobertos
+            }
+          }
+        } catch (e: any) {
+          // Se já tenho a agenda dos snapshots, sigo com o parcial em vez de falhar.
+          if (!ags.length) {
+            if (e?.status === 429 || /limit|429/i.test(e?.message || "")) {
+              return res.status(503).json({ ok: false, error: "Trinks recusou (429) agora. Tente daqui a pouco." });
+            }
+            throw e;
+          }
         }
-        throw e;
       }
       const porServ: Record<string, { qtd: number; valor: number; estetica: boolean }> = {};
       let totalEstetica = 0, qtdEstetica = 0;
@@ -12295,6 +12340,97 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     };
   }
 
+  // Constrói a produção por profissional da folha na FONTE CANÔNICA: RANKING CSV do
+  // mês (montarEquipeDeRanking, 0 token) primeiro, com produto comissionável EXATO por
+  // transação quando as tx cobrem ~todo o ranking (senão ratio do Ranking de Produtos).
+  // Sem ranking: mês passado → semRanking (a UI pede o CSV); mês corrente → cálculo ao
+  // vivo (snapshot raw + gap). Usada pela FOLHA e pelo RECIBO — assim as bases, o bônus
+  // e o saldo batem exatamente entre a tabela e o holerite.
+  async function construirPeriodoFolha(
+    mes: string, metas: any, dataInicio: string, dataFim: string, hoje: string, force: boolean,
+  ): Promise<{ periodo: any; periodoSemApi: boolean; semRanking: boolean }> {
+    const _eqRank = force ? null : await montarEquipeDeRanking(mes, metas);
+    if (_eqRank) {
+      // Ratio agregado de comissionável (Ranking de Produtos, BEBIDAS/DOCES=0%) —
+      // rede de segurança se o cálculo exato por transação não vier.
+      let ratioCom = 1;
+      try {
+        const rkProd: any = await kvGet(`trinks_import:rankingProdutos:${mes}`);
+        if (rkProd?.produtos?.length) {
+          const CAT_BOMB = new Set(["bebidas", "doces", "bomboniere"]);
+          let tRec = 0, tCom = 0;
+          for (const p of rkProd.produtos) { const v = Number(p.valor || 0); tRec += v; if (!CAT_BOMB.has(String(p.categoria || "").toLowerCase())) tCom += v; }
+          if (tRec > 0) ratioCom = tCom / tRec;
+        }
+      } catch { /* ratio=1 */ }
+      // Comissionável de produto EXATO por transação (snapshot raw 0-token + gap) +
+      // COMISSÃO exata pela % de cada produto; cai no ratio se as tx não cobrirem
+      // ~todo o produto do ranking (parcial no 429).
+      const normNm = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+      const exatoPorNome = new Map<string, { comissionavel: number; comissaoRS: number }>();
+      let exatoConfiavel = false;
+      try {
+        const ptx = await calcularPeriodoPorProfissional(dataInicio, dataFim);
+        const txProdBruto = ptx.totais?.produtosBruto || 0;
+        const rkProdBruto = _eqRank.totais?.produtosBruto || 0;
+        exatoConfiavel = rkProdBruto > 0 && txProdBruto >= 0.85 * rkProdBruto;
+        if (exatoConfiavel) {
+          for (const pp of Object.values(ptx.porProfissional) as any[]) {
+            const nn = normNm(pp.nome);
+            if (nn) exatoPorNome.set(nn, { comissionavel: pp.produtos?.liquidoComissionavel || 0, comissaoRS: pp.produtos?.comissaoRS || 0 });
+          }
+        }
+        log(`[folha ${mes}] produto comissionável: ${exatoConfiavel ? "EXATO por transação" : "ratio (tx parcial/ausente)"} — tx=${txProdBruto.toFixed(0)} rank=${rkProdBruto.toFixed(0)}`, "pagamento");
+      } catch (e: any) { log(`[folha ${mes}] exato produto falhou: ${e?.message} — usando ratio`, "pagamento"); }
+
+      const porProfissional: Record<string, any> = {};
+      let somaComiss = 0;
+      for (const [id, e] of _eqRank.byId) {
+        const sl = e.faturamento?.servicosLiquido || 0;
+        const pl = e.faturamento?.produtosLiquido || 0;
+        let comiss = pl * ratioCom;
+        let comissaoRS: number | undefined = undefined;
+        if (exatoConfiavel) {
+          const nomeRank = normNm(e.nome).split(/[-–—]/)[0].trim();
+          let ex = exatoPorNome.get(nomeRank);
+          if (ex == null) {
+            const tok = nomeRank.split(/\s+/)[0];
+            for (const [k, v] of exatoPorNome) { if (k === tok || k.startsWith(tok + " ") || k.includes(" " + tok)) { ex = v; break; } }
+          }
+          if (ex != null) { comiss = ex.comissionavel; comissaoRS = ex.comissaoRS; }
+        }
+        somaComiss += comiss;
+        porProfissional[id] = {
+          nome: e.nome,
+          servicos: { liquido: sl },
+          produtos: { liquido: pl, liquidoComissionavel: comiss, ...(comissaoRS != null ? { comissaoRS } : {}) },
+          plano: { reais: e.faturamento?.plano || 0 },
+          taxaCartao: 0,
+          custoInsumos: 0,
+        };
+      }
+      const tr = _eqRank.totais;
+      const periodo = {
+        porProfissional,
+        produtoComissaoFonte: exatoConfiavel ? "exato-transacao" : "ratio-csv",
+        totais: {
+          reais: tr.faturamento || 0, count: tr.atendimentos || 0,
+          servicosBruto: tr.servicosBruto || 0, servicosLiquido: tr.servicosLiquido || 0,
+          produtosBruto: tr.produtosBruto || 0, produtosLiquido: tr.produtosLiquido || 0,
+          produtosLiquidoComissionavel: exatoConfiavel ? somaComiss : (tr.produtosLiquido || 0) * ratioCom,
+          planoReais: tr.planoReais || 0,
+        },
+      };
+      return { periodo, periodoSemApi: true, semRanking: false };
+    }
+    if (mes < hoje.slice(0, 7) && !force) {
+      return { periodo: null, periodoSemApi: false, semRanking: true };
+    }
+    // Sem ranking (mês corrente antes do export) OU force → cálculo ao vivo (snapshot+gap).
+    const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
+    return { periodo, periodoSemApi: false, semRanking: false };
+  }
+
   // GET /api/pagamento/:mes — linha de pagamento de TODOS os profissionais com meta
   app.get("/api/pagamento/:mes", async (req: Request, res: Response) => {
     try {
@@ -12339,87 +12475,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       // mata a lentidão E a instabilidade — o "A pagar" oscilava porque a API caía no
       // 429 e devolvia produção parcial a cada carga. A API (calcularPeriodoPor
       // Profissional) só entra quando NÃO há ranking (mês corrente antes do export).
-      const _eqRank = force ? null : await montarEquipeDeRanking(mes, metas);
-      let periodo: any;
-      let periodoSemApi = false;
-      if (_eqRank) {
-        periodoSemApi = true;
-        // Ratio agregado de comissionável (do Ranking de Produtos, BEBIDAS/DOCES=0%).
-        // REDE DE SEGURANÇA: só é usado se o cálculo exato por transação não vier.
-        let ratioCom = 1;
-        try {
-          const rkProd: any = await kvGet(`trinks_import:rankingProdutos:${mes}`);
-          if (rkProd?.produtos?.length) {
-            const CAT_BOMB = new Set(["bebidas", "doces", "bomboniere"]);
-            let tRec = 0, tCom = 0;
-            for (const p of rkProd.produtos) { const v = Number(p.valor || 0); tRec += v; if (!CAT_BOMB.has(String(p.categoria || "").toLowerCase())) tCom += v; }
-            if (tRec > 0) ratioCom = tCom / tRec;
-          }
-        } catch { /* ratio=1 */ }
-
-        // v106 EXATO (decisão do dono 03/07): o comissionável de produto por pessoa
-        // vem das TRANSAÇÕES (bomboniere real de cada um, set `semComissao`), não do
-        // ratio. Fonte: snapshot raw (0 token) no mês corrente + API no gap/mês passado
-        // (dono autorizou o token pra exatidão). Só confia se as transações cobrem
-        // ~todo o produto do ranking (senão veio parcial no 429 → cai no ratio).
-        const normNm = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
-        // v109: além do comissionável, captura a COMISSÃO EXATA por transação (que já
-        // usa a % de CADA produto do catálogo). Assim a folha paga a % por produto.
-        const exatoPorNome = new Map<string, { comissionavel: number; comissaoRS: number }>();
-        let exatoConfiavel = false;
-        try {
-          const ptx = await calcularPeriodoPorProfissional(dataInicio, dataFim);
-          const txProdBruto = ptx.totais?.produtosBruto || 0;
-          const rkProdBruto = _eqRank.totais?.produtosBruto || 0;
-          exatoConfiavel = rkProdBruto > 0 && txProdBruto >= 0.85 * rkProdBruto;
-          if (exatoConfiavel) {
-            for (const pp of Object.values(ptx.porProfissional) as any[]) {
-              const nn = normNm(pp.nome);
-              if (nn) exatoPorNome.set(nn, { comissionavel: pp.produtos?.liquidoComissionavel || 0, comissaoRS: pp.produtos?.comissaoRS || 0 });
-            }
-          }
-          log(`[pagamento ${mes}] produto comissionável: ${exatoConfiavel ? "EXATO por transação (% por produto)" : "ratio (tx parcial/ausente)"} — tx=${txProdBruto.toFixed(0)} rank=${rkProdBruto.toFixed(0)}`, "pagamento");
-        } catch (e: any) { log(`[pagamento ${mes}] exato produto falhou: ${e?.message} — usando ratio`, "pagamento"); }
-
-        const porProfissional: Record<string, any> = {};
-        let somaComiss = 0;
-        for (const [id, e] of _eqRank.byId) {
-          const sl = e.faturamento?.servicosLiquido || 0;
-          const pl = e.faturamento?.produtosLiquido || 0;
-          let comiss = pl * ratioCom; // comissionável (fallback ratio)
-          let comissaoRS: number | undefined = undefined; // comissão exata (% por produto)
-          if (exatoConfiavel) {
-            const nomeRank = normNm(e.nome).split(/[-–—]/)[0].trim();
-            let ex = exatoPorNome.get(nomeRank);
-            if (ex == null) {
-              const tok = nomeRank.split(/\s+/)[0];
-              for (const [k, v] of exatoPorNome) { if (k === tok || k.startsWith(tok + " ") || k.includes(" " + tok)) { ex = v; break; } }
-            }
-            if (ex != null) { comiss = ex.comissionavel; comissaoRS = ex.comissaoRS; }
-          }
-          somaComiss += comiss;
-          porProfissional[id] = {
-            nome: e.nome,
-            servicos: { liquido: sl },
-            produtos: { liquido: pl, liquidoComissionavel: comiss, ...(comissaoRS != null ? { comissaoRS } : {}) },
-            plano: { reais: e.faturamento?.plano || 0 },
-            taxaCartao: 0,
-            custoInsumos: 0,
-          };
-        }
-        const tr = _eqRank.totais;
-        periodo = {
-          porProfissional,
-          produtoComissaoFonte: exatoConfiavel ? "exato-transacao" : "ratio-csv",
-          totais: {
-            reais: tr.faturamento || 0, count: tr.atendimentos || 0,
-            servicosBruto: tr.servicosBruto || 0, servicosLiquido: tr.servicosLiquido || 0,
-            produtosBruto: tr.produtosBruto || 0, produtosLiquido: tr.produtosLiquido || 0,
-            produtosLiquidoComissionavel: exatoConfiavel ? somaComiss : (tr.produtosLiquido || 0) * ratioCom,
-            planoReais: tr.planoReais || 0,
-          },
-        };
-      } else if (mes < hoje.slice(0, 7) && !force) {
+      const { periodo, periodoSemApi, semRanking } = await construirPeriodoFolha(mes, metas, dataInicio, dataFim, hoje, force);
+      if (semRanking) {
         // v103: mês PASSADO sem ranking → NÃO bate na API automático (seria o mês
         // inteiro). Folha vazia + flag semRanking pra a UI pedir o Ranking (0 token).
         // Força só com ?force=true (botão "Atualizar Trinks").
@@ -12436,9 +12493,6 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
             produtosBruto: 0, produtosLiquido: 0, planoReais: 0 },
           fetchedAt: new Date().toISOString(),
         });
-      } else {
-        // Sem ranking (mês corrente antes do export) OU force=true → cálculo ao vivo (gap/API).
-        periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
       }
 
       // Detecção de refetch falho: se force=true E o periodo veio vazio mas o backup tinha dados,
@@ -12694,12 +12748,14 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const dataFimReal = `${mes}-${String(ultimoDia).padStart(2, "0")}`;
       const hoje = ymdHoje();
       const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
-      const [periodo, meta, pagto] = await Promise.all([
-        calcularPeriodoPorProfissional(dataInicio, dataFim),
+      const [metas, meta, pagto] = await Promise.all([
+        getAllMetas(),
         getMeta(profId),
         getPagamentoMes(mes, profId),
       ]);
-      const profMes = periodo.porProfissional[profId];
+      // Mesma fonte da folha (ranking-first): o snapshot congelado bate com a tabela.
+      const { periodo } = await construirPeriodoFolha(mes, metas, dataInicio, dataFim, hoje, false);
+      const profMes = (periodo?.porProfissional || {})[profId];
       if (!profMes && !meta) return res.status(404).json({ ok: false, error: "Profissional sem dados nem meta no mês" });
       const linha = await calcularLinhaPagamento(mes, profId, profMes, meta, pagto);
       const snapshot = {
@@ -12754,12 +12810,15 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const hoje = ymdHoje();
       // Mesma janela do GET /api/pagamento — não calcula plano de dias futuros.
       const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
-      const [periodo, meta, pagto] = await Promise.all([
-        calcularPeriodoPorProfissional(dataInicio, dataFim),
+      const [metas, meta, pagto] = await Promise.all([
+        getAllMetas(),
         getMeta(profId),
         getPagamentoMes(mes, profId),
       ]);
-      const profMes = periodo.porProfissional[profId];
+      // Mesma fonte da folha (ranking-first, produto exato): bases, bônus e saldo do
+      // holerite batem com a tabela de Pagamentos.
+      const { periodo } = await construirPeriodoFolha(mes, metas, dataInicio, dataFim, hoje, false);
+      const profMes = (periodo?.porProfissional || {})[profId];
       const linha = await calcularLinhaPagamento(mes, profId, profMes, meta, pagto);
 
       // Se há snapshot fechado, prefere os valores travados (histórico fiel).

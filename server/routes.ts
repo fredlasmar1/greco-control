@@ -4516,7 +4516,12 @@ export async function registerRoutes(
     // API SÓ os dias que faltam (normalmente só hoje) — NUNCA repagina o mês.
     let snapshotsAgend: any[] = [];
     let snapshotsTrans: any[] = [];
-    const diasComRaw = new Set<string>();
+    // v111: cobertura de AGENDAMENTO e TRANSAÇÃO rastreadas SEPARADAS. O e-mail
+    // (Gmail) traz agendamentos mas NÃO transações — e o dinheiro por barbeiro está
+    // nas TRANSAÇÕES. Antes o dia era "coberto" por ter agendamento e a transação
+    // nunca era buscada → produção por barbeiro ZERAVA no mês corrente (email-only).
+    const diasComAgRaw = new Set<string>();
+    const diasComTrRaw = new Set<string>();
     const datas: string[] = [];
     { let cur = dataInicio; while (cur <= dataFim) { datas.push(cur); cur = ymdAddDays(cur, 1); } }
     try {
@@ -4526,19 +4531,19 @@ export async function registerRoutes(
         if (!s || s.fonte === "vazio") continue;
         const temAg = Array.isArray(s.agendamentosRaw) && s.agendamentosRaw.length > 0;
         const temTr = Array.isArray(s.transacoesRaw) && s.transacoesRaw.length > 0;
-        if (temAg) snapshotsAgend.push(...s.agendamentosRaw!);
-        if (temTr) snapshotsTrans.push(...s.transacoesRaw!);
-        if (temAg || temTr) diasComRaw.add(datas[i]);
+        if (temAg) { snapshotsAgend.push(...s.agendamentosRaw!); diasComAgRaw.add(datas[i]); }
+        if (temTr) { snapshotsTrans.push(...s.transacoesRaw!); diasComTrRaw.add(datas[i]); }
       }
-      log(`[periodo ${dataInicio}..${dataFim}] snapshot raw: ${diasComRaw.size}/${datas.length} dias — agend=${snapshotsAgend.length} trans=${snapshotsTrans.length}`, "equipe");
+      log(`[periodo ${dataInicio}..${dataFim}] snapshot raw: agend ${diasComAgRaw.size}/${datas.length}d trans ${diasComTrRaw.size}/${datas.length}d — agend=${snapshotsAgend.length} trans=${snapshotsTrans.length}`, "equipe");
     } catch (err: any) {
       log(`[periodo ${dataInicio}..${dataFim}] erro lendo snapshots: ${err?.message}`, "equipe");
     }
 
     const hojeSP_periodo = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
     const periodoEhPassado = dataFim < hojeSP_periodo;
-    // Dias SEM raw, só até hoje (futuro não tem dado). A API busca só esses.
-    const diasSemRaw = datas.filter(d => !diasComRaw.has(d) && d <= hojeSP_periodo);
+    // Dias sem cada tipo de raw, só até hoje (futuro não tem dado). A API busca o gap.
+    const diasSemAgRaw = datas.filter(d => !diasComAgRaw.has(d) && d <= hojeSP_periodo);
+    const diasSemTrRaw = datas.filter(d => !diasComTrRaw.has(d) && d <= hojeSP_periodo);
 
     // profissionais (cache 24h → ~0 token) — mapa nome↔id. Fallback metas se vazio.
     const profData = await Promise.race([
@@ -4567,20 +4572,23 @@ export async function registerRoutes(
     };
     let agendData: any[] = snapshotsAgend;
     let transData: any[] = snapshotsTrans;
-    // UNIFICADO (v108): qualquer mês lê o RAW dos snapshots (0 token) e busca na API
-    // SÓ os dias sem raw (o gap). Mês corrente → gap = hoje. Mês passado com raw
-    // (capturado pelo cron / backfill) → gap vazio = 0 token. Mês passado sem raw →
-    // gap = mês todo (5s timeout → parcial → o chamador cai no ratio, seguro). Antes
-    // o mês passado repaginava o mês inteiro sempre, e o timeout curto o zerava.
-    if (diasSemRaw.length > 0) {
-      const gapIni = diasSemRaw[0];
-      const gapFim = diasSemRaw[diasSemRaw.length - 1];
-      const gapTransFim = ymdAddDays(gapFim, 1);
-      const gapMs = periodoEhPassado ? 20000 : 5000; // mês passado: mais tempo pro fetch
-      log(`[periodo ${dataInicio}..${dataFim}] gap API: ${gapIni}..${gapFim} (${diasSemRaw.length} dia(s))`, "equipe");
-      const agGap = await withTimeout(trinksFetchAllRange("agendamentos", { dataInicio: gapIni, dataFim: gapFim }).catch(() => []), [], "agendamentos-gap", gapMs);
-      const trGap = await withTimeout(trinksFetchAllRange("transacoes", { dataInicio: gapIni, dataFim: gapTransFim }).catch(() => []), [], "transacoes-gap", gapMs);
+    // v111: gaps SEPARADOS. Lê o RAW dos snapshots (0 token) e busca na API só os
+    // dias que faltam de CADA tipo. Dia email-only (tem agendamento, não tem
+    // transação) agora busca as TRANSAÇÕES na API (onde está o R$ por barbeiro) —
+    // é o "API" do Gmail→API→CSV pro mês corrente. Cacheado (15min corrente / 6h
+    // passado) e protegido pelo hard-stop da cota. Timeout curto: se a API cair,
+    // vem parcial/vazio e o chamador trata (banner "suba o ranking").
+    const gapMs = periodoEhPassado ? 20000 : 5000;
+    if (diasSemAgRaw.length > 0) {
+      const gi = diasSemAgRaw[0], gf = diasSemAgRaw[diasSemAgRaw.length - 1];
+      log(`[periodo ${dataInicio}..${dataFim}] gap AGEND API: ${gi}..${gf} (${diasSemAgRaw.length}d)`, "equipe");
+      const agGap = await withTimeout(trinksFetchAllRange("agendamentos", { dataInicio: gi, dataFim: gf }).catch(() => []), [], "agendamentos-gap", gapMs);
       agendData = dedupe([...snapshotsAgend, ...(Array.isArray(agGap) ? agGap : [])], (a) => String(a.id || `${a.dataHoraInicio || a.data}|${a.cliente?.id}`));
+    }
+    if (diasSemTrRaw.length > 0) {
+      const gi = diasSemTrRaw[0], gf = diasSemTrRaw[diasSemTrRaw.length - 1];
+      log(`[periodo ${dataInicio}..${dataFim}] gap TRANS API: ${gi}..${gf} (${diasSemTrRaw.length}d)`, "equipe");
+      const trGap = await withTimeout(trinksFetchAllRange("transacoes", { dataInicio: gi, dataFim: ymdAddDays(gf, 1) }).catch(() => []), [], "transacoes-gap", gapMs);
       transData = dedupe([...snapshotsTrans, ...(Array.isArray(trGap) ? trGap : [])], (t) => String(t.id || `${t.dataHora}|${t.cliente?.id}`));
     }
     const profLista = profListaEffective; // v37.3: usa fallback de metas se Trinks zerou
@@ -12494,18 +12502,14 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     if (mes < hoje.slice(0, 7) && !force) {
       return { periodo: null, periodoSemApi: false, semRanking: true, aguardandoRanking: false };
     }
-    if (!force) {
-      // MÊS CORRENTE sem ranking: o Gmail NÃO traz produção por profissional (só o
-      // TOTAL da loja); a produção por barbeiro só vem do Ranking de Profissionais CSV
-      // (0 token). Em vez de derivar números frágeis dos agendamentos (que não têm
-      // valor por barbeiro) e acabar inventando gente, mostra a equipe das metas com
-      // produção 0 + aviso pra subir o ranking. O botão "Buscar na API" (force) faz o
-      // cálculo ao vivo por transação.
-      return { periodo: { porProfissional: {}, totais: null }, periodoSemApi: true, semRanking: false, aguardandoRanking: true };
-    }
-    // force=true ("Buscar na API") → cálculo ao vivo (snapshot raw + API gap).
+    // MÊS CORRENTE sem ranking (ou force): produção por barbeiro AO VIVO = snapshot
+    // do Gmail + TRANSAÇÕES da API (Gmail→API→CSV; v111 busca as transações dos dias
+    // email-only, onde está o R$ por barbeiro). Se a API não trouxer nada (429/vazio)
+    // e a produção ficar ~0, marca aguardandoRanking → a UI orienta a subir o Ranking
+    // de Profissionais (0 token, fonte definitiva).
     const periodo = await calcularPeriodoPorProfissional(dataInicio, dataFim);
-    return { periodo, periodoSemApi: false, semRanking: false, aguardandoRanking: false };
+    const semProducao = !((periodo?.totais?.reais || 0) > 0);
+    return { periodo, periodoSemApi: false, semRanking: false, aguardandoRanking: semProducao };
   }
 
   // GET /api/pagamento/:mes — linha de pagamento de TODOS os profissionais com meta

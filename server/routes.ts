@@ -4587,7 +4587,10 @@ export async function registerRoutes(
     const agendLista = Array.isArray(agendData) ? agendData : (agendData?.data || []);
     const transLista = Array.isArray(transData) ? transData : (transData?.data || []);
 
-    const norm = (s: any) => String(s || "").trim().toLowerCase();
+    // v110: tira ACENTO também — os apelidos dos agendamentos do Gmail vêm
+    // acentuados (ANDRÉ, CÉSAR, DÉBORA, JOSÉ) e precisam casar com as metas mesmo
+    // que a acentuação difira. Sem isso, só nomes sem acento resolviam.
+    const norm = (s: any) => String(s || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
     // ── Mapa ID novo → nome canonico, e nome canonico → ID primário ──
     const idNovoParaNome: Map<string, string> = new Map();

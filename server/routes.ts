@@ -12273,12 +12273,36 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const comissaoClubeGreco = Number(clubeGreco?.comissaoRS || 0);
     const excedente = Math.max(0, servicosLiquido - metaReais);
     const bonusExcedente = isSocio ? 0 : (excedente * pctBonusExcedente) / 100;
-    const totalBruto = comissaoServicos + comissaoProdutos + comissaoPlano + comissaoClubeGreco + bonusExcedente + salarioFixo;
+
+    // v107 — bônus "JANTAR" (valor fixo, decisão do dono 05/07): R$300 quando o
+    // profissional bate a META BRUTA de serviços da sua categoria no mês.
+    // VIP 30k · Clássico 15k · Express 10k · Estética 8k (tudo configurável em
+    // settings). SOMA ao bônus de excedente (dono escolheu "somar os dois"). Base =
+    // produção de serviços do ranking (Total Serviços = bruto). O sócio (André=VIP)
+    // TAMBÉM concorre a este bônus — só o top-1 e o excedente é que o excluem.
+    const bonusJantarReais = Number(storeData.settings?.bonusJantarReais ?? 300);
+    const _listaEstetica = ((storeData.settings?.profissionaisEstetica as string[] | undefined) || []).map(_normSocio).filter(Boolean);
+    const _ehEstetica = _listaEstetica.some((s) => _nomeSocio === s || _nomeSocio.includes(s) || s.includes(_nomeSocio));
+    const categoriaMeta: string = _ehEstetica ? "Estetica" : (categoriaPorApelidoRanking(profMes?.nome || meta?.nome || "") || "");
+    const _metasBrutas: Record<string, number> = {
+      VIP: Number(storeData.settings?.metaBrutaVipReais ?? 30000),
+      Classico: Number(storeData.settings?.metaBrutaClassicoReais ?? 15000),
+      Express: Number(storeData.settings?.metaBrutaExpressReais ?? 10000),
+      Estetica: Number(storeData.settings?.metaBrutaEsteticaReais ?? 8000),
+    };
+    const metaBrutaCategoria = _metasBrutas[categoriaMeta] || 0;
+    const servicosBruto = profMes?.servicos?.bruto ?? servicosLiquido; // ranking: bruto = Total Serviços
+    const bateuMetaCategoria = metaBrutaCategoria > 0 && servicosBruto >= metaBrutaCategoria;
+    const bonusMetaCategoria = bateuMetaCategoria ? bonusJantarReais : 0;
+
+    const totalBruto = comissaoServicos + comissaoProdutos + comissaoPlano + comissaoClubeGreco + bonusExcedente + bonusMetaCategoria + salarioFixo;
 
     const vale = Number(pagto?.vale || 0);
     const ajuste = Number(pagto?.ajuste || 0);
     const consumoInterno = Number(pagto?.consumoInterno || 0);
-    const saldoAReceber = totalBruto - vale - consumoInterno + ajuste;
+    const multa = Number(pagto?.multa || 0);                 // v107: multas por atraso/problemas
+    const comprasCartao = Number(pagto?.comprasCartao || 0); // v107: compras/cursos no cartão da barbearia
+    const saldoAReceber = totalBruto - vale - consumoInterno - multa - comprasCartao + ajuste;
 
     return {
       profissionalId,
@@ -12318,6 +12342,11 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         excedenteMeta: excedente,
         bonusExcedente,
         bonusRanking: 0,    // preenchido pelo caller pra top 1 de cada categoria
+        bonusMetaCategoria, // v107: jantar R$ por bater a meta bruta da categoria
+        categoriaMetaBruta: categoriaMeta,   // VIP/Classico/Express/Estetica
+        metaBrutaCategoria,                  // limiar aplicado
+        servicosBruto,                       // produção de serviços comparada ao limiar
+        bateuMetaCategoria,
         salarioFixo,
         totalBruto,
       },
@@ -12332,6 +12361,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         ajusteNota: pagto?.ajusteNota || "",
         consumoInterno,
         consumoInternoNota: pagto?.consumoInternoNota || "",
+        multa,
+        multaNota: pagto?.multaNota || "",
+        comprasCartao,
+        comprasCartaoNota: pagto?.comprasCartaoNota || "",
         saldoAReceber,
         fechado: !!pagto?.fechado,
         fechadoEm: pagto?.fechadoEm || null,
@@ -12402,7 +12435,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         somaComiss += comiss;
         porProfissional[id] = {
           nome: e.nome,
-          servicos: { liquido: sl },
+          servicos: { liquido: sl, bruto: e.faturamento?.servicosBruto ?? sl }, // bruto = Total Serviços do ranking (p/ meta de categoria)
           produtos: { liquido: pl, liquidoComissionavel: comiss, ...(comissaoRS != null ? { comissaoRS } : {}) },
           plano: { reais: e.faturamento?.plano || 0 },
           taxaCartao: 0,
@@ -12484,8 +12517,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         return res.json({
           ok: true, mes, dataInicio, dataFim, semRanking: true, linhas: [], clubeOrfaos: [],
           totais: { totalBruto: 0, totalComissaoServicos: 0, totalComissaoProdutos: 0, totalComissaoPlano: 0,
-            totalComissaoClubeGreco: 0, totalBonusExcedente: 0, totalBonusRanking: 0, totalSalarioFixo: 0,
-            totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalTaxaCartao: 0, totalSaldo: 0 },
+            totalComissaoClubeGreco: 0, totalBonusExcedente: 0, totalBonusRanking: 0, totalBonusMetaCategoria: 0, totalSalarioFixo: 0,
+            totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalMulta: 0, totalComprasCartao: 0, totalTaxaCartao: 0, totalSaldo: 0 },
           conferencia: { oficialTrinks: Number(_tm?.total || 0), producaoRankingServicos: 0, rankingServicos: 0,
             rankingProdutos: 0, planoVendido: 0, planoMensal: 0, apiPeriodo: 0,
             temRanking: false, temOficial: Number(_tm?.total || 0) > 0 },
@@ -12639,17 +12672,20 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         totalComissaoClubeGreco: acc.totalComissaoClubeGreco + l.calculos.comissaoClubeGreco,
         totalBonusExcedente: acc.totalBonusExcedente + l.calculos.bonusExcedente,
         totalBonusRanking: acc.totalBonusRanking + l.calculos.bonusRanking,
+        totalBonusMetaCategoria: acc.totalBonusMetaCategoria + (l.calculos.bonusMetaCategoria || 0),
         totalSalarioFixo: acc.totalSalarioFixo + l.calculos.salarioFixo,
         totalVale: acc.totalVale + l.pagamento.vale,
         totalAjuste: acc.totalAjuste + l.pagamento.ajuste,
         totalConsumoInterno: acc.totalConsumoInterno + l.pagamento.consumoInterno,
+        totalMulta: acc.totalMulta + (l.pagamento.multa || 0),
+        totalComprasCartao: acc.totalComprasCartao + (l.pagamento.comprasCartao || 0),
         totalTaxaCartao: acc.totalTaxaCartao + l.bases.taxaCartaoEstimada,
         totalSaldo: acc.totalSaldo + l.pagamento.saldoAReceber,
       }), {
         totalBruto: 0, totalComissaoServicos: 0, totalComissaoProdutos: 0,
         totalComissaoPlano: 0, totalComissaoClubeGreco: 0,
-        totalBonusExcedente: 0, totalBonusRanking: 0, totalSalarioFixo: 0,
-        totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalTaxaCartao: 0, totalSaldo: 0,
+        totalBonusExcedente: 0, totalBonusRanking: 0, totalBonusMetaCategoria: 0, totalSalarioFixo: 0,
+        totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalMulta: 0, totalComprasCartao: 0, totalTaxaCartao: 0, totalSaldo: 0,
       });
 
       // Conferência de fechamento (0 tokens): o total OFICIAL do mês vem do e-mail
@@ -12720,7 +12756,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const profId = String(req.params.profId || "");
       if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
       if (!profId) return res.status(400).json({ ok: false, error: "profId obrigatório" });
-      const { vale, valeNota, valePagoEm, ajuste, ajusteNota, consumoInterno, consumoInternoNota } = req.body || {};
+      const { vale, valeNota, valePagoEm, ajuste, ajusteNota, consumoInterno, consumoInternoNota,
+        multa, multaNota, comprasCartao, comprasCartaoNota } = req.body || {};
       const patch: any = {};
       if (vale !== undefined) patch.vale = Math.max(0, Number(vale) || 0);
       if (valeNota !== undefined) patch.valeNota = String(valeNota || "");
@@ -12729,6 +12766,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       if (ajusteNota !== undefined) patch.ajusteNota = String(ajusteNota || "");
       if (consumoInterno !== undefined) patch.consumoInterno = Math.max(0, Number(consumoInterno) || 0);
       if (consumoInternoNota !== undefined) patch.consumoInternoNota = String(consumoInternoNota || "");
+      if (multa !== undefined) patch.multa = Math.max(0, Number(multa) || 0);
+      if (multaNota !== undefined) patch.multaNota = String(multaNota || "");
+      if (comprasCartao !== undefined) patch.comprasCartao = Math.max(0, Number(comprasCartao) || 0);
+      if (comprasCartaoNota !== undefined) patch.comprasCartaoNota = String(comprasCartaoNota || "");
       const novo = await upsertPagamentoMes(mes, profId, patch);
       return res.json({ ok: true, pagamento: novo });
     } catch (err: any) {
@@ -12795,6 +12836,48 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }
+  });
+
+  // GET /api/caixinha/:ano — Caixinha de fim de ano. R$100 por DIA em que a LOJA
+  // INTEIRA vendeu ≥ R$5.000 (total da loja/dia, decisão do dono 05/07). Fonte
+  // canônica 0-token: snapshot diário do Gmail (faturamento.total), fallback CSV
+  // Caixa por dia. Fundo ÚNICO da equipe (não é por pessoa).
+  app.get("/api/caixinha/:ano", async (req: Request, res: Response) => {
+    try {
+      const ano = /^\d{4}$/.test(req.params.ano) ? req.params.ano : ymdHoje().slice(0, 4);
+      const THRESHOLD = Number(storeData.settings?.caixinhaThresholdReais ?? 5000);
+      const PER_DIA = Number(storeData.settings?.caixinhaPorDiaReais ?? 100);
+      const mesCorrente = ymdHoje().slice(0, 7);
+      const porMes: Record<string, { dias: number; reais: number }> = {};
+      const dias: { dia: string; total: number }[] = [];
+      for (let m = 1; m <= 12; m++) {
+        const mes = `${ano}-${String(m).padStart(2, "0")}`;
+        if (mes > mesCorrente) break; // não conta meses futuros
+        const porDia = new Map<string, number>();
+        try {
+          const snaps = await listSnapshotsDoMes(mes);
+          for (const s of snaps) { const t = Number(s?.faturamento?.total || 0); if (s?.data && t > 0) porDia.set(s.data, t); }
+        } catch { /* sem snapshot */ }
+        try {
+          const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+          if (Array.isArray(caixa?.rows)) {
+            const somaDia = new Map<string, number>();
+            for (const r of caixa.rows) { const d = String(r?.data || "").slice(0, 10); if (!d) continue; somaDia.set(d, (somaDia.get(d) || 0) + Number(r?.totalGeral || 0)); }
+            for (const [d, v] of somaDia) { if (!porDia.has(d) && v > 0) porDia.set(d, v); } // CSV preenche o que o Gmail não tem
+          }
+        } catch { /* sem CSV */ }
+        let diasMes = 0;
+        for (const [d, total] of porDia) { if (total >= THRESHOLD) { diasMes++; dias.push({ dia: d, total }); } }
+        if (diasMes > 0) porMes[mes] = { dias: diasMes, reais: diasMes * PER_DIA };
+      }
+      dias.sort((a, b) => b.dia.localeCompare(a.dia));
+      return res.json({
+        ok: true, ano, threshold: THRESHOLD, perDia: PER_DIA,
+        totalDias: dias.length, totalReais: dias.length * PER_DIA,
+        mesCorrente, mesCorrenteDias: porMes[mesCorrente]?.dias || 0, mesCorrenteReais: porMes[mesCorrente]?.reais || 0,
+        porMes, dias,
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
   // GET /api/pagamento/:mes/recibo/:profId — gera PDF do holerite

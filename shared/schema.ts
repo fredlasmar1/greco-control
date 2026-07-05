@@ -88,6 +88,16 @@ export interface Settings {
   // Top 1 assistente = mais faturamento em SERVIÇOS no mês entre os assistentes.
   bonusTop1BarbeiroReais?: number;          // default 150
   bonusTop1AssistenteReais?: number;        // default 150
+  // v107: Bônus "jantar" (valor fixo em R$) por bater a META BRUTA de serviços da
+  // categoria no mês. Soma AO bônus de excedente e ao top-1 (decisão do dono 05/07).
+  bonusJantarReais?: number;                // default 300
+  metaBrutaVipReais?: number;               // default 30000
+  metaBrutaClassicoReais?: number;          // default 15000
+  metaBrutaExpressReais?: number;           // default 10000
+  metaBrutaEsteticaReais?: number;          // default 8000
+  // v107: Caixinha de fim de ano — R$X por DIA em que a loja vender ≥ R$Y (total da loja).
+  caixinhaThresholdReais?: number;          // default 5000 (venda do dia da loja)
+  caixinhaPorDiaReais?: number;             // default 100 (vai pra caixinha por dia batido)
   // v32: Lista de NOMES dos profissionais que são ASSISTENTES (não barbeiros).
   // Ranking de assistente é separado do ranking de barbeiro.
   profissionaisAssistente?: string[];

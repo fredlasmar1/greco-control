@@ -23,6 +23,7 @@ import {
   Percent,
   Scissors,
   Package,
+  PiggyBank,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
@@ -72,6 +73,11 @@ type Linha = {
     excedenteMeta: number;
     bonusExcedente: number;
     bonusRanking: number;
+    bonusMetaCategoria?: number;
+    categoriaMetaBruta?: string;
+    metaBrutaCategoria?: number;
+    servicosBruto?: number;
+    bateuMetaCategoria?: boolean;
     salarioFixo: number;
     totalBruto: number;
   };
@@ -88,6 +94,10 @@ type Linha = {
     ajusteNota: string;
     consumoInterno: number;
     consumoInternoNota: string;
+    multa?: number;
+    multaNota?: string;
+    comprasCartao?: number;
+    comprasCartaoNota?: string;
     saldoAReceber: number;
     fechado: boolean;
   };
@@ -107,10 +117,13 @@ type RespApi = {
     totalComissaoClubeGreco?: number;
     totalBonusExcedente?: number;
     totalBonusRanking?: number;
+    totalBonusMetaCategoria?: number;
     totalSalarioFixo?: number;
     totalVale: number;
     totalAjuste: number;
     totalConsumoInterno: number;
+    totalMulta?: number;
+    totalComprasCartao?: number;
     totalTaxaCartao: number;
     totalSaldo: number;
   };
@@ -152,9 +165,10 @@ export default function Equipe() {
   const [loading, setLoading] = useState(false);
   const [buscandoApi, setBuscandoApi] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
-  const [edit, setEdit] = useState({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "", horaExtra: "" });
+  const [edit, setEdit] = useState({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "", multa: "", multaNota: "", comprasCartao: "", comprasCartaoNota: "", horaExtra: "" });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
+  const [caixinha, setCaixinha] = useState<{ totalReais: number; totalDias: number; mesCorrenteReais: number; mesCorrenteDias: number; threshold: number; perDia: number } | null>(null);
   const VALOR_HORA = 10; // R$ 10,00 / hora extra (regra do dono)
 
   // Caminho normal = 0 token (Ranking / gap do dia). force=1 só no botão "Buscar na API".
@@ -180,6 +194,10 @@ export default function Equipe() {
   };
 
   useEffect(() => { carregar(false); /* eslint-disable-next-line */ }, [mes]);
+  useEffect(() => {
+    const ano = mes.slice(0, 4);
+    authFetch(`/api/caixinha/${ano}`).then(r => r.json()).then(j => { if (j.ok) setCaixinha(j); }).catch(() => {});
+  }, [mes]);
 
   const iniciarEdicao = (l: Linha) => {
     if (l.pagamento.fechado) return;
@@ -191,12 +209,16 @@ export default function Equipe() {
       ajusteNota: l.pagamento.ajusteNota || "",
       consumoInterno: String(l.pagamento.consumoInterno || 0),
       consumoInternoNota: l.pagamento.consumoInternoNota || "",
+      multa: String(l.pagamento.multa || 0),
+      multaNota: l.pagamento.multaNota || "",
+      comprasCartao: String(l.pagamento.comprasCartao || 0),
+      comprasCartaoNota: l.pagamento.comprasCartaoNota || "",
       horaExtra: "",
     });
   };
   const cancelarEdicao = () => {
     setEditandoId(null);
-    setEdit({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "", horaExtra: "" });
+    setEdit({ vale: "", valeNota: "", ajuste: "", ajusteNota: "", consumoInterno: "", consumoInternoNota: "", multa: "", multaNota: "", comprasCartao: "", comprasCartaoNota: "", horaExtra: "" });
   };
   // Converte horas extras (× R$10) direto no campo Ajuste, com nota automática.
   const aplicarHoraExtra = () => {
@@ -218,6 +240,10 @@ export default function Equipe() {
           ajusteNota: edit.ajusteNota,
           consumoInterno: Number(edit.consumoInterno.replace(",", ".")) || 0,
           consumoInternoNota: edit.consumoInternoNota,
+          multa: Number(edit.multa.replace(",", ".")) || 0,
+          multaNota: edit.multaNota,
+          comprasCartao: Number(edit.comprasCartao.replace(",", ".")) || 0,
+          comprasCartaoNota: edit.comprasCartaoNota,
         }),
       });
       const j = await r.json();
@@ -244,7 +270,7 @@ export default function Equipe() {
         ...l,
         _producao: (l.bases.servicosLiquido || 0) + (l.bases.produtosLiquidoTotal || 0),
         _comissaoTotal: l.calculos.comissaoServicos + l.calculos.comissaoProdutos + l.calculos.comissaoPlano + l.calculos.comissaoClubeGreco,
-        _bonus: l.calculos.bonusExcedente + l.calculos.bonusRanking,
+        _bonus: l.calculos.bonusExcedente + l.calculos.bonusRanking + (l.calculos.bonusMetaCategoria || 0),
       }))
       .filter(l =>
         l.calculos.totalBruto > 0 || l._producao > 0 ||
@@ -375,6 +401,33 @@ export default function Equipe() {
           sub={`Produtos: R$ ${fmtBRL(data?.totais.totalComissaoProdutos || 0)}`} />
       </div>
 
+      {/* ── Caixinha de fim de ano (fundo único da equipe) ── */}
+      {caixinha && (
+        <Card className="bg-card border-card-border border-amber-500/40">
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-amber-500/15 flex items-center justify-center flex-shrink-0"><PiggyBank className="w-5 h-5 text-amber-500" /></div>
+              <div>
+                <p className="text-sm font-semibold">🐷 Caixinha de fim de ano <span className="text-xs font-normal text-muted-foreground">· {mes.slice(0, 4)}</span></p>
+                <p className="text-[11px] text-muted-foreground">R$ {fmtBRL(caixinha.perDia)} por dia em que a loja vendeu ≥ R$ {fmtBRL(caixinha.threshold)} (fundo único da equipe).</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-6">
+              <div className="text-right">
+                <p className="text-[11px] text-muted-foreground">Este mês</p>
+                <p className="text-lg font-bold text-amber-600">R$ {fmtBRL(caixinha.mesCorrenteReais)}</p>
+                <p className="text-[10px] text-muted-foreground">{caixinha.mesCorrenteDias} dia{caixinha.mesCorrenteDias !== 1 ? "s" : ""}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[11px] text-muted-foreground">Acumulado no ano</p>
+                <p className="text-2xl font-bold text-amber-500">R$ {fmtBRL(caixinha.totalReais)}</p>
+                <p className="text-[10px] text-muted-foreground">{caixinha.totalDias} dia{caixinha.totalDias !== 1 ? "s" : ""} batidos</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Composição da folha (4 blocos) ── */}
       {data && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -392,9 +445,10 @@ export default function Equipe() {
           <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3">
             <div className="text-[10px] uppercase tracking-wide text-yellow-500 font-semibold mb-2">Bônus</div>
             <div className="space-y-1 text-xs">
+              <Row label="🍽️ Jantar (meta categoria)" valor={data.totais.totalBonusMetaCategoria || 0} />
               <Row label="🥇 Top 1 (barbeiro + assist.)" valor={data.totais.totalBonusRanking || 0} />
               <Row label="Excedente de meta" valor={data.totais.totalBonusExcedente || 0} />
-              {(data.totais.totalBonusRanking || 0) + (data.totais.totalBonusExcedente || 0) === 0 && (
+              {(data.totais.totalBonusRanking || 0) + (data.totais.totalBonusExcedente || 0) + (data.totais.totalBonusMetaCategoria || 0) === 0 && (
                 <div className="text-muted-foreground italic">Sem bônus.</div>
               )}
             </div>
@@ -413,6 +467,8 @@ export default function Equipe() {
             <div className="space-y-1 text-xs">
               <Row label="Vales" valor={-(data.totais.totalVale || 0)} />
               <Row label="Consumo interno" valor={-(data.totais.totalConsumoInterno || 0)} />
+              <Row label="Multas" valor={-(data.totais.totalMulta || 0)} />
+              <Row label="Compras/cursos no cartão" valor={-(data.totais.totalComprasCartao || 0)} />
               <Row label="Ajustes" valor={data.totais.totalAjuste || 0} />
             </div>
           </div>
@@ -460,7 +516,7 @@ export default function Equipe() {
                     const editando = editandoId === l.profissionalId;
                     const expandido = expandedId === l.profissionalId;
                     const pct = producaoEquipe > 0 ? (l._producao / producaoEquipe) * 100 : 0;
-                    const descontos = l.pagamento.vale + l.pagamento.consumoInterno - l.pagamento.ajuste;
+                    const descontos = l.pagamento.vale + l.pagamento.consumoInterno + (l.pagamento.multa || 0) + (l.pagamento.comprasCartao || 0) - l.pagamento.ajuste;
                     return (
                       <Fragment key={l.profissionalId}>
                         <tr
@@ -528,12 +584,16 @@ export default function Equipe() {
                             {editando ? (
                               <div className="flex flex-col items-end gap-1" onClick={e => e.stopPropagation()}>
                                 <Input type="number" step="0.01" value={edit.vale} onChange={e => setEdit({ ...edit, vale: e.target.value })} className="w-24 h-7 text-right text-xs" placeholder="vale" />
+                                <Input type="number" step="0.01" value={edit.multa} onChange={e => setEdit({ ...edit, multa: e.target.value })} className="w-24 h-7 text-right text-xs" placeholder="multa" />
+                                <Input type="number" step="0.01" value={edit.comprasCartao} onChange={e => setEdit({ ...edit, comprasCartao: e.target.value })} className="w-24 h-7 text-right text-xs" placeholder="compras cartão" />
                                 <Input type="number" step="0.01" value={edit.ajuste} onChange={e => setEdit({ ...edit, ajuste: e.target.value })} className="w-24 h-7 text-right text-xs" placeholder="ajuste ±" />
                               </div>
                             ) : (
                               <div className="text-[11px]">
                                 {l.pagamento.vale > 0 && <div className="text-red-500">−{fmtBRL(l.pagamento.vale)} vale</div>}
                                 {l.pagamento.consumoInterno > 0 && <div className="text-red-500">−{fmtBRL(l.pagamento.consumoInterno)} cons.</div>}
+                                {(l.pagamento.multa || 0) > 0 && <div className="text-red-500">−{fmtBRL(l.pagamento.multa || 0)} multa</div>}
+                                {(l.pagamento.comprasCartao || 0) > 0 && <div className="text-red-500">−{fmtBRL(l.pagamento.comprasCartao || 0)} cartão</div>}
                                 {l.pagamento.ajuste !== 0 && <div className={l.pagamento.ajuste > 0 ? "text-emerald-500" : "text-red-500"}>{l.pagamento.ajuste > 0 ? "+" : "−"}{fmtBRL(Math.abs(l.pagamento.ajuste))} aj.</div>}
                                 {descontos === 0 && l.pagamento.ajuste === 0 && <span className="text-muted-foreground">—</span>}
                               </div>
@@ -580,17 +640,21 @@ export default function Equipe() {
                                 </div>
                                 <div className="space-y-1">
                                   <div className="text-[10px] uppercase tracking-wide text-yellow-500 font-semibold mb-1">Bônus & Fixo</div>
+                                  {(l.calculos.bonusMetaCategoria || 0) > 0 && <Row label={`🍽️ Jantar — bateu meta ${l.calculos.categoriaMetaBruta || ""} (${fmtBRL(l.calculos.servicosBruto || 0)} ≥ ${fmtBRL(l.calculos.metaBrutaCategoria || 0)})`} valor={l.calculos.bonusMetaCategoria || 0} />}
+                                  {(l.calculos.bonusMetaCategoria || 0) === 0 && (l.calculos.metaBrutaCategoria || 0) > 0 && <div className="text-[10px] text-muted-foreground">Jantar {l.calculos.categoriaMetaBruta}: falta {fmtBRL(Math.max(0, (l.calculos.metaBrutaCategoria || 0) - (l.calculos.servicosBruto || 0)))} pra bater {fmtBRL(l.calculos.metaBrutaCategoria || 0)}</div>}
                                   {l.calculos.bonusRanking > 0 && <Row label={`🥇 Top 1 ${l.categoriaRanking === "assistente" ? "Assistente" : "Barbeiro"}`} valor={l.calculos.bonusRanking} />}
                                   {l.percentuais.pctBonusExcedente > 0 && <Row label={`Excedente meta (${l.percentuais.pctBonusExcedente}% × ${fmtBRL(l.calculos.excedenteMeta)})`} valor={l.calculos.bonusExcedente} />}
                                   {l.percentuais.salarioFixo > 0 && <Row label="Salário fixo" valor={l.percentuais.salarioFixo} />}
-                                  {l._bonus === 0 && l.percentuais.salarioFixo === 0 && <div className="text-muted-foreground italic">Sem bônus/fixo.</div>}
+                                  {l._bonus === 0 && l.percentuais.salarioFixo === 0 && (l.calculos.metaBrutaCategoria || 0) === 0 && <div className="text-muted-foreground italic">Sem bônus/fixo.</div>}
                                 </div>
                                 <div className="space-y-1">
                                   <div className="text-[10px] uppercase tracking-wide text-red-500 font-semibold mb-1 flex items-center gap-1"><Package className="w-3 h-3" />Descontos / Ajustes</div>
                                   {l.pagamento.vale > 0 && <Row label={`Vale${l.pagamento.valeNota ? ` — ${l.pagamento.valeNota}` : ""}`} valor={-l.pagamento.vale} />}
                                   {l.pagamento.consumoInterno > 0 && <Row label={`Consumo${l.pagamento.consumoInternoNota ? ` — ${l.pagamento.consumoInternoNota}` : ""}`} valor={-l.pagamento.consumoInterno} />}
+                                  {(l.pagamento.multa || 0) > 0 && <Row label={`Multa${l.pagamento.multaNota ? ` — ${l.pagamento.multaNota}` : ""}`} valor={-(l.pagamento.multa || 0)} />}
+                                  {(l.pagamento.comprasCartao || 0) > 0 && <Row label={`Compras/cursos no cartão${l.pagamento.comprasCartaoNota ? ` — ${l.pagamento.comprasCartaoNota}` : ""}`} valor={-(l.pagamento.comprasCartao || 0)} />}
                                   {l.pagamento.ajuste !== 0 && <Row label={`Ajuste${l.pagamento.ajusteNota ? ` — ${l.pagamento.ajusteNota}` : ""}`} valor={l.pagamento.ajuste} />}
-                                  {l.pagamento.vale === 0 && l.pagamento.consumoInterno === 0 && l.pagamento.ajuste === 0 && <div className="text-muted-foreground italic">Sem descontos.</div>}
+                                  {l.pagamento.vale === 0 && l.pagamento.consumoInterno === 0 && (l.pagamento.multa || 0) === 0 && (l.pagamento.comprasCartao || 0) === 0 && l.pagamento.ajuste === 0 && <div className="text-muted-foreground italic">Sem descontos.</div>}
                                 </div>
                               </div>
                               {editando && (
@@ -610,6 +674,8 @@ export default function Equipe() {
                                   <div><label className="text-[10px] text-muted-foreground block mb-1">Nota do vale</label><Input value={edit.valeNota} onChange={e => setEdit({ ...edit, valeNota: e.target.value })} className="h-8 text-xs" placeholder="opcional" /></div>
                                   <div><label className="text-[10px] text-muted-foreground block mb-1">Nota do consumo</label><Input value={edit.consumoInternoNota} onChange={e => setEdit({ ...edit, consumoInternoNota: e.target.value })} className="h-8 text-xs" placeholder="ex: 2 cervejas" /></div>
                                   <div><label className="text-[10px] text-muted-foreground block mb-1">Nota do ajuste</label><Input value={edit.ajusteNota} onChange={e => setEdit({ ...edit, ajusteNota: e.target.value })} className="h-8 text-xs" placeholder="ex: horas extras, falta, prêmio" /></div>
+                                  <div><label className="text-[10px] text-muted-foreground block mb-1">Nota da multa</label><Input value={edit.multaNota} onChange={e => setEdit({ ...edit, multaNota: e.target.value })} className="h-8 text-xs" placeholder="ex: atraso 3 dias" /></div>
+                                  <div><label className="text-[10px] text-muted-foreground block mb-1">Nota compras/cursos no cartão</label><Input value={edit.comprasCartaoNota} onChange={e => setEdit({ ...edit, comprasCartaoNota: e.target.value })} className="h-8 text-xs" placeholder="ex: curso de barba R$ 200" /></div>
                                 </div>
                                 </div>
                               )}

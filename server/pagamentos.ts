@@ -18,6 +18,10 @@ export interface PagamentoMes {
   ajusteNota?: string;
   consumoInterno: number;     // consumo interno do barbeiro no mês (desconta do saldo)
   consumoInternoNota?: string;
+  multa: number;              // v107: multas por atraso/problemas (desconta do saldo)
+  multaNota?: string;
+  comprasCartao: number;      // v107: compras/cursos no cartão da barbearia (desconta)
+  comprasCartaoNota?: string;
   fechado: boolean;      // se true, snapshot é imutável
   fechadoEm?: string;    // ISO
   // Snapshot dos valores no momento do fechamento (preservado para histórico
@@ -94,6 +98,8 @@ export async function upsertPagamentoMes(
     vale: 0,
     ajuste: 0,
     consumoInterno: 0,
+    multa: 0,
+    comprasCartao: 0,
     fechado: false,
     atualizadoEm: new Date().toISOString(),
   };
@@ -122,7 +128,7 @@ export async function fecharMes(
   const all = await loadAll();
   if (!all[mes]) all[mes] = {};
   const atual = all[mes][profissionalId] || {
-    profissionalId, mes, vale: 0, ajuste: 0, consumoInterno: 0, fechado: false,
+    profissionalId, mes, vale: 0, ajuste: 0, consumoInterno: 0, multa: 0, comprasCartao: 0, fechado: false,
     atualizadoEm: new Date().toISOString(),
   };
   const novo: PagamentoMes = {

@@ -4592,12 +4592,23 @@ export async function registerRoutes(
     // ── Mapa ID novo → nome canonico, e nome canonico → ID primário ──
     const idNovoParaNome: Map<string, string> = new Map();
     const nomeParaIdPrimario: Map<string, string> = new Map();
+    // token (apelido/1º nome) → ids que o possuem. Resolve nome parcial só quando é
+    // INEQUÍVOCO (1 dono) — ex.: agendamento do Gmail traz "ANDRÉ" com id hasheado;
+    // casa "andré" ⊂ "CARLOS ANDRÉ" sem inventar profissional.
+    const tokenParaIds: Map<string, Set<string>> = new Map();
+    const regToken = (tok: string, id: string) => { const k = norm(tok); if (k.length < 3) return; const s = tokenParaIds.get(k) || new Set<string>(); s.add(id); tokenParaIds.set(k, s); };
+    const regNomeId = (nome: any, id: string) => {
+      const n = String(nome || "").trim(); if (!n || !id) return;
+      if (!nomeParaIdPrimario.has(norm(n))) nomeParaIdPrimario.set(norm(n), id);
+      n.split(/\s+/).forEach((tok: string) => regToken(tok, id));
+    };
     profLista.forEach((p: any) => {
       const id = String(p.id);
       const nome = (p.nome || p.apelido || "").trim();
       if (!id || !nome) return;
       idNovoParaNome.set(id, nome);
-      if (!nomeParaIdPrimario.has(norm(nome))) nomeParaIdPrimario.set(norm(nome), id);
+      regNomeId(nome, id);
+      if (p.apelido) regNomeId(p.apelido, id);
     });
     // v39.1: dicionário manual de IDs (Configurações → profissionais conhecidos).
     // Essencial quando a API Trinks está bloqueada: resolve IDs legados
@@ -4608,7 +4619,7 @@ export async function registerRoutes(
         const n = String(nome || "").trim();
         if (!id || !n) continue;
         idNovoParaNome.set(String(id), n);
-        if (!nomeParaIdPrimario.has(norm(n))) nomeParaIdPrimario.set(norm(n), String(id));
+        regNomeId(n, String(id));
       }
     } catch { /* ignora */ }
 
@@ -4659,20 +4670,41 @@ export async function registerRoutes(
       if (melhorNome) idLegadoParaNome.set(idLeg, melhorNome);
     });
 
-    // Resolve qualquer ID (novo ou legado) → { nome, idPrimario }.
+    // v110: nome que o PRÓPRIO agendamento/transação carrega (ex.: snapshot do Gmail
+    // traz profissional.nome="ANDRÉ" mesmo com id hasheado). Resolve pro profissional
+    // REAL pelo nome em vez de inventar "Profissional {hash}".
+    const idParaNomeDireto = new Map<string, string>();
+    const registrarDireto = (pid: any, pnome: any) => {
+      const idd = String(pid || ""); const nome = String(pnome || "").trim();
+      if (idd && nome && !idParaNomeDireto.has(idd)) idParaNomeDireto.set(idd, nome);
+    };
+    agendLista.forEach((a: any) => registrarDireto(a.profissionalId || a.profissional?.id, a.profissional?.nome || a.profissional?.apelido));
+    transLista.forEach((t: any) => registrarDireto(t.profissionalId || t.profissional?.id, t.profissional?.nome || t.profissional?.apelido));
+    // Resolve um NOME → id primário: exato, senão por token (apelido/1º nome) só se INEQUÍVOCO.
+    const resolveIdPorNome = (nm: string): string | null => {
+      const k = norm(nm); if (!k) return null;
+      const exato = nomeParaIdPrimario.get(k); if (exato) return exato;
+      const tk = tokenParaIds.get(k); if (tk && tk.size === 1) return [...tk][0];
+      const first = norm(String(nm).split(/\s+/)[0]);
+      const tf = tokenParaIds.get(first); if (tf && tf.size === 1) return [...tf][0];
+      return null;
+    };
+
+    // Resolve qualquer ID (novo, legado ou hash do Gmail/CSV) → { nome, idPrimario }.
+    // idPrimario "invent:<id>" (não resolveu a um profissional real) é filtrado na folha.
     const resolveProf = (id: string): { nome: string; idPrimario: string } | null => {
       if (!id) return null;
       // 1º ID novo direto
       const nomeNovo = idNovoParaNome.get(id);
-      if (nomeNovo) return { nome: nomeNovo, idPrimario: nomeParaIdPrimario.get(norm(nomeNovo)) || id };
-      // 2º ID legado mapeado por heurística
+      if (nomeNovo) return { nome: nomeNovo, idPrimario: nomeParaIdPrimario.get(norm(nomeNovo)) || resolveIdPorNome(nomeNovo) || id };
+      // 2º ID legado mapeado por heurística (cruzamento data+cliente)
       const nomeLeg = idLegadoParaNome.get(id);
-      if (nomeLeg) {
-        const idPrim = nomeParaIdPrimario.get(norm(nomeLeg)) || id;
-        return { nome: nomeLeg, idPrimario: idPrim };
-      }
-      // 3º desconhecido: usa o próprio ID
-      return { nome: `Profissional ${id}`, idPrimario: id };
+      if (nomeLeg) { const idp = resolveIdPorNome(nomeLeg); return { nome: nomeLeg, idPrimario: idp || id }; }
+      // 3º nome que o próprio agendamento/transação carrega → resolve o hash pelo nome
+      const nomeDir = idParaNomeDireto.get(id);
+      if (nomeDir) { const idp = resolveIdPorNome(nomeDir); if (idp) return { nome: idNovoParaNome.get(idp) || nomeDir, idPrimario: idp }; }
+      // 4º desconhecido: NÃO inventa profissional — marca idPrimario pra ser filtrado.
+      return { nome: `Profissional ${id}`, idPrimario: `invent:${id}` };
     };
 
     // Agrega por idPrimario (canonico)
@@ -12551,7 +12583,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       }
 
       const ids = new Set<string>();
-      Object.keys(periodo.porProfissional).forEach(id => ids.add(id));
+      // v110: NÃO inventar profissionais. Ids "invent:<x>" (produção que o
+      // calcularPeriodoPorProfissional não conseguiu casar com um profissional real —
+      // ex.: hash de agendamento do Gmail sem meta) ficam DE FORA da folha.
+      Object.keys(periodo.porProfissional).forEach(id => { if (!String(id).startsWith("invent:")) ids.add(id); });
       Object.keys(metas).forEach(id => ids.add(id));
 
       // ─── Comissão Clube Greco por seller no mês ───

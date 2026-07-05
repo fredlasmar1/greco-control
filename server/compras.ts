@@ -25,6 +25,34 @@ export const CATEGORIAS_COMPRA = [
   "Outros",
 ] as const;
 
+/**
+ * Natureza padrão de cada categoria: custo FIXO (todo mês, previsível — aluguel,
+ * salário, luz, imposto, software) ou VARIÁVEL (varia com o movimento — produtos,
+ * bebidas, limpeza, marketing). É só o palpite inicial; cada compra pode ser
+ * ajustada individualmente pelo dono na tela.
+ */
+export const NATUREZA_PADRAO: Record<string, "fixo" | "variavel"> = {
+  "Salários & Equipe": "fixo",
+  "Aluguel": "fixo",
+  "Contas & Utilidades": "fixo",
+  "Impostos & Contador": "fixo",
+  "Software & Sistemas": "fixo",
+  "Produtos & Insumos": "variavel",
+  "Bebidas & Bomboniere": "variavel",
+  "Limpeza & Higiene": "variavel",
+  "Manutenção & Reparos": "variavel",
+  "Equipamentos & Móveis": "variavel",
+  "Marketing & Publicidade": "variavel",
+  "Alimentação": "variavel",
+  "Outros": "variavel",
+};
+
+/** Natureza de uma compra: usa o que foi definido na compra, senão o padrão da categoria. */
+export function naturezaDaCompra(c: { natureza?: string; categoria?: string }): "fixo" | "variavel" {
+  if (c.natureza === "fixo" || c.natureza === "variavel") return c.natureza;
+  return NATUREZA_PADRAO[c.categoria || "Outros"] || "variavel";
+}
+
 export interface Compra {
   id: string;
   mes: string;          // YYYY-MM (bucket)
@@ -32,6 +60,7 @@ export interface Compra {
   valor: number;        // positivo, em reais
   loja: string;         // beneficiário / estabelecimento
   categoria: string;
+  natureza?: "fixo" | "variavel"; // custo fixo x variável (default: pela categoria)
   descricao?: string;
   tipo: "pix" | "compra" | "boleto" | "outro";
   origem: "telegram" | "manual";
@@ -88,16 +117,19 @@ export async function removerCompra(mes: string, id: string): Promise<boolean> {
 export function resumoCompras(compras: Compra[]) {
   const total = compras.reduce((s, c) => s + (Number(c.valor) || 0), 0);
   const porCategoria: Record<string, { total: number; count: number }> = {};
+  let fixo = 0, variavel = 0;
   for (const c of compras) {
     const k = c.categoria || "Outros";
     if (!porCategoria[k]) porCategoria[k] = { total: 0, count: 0 };
-    porCategoria[k].total += Number(c.valor) || 0;
+    const v = Number(c.valor) || 0;
+    porCategoria[k].total += v;
     porCategoria[k].count += 1;
+    if (naturezaDaCompra(c) === "fixo") fixo += v; else variavel += v;
   }
   const categorias = Object.entries(porCategoria)
     .map(([nome, v]) => ({ nome, ...v }))
     .sort((a, b) => b.total - a.total);
-  return { total, count: compras.length, categorias };
+  return { total, count: compras.length, categorias, fixo, variavel };
 }
 
 /** Normaliza a categoria vinda da IA pra uma das oficiais (fallback Outros). */

@@ -57,7 +57,16 @@ import {
   resumoCompras,
   normalizarCategoria,
   CATEGORIAS_COMPRA,
+  NATUREZA_PADRAO,
 } from "./compras";
+import {
+  listarAgenda,
+  salvarAgendaItem,
+  atualizarAgendaItem,
+  removerAgendaItem,
+  resumoAgenda,
+  gerarRecorrentes,
+} from "./agenda";
 import {
   getAllMetas,
   getMeta,
@@ -10949,7 +10958,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     try {
       const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : mesHojeSP();
       const compras = await listarCompras(mes);
-      return res.json({ ok: true, mes, compras, resumo: resumoCompras(compras), categorias: CATEGORIAS_COMPRA });
+      return res.json({ ok: true, mes, compras, resumo: resumoCompras(compras), categorias: CATEGORIAS_COMPRA, naturezaPadrao: NATUREZA_PADRAO });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
   app.post("/api/compras/:mes", async (req: Request, res: Response) => {
@@ -10960,6 +10969,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const nova = await salvarCompra({
         mes: data.slice(0, 7), data, valor: Math.abs(Number(b.valor) || 0),
         loja: String(b.loja || "—"), categoria: normalizarCategoria(b.categoria),
+        natureza: b.natureza === "fixo" || b.natureza === "variavel" ? b.natureza : undefined,
         descricao: String(b.descricao || ""), tipo: b.tipo || "compra", origem: "manual",
       });
       return res.json({ ok: true, compra: nova });
@@ -10973,6 +10983,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       if (b.valor != null) patch.valor = Math.abs(Number(b.valor) || 0);
       if (b.loja != null) patch.loja = String(b.loja);
       if (b.categoria != null) patch.categoria = normalizarCategoria(b.categoria);
+      if (b.natureza === "fixo" || b.natureza === "variavel") patch.natureza = b.natureza;
       if (b.descricao != null) patch.descricao = String(b.descricao);
       if (b.data != null && /^\d{4}-\d{2}-\d{2}$/.test(String(b.data))) patch.data = String(b.data);
       if (b.tipo != null) patch.tipo = b.tipo;
@@ -11000,6 +11011,93 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       res.setHeader("Cache-Control", "private, max-age=3600");
       return res.send(buf);
     } catch { return res.status(500).send("erro"); }
+  });
+
+  // ── Agenda de Pagamentos (dentro da aba Compras do Mês) ───────────────────
+  // O que a barbearia TEM A PAGAR e QUANDO. Marcar "pago" gera uma Compra.
+  app.get("/api/agenda/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : mesHojeSP();
+      const itens = await listarAgenda(mes);
+      return res.json({ ok: true, mes, hoje: dataHojeSP(), itens, resumo: resumoAgenda(itens, dataHojeSP()), categorias: CATEGORIAS_COMPRA, naturezaPadrao: NATUREZA_PADRAO });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  app.post("/api/agenda/:mes", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const b = req.body || {};
+      const venc = /^\d{4}-\d{2}-\d{2}$/.test(String(b.vencimento || "")) ? String(b.vencimento) : dataHojeSP();
+      const categoria = normalizarCategoria(b.categoria);
+      const natureza = b.natureza === "fixo" || b.natureza === "variavel" ? b.natureza : (NATUREZA_PADRAO[categoria] || "variavel");
+      const novo = await salvarAgendaItem({
+        mes: venc.slice(0, 7), vencimento: venc,
+        descricao: String(b.descricao || "").trim() || "Pagamento",
+        beneficiario: String(b.beneficiario || "—").trim(),
+        valor: Math.abs(Number(b.valor) || 0), categoria, natureza,
+        recorrente: !!b.recorrente, status: "pendente",
+      });
+      return res.json({ ok: true, item: novo });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  app.put("/api/agenda/:mes/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const b = req.body || {}; const patch: any = {};
+      if (b.vencimento != null && /^\d{4}-\d{2}-\d{2}$/.test(String(b.vencimento))) patch.vencimento = String(b.vencimento);
+      if (b.descricao != null) patch.descricao = String(b.descricao);
+      if (b.beneficiario != null) patch.beneficiario = String(b.beneficiario);
+      if (b.valor != null) patch.valor = Math.abs(Number(b.valor) || 0);
+      if (b.categoria != null) patch.categoria = normalizarCategoria(b.categoria);
+      if (b.natureza === "fixo" || b.natureza === "variavel") patch.natureza = b.natureza;
+      if (b.recorrente != null) patch.recorrente = !!b.recorrente;
+      if (b.status === "pendente" || b.status === "pago") patch.status = b.status;
+      const upd = await atualizarAgendaItem(req.params.mes, req.params.id, patch);
+      if (!upd) return res.status(404).json({ ok: false, error: "não encontrado" });
+      return res.json({ ok: true, item: upd });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  app.delete("/api/agenda/:mes/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const ok = await removerAgendaItem(req.params.mes, req.params.id);
+      return res.json({ ok });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  // Marca pago e (por padrão) lança uma Compra no mês, pra não digitar duas vezes.
+  app.post("/api/agenda/:mes/:id/pagar", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const mes = req.params.mes;
+      const itens = await listarAgenda(mes);
+      const it = itens.find(x => x.id === req.params.id);
+      if (!it) return res.status(404).json({ ok: false, error: "não encontrado" });
+      if (it.status === "pago") return res.json({ ok: true, item: it, jaEstava: true });
+      const b = req.body || {};
+      const pagoEm = /^\d{4}-\d{2}-\d{2}$/.test(String(b.pagoEm || "")) ? String(b.pagoEm) : dataHojeSP();
+      const valor = b.valor != null ? Math.abs(Number(b.valor) || 0) : it.valor;
+      const lancarCompra = b.lancarCompra !== false; // default true
+      let compraId: string | undefined;
+      if (lancarCompra && valor > 0) {
+        const compra = await salvarCompra({
+          mes: pagoEm.slice(0, 7), data: pagoEm, valor,
+          loja: it.beneficiario || it.descricao, categoria: it.categoria,
+          natureza: it.natureza, descricao: it.descricao, tipo: "compra", origem: "manual",
+        });
+        compraId = compra.id;
+      }
+      const upd = await atualizarAgendaItem(mes, it.id, { status: "pago", pagoEm, valor, compraId });
+      return res.json({ ok: true, item: upd, compraId });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  // Copia os recorrentes do mês anterior pra este mês (aluguel, luz, DAS, salário…).
+  app.post("/api/agenda/:mes/gerar-recorrentes", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : mesHojeSP();
+      const criados = await gerarRecorrentes(mes);
+      const itens = await listarAgenda(mes);
+      return res.json({ ok: true, criados, itens, resumo: resumoAgenda(itens, dataHojeSP()) });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
   // GET /api/clube-greco/contador/:mes — RECEITA do Clube (mensalidades ativas)

@@ -301,10 +301,14 @@ export async function getMesData(
   ]);
   // v100: snapshots diários (GMAIL, 0 token) — fonte primária do mês corrente.
   const resSnapshot = deps.lerSnapshots ? await lerSnapshotsFonte(mes, deps.lerSnapshots) : null;
-  const temCsv = !!(resFinanceiro || resCaixa);
   const temSnapshot = !!(resSnapshot && resSnapshot.faturamento > 0);
-  // API = ÚLTIMO recurso. Só quando NÃO há CSV NEM snapshot (Gmail).
-  const resApi = (ignorarApi || temCsv || temSnapshot)
+  // v106 — ordem canônica do dono: GMAIL → API → CSV (mês corrente).
+  // A API vem ANTES do CSV: é consultada sempre que há mês CORRENTE e NÃO há
+  // snapshot do Gmail (mesmo existindo CSV importado). Mês FECHADO nunca chama a
+  // API (imutável; CSV é a autoridade). Timeout curto preservado: se a API
+  // cair/estourar/429, o resultado é null e a escolha cai pro CSV — nunca trava
+  // o render nem repagina o mês inteiro à toa (só quando falta o Gmail).
+  const resApi = (ignorarApi || temSnapshot)
     ? null
     : await lerApiTrinksComTimeout(mes, deps.trinksFetchAllRange, deps.log);
 
@@ -342,14 +346,18 @@ export async function getMesData(
   // fallback (pode vir incompleto, ex.: junho/2026 caixa = R$20,6k vs
   // financeiro = R$41k). A API só entra quando NÃO há nenhum CSV; o "hoje ao
   // vivo" fica nos endpoints dedicados de hoje, não neste agregado mensal.
-  // v100: ordem canônica do dono — GMAIL (snapshot) → CSV → API (último recurso).
-  // Mês fechado: CSV é a autoridade (mais rico/validado), snapshot como fallback.
-  // Mês corrente: snapshot (Gmail, 0 token, fresco) primeiro; CSV refina; API por último.
+  // v106: ordem canônica do dono — mês CORRENTE = GMAIL (snapshot) → API → CSV.
+  // Mês fechado: CSV é a autoridade (mais rico/validado, imutável), snapshot como
+  //   fallback; a API NUNCA é consultada (era a origem do timeout de 12s no 429).
+  // Mês corrente: snapshot (Gmail, 0 token) primeiro; se não houver, API ao vivo
+  //   (com timeout curto); CSV importado só por último.
   let escolhida: ResultadoFonte | null = null;
   if (ehMesFechado) {
     escolhida = resFinanceiro || resCaixa || resSnapshot || null;
   } else {
-    escolhida = resSnapshot || resFinanceiro || resCaixa || ((resApi && resApi.comandas > 0) ? resApi : null);
+    escolhida = resSnapshot
+      || ((resApi && resApi.comandas > 0) ? resApi : null)
+      || resFinanceiro || resCaixa || null;
   }
 
   const data: MesData = escolhida ? {

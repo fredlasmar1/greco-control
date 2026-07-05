@@ -254,11 +254,15 @@ export default function Equipe() {
   }, [data]);
 
   const producaoEquipe = linhas.reduce((s, l) => s + l._producao, 0);
-  const faturamentoMes = data?.faturamento?.totalReais || 0;
+  // Faturamento OFICIAL do mês = receita do e-mail diário da Trinks (Gmail),
+  // fonte canônica. A soma do ranking (produção) é fallback, e a produção da
+  // equipe é o último recurso. NUNCA rotular a produção do ranking como "oficial".
+  const oficialTrinks = data?.conferencia?.oficialTrinks || 0;
+  const faturamentoRanking = data?.faturamento?.totalReais || 0;
   const totalPagar = data?.totais.totalSaldo || 0;
   const totalBruto = data?.totais.totalBruto || 0;
-  // % da folha = custo de pessoal (bruto, antes de vale/ajuste) sobre o faturamento oficial do mês
-  const baseFolhaPct = faturamentoMes > 0 ? faturamentoMes : producaoEquipe;
+  // % da folha = custo de pessoal (bruto, antes de vale/ajuste) sobre o faturamento OFICIAL (Gmail).
+  const baseFolhaPct = oficialTrinks > 0 ? oficialTrinks : (faturamentoRanking > 0 ? faturamentoRanking : producaoEquipe);
   const pctFolha = baseFolhaPct > 0 ? (totalBruto / baseFolhaPct) * 100 : 0;
 
   // ── Exportar CSV da folha ──
@@ -362,11 +366,11 @@ export default function Equipe() {
       {/* ── Resumo geral (topo) ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard icon={<TrendingUp className="w-4 h-4" />} label="Produção da equipe" valor={producaoEquipe}
-          sub={faturamentoMes > 0 ? `Oficial Trinks: R$ ${fmtBRL(faturamentoMes)}` : "serviços + produtos"} />
+          sub={oficialTrinks > 0 ? `Oficial Trinks (Gmail): R$ ${fmtBRL(oficialTrinks)}` : "serviços + produtos"} />
         <KpiCard icon={<Wallet className="w-4 h-4" />} label="Total a pagar (folha)" valor={totalPagar} destaque
           sub={`${linhas.length} pessoa${linhas.length !== 1 ? "s" : ""}`} />
         <KpiCard icon={<Percent className="w-4 h-4" />} label="Folha sobre faturamento" valorTexto={`${pctFolha.toFixed(1)}%`}
-          sub={`Custo bruto: R$ ${fmtBRL(totalBruto)}`} />
+          sub={oficialTrinks > 0 ? `Custo bruto R$ ${fmtBRL(totalBruto)} ÷ oficial` : `Custo bruto: R$ ${fmtBRL(totalBruto)}`} />
         <KpiCard icon={<Users className="w-4 h-4" />} label="Comissão de serviços" valor={data?.totais.totalComissaoServicos || 0}
           sub={`Produtos: R$ ${fmtBRL(data?.totais.totalComissaoProdutos || 0)}`} />
       </div>

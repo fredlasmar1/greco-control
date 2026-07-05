@@ -7139,20 +7139,9 @@ Regras CRÍTICAS:
       // pagou antes), 'voucher' (cortesia, sem dinheiro), 'descontoProf'
       // (abatimento da comissão), 'outros' (qualquer coisa não identificada).
       let trinks = { total: 0, pix: 0, cartao: 0, dinheiro: 0, plano: 0, voucher: 0, descontoProf: 0, outros: 0, qtd: 0 };
-      try {
-        const dataObj = new Date(data + "T12:00:00");
-        const next = new Date(dataObj.getTime() + 24 * 60 * 60 * 1000);
-        const fim = next.toISOString().slice(0, 10);
-        // Timeout de 5s pra Trinks — se rate-limit+retries fazem demorar,
-        // segue com trinks zerado em vez de travar a aba Caixa do Dia.
-        const transApi: any = await Promise.race([
-          trinksFetchAll("transacoes", { dataInicio: data, dataFim: fim }),
-          new Promise((resolve) => setTimeout(() => {
-            log(`caixa-dia/trinks timeout 5s — seguindo sem dados Trinks`, "caixa");
-            resolve([]);
-          }, 5000)),
-        ]);
-        const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
+      // Acumula o breakdown por meio a partir de um array de transações Trinks
+      // (mesma forma vinda do snapshot raw OU da API ao vivo).
+      const acumularTrinksDia = (arr: any[]) => {
         for (const t of arr) {
           const raw = t.dataHora || t.dataReferencia || t.data || "";
           const d = typeof raw === "string" ? raw.split("T")[0] : "";
@@ -7171,8 +7160,38 @@ Regras CRÍTICAS:
             else trinks.outros += v;
           }
         }
-      } catch (err: any) {
-        log(`caixa-dia/trinks erro: ${err.message}`, "caixa");
+      };
+      // v106 — ordem canônica GMAIL → API → CSV.
+      // 1) Snapshot RAW do dia (capturado pelo cron 23h50, 0 token) — cobre dias
+      //    passados sem tocar a API. O e-mail não traz breakdown por forma, mas o
+      //    raw da API guardado no snapshot traz — por isso vem aqui, na frente.
+      try {
+        const snap: any = await getSnapshot(data);
+        if (Array.isArray(snap?.transacoesRaw) && snap.transacoesRaw.length) {
+          acumularTrinksDia(snap.transacoesRaw);
+          if (trinks.qtd > 0) log(`caixa-dia/${data}: snapshot Gmail/raw (${trinks.qtd} comandas, 0 token)`, "caixa");
+        }
+      } catch { /* sem snapshot */ }
+      // 2) API ao vivo — só se o snapshot não cobriu (hoje / dia sem raw).
+      if (trinks.qtd === 0) {
+        try {
+          const dataObj = new Date(data + "T12:00:00");
+          const next = new Date(dataObj.getTime() + 24 * 60 * 60 * 1000);
+          const fim = next.toISOString().slice(0, 10);
+          // Timeout de 5s pra Trinks — se rate-limit+retries fazem demorar,
+          // segue com trinks zerado em vez de travar a aba Caixa do Dia.
+          const transApi: any = await Promise.race([
+            trinksFetchAll("transacoes", { dataInicio: data, dataFim: fim }),
+            new Promise((resolve) => setTimeout(() => {
+              log(`caixa-dia/trinks timeout 5s — seguindo sem dados Trinks`, "caixa");
+              resolve([]);
+            }, 5000)),
+          ]);
+          const arr: any[] = Array.isArray(transApi) ? transApi : (transApi?.data || []);
+          acumularTrinksDia(arr);
+        } catch (err: any) {
+          log(`caixa-dia/trinks erro: ${err.message}`, "caixa");
+        }
       }
 
       // ── Fallback: API Trinks não trouxe nada (rate limit) → usa o CSV

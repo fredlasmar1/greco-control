@@ -732,6 +732,7 @@ export default function Equipe() {
 
       {/* ── Vouchers do mês (dono decide comissão caso a caso) ── */}
       <VoucherCard mes={mes} />
+      <LeadsMetasCard mes={mes} />
 
       {/* ── Configurações da folha (recolhível) ── */}
       <details className="rounded-lg border bg-card">
@@ -838,6 +839,69 @@ function VoucherCard({ mes }: { mes: string }) {
               <div key={p.nome} className="flex justify-between text-xs py-0.5"><span>{p.nome} · {p.qtd} atend.</span><span className="tabular-nums text-muted-foreground">tabela R$ {fmtBRL(p.valorTabela)} · desconto R$ {fmtBRL(p.desconto || 0)} · comissão R$ {fmtBRL(p.comissao)}</span></div>
             ))}
           </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Leads (cliente novo com desconto) puxados do Greco Metas via HUB — pro fechamento.
+function LeadsMetasCard({ mes }: { mes: string }) {
+  const [d, setD] = useState<any>(null);
+  useEffect(() => { authFetch(`/api/leads-metas/${mes}`).then(r => r.json()).then(setD).catch(() => setD(null)); }, [mes]);
+  if (!d) return null;
+  const t = d.totais || {};
+  const fonteBadge = (f: string) => f === "instagram" ? "bg-pink-500/15 text-pink-500 border-pink-500/30" : f === "google" ? "bg-sky-500/15 text-sky-500 border-sky-500/30" : "bg-purple-500/15 text-purple-500 border-purple-500/30";
+  return (
+    <Card className="bg-card border-card-border">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">🎯 Clientes novos com desconto (Greco Metas) — {labelMesPtBR(mes)}</CardTitle>
+        <p className="text-xs text-muted-foreground">Leads cadastrados no Greco Metas (Instagram/Google/Vouchers) com o desconto de 1ª visita. Puxado ao vivo do Metas, 0 token.</p>
+      </CardHeader>
+      <CardContent>
+        {!d.disponivel ? (
+          <div className="text-xs text-amber-500 bg-amber-500/10 border border-amber-500/30 rounded p-3">
+            <AlertTriangle className="w-3.5 h-3.5 inline mr-1" />Não consegui conectar ao Greco Metas. {d.motivo || "Verifique a HUB_API_KEY nos dois sistemas."}
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              <KpiMini label="Leads no mês" valorTexto={String(t.leads || 0)} />
+              <KpiMini label="Compareceram" valorTexto={`${t.compareceram || 0}/${t.leads || 0}`} cor="text-emerald-500" />
+              <KpiMini label="Desconto dado" valor={t.descontoRS || 0} cor="text-red-500" />
+              <KpiMini label="Líquido faturado" valor={t.liquido || 0} cor="text-emerald-500" />
+            </div>
+            {(d.leads || []).length === 0 ? (
+              <p className="text-sm text-muted-foreground py-3 text-center">Nenhum lead com desconto cadastrado neste mês.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="py-2 pr-2">Cliente</th><th className="py-2 px-2">Fonte</th><th className="py-2 px-2">Serviço</th><th className="py-2 px-2">Barbeiro</th><th className="py-2 px-2 text-right">Desconto</th><th className="py-2 px-2 text-right">Tabela → líquido</th><th className="py-2 px-2 text-center">Veio?</th>
+                  </tr></thead>
+                  <tbody>{d.leads.map((l: any) => (
+                    <tr key={l.id} className="border-b">
+                      <td className="py-1.5 pr-2 font-medium">{l.nome}{l.telefone ? <div className="text-[10px] text-muted-foreground">{l.telefone}</div> : null}</td>
+                      <td className="py-1.5 px-2"><span className={`text-[9px] px-1.5 py-0.5 rounded border ${fonteBadge(l.fonte)}`}>{l.fonte}</span></td>
+                      <td className="py-1.5 px-2 text-xs">{l.servico || "—"}</td>
+                      <td className="py-1.5 px-2 text-xs">{l.profissionalNome || "—"}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums text-red-500">{l.desconto === "gratis" ? "grátis (100%)" : `${l.pctDesconto}%`}<div className="text-[10px]">−R$ {fmtBRL(l.descontoRS)}</div></td>
+                      <td className="py-1.5 px-2 text-right tabular-nums text-xs">R$ {fmtBRL(l.valorTabela)} → <strong>R$ {fmtBRL(l.valorLiquido)}</strong></td>
+                      <td className="py-1.5 px-2 text-center">{l.compareceu ? <span className="text-emerald-500">✓</span> : <span className="text-muted-foreground">—</span>}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+            {(d.porBarbeiro || []).length > 0 && (
+              <div className="mt-3 border-t border-card-border pt-2">
+                <p className="text-[10px] uppercase text-muted-foreground mb-1">Desconto por barbeiro</p>
+                {d.porBarbeiro.map((p: any) => (
+                  <div key={p.profissional} className="flex justify-between text-xs py-0.5"><span>{p.profissional} · {p.compareceram}/{p.leads} vieram</span><span className="tabular-nums text-muted-foreground">desconto R$ {fmtBRL(p.descontoRS)} · líquido R$ {fmtBRL(p.liquido)}</span></div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>

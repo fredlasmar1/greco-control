@@ -91,6 +91,28 @@ export async function getMetasQuota(): Promise<MetasQuota | null> {
   } catch { return mqCache?.data || null; }
 }
 
+// LEADS do mês (cliente novo com desconto, cadastrado no Metas) → fechamento da folha.
+export interface MetasLeads {
+  leads: any[];
+  porBarbeiro: any[];
+  totais: { leads: number; compareceram: number; valorTabela: number; descontoRS: number; liquido: number };
+}
+const leadsCache = new Map<string, { at: number; data: MetasLeads }>();
+export async function getMetasLeads(mes: string): Promise<MetasLeads | null> {
+  if (!KEY) return null;
+  const hit = leadsCache.get(mes);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.data;
+  try {
+    const r = await fetch(`${BASE}/api/hub/leads/${encodeURIComponent(mes)}`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return hit?.data || null;
+    const j = (await r.json()) as any;
+    if (!j?.ok) return hit?.data || null;
+    const data: MetasLeads = { leads: j.leads || [], porBarbeiro: j.porBarbeiro || [], totais: j.totais || { leads: 0, compareceram: 0, valorTabela: 0, descontoRS: 0, liquido: 0 } };
+    leadsCache.set(mes, { at: Date.now(), data });
+    return data;
+  } catch { return hit?.data || null; }
+}
+
 export async function getMetasVisitas(phones: string[], mes: string): Promise<Record<string, UsoMetas>> {
   if (!KEY || !phones.length) return {};
   const key = `${mes}|${phones.length}`;

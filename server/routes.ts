@@ -3665,6 +3665,16 @@ export async function registerRoutes(
     const movs = await getMovimentacoesEstoque();
     const deltaPorProd = getDeltasPorProduto(movs);
 
+    // v113: VENDIDOS do Ranking de Produtos do mês (CSV, 0 token) — cruza por NOME
+    // com o estoque pra a conferência semanal (quanto vendeu / o que repor).
+    const _mesEstoque = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }).slice(0, 7);
+    const _normProd = (s: any) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+    const vendidosPorNome = new Map<string, number>();
+    try {
+      const rkp: any = await kvGet(`trinks_import:rankingProdutos:${_mesEstoque}`);
+      for (const p of (rkp?.produtos || [])) { const n = _normProd(p.produto); if (n) vendidosPorNome.set(n, (vendidosPorNome.get(n) || 0) + Number(p.quantidade || 0)); }
+    } catch { /* sem ranking */ }
+
     // v38.2: cache PERSISTENTE em kv_store. Quando Trinks responde, salva.
     // Quando falha (429), usa cache anterior. Estoque continua funcionando
     // mesmo com API morta indefinidamente.
@@ -3959,6 +3969,9 @@ export async function registerRoutes(
         giroLento,
         parado,
         vendidos30d: qtd30d,
+        // v113: vendidos do mês pelo Ranking de Produtos (CSV, 0 token) + reposição sugerida
+        vendidosMes: vendidosPorNome.get(_normProd(p.nome || p.descricao)) || 0,
+        reporSugerido: minimo > 0 ? Math.max(0, minimo - saldo) : 0,
         faturamento30d: mov?.valor30d ?? 0,
         ultimaVenda,
         diasDesdeUltimaVenda: ultimaVenda ? diasDesdeUltimaVenda : null,
@@ -14638,31 +14651,34 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         await dispararIndividualParaTodos("mensal");
       }, { timezone: "America/Sao_Paulo" });
 
-      // Alerta diário de estoque baixo: ter-sáb 09h00 (após o resumo da manhã)
-      // Envia uma mensagem consolidada com produtos abaixo do mínimo cadastrado.
-      // Alerta estoque 09h — DESATIVADO em 21/06/2026 (só matinal 8h fica)
-      if (false) cron.schedule("0 9 * * 2-6", async () => { await comOrigem("cron-estoque", async () => {
+      // v113: CONFERÊNCIA SEMANAL DE ESTOQUE — TODA TERÇA 09h00 (pedido do dono).
+      // Lista o que está abaixo do mínimo (repor) + quanto vendeu no mês, pra não
+      // faltar nada e não comprar de última hora.
+      cron.schedule("0 9 * * 2", async () => { await comOrigem("cron-estoque", async () => {
         try {
           const resumo = await calcularEstoqueResumo();
           const ruptura = (resumo?.produtos || []).filter((p: any) => p.nivel === "ruptura");
+          const fmt = (n: number) => Number(n || 0).toLocaleString("pt-BR");
           if (ruptura.length === 0) {
-            log("[cron] alerta estoque: nenhum produto em ruptura", "telegram");
+            await enviarMensagem(`📦 *Conferência de estoque (terça)*\n\n✅ Nenhum produto abaixo do mínimo. Estoque ok!`);
+            log("[cron] conferência estoque: nenhum em ruptura", "telegram");
             return;
           }
           const linhas = ruptura
-            .sort((a: any, b: any) => (a.saldo - a.minimo) - (b.saldo - b.minimo))
+            .sort((a: any, b: any) => (b.reporSugerido || 0) - (a.reporSugerido || 0))
             .slice(0, 30)
             .map((p: any) => {
-              const fmt = (n: number) => Number(n || 0).toLocaleString("pt-BR");
-              return `• *${p.nome}* — saldo *${fmt(p.saldo)}* / mínimo ${fmt(p.minimo)}`;
+              const repor = p.reporSugerido > 0 ? ` → *repor ${fmt(p.reporSugerido)}*` : "";
+              const vend = p.vendidosMes > 0 ? ` _(vendeu ${fmt(p.vendidosMes)} no mês)_` : "";
+              return `• *${p.nome}* — saldo ${fmt(p.saldo)}/mín ${fmt(p.minimo)}${repor}${vend}`;
             })
             .join("\n");
           const extras = ruptura.length > 30 ? `\n\n_+ ${ruptura.length - 30} outros itens_` : "";
-          const msg = `📦 *Alerta de estoque baixo*\n\n${ruptura.length} produto(s) abaixo do mínimo:\n\n${linhas}${extras}`;
+          const msg = `📦 *Conferência de estoque (terça)*\n\n${ruptura.length} produto(s) pra repor:\n\n${linhas}${extras}\n\n_Confira o físico e lance o inventário na aba Estoque._`;
           const r = await enviarMensagem(msg);
-          log(`[cron] alerta estoque: ${ruptura.length} itens, ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
+          log(`[cron] conferência estoque: ${ruptura.length} itens, ${r.ok ? "OK" : "FALHOU: " + r.error}`, "telegram");
         } catch (err: any) {
-          log(`[cron] erro alerta estoque: ${err.message}`, "telegram");
+          log(`[cron] erro conferência estoque: ${err.message}`, "telegram");
         }
       }); }, { timezone: "America/Sao_Paulo" });
 

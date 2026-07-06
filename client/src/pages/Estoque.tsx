@@ -27,6 +27,8 @@ interface Produto {
   giroLento?: boolean;
   parado?: boolean;
   vendidos30d: number;
+  vendidosMes?: number;
+  reporSugerido?: number;
   faturamento30d: number;
   ultimaVenda: string | null;
   diasDesdeUltimaVenda: number | null;
@@ -473,7 +475,9 @@ export default function Estoque() {
                       <tr className="border-b border-border text-xs text-muted-foreground">
                         <th className="text-left py-2 px-2 font-medium">Produto</th>
                         <th className="text-right py-2 px-2 font-medium">Saldo</th>
-                        <th className="text-right py-2 px-2 font-medium">Vendidos (30d)</th>
+                        <th className="text-right py-2 px-2 font-medium">Vend. mês</th>
+                        <th className="text-right py-2 px-2 font-medium">Repor</th>
+                        <th className="text-right py-2 px-2 font-medium hidden md:table-cell">Vendidos (30d)</th>
                         <th className="text-right py-2 px-2 font-medium hidden sm:table-cell">Faturamento (30d)</th>
                         <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Preço compra</th>
                         <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Preço venda</th>
@@ -503,6 +507,14 @@ export default function Estoque() {
                             )}
                           </td>
                           <td className="py-2 px-2 text-right font-semibold">
+                            {(p.vendidosMes ?? 0) > 0 ? p.vendidosMes : <span className="text-muted-foreground">-</span>}
+                          </td>
+                          <td className="py-2 px-2 text-right">
+                            {(p.reporSugerido ?? 0) > 0
+                              ? <span className="font-bold text-red-500">{p.reporSugerido}</span>
+                              : <span className="text-emerald-500 text-xs">ok</span>}
+                          </td>
+                          <td className="py-2 px-2 text-right text-muted-foreground hidden md:table-cell">
                             {p.vendidos30d}
                           </td>
                           <td className="py-2 px-2 text-right text-muted-foreground hidden sm:table-cell">

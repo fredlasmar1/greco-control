@@ -269,51 +269,59 @@ export default function VendasProdutos() {
                 <div className="text-lg font-bold tabular-nums text-slate-900">R$ {fmtBRL(csvProd.bomboniere)}</div>
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs text-muted-foreground">
-                    <th className="py-2 pr-2">Produto</th>
-                    <th className="py-2 px-2">Categoria</th>
-                    <th className="py-2 px-2 text-right">Qtd</th>
-                    <th className="py-2 px-2 text-right">Valor bruto</th>
-                    <th className="py-2 px-2 text-right">Ganho equipe (10%)</th>
-                    <th className="py-2 px-2 text-right">% do total</th>
-                    <th className="py-2 px-2 text-center">Tipo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {csvProd.produtos.map((p: any, i: number) => {
-                    const ganho = p.bomboniere ? 0 : Number(p.valor || 0) * 0.10;
-                    const pctTot = csvProd.total > 0 ? (Number(p.valor || 0) / csvProd.total) * 100 : 0;
-                    return (
-                      <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
-                        <td className="py-1.5 pr-2 font-medium">{p.produto}</td>
-                        <td className="py-1.5 px-2 text-muted-foreground text-xs">{p.categoria || "—"}</td>
-                        <td className="py-1.5 px-2 text-right tabular-nums">{p.quantidade}</td>
-                        <td className="py-1.5 px-2 text-right tabular-nums font-semibold">R$ {fmtBRL(p.valor)}</td>
-                        <td className="py-1.5 px-2 text-right tabular-nums text-emerald-600 font-medium">{ganho > 0 ? `R$ ${fmtBRL(ganho)}` : "—"}</td>
-                        <td className="py-1.5 px-2 text-right tabular-nums text-muted-foreground">{pctTot.toFixed(1)}%</td>
-                        <td className="py-1.5 px-2 text-center">
-                          {p.bomboniere
-                            ? <Badge variant="outline" className="text-[9px] h-4 border-amber-500/50 text-amber-600 bg-amber-500/10">bomboniere</Badge>
-                            : <Badge variant="outline" className="text-[9px] h-4 border-emerald-500/50 text-emerald-600 bg-emerald-500/10">% equipe</Badge>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t-2 font-semibold bg-muted/20">
-                    <td className="py-2 pr-2" colSpan={3}>Total do mês</td>
-                    <td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(csvProd.total)}</td>
-                    <td className="py-2 px-2 text-right tabular-nums text-emerald-600">R$ {fmtBRL(Number(csvProd.comissionavel || 0) * 0.10)}</td>
-                    <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">100%</td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+            {(() => {
+              const todos = (csvProd.produtos || []) as any[];
+              const comiss = todos.filter(p => !p.bomboniere).sort((a, b) => Number(b.valor || 0) - Number(a.valor || 0));
+              const bomb = todos.filter(p => p.bomboniere).sort((a, b) => Number(b.quantidade || 0) - Number(a.quantidade || 0));
+              const somaQtd = (arr: any[]) => arr.reduce((s, p) => s + Number(p.quantidade || 0), 0);
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Ranking 1 — PAGAMENTO DE COMISSÃO */}
+                  <div>
+                    <div className="text-xs font-semibold text-emerald-600 mb-1 flex items-center gap-1.5">💈 Ranking de comissão <span className="text-[10px] font-normal text-muted-foreground">(vai pra folha · 10% pra equipe)</span></div>
+                    <div className="overflow-x-auto rounded-md border border-emerald-500/30">
+                      <table className="w-full text-sm">
+                        <thead><tr className="border-b bg-emerald-500/5 text-left text-xs text-muted-foreground">
+                          <th className="py-2 pr-2 pl-2">Produto</th><th className="py-2 px-2 text-right">Qtd</th><th className="py-2 px-2 text-right">Valor</th><th className="py-2 px-2 text-right">Ganho equipe</th>
+                        </tr></thead>
+                        <tbody>{comiss.map((p, i) => (
+                          <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                            <td className="py-1.5 pr-2 pl-2 font-medium">{p.produto}<div className="text-[10px] text-muted-foreground">{p.categoria || "—"}</div></td>
+                            <td className="py-1.5 px-2 text-right tabular-nums">{p.quantidade}</td>
+                            <td className="py-1.5 px-2 text-right tabular-nums font-semibold">R$ {fmtBRL(p.valor)}</td>
+                            <td className="py-1.5 px-2 text-right tabular-nums text-emerald-600 font-medium">R$ {fmtBRL(Number(p.valor || 0) * 0.10)}</td>
+                          </tr>
+                        ))}{comiss.length === 0 && <tr><td colSpan={4} className="py-3 text-center text-muted-foreground text-xs">Nenhum produto comissionável.</td></tr>}</tbody>
+                        <tfoot><tr className="border-t-2 font-semibold bg-emerald-500/10">
+                          <td className="py-2 pl-2">{somaQtd(comiss)} un</td><td /><td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(csvProd.comissionavel)}</td><td className="py-2 px-2 text-right tabular-nums text-emerald-600">R$ {fmtBRL(Number(csvProd.comissionavel || 0) * 0.10)}</td>
+                        </tr></tfoot>
+                      </table>
+                    </div>
+                  </div>
+                  {/* Ranking 2 — CONSUMO / BOMBONIERE (não comissiona) */}
+                  <div>
+                    <div className="text-xs font-semibold text-amber-600 mb-1 flex items-center gap-1.5">🍫 Ranking de consumo — bomboniere <span className="text-[10px] font-normal text-muted-foreground">(não comissiona)</span></div>
+                    <div className="overflow-x-auto rounded-md border border-amber-500/30">
+                      <table className="w-full text-sm">
+                        <thead><tr className="border-b bg-amber-500/5 text-left text-xs text-muted-foreground">
+                          <th className="py-2 pr-2 pl-2">Produto</th><th className="py-2 px-2 text-right">Qtd</th><th className="py-2 px-2 text-right">Valor</th>
+                        </tr></thead>
+                        <tbody>{bomb.map((p, i) => (
+                          <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                            <td className="py-1.5 pr-2 pl-2 font-medium">{p.produto}<div className="text-[10px] text-muted-foreground">{p.categoria || "—"}</div></td>
+                            <td className="py-1.5 px-2 text-right tabular-nums">{p.quantidade}</td>
+                            <td className="py-1.5 px-2 text-right tabular-nums font-semibold">R$ {fmtBRL(p.valor)}</td>
+                          </tr>
+                        ))}{bomb.length === 0 && <tr><td colSpan={3} className="py-3 text-center text-muted-foreground text-xs">Nenhum item de bomboniere.</td></tr>}</tbody>
+                        <tfoot><tr className="border-t-2 font-semibold bg-amber-500/10">
+                          <td className="py-2 pl-2">{somaQtd(bomb)} un</td><td /><td className="py-2 px-2 text-right tabular-nums">R$ {fmtBRL(csvProd.bomboniere)}</td>
+                        </tr></tfoot>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="mt-2 text-[10px] text-muted-foreground">
               Fonte: relatório "Ranking de Produtos" da Trinks (importado, 0 tokens). Bomboniere (BEBIDAS/DOCES) = 0% de comissão. "Ganho equipe" = 10% sobre o comissionável. Este ranking é por produto (sem vendedor); <strong>quem vendeu</strong> está no ranking de colaboradores abaixo — e é de lá que a comissão vai pra <strong>Pagamento da Equipe</strong>. Margem por item precisa do custo cadastrado (aba Margem de Produtos).
             </div>

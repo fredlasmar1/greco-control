@@ -413,6 +413,12 @@ interface AssinaturaCliente {
   // Vendedor & comissão (20% padrão sobre cada mensalidade paga)
   seller?: string;
   commissionPct?: number;
+  // v112: Clube comissão SEMANA A SEMANA (decisão do dono 05/07).
+  // barbeiroFixo = colaborador "dono" do assinante: recebe as semanas SEM visita no
+  // fechamento. visitasMes = nº de visitas/mês do plano → valor/semana = planValue ÷ visitasMes.
+  barbeiroFixoId?: string;
+  barbeiroFixoNome?: string;
+  visitasMes?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -10255,7 +10261,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
 
   // POST /api/assinaturas/clientes — cadastrar novo assinante
   app.post("/api/assinaturas/clientes", (req: Request, res: Response) => {
-    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes, seller, commissionPct } = req.body;
+    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes, seller, commissionPct, barbeiroFixoId, barbeiroFixoNome, visitasMes } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: "Nome é obrigatório" });
     if (!plan) return res.status(400).json({ error: "Plano é obrigatório" });
     if (!planValue) return res.status(400).json({ error: "Valor é obrigatório" });
@@ -10285,6 +10291,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       notes: notes || undefined,
       seller: seller ? String(seller).trim() : undefined,
       commissionPct: commissionPct != null && commissionPct !== '' ? Number(commissionPct) : undefined,
+      barbeiroFixoId: barbeiroFixoId ? String(barbeiroFixoId) : undefined,
+      barbeiroFixoNome: barbeiroFixoNome ? String(barbeiroFixoNome).trim() : undefined,
+      visitasMes: visitasMes != null && visitasMes !== '' ? Math.max(1, Number(visitasMes)) : undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -10299,7 +10308,10 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
     const idx = assinaturaClientes.findIndex(c => c.id === id);
     if (idx < 0) return res.status(404).json({ error: "Cliente não encontrado" });
     const c = assinaturaClientes[idx];
-    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes, status, seller, commissionPct } = req.body;
+    const { name, phone, email, plan, planValue, contractDate, contractDurationMonths, paymentDay, contractUrl, notes, status, seller, commissionPct, barbeiroFixoId, barbeiroFixoNome, visitasMes } = req.body;
+    if (barbeiroFixoId !== undefined) c.barbeiroFixoId = barbeiroFixoId ? String(barbeiroFixoId) : undefined;
+    if (barbeiroFixoNome !== undefined) c.barbeiroFixoNome = barbeiroFixoNome ? String(barbeiroFixoNome).trim() : undefined;
+    if (visitasMes !== undefined) c.visitasMes = visitasMes !== '' && visitasMes != null ? Math.max(1, Number(visitasMes)) : undefined;
     if (name !== undefined) c.name = String(name).trim();
     if (phone !== undefined) c.phone = phone || undefined;
     if (email !== undefined) c.email = email || undefined;
@@ -11233,6 +11245,106 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         consumidoTotal, atendimentosTotal, saldo, prejuizo: saldo < 0,
         ticketMedioConsumo: atendimentosTotal > 0 ? Math.round((consumidoTotal / atendimentosTotal) * 100) / 100 : 0,
         porBarbeiro,
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  // GET /api/clube-greco/comissao-semanal/:mes — COMISSÃO DO CLUBE SEMANA A SEMANA
+  // (decisão do dono 05/07). Modelo: valor/semana = planValue ÷ visitasMes; o
+  // colaborador que ATENDE o assinante na semana ganha valor/semana × %dele; se o
+  // assinante NÃO vem numa semana já passada, o BARBEIRO FIXO do assinante recebe no
+  // fechamento. Separado da produção normal (não dobra). Fonte 0-token: snapshots do
+  // Gmail (agendamentos por cliente). É um CONTADOR de conferência — ainda não entra
+  // no "a pagar" (Fase 3 liga isso à folha, sem dobra, após validação).
+  app.get("/api/clube-greco/comissao-semanal/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : ymdHoje().slice(0, 7);
+      const ultimoDiaStr = ultimoDiaDoMes(`${mes}-01`);
+      const diasNoMes = Number(ultimoDiaStr.slice(8, 10));
+      const hoje = ymdHoje();
+      const round2 = (n: number) => Math.round(n * 100) / 100;
+      const norm = (s: any) => String(s || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const pctDe = (nome: string) => { try { const c = categoriaPorApelidoRanking(nome); return c ? pctDaCategoria(c) : 0.4; } catch { return 0.4; } };
+
+      // metas: nome/token → id do colaborador (resolve quem atendeu e o barbeiro fixo)
+      const metas = await getAllMetas().catch(() => ({} as any));
+      const idPorNome = new Map<string, string>();
+      const tokenPorNome = new Map<string, Set<string>>();
+      const nomePorId = new Map<string, string>();
+      for (const mt of Object.values(metas) as any[]) {
+        if (!mt?.profissionalId) continue;
+        nomePorId.set(String(mt.profissionalId), mt.nome);
+        const n = norm(mt.nome); if (!n) continue;
+        if (!idPorNome.has(n)) idPorNome.set(n, String(mt.profissionalId));
+        for (const tk of n.split(/\s+/)) { if (tk.length >= 3) { const s = tokenPorNome.get(tk) || new Set<string>(); s.add(String(mt.profissionalId)); tokenPorNome.set(tk, s); } }
+      }
+      const resolveId = (nome: string): string | null => {
+        const n = norm(nome); if (!n) return null;
+        if (idPorNome.has(n)) return idPorNome.get(n)!;
+        for (const tk of n.split(/\s+/)) { const s = tokenPorNome.get(tk); if (s && s.size === 1) return [...s][0]; }
+        return null;
+      };
+
+      // Visitas do mês por cliente (nome normalizado) → [{ dia, prof }] (0 token, Gmail)
+      const fimJanela = ultimoDiaStr < hoje ? ultimoDiaStr : hoje;
+      const datas: string[] = []; { let c = `${mes}-01`; while (c <= fimJanela) { datas.push(c); c = ymdAddDays(c, 1); } }
+      const visitasPorCliente = new Map<string, { dia: number; prof: string }[]>();
+      for (const d of datas) {
+        const s: any = await getSnapshot(d);
+        for (const a of (s?.agendamentosRaw || [])) {
+          const st = (typeof a.status === "string" ? a.status : (a.status?.nome || a.status?.descricao || "")).toLowerCase();
+          if (!(st.includes("finaliz") || st.includes("confirm"))) continue;
+          const cli = norm(a.cliente?.nome); const prof = a.profissional?.nome || a.profissional?.apelido || "";
+          if (!cli) continue;
+          const arr = visitasPorCliente.get(cli) || []; arr.push({ dia: Number(d.slice(8, 10)), prof }); visitasPorCliente.set(cli, arr);
+        }
+      }
+
+      const ativos = assinaturaClientes.filter((c: any) => c.status === "active");
+      type Bucket = { id: string; nome: string; atendido: number; garantido: number; total: number; semanas: number };
+      const porColab = new Map<string, Bucket>();
+      const acc = (id: string, nome: string, tipo: "atendido" | "garantido", valor: number) => {
+        const b = porColab.get(id) || { id, nome, atendido: 0, garantido: 0, total: 0, semanas: 0 };
+        b[tipo] += valor; b.total += valor; b.semanas += 1; b.nome = nome; porColab.set(id, b);
+      };
+      const semFixo: { cliente: string; semanas: number; valorPerdido: number }[] = [];
+      let assinantesSemVisita = 0;
+
+      for (const c of ativos) {
+        const visitasMes = Math.max(1, Number(c.visitasMes) || 4);
+        const valorSemana = (Number(c.planValue) || 0) / visitasMes;
+        const fixoNome = c.barbeiroFixoNome || "";
+        const fixoId = c.barbeiroFixoId || (fixoNome ? resolveId(fixoNome) : null);
+        const visitas = visitasPorCliente.get(norm(c.name)) || [];
+        if (visitas.length === 0) assinantesSemVisita++;
+        const lenP = diasNoMes / visitasMes;
+        let semanasSemFixo = 0;
+        for (let p = 0; p < visitasMes; p++) {
+          const iniDia = Math.floor(p * lenP) + 1;
+          const fimDia = Math.min(diasNoMes, Math.floor((p + 1) * lenP));
+          const fimData = `${mes}-${String(fimDia).padStart(2, "0")}`;
+          const jaPassou = fimData <= hoje;
+          const vis = visitas.find(v => v.dia >= iniDia && v.dia <= fimDia);
+          if (vis) {
+            const sid = resolveId(vis.prof);
+            const snome = sid ? (nomePorId.get(String(sid)) || vis.prof) : vis.prof;
+            acc(sid || `ext:${norm(vis.prof)}`, snome, "atendido", valorSemana * pctDe(vis.prof));
+          } else if (jaPassou) {
+            if (fixoId) acc(String(fixoId), nomePorId.get(String(fixoId)) || fixoNome, "garantido", valorSemana * pctDe(fixoNome));
+            else semanasSemFixo++;
+          }
+        }
+        if (semanasSemFixo > 0) semFixo.push({ cliente: c.name, semanas: semanasSemFixo, valorPerdido: round2(semanasSemFixo * valorSemana) });
+      }
+
+      const linhas = [...porColab.values()]
+        .map(b => ({ ...b, atendido: round2(b.atendido), garantido: round2(b.garantido), total: round2(b.total) }))
+        .sort((a, b) => b.total - a.total);
+      const totalGeral = round2(linhas.reduce((s, l) => s + l.total, 0));
+      return res.json({
+        ok: true, mes, assinantesAtivos: ativos.length, assinantesSemVisita,
+        linhas, totalGeral, semFixo,
+        avisoSemFixo: semFixo.length > 0, // assinantes sem barbeiro fixo definido (semanas não pagas)
       });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });

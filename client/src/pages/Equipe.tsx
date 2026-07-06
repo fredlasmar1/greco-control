@@ -848,8 +848,12 @@ function VoucherCard({ mes }: { mes: string }) {
 // Leads (cliente novo com desconto) puxados do Greco Metas via HUB — pro fechamento.
 function LeadsMetasCard({ mes }: { mes: string }) {
   const [d, setD] = useState<any>(null);
+  const [hist, setHist] = useState<any[]>([]);
   useEffect(() => { authFetch(`/api/leads-metas/${mes}`).then(r => r.json()).then(setD).catch(() => setD(null)); }, [mes]);
+  useEffect(() => { authFetch(`/api/leads-metas/historico/6`).then(r => r.json()).then(j => setHist(j?.historico || [])).catch(() => setHist([])); }, []);
   if (!d) return null;
+  const labelMesCurto = (m: string) => { const [y, mm] = (m || "").split("-"); const nm = ["", "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"][Number(mm)] || m; return `${nm}/${(y || "").slice(2)}`; };
+  const maxTaxa = Math.max(1, ...hist.map((h: any) => h.taxaRetorno || 0));
   const t = d.totais || {};
   const fonteBadge = (f: string) => f === "instagram" ? "bg-pink-500/15 text-pink-500 border-pink-500/30" : f === "google" ? "bg-sky-500/15 text-sky-500 border-sky-500/30" : "bg-purple-500/15 text-purple-500 border-purple-500/30";
   return (
@@ -881,6 +885,24 @@ function LeadsMetasCard({ mes }: { mes: string }) {
                     <div className="text-[10px] text-red-500">desconto R$ {fmtBRL(f.descontoRS)}</div>
                   </div>
                 ))}
+              </div>
+            )}
+            {hist.length > 1 && (
+              <div className="mb-3 rounded-md border p-3">
+                <p className="text-[10px] uppercase text-muted-foreground mb-2">Conversão mês a mês — a campanha está melhorando?</p>
+                <div className="flex items-end gap-2 overflow-x-auto">
+                  {hist.map((h: any) => (
+                    <div key={h.mes} className="flex flex-col items-center gap-1 min-w-[44px]">
+                      <span className="text-[10px] font-semibold text-emerald-500">{(h.taxaRetorno || 0).toFixed(0)}%</span>
+                      <div className="w-6 bg-emerald-500/20 rounded-t flex items-end" style={{ height: 48 }}>
+                        <div className="w-full bg-emerald-500 rounded-t" style={{ height: `${Math.round(((h.taxaRetorno || 0) / maxTaxa) * 100)}%` }} />
+                      </div>
+                      <span className="text-[9px] text-muted-foreground">{labelMesCurto(h.mes)}</span>
+                      <span className="text-[8px] text-muted-foreground">{h.retornaram}/{h.compareceram}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">Barra = % dos que vieram e <strong>voltaram</strong> (viraram cliente). Embaixo: voltaram/vieram.</p>
               </div>
             )}
             {(d.leads || []).length === 0 ? (

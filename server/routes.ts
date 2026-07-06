@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
@@ -13031,6 +13031,16 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const data = await getMetasLeads(mes);
       if (!data) return res.json({ ok: true, mes, disponivel: false, motivo: "Hub do Greco Metas indisponível ou HUB_API_KEY não configurada.", leads: [], porBarbeiro: [], totais: { leads: 0, compareceram: 0, valorTabela: 0, descontoRS: 0, liquido: 0 } });
       return res.json({ ok: true, mes, disponivel: true, ...data });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  // GET /api/leads-metas/historico/:meses — conversão dos leads mês a mês (do Metas).
+  app.get("/api/leads-metas/historico/:meses", async (req: Request, res: Response) => {
+    try {
+      const meses = Math.min(24, Math.max(1, parseInt(req.params.meses, 10) || 6));
+      const historico = await getMetasLeadsHistorico(meses);
+      if (!historico) return res.json({ ok: true, disponivel: false, historico: [] });
+      return res.json({ ok: true, disponivel: true, historico });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 

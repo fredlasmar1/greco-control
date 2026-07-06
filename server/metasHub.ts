@@ -114,6 +114,24 @@ export async function getMetasLeads(mes: string): Promise<MetasLeads | null> {
   } catch { return hit?.data || null; }
 }
 
+// Histórico mês a mês da conversão dos leads (a campanha está melhorando?).
+const leadsHistCache = new Map<string, { at: number; data: any[] }>();
+export async function getMetasLeadsHistorico(meses = 6): Promise<any[] | null> {
+  if (!KEY) return null;
+  const ck = `h${meses}`;
+  const hit = leadsHistCache.get(ck);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.data;
+  try {
+    const r = await fetch(`${BASE}/api/hub/leads-historico?meses=${meses}`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return hit?.data || null;
+    const j = (await r.json()) as any;
+    if (!j?.ok) return hit?.data || null;
+    const data = Array.isArray(j.historico) ? j.historico : [];
+    leadsHistCache.set(ck, { at: Date.now(), data });
+    return data;
+  } catch { return hit?.data || null; }
+}
+
 export async function getMetasVisitas(phones: string[], mes: string): Promise<Record<string, UsoMetas>> {
   if (!KEY || !phones.length) return {};
   const key = `${mes}|${phones.length}`;

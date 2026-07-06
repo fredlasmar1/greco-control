@@ -11402,8 +11402,12 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         const dec = decisoes[itemId] || {};
         const formaNome = formas.map((f: any) => f.nome).filter(Boolean).join(" + ") || (total === 0 ? "R$ 0 (sem pagamento)" : "—");
         const pct = pctBarbeiro(profNome);
+        // v113: % de desconto real = quanto NÃO foi cobrado sobre o preço de tabela.
+        const desconto = Math.round(Math.max(0, valorTabela - total) * 100) / 100;
+        const pctDesconto = valorTabela > 0 ? Math.round((desconto / valorTabela) * 1000) / 10 : 0;
         itens.push({
           id: itemId, data: (t.dataHora || "").slice(0, 10), cliente: t.cliente?.nome || "—", servico, valorTabela, forma: formaNome,
+          valorPago: Math.round(total * 100) / 100, desconto, pctDesconto,
           temVoucherAuto: temVoucher, totalZero: total === 0, profissional: profNome,
           ehVoucher: dec.ehVoucher !== undefined ? !!dec.ehVoucher : true,          // candidato → default É voucher
           pagaComissao: dec.pagaComissao !== undefined ? !!dec.pagaComissao : false, // default NÃO paga comissão
@@ -11412,18 +11416,19 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       }
       itens.sort((a, b) => (a.data < b.data ? 1 : -1));
       const porBarbeiro: Record<string, any> = {};
-      let totValor = 0, totComissao = 0, nVouchers = 0;
+      let totValor = 0, totComissao = 0, nVouchers = 0, totDesconto = 0;
       for (const it of itens) {
         if (!it.ehVoucher) continue;
-        nVouchers++; totValor += it.valorTabela;
+        nVouchers++; totValor += it.valorTabela; totDesconto += it.desconto;
         const com = it.pagaComissao ? it.comissaoPotencial : 0; totComissao += com;
-        if (!porBarbeiro[it.profissional]) porBarbeiro[it.profissional] = { nome: it.profissional, qtd: 0, valorTabela: 0, comissao: 0 };
-        porBarbeiro[it.profissional].qtd++; porBarbeiro[it.profissional].valorTabela += it.valorTabela; porBarbeiro[it.profissional].comissao += com;
+        if (!porBarbeiro[it.profissional]) porBarbeiro[it.profissional] = { nome: it.profissional, qtd: 0, valorTabela: 0, desconto: 0, comissao: 0 };
+        porBarbeiro[it.profissional].qtd++; porBarbeiro[it.profissional].valorTabela += it.valorTabela; porBarbeiro[it.profissional].desconto += it.desconto; porBarbeiro[it.profissional].comissao += com;
       }
+      const pctDescontoMedio = totValor > 0 ? Math.round((totDesconto / totValor) * 1000) / 10 : 0;
       return res.json({
         ok: true, mes, itens,
-        porBarbeiro: Object.values(porBarbeiro).map((p: any) => ({ ...p, valorTabela: Math.round(p.valorTabela * 100) / 100, comissao: Math.round(p.comissao * 100) / 100 })).sort((a: any, b: any) => b.valorTabela - a.valorTabela),
-        totais: { nVouchers, valorTabela: Math.round(totValor * 100) / 100, comissaoAPagar: Math.round(totComissao * 100) / 100, custoTotal: Math.round((totValor + totComissao) * 100) / 100 },
+        porBarbeiro: Object.values(porBarbeiro).map((p: any) => ({ ...p, valorTabela: Math.round(p.valorTabela * 100) / 100, desconto: Math.round(p.desconto * 100) / 100, comissao: Math.round(p.comissao * 100) / 100 })).sort((a: any, b: any) => b.valorTabela - a.valorTabela),
+        totais: { nVouchers, valorTabela: Math.round(totValor * 100) / 100, desconto: Math.round(totDesconto * 100) / 100, pctDescontoMedio, comissaoAPagar: Math.round(totComissao * 100) / 100, custoTotal: Math.round((totValor + totComissao) * 100) / 100 },
       });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });

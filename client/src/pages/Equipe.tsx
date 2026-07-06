@@ -802,11 +802,12 @@ function VoucherCard({ mes }: { mes: string }) {
         <p className="text-xs text-muted-foreground">Candidatos: pagos por <strong>voucher/pré-pago/cortesia</strong> ou <strong>R$ 0</strong>. Marque <strong>é voucher?</strong> e <strong>paga comissão?</strong> — o custo aparece em cima.</p>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
           <KpiMini label="Vouchers" valorTexto={String(t.nVouchers || 0)} />
           <KpiMini label="Valor de tabela" valor={t.valorTabela} cor="text-amber-500" />
-          <KpiMini label="Comissão a pagar" valor={t.comissaoAPagar} cor="text-amber-500" />
-          <KpiMini label="Custo total do voucher" valor={t.custoTotal} cor="text-red-500" destaque />
+          <KpiMini label="Desconto dado" valorTexto={`R$ ${fmtBRL(t.desconto || 0)}`} cor="text-red-500" />
+          <KpiMini label="% desconto médio" valorTexto={`${(t.pctDescontoMedio || 0).toFixed(1)}%`} cor="text-red-500" />
+          <KpiMini label="Custo total (tabela+com.)" valor={t.custoTotal} cor="text-red-500" destaque />
         </div>
         {d.itens.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">Nenhum candidato a voucher neste mês (nenhum atendimento por voucher/cortesia ou R$ 0).</p>
@@ -814,7 +815,7 @@ function VoucherCard({ mes }: { mes: string }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="border-b text-left text-xs text-muted-foreground">
-                <th className="py-2 pr-2">Data</th><th className="py-2 px-2">Cliente / serviço</th><th className="py-2 px-2">Profissional</th><th className="py-2 px-2 text-right">Valor tabela</th><th className="py-2 px-2 text-center">É voucher?</th><th className="py-2 px-2 text-center">Paga comissão?</th>
+                <th className="py-2 pr-2">Data</th><th className="py-2 px-2">Cliente / serviço</th><th className="py-2 px-2">Profissional</th><th className="py-2 px-2 text-right">Valor tabela</th><th className="py-2 px-2 text-right">Desconto</th><th className="py-2 px-2 text-center">É voucher?</th><th className="py-2 px-2 text-center">Paga comissão?</th>
               </tr></thead>
               <tbody>{d.itens.map((it: any) => (
                 <tr key={it.id} className={`border-b ${it.ehVoucher ? "" : "opacity-50"}`}>
@@ -822,6 +823,7 @@ function VoucherCard({ mes }: { mes: string }) {
                   <td className="py-1.5 px-2"><div className="font-medium">{it.cliente}</div><div className="text-[10px] text-muted-foreground">{it.servico} · {it.forma}</div></td>
                   <td className="py-1.5 px-2">{it.profissional}</td>
                   <td className="py-1.5 px-2 text-right tabular-nums">R$ {fmtBRL(it.valorTabela)}<div className="text-[10px] text-muted-foreground">com. R$ {fmtBRL(it.comissaoPotencial)}</div></td>
+                  <td className="py-1.5 px-2 text-right tabular-nums text-red-500">{(it.desconto || 0) > 0 ? <>−R$ {fmtBRL(it.desconto)}<div className="text-[10px]">{(it.pctDesconto || 0).toFixed(0)}%</div></> : "—"}</td>
                   <td className="py-1.5 px-2 text-center"><TogglePill on={it.ehVoucher} onChange={v => toggle(it.id, "ehVoucher", v)} /></td>
                   <td className="py-1.5 px-2 text-center"><TogglePill on={it.pagaComissao} disabled={!it.ehVoucher} onChange={v => toggle(it.id, "pagaComissao", v)} /></td>
                 </tr>
@@ -833,7 +835,7 @@ function VoucherCard({ mes }: { mes: string }) {
           <div className="mt-3 border-t border-card-border pt-2">
             <p className="text-[10px] uppercase text-muted-foreground mb-1">Resumo por profissional (só os marcados como voucher)</p>
             {d.porBarbeiro.map((p: any) => (
-              <div key={p.nome} className="flex justify-between text-xs py-0.5"><span>{p.nome} · {p.qtd} atend.</span><span className="tabular-nums text-muted-foreground">tabela R$ {fmtBRL(p.valorTabela)} · comissão a pagar R$ {fmtBRL(p.comissao)}</span></div>
+              <div key={p.nome} className="flex justify-between text-xs py-0.5"><span>{p.nome} · {p.qtd} atend.</span><span className="tabular-nums text-muted-foreground">tabela R$ {fmtBRL(p.valorTabela)} · desconto R$ {fmtBRL(p.desconto || 0)} · comissão R$ {fmtBRL(p.comissao)}</span></div>
             ))}
           </div>
         )}

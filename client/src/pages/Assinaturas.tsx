@@ -168,6 +168,47 @@ function ContadorClube() {
   );
 }
 
+// ─── Comissão do Clube SEMANA A SEMANA (conferência; ainda não entra no "a pagar") ──
+function ComissaoClubeSemanal() {
+  const [d, setD] = useState<any>(null);
+  const mes = useMemo(() => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }).slice(0, 7), []);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/clube-greco/comissao-semanal/${mes}`).then(r => r.json()).then(x => { if (x?.ok) setD(x); }).catch(() => {});
+  }, [mes]);
+  const fmt = (n: number) => (Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (!d) return null;
+  return (
+    <Card className="border bg-purple-500/5 border-purple-500/30">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <Crown className="w-4 h-4 text-purple-400" />
+          <span className="text-sm font-semibold">Comissão do Clube — semana a semana ({mes.split("-").reverse().join("/")})</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/30">conferência · ainda não entra no "a pagar"</span>
+        </div>
+        <p className="text-[10px] text-muted-foreground mb-3">valor/semana = mensalidade ÷ visitas · pago à % de quem atende · semana sem visita → barbeiro fixo no fechamento</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><p className="text-[10px] text-muted-foreground uppercase">Total comissão Clube</p><p className="text-lg font-bold text-purple-400">R$ {fmt(d.totalGeral)}</p></div>
+          <div><p className="text-[10px] text-muted-foreground uppercase">Assinantes ativos</p><p className="text-lg font-bold">{d.assinantesAtivos}</p><p className="text-[10px] text-muted-foreground">{d.assinantesSemVisita} sem visita ainda</p></div>
+        </div>
+        {d.linhas?.length > 0 ? (
+          <div className="overflow-x-auto"><table className="w-full text-xs">
+            <thead><tr className="text-left text-muted-foreground"><th className="py-1">Colaborador</th><th className="py-1 text-right">Atendido</th><th className="py-1 text-right">Garantido (fixo)</th><th className="py-1 text-right">Total</th></tr></thead>
+            <tbody>{d.linhas.map((l: any) => (
+              <tr key={l.id} className="border-t border-card-border/40"><td className="py-1">{l.nome}</td><td className="py-1 text-right tabular-nums">R$ {fmt(l.atendido)}</td><td className="py-1 text-right tabular-nums text-muted-foreground">R$ {fmt(l.garantido)}</td><td className="py-1 text-right tabular-nums font-semibold">R$ {fmt(l.total)}</td></tr>
+            ))}</tbody>
+          </table></div>
+        ) : <p className="text-xs text-muted-foreground">Nenhuma comissão de Clube ainda neste mês.</p>}
+        {d.avisoSemFixo && (
+          <div className="mt-3 text-[11px] text-amber-500 bg-amber-500/10 border border-amber-500/30 rounded p-2">
+            <AlertTriangle className="w-3 h-3 inline mr-1" />
+            {d.semFixo.length} assinante(s) com semana sem visita e <strong>sem barbeiro fixo definido</strong> — essas semanas não são pagas a ninguém. Defina o barbeiro fixo no cadastro do assinante: {d.semFixo.slice(0, 5).map((s: any) => s.cliente).join(", ")}{d.semFixo.length > 5 ? "…" : ""}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Page ─────────────────────────────────────────────
 export default function Assinaturas() {
   const { toast } = useToast();
@@ -334,6 +375,8 @@ export default function Assinaturas() {
 
       {/* Contador do Clube: receita vs valor de tabela consumido (furo/prejuízo) */}
       <ContadorClube />
+      {/* Comissão do Clube semana a semana (conferência, ainda não entra no a-pagar) */}
+      <ComissaoClubeSemanal />
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -1083,7 +1126,7 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
     name: "", phone: "", email: "", plan: "", planValue: "",
     contractDate: new Date().toISOString().split("T")[0],
     contractDurationMonths: "12", paymentDay: "10", contractUrl: "", notes: "",
-    seller: "", commissionPct: "",
+    seller: "", commissionPct: "", barbeiroFixoNome: "", visitasMes: "4",
   });
 
   useEffect(() => {
@@ -1098,6 +1141,8 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
           contractUrl: c.contractUrl || "", notes: c.notes || "",
           seller: c.seller || "",
           commissionPct: c.commissionPct != null ? String(c.commissionPct) : "",
+          barbeiroFixoNome: c.barbeiroFixoNome || "",
+          visitasMes: c.visitasMes != null ? String(c.visitasMes) : "4",
         });
       });
     } else if (open) {
@@ -1183,6 +1228,21 @@ function AssinanteFormDialog({ open, onClose, onSaved, editId }: {
           </div>
           <p className="text-[10px] text-muted-foreground -mt-2">
             Vendedor ganha {form.commissionPct || "20"}% como bônus único, creditado quando a 1ª parcela for paga. Deixe em branco para usar o padrão (20%).
+          </p>
+
+          {/* Clube semana a semana: barbeiro fixo + nº de visitas/mês */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-1.5 md:col-span-2">
+              <Label className="text-xs">Barbeiro fixo do assinante (recebe as semanas sem visita)</Label>
+              <Input value={form.barbeiroFixoNome} onChange={e => setForm({ ...form, barbeiroFixoNome: e.target.value })} placeholder="Ex: André, Pedro, César..." />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Visitas/mês do plano</Label>
+              <Input type="number" step="1" min="1" max="31" value={form.visitasMes} onChange={e => setForm({ ...form, visitasMes: e.target.value })} placeholder="4" />
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground -mt-2">
+            Comissão do Clube semana a semana: valor/semana = <strong>mensalidade ÷ visitas</strong> ({form.planValue && form.visitasMes ? `R$ ${(Number(form.planValue.replace(",", ".")) / Math.max(1, Number(form.visitasMes))).toFixed(2)}` : "—"}), pago a <strong>% do colaborador que atende</strong>. Semana sem visita → o <strong>barbeiro fixo</strong> recebe no fechamento.
           </p>
 
           <div className="border-t border-border pt-3" />

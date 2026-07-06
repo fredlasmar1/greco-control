@@ -865,19 +865,31 @@ function LeadsMetasCard({ mes }: { mes: string }) {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
               <KpiMini label="Leads no mês" valorTexto={String(t.leads || 0)} />
-              <KpiMini label="Compareceram" valorTexto={`${t.compareceram || 0}/${t.leads || 0}`} cor="text-emerald-500" />
+              <KpiMini label="Compareceram" valorTexto={`${t.compareceram || 0}/${t.leads || 0}`} cor="text-sky-500" />
+              <KpiMini label="Retornaram (campanha valeu)" valorTexto={`${t.retornaram || 0}`} cor="text-emerald-500" destaque />
+              <KpiMini label="Taxa de retorno" valorTexto={`${(t.taxaRetorno || 0).toFixed(0)}%`} cor="text-emerald-500" />
               <KpiMini label="Desconto dado" valor={t.descontoRS || 0} cor="text-red-500" />
-              <KpiMini label="Líquido faturado" valor={t.liquido || 0} cor="text-emerald-500" />
             </div>
+            {(d.porFonte || []).length > 0 && (
+              <div className="mb-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {d.porFonte.map((f: any) => (
+                  <div key={f.fonte} className="rounded-md border p-2 text-xs">
+                    <div className="font-semibold capitalize flex items-center justify-between">{f.fonte}<span className="text-[10px] text-muted-foreground">{f.leads} leads</span></div>
+                    <div className="text-muted-foreground mt-0.5">veio {f.compareceram} · <strong className="text-emerald-500">voltou {f.retornaram}</strong> ({(f.taxaRetorno || 0).toFixed(0)}%)</div>
+                    <div className="text-[10px] text-red-500">desconto R$ {fmtBRL(f.descontoRS)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             {(d.leads || []).length === 0 ? (
               <p className="text-sm text-muted-foreground py-3 text-center">Nenhum lead com desconto cadastrado neste mês.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead><tr className="border-b text-left text-xs text-muted-foreground">
-                    <th className="py-2 pr-2">Cliente</th><th className="py-2 px-2">Fonte</th><th className="py-2 px-2">Serviço</th><th className="py-2 px-2">Barbeiro</th><th className="py-2 px-2 text-right">Desconto</th><th className="py-2 px-2 text-right">Tabela → líquido</th><th className="py-2 px-2 text-center">Veio?</th>
+                    <th className="py-2 pr-2">Cliente</th><th className="py-2 px-2">Fonte</th><th className="py-2 px-2">Serviço</th><th className="py-2 px-2">Barbeiro</th><th className="py-2 px-2 text-right">Desconto</th><th className="py-2 px-2 text-right">Tabela → líquido</th><th className="py-2 px-2 text-center">Situação</th>
                   </tr></thead>
                   <tbody>{d.leads.map((l: any) => (
                     <tr key={l.id} className="border-b">
@@ -887,7 +899,13 @@ function LeadsMetasCard({ mes }: { mes: string }) {
                       <td className="py-1.5 px-2 text-xs">{l.profissionalNome || "—"}</td>
                       <td className="py-1.5 px-2 text-right tabular-nums text-red-500">{l.desconto === "gratis" ? "grátis (100%)" : `${l.pctDesconto}%`}<div className="text-[10px]">−R$ {fmtBRL(l.descontoRS)}</div></td>
                       <td className="py-1.5 px-2 text-right tabular-nums text-xs">R$ {fmtBRL(l.valorTabela)} → <strong>R$ {fmtBRL(l.valorLiquido)}</strong></td>
-                      <td className="py-1.5 px-2 text-center">{l.compareceu ? <span className="text-emerald-500">✓</span> : <span className="text-muted-foreground">—</span>}</td>
+                      <td className="py-1.5 px-2 text-center whitespace-nowrap">
+                        {l.retornou
+                          ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/40 font-semibold">🎉 voltou ({l.visitas}×)</span>
+                          : l.compareceu
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-500 border border-sky-500/30">veio 1×</span>
+                            : <span className="text-[10px] text-muted-foreground">não veio</span>}
+                      </td>
                     </tr>
                   ))}</tbody>
                 </table>
@@ -897,7 +915,7 @@ function LeadsMetasCard({ mes }: { mes: string }) {
               <div className="mt-3 border-t border-card-border pt-2">
                 <p className="text-[10px] uppercase text-muted-foreground mb-1">Desconto por barbeiro</p>
                 {d.porBarbeiro.map((p: any) => (
-                  <div key={p.profissional} className="flex justify-between text-xs py-0.5"><span>{p.profissional} · {p.compareceram}/{p.leads} vieram</span><span className="tabular-nums text-muted-foreground">desconto R$ {fmtBRL(p.descontoRS)} · líquido R$ {fmtBRL(p.liquido)}</span></div>
+                  <div key={p.profissional} className="flex justify-between text-xs py-0.5"><span>{p.profissional} · {p.compareceram}/{p.leads} vieram · <strong className="text-emerald-500">{p.retornaram || 0} voltaram</strong></span><span className="tabular-nums text-muted-foreground">desconto R$ {fmtBRL(p.descontoRS)} · líquido R$ {fmtBRL(p.liquido)}</span></div>
                 ))}
               </div>
             )}

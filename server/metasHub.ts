@@ -95,7 +95,8 @@ export async function getMetasQuota(): Promise<MetasQuota | null> {
 export interface MetasLeads {
   leads: any[];
   porBarbeiro: any[];
-  totais: { leads: number; compareceram: number; valorTabela: number; descontoRS: number; liquido: number };
+  porFonte?: any[];
+  totais: { leads: number; compareceram: number; retornaram?: number; taxaComparecimento?: number; taxaRetorno?: number; valorTabela: number; descontoRS: number; liquido: number };
 }
 const leadsCache = new Map<string, { at: number; data: MetasLeads }>();
 export async function getMetasLeads(mes: string): Promise<MetasLeads | null> {
@@ -107,7 +108,7 @@ export async function getMetasLeads(mes: string): Promise<MetasLeads | null> {
     if (!r.ok) return hit?.data || null;
     const j = (await r.json()) as any;
     if (!j?.ok) return hit?.data || null;
-    const data: MetasLeads = { leads: j.leads || [], porBarbeiro: j.porBarbeiro || [], totais: j.totais || { leads: 0, compareceram: 0, valorTabela: 0, descontoRS: 0, liquido: 0 } };
+    const data: MetasLeads = { leads: j.leads || [], porBarbeiro: j.porBarbeiro || [], porFonte: j.porFonte || [], totais: j.totais || { leads: 0, compareceram: 0, retornaram: 0, valorTabela: 0, descontoRS: 0, liquido: 0 } };
     leadsCache.set(mes, { at: Date.now(), data });
     return data;
   } catch { return hit?.data || null; }

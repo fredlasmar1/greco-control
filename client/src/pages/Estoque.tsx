@@ -118,6 +118,7 @@ export default function Estoque() {
   const [editando, setEditando] = useState<Produto | null>(null);
   const [ajustando, setAjustando] = useState<Produto | null>(null);
   const [historicoDe, setHistoricoDe] = useState<Produto | null>(null);
+  const [penteFino, setPenteFino] = useState(false);
 
   async function carregar() {
     setLoading(true);
@@ -189,11 +190,24 @@ export default function Estoque() {
             Análise de produtos e ranking de vendedores baseado nas comandas dos últimos 30 dias (Trinks)
           </p>
         </div>
-        <Button onClick={carregar} disabled={loading} variant="outline" size="sm">
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          <span className="ml-2">Atualizar</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setPenteFino(v => !v)} variant={penteFino ? "default" : "outline"} size="sm">
+            <ClipboardList className="w-4 h-4 mr-1" />{penteFino ? "Sair do pente fino" : "Pente fino"}
+          </Button>
+          <Button onClick={carregar} disabled={loading} variant="outline" size="sm">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            <span className="ml-2">Atualizar</span>
+          </Button>
+        </div>
       </div>
+
+      {/* Baixa automática (status + consolidar ontem) */}
+      <BaixaAutomaticaCard />
+
+      {/* Pente fino — contagem física de todos os produtos */}
+      {penteFino && resumo && (
+        <PenteFinoSection produtos={resumo.produtos} onSalvo={() => { setPenteFino(false); carregar(); }} />
+      )}
 
       {/* Aviso sobre limitação da API */}
       <Card className="border-blue-500/20 bg-blue-500/5">
@@ -1237,5 +1251,97 @@ function HistoricoMovimentacoesModal({
         </div>
       </div>
     </div>
+  );
+}
+
+// Baixa automática de estoque — status + consolidar vendas de ontem.
+function BaixaAutomaticaCard() {
+  const [st, setSt] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  async function carregar() {
+    try { const r = await fetch(`${API_BASE}/api/estoque/consolidacao-status`); const j = await r.json(); if (j.ok) setSt(j); } catch {}
+  }
+  useEffect(() => { carregar(); }, []);
+  async function consolidarOntem() {
+    setBusy(true); setMsg("");
+    try {
+      const r = await fetch(`${API_BASE}/api/estoque/consolidar/ontem`, { method: "POST" });
+      const j = await r.json();
+      setMsg(j.consolidado ? `Baixa de ${j.data}: ${j.produtos} produtos, ${j.unidades} un.` : `${j.data}: ${j.motivo || "nada a fazer"}`);
+      await carregar();
+    } catch { setMsg("Erro ao consolidar."); } finally { setBusy(false); }
+  }
+  if (!st) return null;
+  return (
+    <Card className="border-emerald-500/30 bg-emerald-500/5">
+      <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="text-xs">
+          <div className="font-semibold text-sm flex items-center gap-1.5"><ArrowDownCircle className="w-4 h-4 text-emerald-500" />Baixa automática de estoque</div>
+          <div className="text-muted-foreground mt-0.5">
+            Última contagem (pente fino): <strong>{st.ultimaContagem ? st.ultimaContagem.split("-").reverse().join("/") : "nunca — faça o pente fino"}</strong>.
+            Todo dia 8h30 o sistema dá baixa das vendas de ontem (raw da API, 0 token).
+          </div>
+          {st.dias?.length > 0 && <div className="text-[10px] text-muted-foreground mt-1">Últimos dias baixados: {st.dias.slice(0, 6).map((d: any) => `${d.data.slice(8)}/${d.data.slice(5, 7)} (${d.unidades}un)`).join(" · ")}</div>}
+          {msg && <div className="text-[11px] text-emerald-600 mt-1">{msg}</div>}
+        </div>
+        <Button size="sm" variant="outline" onClick={consolidarOntem} disabled={busy} className="flex-shrink-0">
+          {busy ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}Consolidar ontem
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Pente fino — contagem física de TODOS os produtos de uma vez.
+function PenteFinoSection({ produtos, onSalvo }: { produtos: any[]; onSalvo: () => void }) {
+  const [cont, setCont] = useState<Record<string, string>>({});
+  const [min, setMin] = useState<Record<string, string>>({});
+  const [busca, setBusca] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const lista = produtos.filter(p => !busca.trim() || String(p.nome).toLowerCase().includes(busca.toLowerCase()));
+  const preenchidos = Object.values(cont).filter(v => v !== "" && v != null).length;
+  async function salvar() {
+    setSalvando(true);
+    try {
+      const itens = produtos
+        .filter(p => (cont[p.id] != null && cont[p.id] !== "") || (min[p.id] != null && min[p.id] !== ""))
+        .map(p => ({ produtoId: p.id, contado: cont[p.id] !== "" ? cont[p.id] : undefined, minimo: min[p.id] !== "" ? min[p.id] : undefined }));
+      if (!itens.length) { setSalvando(false); return; }
+      const r = await fetch(`${API_BASE}/api/estoque/inventario-lote`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }) });
+      const j = await r.json();
+      if (j.ok) onSalvo();
+    } finally { setSalvando(false); }
+  }
+  return (
+    <Card className="border-primary/40">
+      <CardHeader className="pb-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <CardTitle className="text-base flex items-center gap-2"><ClipboardList className="w-4 h-4 text-primary" />Pente fino — contagem física de hoje</CardTitle>
+          <div className="flex items-center gap-2">
+            <Input value={busca} onChange={e => setBusca(e.target.value)} placeholder="filtrar produto..." className="h-8 w-40 text-xs" />
+            <Button size="sm" onClick={salvar} disabled={salvando || preenchidos === 0}>{salvando ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}Salvar contagem ({preenchidos})</Button>
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground">Conte o físico e digite a quantidade REAL de cada produto (e o mínimo pra alerta). O saldo vira a contagem; a partir de amanhã as vendas dão baixa sozinhas.</p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-card"><tr className="border-b text-left text-xs text-muted-foreground">
+              <th className="py-2 pr-2">Produto</th><th className="py-2 px-2 text-right">Saldo atual</th><th className="py-2 px-2 text-right w-28">Contei</th><th className="py-2 px-2 text-right w-24">Mínimo</th>
+            </tr></thead>
+            <tbody>{lista.map(p => (
+              <tr key={p.id} className="border-b last:border-0">
+                <td className="py-1.5 pr-2"><div className="font-medium">{p.nome}</div>{p.categoria && <div className="text-[10px] text-muted-foreground">{p.categoria}</div>}</td>
+                <td className="py-1.5 px-2 text-right tabular-nums text-muted-foreground">{p.saldo}</td>
+                <td className="py-1.5 px-2 text-right"><Input type="number" value={cont[p.id] ?? ""} onChange={e => setCont({ ...cont, [p.id]: e.target.value })} placeholder="—" className="h-7 w-24 text-right text-xs" /></td>
+                <td className="py-1.5 px-2 text-right"><Input type="number" value={min[p.id] ?? (p.minimo > 0 ? String(p.minimo) : "")} onChange={e => setMin({ ...min, [p.id]: e.target.value })} placeholder="mín" className="h-7 w-20 text-right text-xs" /></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

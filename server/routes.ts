@@ -13618,6 +13618,90 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     }
   });
 
+  // POST /api/estoque/inventario-lote — PENTE FINO: contagem física de TODOS os
+  // produtos de uma vez. Grava um "inventário" por item (saldo vira a contagem) e,
+  // opcionalmente, o mínimo. Marca a data da contagem = baseline pra baixa automática.
+  app.post("/api/estoque/inventario-lote", async (req: Request, res: Response) => {
+    try {
+      const itens: any[] = Array.isArray(req.body?.itens) ? req.body.itens : [];
+      if (!itens.length) return res.status(400).json({ ok: false, error: "envie itens: [{produtoId, contado, minimo?}]" });
+      const custosMap = await getProdutosCustos();
+      const movs = await getMovimentacoesEstoque();
+      const deltas = getDeltasPorProduto(movs);
+      const usuario = (req as any).user?.username || "admin";
+      let contados = 0, minimosSet = 0;
+      for (const it of itens) {
+        const produtoId = String(it.produtoId || "").trim();
+        if (!produtoId) continue;
+        if (it.contado != null && it.contado !== "") {
+          const contado = Math.max(0, Number(it.contado) || 0);
+          const saldoAnterior = Math.max(0, Number(deltas[produtoId] || 0));
+          await addMovimentacao({ produtoId, tipo: "inventario", quantidade: contado, custoUnitario: getCustoOf(custosMap, produtoId), motivo: "Pente fino (contagem física)", usuario, saldoAnterior });
+          deltas[produtoId] = contado; // reflete pra próximos itens do mesmo lote
+          contados++;
+        }
+        if (it.minimo != null && it.minimo !== "") { await setProdutoMinimo(produtoId, Math.max(0, Number(it.minimo) || 0)); minimosSet++; }
+      }
+      const dataContagem = ymdHoje();
+      await kvSet("estoque_ultima_contagem", dataContagem);
+      invalidateCache("estoque");
+      return res.json({ ok: true, contados, minimosSet, dataContagem });
+    } catch (err: any) { return res.status(400).json({ ok: false, error: err.message }); }
+  });
+
+  // Consolida a BAIXA das vendas de um dia (do raw da API no snapshot, 0 token).
+  // Trava anti-dobra: só um dia DEPOIS da última contagem (senão a contagem já
+  // refletiu essas vendas) e nunca 2×/dia (idempotente).
+  async function consolidarBaixaEstoque(data: string): Promise<{ ok: boolean; motivo?: string; produtos: number; unidades: number; itens: any[] }> {
+    const consolidados: any = (await kvGet("estoque_consolidado")) || {};
+    if (consolidados[data]) return { ok: false, motivo: "já consolidado", produtos: 0, unidades: 0, itens: [] };
+    const ultimaContagem = String((await kvGet<string>("estoque_ultima_contagem")) || "");
+    if (ultimaContagem && data <= ultimaContagem) return { ok: false, motivo: `dia ≤ última contagem (${ultimaContagem}) — já refletido no pente fino`, produtos: 0, unidades: 0, itens: [] };
+    const snap: any = await getSnapshot(data).catch(() => null);
+    const trans: any[] = Array.isArray(snap?.transacoesRaw) ? snap.transacoesRaw : [];
+    if (!trans.length) return { ok: false, motivo: "sem raw da API pra esse dia (não capturado)", produtos: 0, unidades: 0, itens: [] };
+    const porProduto = new Map<string, { qtd: number; nome: string }>();
+    for (const t of trans) {
+      for (const p of (t.produtos || [])) {
+        const id = String(p.id || p.produtoId || ""); const q = Number(p.quantidade || 0);
+        if (!id || q <= 0) continue;
+        const e = porProduto.get(id) || { qtd: 0, nome: p.nome || p.descricao || "" };
+        e.qtd += q; if (!e.nome && (p.nome || p.descricao)) e.nome = p.nome || p.descricao; porProduto.set(id, e);
+      }
+    }
+    if (porProduto.size === 0) { consolidados[data] = { produtos: 0, unidades: 0, em: new Date().toISOString() }; await kvSet("estoque_consolidado", consolidados); return { ok: true, produtos: 0, unidades: 0, itens: [] }; }
+    const custosMap = await getProdutosCustos();
+    const itens: any[] = []; let unidades = 0;
+    for (const [id, e] of Array.from(porProduto.entries())) {
+      await addMovimentacao({ produtoId: id, tipo: "saida", quantidade: e.qtd, custoUnitario: getCustoOf(custosMap, id), motivo: `Venda do dia ${data} (baixa automática)`, usuario: "sistema" });
+      itens.push({ produtoId: id, nome: e.nome, qtd: e.qtd }); unidades += e.qtd;
+    }
+    consolidados[data] = { produtos: itens.length, unidades, em: new Date().toISOString() };
+    await kvSet("estoque_consolidado", consolidados);
+    invalidateCache("estoque");
+    log(`[estoque] baixa consolidada ${data}: ${itens.length} produtos, ${unidades} un`, "estoque");
+    return { ok: true, produtos: itens.length, unidades, itens };
+  }
+  // POST /api/estoque/consolidar/:data (ou /ontem) — dá baixa das vendas do dia.
+  app.post("/api/estoque/consolidar/:data", async (req: Request, res: Response) => {
+    try {
+      const p = String(req.params.data);
+      const data = p === "ontem" ? ymdAddDays(ymdHoje(), -1) : p;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ ok: false, error: "data inválida" });
+      const r = await consolidarBaixaEstoque(data);
+      return res.json({ ok: true, data, consolidado: r.ok, motivo: r.motivo, produtos: r.produtos, unidades: r.unidades, itens: r.itens });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  // GET /api/estoque/consolidacao-status — última contagem + dias já baixados.
+  app.get("/api/estoque/consolidacao-status", async (_req: Request, res: Response) => {
+    try {
+      const ultimaContagem = String((await kvGet<string>("estoque_ultima_contagem")) || "");
+      const consolidados: any = (await kvGet("estoque_consolidado")) || {};
+      const dias = Object.entries(consolidados).map(([data, v]: any) => ({ data, ...v })).sort((a, b) => b.data.localeCompare(a.data)).slice(0, 30);
+      return res.json({ ok: true, ultimaContagem, dias });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   // DELETE /api/estoque/movimentacoes/:id — remove um ajuste (correção de erro)
   app.delete("/api/estoque/movimentacoes/:id", async (req: Request, res: Response) => {
     try {
@@ -14798,6 +14882,17 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         } catch (err: any) {
           log(`[cron] erro conferência estoque: ${err.message}`, "telegram");
         }
+      }); }, { timezone: "America/Sao_Paulo" });
+
+      // v113: BAIXA AUTOMÁTICA de estoque — todo dia 8h30 consolida as vendas de
+      // ONTEM (do raw da API no snapshot, 0 token) e dá baixa. Trava anti-dobra
+      // (só depois da última contagem + idempotente).
+      cron.schedule("30 8 * * *", async () => { await comOrigem("cron-estoque-baixa", async () => {
+        try {
+          const ontem = ymdAddDays(ymdHoje(), -1);
+          const r = await consolidarBaixaEstoque(ontem);
+          log(`[cron] baixa estoque ${ontem}: ${r.ok ? `${r.produtos} produtos / ${r.unidades} un` : r.motivo}`, "estoque");
+        } catch (err: any) { log(`[cron] erro baixa estoque: ${err.message}`, "estoque"); }
       }); }, { timezone: "America/Sao_Paulo" });
 
       // v36 Fase 2 / v79: Cron noturno de SNAPSHOT — FECHAMENTO do dia às 23:50 SP

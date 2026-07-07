@@ -1,8 +1,8 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Package, AlertTriangle, TrendingDown, RefreshCw, Loader2, Search, Info, Trophy, User, Pencil, Save, X, Plus, Minus, ClipboardList, History, Trash2, ArrowUpCircle, ArrowDownCircle } from "lucide-react";
+import { Package, AlertTriangle, TrendingDown, TrendingUp, RefreshCw, Loader2, Search, Info, Trophy, User, Pencil, Save, X, Plus, Minus, ClipboardList, History, Trash2, ArrowUpCircle, ArrowDownCircle } from "lucide-react";
 import { formatCurrency } from "@/lib/demoData";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
@@ -100,6 +100,25 @@ interface Resumo {
   rankingVendedores?: VendedorRanking[];
 }
 
+// KPI premium no padrão do Dashboard (label uppercase + valor bold + ícone em quadrado).
+function KpiTile({ icon, label, value, sub, valorCor, accent }: { icon: ReactNode; label: string; value: string; sub?: string; valorCor?: string; accent?: "red" | "amber" | "emerald" | "primary" }) {
+  const ring = accent === "red" ? "bg-red-500/10 text-red-500" : accent === "amber" ? "bg-amber-500/10 text-amber-500" : accent === "emerald" ? "bg-emerald-500/10 text-emerald-500" : "bg-primary/10 text-primary";
+  return (
+    <Card className="bg-card border-card-border">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{label}</p>
+            <p className={`text-xl font-bold mt-1 truncate ${valorCor || ""}`}>{value}</p>
+            {sub && <p className="text-[11px] text-muted-foreground mt-1 truncate">{sub}</p>}
+          </div>
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${ring}`}>{icon}</div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function formatarDiasUltimaVenda(dias: number | null): string {
   if (dias === null) return "nunca vendido";
   if (dias === 0) return "hoje";
@@ -187,7 +206,7 @@ export default function Estoque() {
             Controle de Produtos
           </h2>
           <p className="text-sm text-muted-foreground">
-            Análise de produtos e ranking de vendedores baseado nas comandas dos últimos 30 dias (Trinks)
+            Pente fino, baixa automática das vendas e alerta de reposição — saldo, vendidos e o que repor.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -209,12 +228,12 @@ export default function Estoque() {
         <PenteFinoSection produtos={resumo.produtos} onSalvo={() => { setPenteFino(false); carregar(); }} />
       )}
 
-      {/* Aviso sobre limitação da API */}
-      <Card className="border-blue-500/20 bg-blue-500/5">
-        <CardContent className="pt-4 flex items-start gap-3">
-          <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
-          <div className="text-xs text-muted-foreground">
-            A API da Trinks não expõe saldo de estoque. O <strong className="text-foreground">saldo abaixo é calculado</strong> a partir dos <strong className="text-foreground">ajustes manuais</strong> que você registra (entradas, saídas e inventários). Use o botão <ClipboardList className="w-3 h-3 inline" /> em cada produto para registrar uma compra, perda ou contagem física. As vendas via Trinks também são usadas para identificar produtos parados.
+      {/* Como funciona (discreto, premium) */}
+      <Card className="bg-card border-card-border">
+        <CardContent className="p-3 flex items-start gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center flex-shrink-0"><Info className="w-3.5 h-3.5" /></div>
+          <div className="text-[11px] text-muted-foreground leading-relaxed">
+            O saldo vem do <strong className="text-foreground">pente fino</strong> (contagem física) mais as <strong className="text-foreground">baixas automáticas</strong> das vendas do dia. Faça o pente fino, cadastre o mínimo, e a partir daí o estoque se mantém sozinho — com alerta toda terça do que repor.
           </div>
         </CardContent>
       </Card>
@@ -238,44 +257,18 @@ export default function Estoque() {
       {/* Cards resumo */}
       {resumo && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card>
-              <CardContent className="pt-4">
-                <div className="text-xs text-muted-foreground">Total de produtos</div>
-                <div className="text-2xl font-semibold mt-1">{resumo.totalProdutos}</div>
-              </CardContent>
-            </Card>
-            <Card className={resumo.produtosCriticos > 0 ? "border-red-500/30" : ""}>
-              <CardContent className="pt-4">
-                <div className="text-xs text-muted-foreground">Produtos parados</div>
-                <div className="text-2xl font-semibold mt-1 text-amber-400">
-                  {resumo.produtosEmAlerta}
-                </div>
-                {resumo.produtosCriticos > 0 && (
-                  <div className="text-[11px] text-red-400 mt-0.5">
-                    {resumo.produtosCriticos} há mais de 30 dias
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4">
-                <div className="text-xs text-muted-foreground">Faturamento produtos (30d)</div>
-                <div className="text-2xl font-semibold mt-1">
-                  {formatCurrency(resumo.faturamentoProdutos30d || 0)}
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4">
-                <div className="text-xs text-muted-foreground">Vendas hoje</div>
-                <div className="text-2xl font-semibold mt-1">{resumo.movimentacoesHojeCount}</div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">
-                  itens vendidos
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          {(() => {
+            const rup = resumo.produtos.filter(p => p.nivel === "ruptura").length;
+            const parados = resumo.produtos.filter(p => p.nivel === "critico" || p.nivel === "atencao").length;
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <KpiTile icon={<Package className="w-4 h-4" />} label="Produtos" value={String(resumo.totalProdutos)} sub={`${formatCurrency(resumo.valorTotalEstoque || 0)} em estoque`} />
+                <KpiTile icon={<ArrowDownCircle className="w-4 h-4" />} label="Repor (estoque baixo)" value={String(rup)} valorCor={rup > 0 ? "text-red-500" : "text-emerald-500"} accent={rup > 0 ? "red" : "emerald"} sub={rup > 0 ? "cadastre o mínimo e conte" : "tudo ok"} />
+                <KpiTile icon={<TrendingDown className="w-4 h-4" />} label="Sem giro" value={String(parados)} valorCor="text-amber-500" accent="amber" sub={`${resumo.produtosCriticos || 0} parados +30d`} />
+                <KpiTile icon={<TrendingUp className="w-4 h-4" />} label="Faturamento produtos" value={formatCurrency(resumo.faturamentoProdutos30d || 0)} sub="últimos 30 dias" />
+              </div>
+            );
+          })()}
 
           {/* Alertas - produtos parados */}
           {resumo.alertas.length > 0 && (

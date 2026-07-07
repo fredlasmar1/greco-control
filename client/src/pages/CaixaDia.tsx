@@ -6,7 +6,9 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, RefreshCw, TrendingUp } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, RefreshCw, TrendingUp, Landmark, Save } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { useAuth } from "@/lib/authStore";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
@@ -78,6 +80,9 @@ export default function CaixaDia() {
           <Button variant="ghost" size="sm" onClick={carregar} title="Recarregar"><RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /></Button>
         </div>
       </div>
+
+      {/* Conciliação bancária do ÚLTIMO caixa fechado (pedido do dono) */}
+      <ConciliacaoUltimoCaixa />
 
       {/* v82: fechamentos diários (Trinks/email) pra conferir */}
       <FechamentosDiarios onConferir={(dt) => setData(dt)} />
@@ -209,6 +214,128 @@ export default function CaixaDia() {
 }
 
 // ─── v83: Fechamentos do mês (email Trinks) + calculadora por forma ──────────
+// Conciliação bancária do ÚLTIMO caixa fechado (checklist do dono).
+function ConciliacaoUltimoCaixa() {
+  const user = useAuth((s) => s.user);
+  const [d, setD] = useState<any>(null);
+  const [f, setF] = useState<any>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [salvo, setSalvo] = useState(false);
+
+  async function carregar() {
+    const r = await fetch(`${API_BASE}/api/caixa-dia/conciliacao/ultimo`);
+    const j = await r.json();
+    if (!j.ok) return;
+    setD(j);
+    const c = j.conciliacao;
+    const gap = (vend: number, caiu: number) => Math.max(0, Math.round((vend - caiu) * 100) / 100);
+    setF(c ? {
+      credito: c.credito, debito: c.debito, pix: c.pix, dinheiro: c.dinheiro,
+      planosQtd: c.planosQtd, infinitepay: c.infinitepay,
+      quemFechou: c.quemFechou || "", quemConferiu: c.quemConferiu || "", obs: c.obs || "",
+    } : {
+      credito: { bateu: null, faltando: gap(j.vendido.credito, j.caiuItau.credito) },
+      debito: { bateu: null, faltando: gap(j.vendido.debito, j.caiuItau.debito) },
+      pix: { bateu: null, valor: j.vendido.pix },
+      dinheiro: { bateu: null, valor: j.cashDrawer?.recebido ?? j.vendido.dinheiro },
+      planosQtd: j.planosQtd,
+      infinitepay: { teve: (j.infinitepay?.total || 0) > 0, quem: (j.infinitepay?.itens || []).map((x: any) => x.descricao).join("; ").slice(0, 200), valor: j.infinitepay?.total || 0 },
+      quemFechou: "", quemConferiu: user?.nome || "", obs: "",
+    });
+    setSalvo(!!c);
+  }
+  useEffect(() => { carregar(); /* eslint-disable-next-line */ }, []);
+  if (!d || !f) return null;
+
+  const setForma = (k: string, patch: any) => { setF({ ...f, [k]: { ...f[k], ...patch } }); setSalvo(false); };
+  async function salvar() {
+    setSalvando(true);
+    try {
+      await fetch(`${API_BASE}/api/caixa-dia/conciliacao/${d.data}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f),
+      });
+      setSalvo(true);
+    } finally { setSalvando(false); }
+  }
+
+  const Toggle = ({ on, onSet }: { on: boolean | null; onSet: (v: boolean) => void }) => (
+    <div className="inline-flex rounded-md border overflow-hidden text-xs">
+      <button type="button" onClick={() => onSet(true)} className={`px-2 py-0.5 ${on === true ? "bg-emerald-500 text-white" : "bg-background"}`}>bateu</button>
+      <button type="button" onClick={() => onSet(false)} className={`px-2 py-0.5 border-l ${on === false ? "bg-red-500 text-white" : "bg-background"}`}>não</button>
+    </div>
+  );
+  const FormaLinha = ({ label, k, vendido, caiu }: { label: string; k: string; vendido: number; caiu: number }) => (
+    <div className="flex items-center justify-between gap-2 py-1.5 border-b last:border-0 flex-wrap">
+      <div className="text-sm font-medium min-w-[80px]">{label}</div>
+      <div className="text-xs text-muted-foreground tabular-nums">vendido R$ {fmt(vendido)} · caiu R$ {fmt(caiu)}</div>
+      <div className="flex items-center gap-2">
+        <Toggle on={f[k].bateu} onSet={v => setForma(k, { bateu: v })} />
+        {f[k].bateu === false && (
+          <div className="flex items-center gap-1"><span className="text-[10px] text-muted-foreground">faltou R$</span>
+            <Input type="number" step="0.01" value={f[k].faltando ?? 0} onChange={e => setForma(k, { faltando: Number(e.target.value) || 0 })} className="w-24 h-7 text-right text-xs" /></div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <Card className="border-primary/30">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2"><Landmark className="w-4 h-4 text-primary" />Conciliação do último caixa fechado — {labelDia(d.data)}</CardTitle>
+        <p className="text-xs text-muted-foreground">Total do dia R$ {fmt(d.totalDia)} · {d.comandas} comandas. Confira cada forma contra o banco. {salvo ? <span className="text-emerald-500">✓ conferido</span> : <span className="text-amber-500">pendente</span>}</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="rounded-md border p-3">
+          <FormaLinha label="Débito" k="debito" vendido={d.vendido.debito} caiu={d.caiuItau.debito} />
+          <FormaLinha label="Crédito" k="credito" vendido={d.vendido.credito} caiu={d.caiuItau.credito} />
+          {/* PIX */}
+          <div className="flex items-center justify-between gap-2 py-1.5 border-b flex-wrap">
+            <div className="text-sm font-medium min-w-[80px]">PIX</div>
+            <div className="text-xs text-muted-foreground tabular-nums">vendido R$ {fmt(d.vendido.pix)} · caiu R$ {fmt(d.caiuItau.pix)}</div>
+            <div className="flex items-center gap-1"><span className="text-[10px] text-muted-foreground">recebemos R$</span>
+              <Input type="number" step="0.01" value={f.pix.valor ?? 0} onChange={e => setForma("pix", { valor: Number(e.target.value) || 0 })} className="w-28 h-7 text-right text-xs" /></div>
+          </div>
+          {/* Dinheiro */}
+          <div className="flex items-center justify-between gap-2 py-1.5 flex-wrap">
+            <div className="text-sm font-medium min-w-[80px]">Dinheiro</div>
+            <div className="text-xs text-muted-foreground tabular-nums">caixa: recebido R$ {fmt(d.cashDrawer?.recebido || 0)} · saldo R$ {fmt(d.cashDrawer?.saldo || 0)}</div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1"><span className="text-[10px] text-muted-foreground">R$</span><Input type="number" step="0.01" value={f.dinheiro.valor ?? 0} onChange={e => setForma("dinheiro", { valor: Number(e.target.value) || 0 })} className="w-24 h-7 text-right text-xs" /></div>
+              <Toggle on={f.dinheiro.bateu} onSet={v => setForma("dinheiro", { bateu: v })} />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded-md border p-3">
+            <label className="text-[10px] uppercase text-muted-foreground">Clientes de plano (quantos)</label>
+            <Input type="number" value={f.planosQtd ?? 0} onChange={e => { setF({ ...f, planosQtd: Number(e.target.value) || 0 }); setSalvo(false); }} className="h-8 mt-1 w-28" />
+          </div>
+          <div className="rounded-md border p-3">
+            <label className="text-[10px] uppercase text-muted-foreground flex items-center gap-1">InfinitePay — algum pagamento?</label>
+            <div className="flex items-center gap-2 mt-1">
+              <Toggle on={f.infinitepay.teve} onSet={v => { setF({ ...f, infinitepay: { ...f.infinitepay, teve: v } }); setSalvo(false); }} />
+              {f.infinitepay.teve && <Input value={f.infinitepay.quem} onChange={e => { setF({ ...f, infinitepay: { ...f.infinitepay, quem: e.target.value } }); setSalvo(false); }} placeholder="quem / o quê" className="h-8 flex-1 text-xs" />}
+            </div>
+            {(d.infinitepay?.total || 0) > 0 && <p className="text-[10px] text-muted-foreground mt-1">Banco: R$ {fmt(d.infinitepay.total)} ({(d.infinitepay.itens || []).length} lançamento(s))</p>}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div><label className="text-[10px] uppercase text-muted-foreground">Quem fechou o caixa</label><Input value={f.quemFechou} onChange={e => { setF({ ...f, quemFechou: e.target.value }); setSalvo(false); }} placeholder="nome" className="h-8 mt-1" /></div>
+          <div><label className="text-[10px] uppercase text-muted-foreground">Quem conferiu</label><Input value={f.quemConferiu} onChange={e => { setF({ ...f, quemConferiu: e.target.value }); setSalvo(false); }} placeholder="nome" className="h-8 mt-1" /></div>
+        </div>
+        <Textarea value={f.obs} onChange={e => { setF({ ...f, obs: e.target.value }); setSalvo(false); }} placeholder="Observações da conciliação..." rows={2} className="text-sm" />
+
+        <div className="flex items-center justify-end gap-2">
+          {d.conciliacao?.conferidoEm && <span className="text-[10px] text-muted-foreground">conferido em {new Date(d.conciliacao.conferidoEm).toLocaleString("pt-BR")}</span>}
+          <Button size="sm" onClick={salvar} disabled={salvando}>{salvando ? <RefreshCw className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}{salvo ? "Salvo" : "Salvar conciliação"}</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void }) {
   const [d, setD] = useState<any>(null);
   const [carregando, setCarregando] = useState(true);

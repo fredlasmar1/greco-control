@@ -7641,6 +7641,93 @@ Regras CRÍTICAS:
     }
   });
 
+  // ── CONCILIAÇÃO BANCÁRIA do último caixa fechado (pedido do dono 07/07) ──
+  // Pega o último dia fechado (e-mail Trinks/Gmail) e monta o checklist: débito
+  // bateu? crédito bateu? (senão, quanto faltou) · PIX recebido · dinheiro (bate c/
+  // caixa?) · planos (quantos) · InfinitePay (teve? quem) · quem fechou · quem conferiu.
+  // Fontes: Gmail (total/dinheiro/planos) + CSV/API (crédito/débito/PIX) + banco (caiu).
+  async function ultimaDataCaixaFechada(): Promise<string> {
+    let d = ymdAddDays(ymdHoje(), -1);
+    for (let i = 0; i < 45; i++) {
+      try { const s: any = await getSnapshot(d); if (s && Number(s?.faturamento?.total || 0) > 0) return d; } catch {}
+      d = ymdAddDays(d, -1);
+    }
+    return ymdAddDays(ymdHoje(), -1);
+  }
+  app.get("/api/caixa-dia/conciliacao/:data", async (req: Request, res: Response) => {
+    try {
+      const p = String(req.params.data);
+      const data = /^\d{4}-\d{2}-\d{2}$/.test(p) ? p : await ultimaDataCaixaFechada();
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const mes = data.slice(0, 7);
+      const snap: any = await getSnapshot(data).catch(() => null);
+      // vendido por forma (CSV Caixa; PIX = coluna "Outros"; plano = pré-pago)
+      const vend = { credito: 0, debito: 0, pix: 0, dinheiro: 0, plano: 0 };
+      let planosQtd = 0, comandas = 0;
+      const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+      const rows: any[] = Array.isArray(caixaPayload?.rows) ? caixaPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
+      for (const r of rows) {
+        vend.credito += Number(r.totalCredito || 0); vend.debito += Number(r.totalDebito || 0);
+        vend.dinheiro += Number(r.totalDinheiro || 0); vend.plano += Number(r.totalPrePago || 0);
+        vend.pix += Number(r.totalOutros || 0); comandas++;
+        if (Number(r.totalPacotes || 0) > 0 || Number(r.totalPrePago || 0) > 0) planosQtd++;
+      }
+      // caiu no Itaú (D+1 útil pra cartão; mesmo dia pro PIX)
+      const d1 = new Date(data + "T12:00:00Z"); d1.setUTCDate(d1.getUTCDate() + 1);
+      while (d1.getUTCDay() === 0 || d1.getUTCDay() === 6) d1.setUTCDate(d1.getUTCDate() + 1);
+      const dataMais1 = d1.toISOString().slice(0, 10);
+      const contasObs = new Set(contasConsolidacao.filter(c => c.observacao).map(c => c.id));
+      let caiuCredito = 0, caiuDebito = 0, caiuPix = 0;
+      const infinitepayItens: { descricao: string; valor: number }[] = [];
+      for (const t of transacoesBanco) {
+        const conta = contasConsolidacao.find(c => c.id === t.contaId);
+        const ehInfinite = !!conta && (contasObs.has(t.contaId) || /infinit/i.test(conta.nome || ""));
+        if (ehInfinite) { if (t.date === data && Number(t.amount) > 0) infinitepayItens.push({ descricao: t.description || "", valor: r2(Number(t.amount)) }); continue; }
+        if (Number(t.amount) <= 0 || t.incluidoNoFluxo === false) continue;
+        const up = (t.description || "").toUpperCase();
+        if (t.date === dataMais1 && up.includes("REDE")) {
+          if (/\bAT\d|AT0|VISA AT|MAST AT|ELO AT|AMEX AT/.test(up) || up.includes(" AT")) caiuCredito += t.amount;
+          else if (/\bDB\d|DB0|VISA DB|MAST DB|ELO DB| DB/.test(up)) caiuDebito += t.amount;
+        }
+        if (t.date === data && up.includes("PIX") && (up.includes("RECEB") || up.includes("QR"))) caiuPix += t.amount;
+      }
+      const cashDrawer = snap?.caixaDinheiro || null;
+      const salvo: any = await kvGet(`caixa_conciliacao:${data}`);
+      return res.json({
+        ok: true, data, dataMais1, ehUltimo: !/^\d{4}-\d{2}-\d{2}$/.test(p),
+        temDados: rows.length > 0 || !!snap,
+        totalDia: r2(Number(snap?.faturamento?.total || 0) || rows.reduce((s, r) => s + Number(r.totalGeral || 0), 0)),
+        comandas,
+        vendido: { credito: r2(vend.credito), debito: r2(vend.debito), pix: r2(vend.pix), dinheiro: r2(vend.dinheiro), plano: r2(vend.plano) },
+        caiuItau: { credito: r2(caiuCredito), debito: r2(caiuDebito), pix: r2(caiuPix) },
+        planosQtd,
+        infinitepay: { itens: infinitepayItens, total: r2(infinitepayItens.reduce((s, x) => s + x.valor, 0)) },
+        cashDrawer,
+        conciliacao: salvo || null,
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err?.message || "Erro interno." }); }
+  });
+  app.post("/api/caixa-dia/conciliacao/:data", async (req: Request, res: Response) => {
+    try {
+      const data = String(req.params.data);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ ok: false, error: "data inválida" });
+      const b = req.body || {};
+      const forma = (o: any) => ({ bateu: o?.bateu === true ? true : o?.bateu === false ? false : null, faltando: Math.max(0, Number(o?.faltando) || 0), valor: o?.valor != null ? Number(o.valor) || 0 : undefined });
+      const reg = {
+        data,
+        credito: forma(b.credito), debito: forma(b.debito), pix: forma(b.pix), dinheiro: forma(b.dinheiro),
+        planosQtd: Math.max(0, Number(b.planosQtd) || 0),
+        infinitepay: { teve: !!b?.infinitepay?.teve, quem: String(b?.infinitepay?.quem || "").slice(0, 200), valor: Number(b?.infinitepay?.valor) || 0 },
+        quemFechou: String(b.quemFechou || "").slice(0, 120),
+        quemConferiu: String(b.quemConferiu || "").slice(0, 120),
+        obs: String(b.obs || "").slice(0, 500),
+        conferidoEm: new Date().toISOString(),
+      };
+      await kvSet(`caixa_conciliacao:${data}`, reg);
+      return res.json({ ok: true, conciliacao: reg });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err?.message || "Erro interno." }); }
+  });
+
   // DELETE /api/caixa-dia/:data — reabre o dia (apaga fechamento)
   app.delete("/api/caixa-dia/:data", async (req: Request, res: Response) => {
     try {

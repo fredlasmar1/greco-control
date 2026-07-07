@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, RefreshCw, TrendingUp, Landmark, Save } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, RefreshCw, TrendingUp, Landmark, Save, MessageSquare, Trash2, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/authStore";
 
@@ -83,6 +83,9 @@ export default function CaixaDia() {
 
       {/* Conciliação bancária do ÚLTIMO caixa fechado (pedido do dono) */}
       <ConciliacaoUltimoCaixa />
+
+      {/* Observações / problemas do caixa */}
+      <ObservacoesCaixa />
 
       {/* v82: fechamentos diários (Trinks/email) pra conferir */}
       <FechamentosDiarios onConferir={(dt) => setData(dt)} />
@@ -214,6 +217,63 @@ export default function CaixaDia() {
 }
 
 // ─── v83: Fechamentos do mês (email Trinks) + calculadora por forma ──────────
+// Observações / problemas do caixa — log com autor e data.
+function ObservacoesCaixa() {
+  const user = useAuth((s) => s.user);
+  const [lista, setLista] = useState<any[]>([]);
+  const [texto, setTexto] = useState("");
+  const [tipo, setTipo] = useState<"problema" | "observacao">("problema");
+  const [salvando, setSalvando] = useState(false);
+  async function carregar() { try { const r = await fetch(`${API_BASE}/api/caixa-dia/observacoes`); const j = await r.json(); if (j.ok) setLista(j.observacoes || []); } catch { /* */ } }
+  useEffect(() => { carregar(); }, []);
+  async function adicionar() {
+    if (!texto.trim()) return;
+    setSalvando(true);
+    try { await fetch(`${API_BASE}/api/caixa-dia/observacoes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texto, tipo, autor: user?.nome }) }); setTexto(""); await carregar(); }
+    finally { setSalvando(false); }
+  }
+  async function resolver(id: string, resolvido: boolean) { await fetch(`${API_BASE}/api/caixa-dia/observacoes/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resolvido }) }); await carregar(); }
+  async function remover(id: string) { if (!confirm("Remover esta observação?")) return; await fetch(`${API_BASE}/api/caixa-dia/observacoes/${id}`, { method: "DELETE" }); await carregar(); }
+  const abertos = lista.filter(o => !o.resolvido);
+  return (
+    <Card className="bg-card border-card-border">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2"><MessageSquare className="w-4 h-4 text-primary" />Observações / Problemas do caixa {abertos.length > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/30">{abertos.length} em aberto</span>}</CardTitle>
+        <p className="text-xs text-muted-foreground">Registre qualquer problema do caixa (divergência, falta, erro, etc.) — fica gravado com quem escreveu e quando.</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="rounded-md border p-2 space-y-2">
+          <div className="inline-flex rounded-md border overflow-hidden text-xs">
+            <button type="button" onClick={() => setTipo("problema")} className={`px-2.5 py-1 flex items-center gap-1 ${tipo === "problema" ? "bg-red-500 text-white" : "bg-background"}`}><AlertTriangle className="w-3 h-3" />Problema</button>
+            <button type="button" onClick={() => setTipo("observacao")} className={`px-2.5 py-1 border-l ${tipo === "observacao" ? "bg-primary text-primary-foreground" : "bg-background"}`}>Observação</button>
+          </div>
+          <Textarea value={texto} onChange={e => setTexto(e.target.value)} rows={2} placeholder="Descreva o problema ou a observação..." className="text-sm" />
+          <div className="flex justify-end"><Button size="sm" onClick={adicionar} disabled={salvando || !texto.trim()}>{salvando ? <RefreshCw className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}Registrar</Button></div>
+        </div>
+        {lista.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-2">Nenhuma observação registrada.</p>
+        ) : (
+          <div className="space-y-1.5 max-h-[360px] overflow-y-auto">
+            {lista.map(o => (
+              <div key={o.id} className={`flex items-start gap-2 rounded-md border p-2 text-sm ${o.resolvido ? "opacity-60" : o.tipo === "problema" ? "border-red-500/30 bg-red-500/5" : ""}`}>
+                <div className="flex-shrink-0 mt-0.5">{o.tipo === "problema" ? <AlertTriangle className="w-4 h-4 text-red-500" /> : <MessageSquare className="w-4 h-4 text-muted-foreground" />}</div>
+                <div className="flex-1 min-w-0">
+                  <div className={o.resolvido ? "line-through" : ""}>{o.texto}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{o.autor || "—"} · {(o.data || "").split("-").reverse().join("/")}{o.resolvido ? " · ✓ resolvido" : ""}</div>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => resolver(o.id, !o.resolvido)}>{o.resolvido ? "Reabrir" : "Resolver"}</Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-1.5 text-red-500" onClick={() => remover(o.id)}><Trash2 className="w-3 h-3" /></Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // Conciliação bancária do ÚLTIMO caixa fechado (checklist do dono).
 function ConciliacaoUltimoCaixa() {
   const user = useAuth((s) => s.user);

@@ -7782,6 +7782,54 @@ Regras CRÍTICAS:
     } catch (err: any) { return res.status(500).json({ ok: false, error: err?.message || "Erro interno." }); }
   });
 
+  // ── OBSERVAÇÕES / PROBLEMAS do caixa (log com autor e data) ──
+  app.get("/api/caixa-dia/observacoes", async (_req: Request, res: Response) => {
+    try {
+      const arr = (await kvGet<any[]>("caixa_observacoes")) || [];
+      const lista = (Array.isArray(arr) ? arr : []).slice().sort((a, b) => String(b.criadoEm || "").localeCompare(String(a.criadoEm || "")));
+      return res.json({ ok: true, observacoes: lista });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  app.post("/api/caixa-dia/observacoes", async (req: Request, res: Response) => {
+    try {
+      const b = req.body || {};
+      const texto = String(b.texto || "").trim();
+      if (!texto) return res.status(400).json({ ok: false, error: "texto obrigatório" });
+      const arr = (await kvGet<any[]>("caixa_observacoes")) || [];
+      const obs = {
+        id: `obs_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        texto: texto.slice(0, 1000),
+        autor: String(b.autor || (req as any).user?.nome || (req as any).user?.username || "").slice(0, 120),
+        data: /^\d{4}-\d{2}-\d{2}$/.test(String(b.data || "")) ? String(b.data) : ymdHoje(),
+        tipo: b.tipo === "problema" ? "problema" : "observacao",
+        resolvido: false,
+        criadoEm: new Date().toISOString(),
+      };
+      const nova = [obs, ...(Array.isArray(arr) ? arr : [])].slice(0, 500);
+      await kvSet("caixa_observacoes", nova);
+      return res.json({ ok: true, observacao: obs });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  app.put("/api/caixa-dia/observacoes/:id", async (req: Request, res: Response) => {
+    try {
+      const arr = (await kvGet<any[]>("caixa_observacoes")) || [];
+      const i = (Array.isArray(arr) ? arr : []).findIndex((o: any) => o.id === req.params.id);
+      if (i < 0) return res.status(404).json({ ok: false, error: "não encontrada" });
+      if (req.body?.resolvido != null) arr[i].resolvido = !!req.body.resolvido;
+      if (req.body?.texto != null) arr[i].texto = String(req.body.texto).slice(0, 1000);
+      await kvSet("caixa_observacoes", arr);
+      return res.json({ ok: true, observacao: arr[i] });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+  app.delete("/api/caixa-dia/observacoes/:id", async (req: Request, res: Response) => {
+    try {
+      const arr = (await kvGet<any[]>("caixa_observacoes")) || [];
+      const nova = (Array.isArray(arr) ? arr : []).filter((o: any) => o.id !== req.params.id);
+      await kvSet("caixa_observacoes", nova);
+      return res.json({ ok: true });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   // DELETE /api/caixa-dia/:data — reabre o dia (apaga fechamento)
   app.delete("/api/caixa-dia/:data", async (req: Request, res: Response) => {
     try {

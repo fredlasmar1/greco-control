@@ -7,7 +7,7 @@ export interface AuthUser {
   id: string;
   username: string;
   nome: string;
-  role: "admin" | "barbeiro";
+  role: "admin" | "barbeiro" | "recepcao";
   barberId?: string;
   ativo: boolean;
   createdAt: string;

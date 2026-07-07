@@ -487,7 +487,7 @@ interface Usuario {
   id: string;
   username: string;
   passwordHash: string; // formato: salt:hash
-  role: 'admin' | 'barbeiro';
+  role: 'admin' | 'barbeiro' | 'recepcao';
   nome: string;
   barberId?: string; // ID do profissional no Trinks (apenas para barbeiros)
   ativo: boolean;
@@ -1699,8 +1699,8 @@ export async function registerRoutes(
     if (!username || !password || !nome || !role) {
       return res.status(400).json({ error: "username, password, nome e role são obrigatórios." });
     }
-    if (role !== "admin" && role !== "barbeiro") {
-      return res.status(400).json({ error: "role deve ser 'admin' ou 'barbeiro'." });
+    if (role !== "admin" && role !== "barbeiro" && role !== "recepcao") {
+      return res.status(400).json({ error: "role deve ser 'admin', 'barbeiro' ou 'recepcao'." });
     }
     if (usuarios.some(u => u.username.toLowerCase() === String(username).toLowerCase())) {
       return res.status(409).json({ error: "Usuário já existe." });
@@ -1729,7 +1729,7 @@ export async function registerRoutes(
     if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
     const { nome, role, barberId, ativo } = req.body;
     if (nome != null) user.nome = String(nome);
-    if (role != null && (role === "admin" || role === "barbeiro")) user.role = role;
+    if (role != null && (role === "admin" || role === "barbeiro" || role === "recepcao")) user.role = role;
     if (barberId !== undefined) user.barberId = barberId ? String(barberId) : undefined;
     if (ativo != null) user.ativo = !!ativo;
     saveUsuarios();

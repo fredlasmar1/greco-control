@@ -47,6 +47,9 @@ function RedirectTo({ to }: { to: string }) {
   return null;
 }
 
+// Rotas que a RECEPÇÃO pode acessar (sem financeiro/folha).
+const RECEPCAO_ROTAS = ["/caixa-dia", "/estoque", "/compras", "/assinaturas"];
+
 function AdminRoutes() {
   const loadSavedConfig = useTrinksStore((s) => s.loadSavedConfig);
   const loadStoreFromServer = useStore((s) => s.loadFromServer);
@@ -116,8 +119,10 @@ function AppRouter() {
       setLocation("/login");
     } else if (user?.role === "barbeiro" && location !== "/meu-painel" && location !== "/login") {
       setLocation("/meu-painel");
-    } else if (user?.role === "admin" && location === "/login") {
-      setLocation("/");
+    } else if (user?.role === "recepcao" && !RECEPCAO_ROTAS.includes(location) && location !== "/login") {
+      setLocation("/caixa-dia");
+    } else if ((user?.role === "admin" || user?.role === "recepcao") && location === "/login") {
+      setLocation(user?.role === "recepcao" ? "/caixa-dia" : "/");
     }
   }, [user, loading, location, setLocation]);
 
@@ -146,6 +151,21 @@ function AppRouter() {
         <Route path="/meu-painel" component={MeuPainel} />
         <Route component={MeuPainel} />
       </Switch>
+    );
+  }
+
+  // Recepção: caixa, estoque, compras e assinaturas (sem financeiro/folha)
+  if (user.role === "recepcao") {
+    return (
+      <AppLayout>
+        <Switch>
+          <Route path="/caixa-dia" component={CaixaDia} />
+          <Route path="/estoque" component={Estoque} />
+          <Route path="/compras" component={Compras} />
+          <Route path="/assinaturas" component={Assinaturas} />
+          <Route component={CaixaDia} />
+        </Switch>
+      </AppLayout>
     );
   }
 

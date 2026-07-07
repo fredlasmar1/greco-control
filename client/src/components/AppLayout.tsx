@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { useLocation, Link } from "wouter";
 import grecoLogo from "../../logo-greco.png";
 import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/authStore";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
+
+// Rotas que a RECEPÇÃO pode acessar (sem financeiro/folha).
+const RECEPCAO_ROTAS = ["/caixa-dia", "/estoque", "/compras", "/assinaturas"];
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 import {
@@ -70,6 +74,10 @@ function getPageTitle(path: string): string {
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { sidebarOpen, setSidebarOpen } = useStore();
+  const user = useAuth((s) => s.user);
+  const itensVisiveis = user?.role === "recepcao"
+    ? navItems.filter((n) => RECEPCAO_ROTAS.includes(n.path))
+    : navItems;
 
   // Badge global de duplicados pendentes (alerta na sidebar)
   const [duplicadosCount, setDuplicadosCount] = useState<number | null>(null);
@@ -122,7 +130,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* Navigation */}
         <nav className="flex-1 py-2 px-2 overflow-y-auto">
-          {navItems.map(({ path, label, icon: Icon }) => {
+          {itensVisiveis.map(({ path, label, icon: Icon }) => {
             const isActive = location === path || (path !== "/" && location.startsWith(path));
             return (
               <Link key={path} href={path}>

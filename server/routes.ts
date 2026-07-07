@@ -155,6 +155,14 @@ import {
   type TipoMovimentacao,
 } from "./movimentacoesEstoque";
 import {
+  listarProdutosInternos,
+  addProdutoInterno,
+  atualizarProdutoInterno,
+  removerProdutoInterno,
+  importarProdutosInternos,
+  normProdNome,
+} from "./estoqueInterno";
+import {
   getPagamentoMes,
   getPagamentosDoMes,
   upsertPagamentoMes,
@@ -3637,6 +3645,65 @@ export async function registerRoutes(
     const ck = "estoque-resumo";
     const cached = getCached(ck);
     if (cached) return cached;
+
+    // v114 — ESTOQUE INTERNO (decisão do dono 07/07): a lista de produtos é NOSSA
+    // (cadastro interno), NÃO o catálogo da Trinks. 0 TOKEN: saldo vem das
+    // movimentações (pente fino + baixas), vendidos do Ranking de Produtos CSV.
+    // A Trinks (Gmail→API→CSV) só é usada pra dar BAIXA (consolidarBaixaEstoque).
+    {
+      const hojeI = ymdHoje();
+      const mesI = hojeI.slice(0, 7);
+      const [internos, custosMapI, movsI] = await Promise.all([
+        listarProdutosInternos(),
+        getProdutosCustos(),
+        getMovimentacoesEstoque(),
+      ]);
+      const deltasI = getDeltasPorProduto(movsI);
+      const vendPorNome = new Map<string, number>();
+      let receitaProdMes = 0;
+      try {
+        const rkp: any = await kvGet(`trinks_import:rankingProdutos:${mesI}`);
+        for (const pr of (rkp?.produtos || [])) { const n = normProdNome(pr.produto); if (n) { vendPorNome.set(n, (vendPorNome.get(n) || 0) + Number(pr.quantidade || 0)); receitaProdMes += Number(pr.valor || 0); } }
+      } catch { /* sem ranking */ }
+      const listaI = internos.filter((p: any) => p.ativo !== false).map((p: any) => {
+        const saldo = Math.max(0, Number(deltasI[p.id] || 0));
+        const minimo = Number(p.minimo || 0);
+        const ce: any = custosMapI[p.id];
+        const custoUnit = Number(ce?.custo || 0);
+        const precoVenda = Number(ce?.precoVenda || 0);
+        const nivel: "ok" | "ruptura" = (minimo > 0 && saldo <= minimo) ? "ruptura" : "ok";
+        return {
+          id: p.id, nome: p.nome, categoria: p.categoria || "", fabricante: "",
+          saldo, minimo, custoMedio: custoUnit, custo: custoUnit,
+          comissaoPct: typeof ce?.comissaoPct === "number" ? ce.comissaoPct : null,
+          precoVendaManual: precoVenda || null, precoVendaCatalogo: 0, precoVendaObservado: 0,
+          valorVenda: precoVenda, valorEstoque: saldo * custoUnit,
+          nivel, giroLento: false, parado: false,
+          vendidos30d: 0, vendidosMes: vendPorNome.get(normProdNome(p.nome)) || 0,
+          reporSugerido: minimo > 0 ? Math.max(0, minimo - saldo) : 0,
+          faturamento30d: 0, ultimaVenda: null, diasDesdeUltimaVenda: null,
+        };
+      }).sort((a: any, b: any) => (a.nivel === "ruptura" ? 0 : 1) - (b.nivel === "ruptura" ? 0 : 1) || b.vendidosMes - a.vendidosMes || String(a.nome).localeCompare(String(b.nome)));
+      const rupturaI = listaI.filter((p: any) => p.nivel === "ruptura");
+      const valorTotalI = listaI.reduce((s: number, p: any) => s + p.valorEstoque, 0);
+      const movHojeI = movsI.filter((m: any) => String(m.data || "").slice(0, 10) === hojeI);
+      const resumoI = {
+        atualizadoEm: new Date().toISOString(),
+        fonte: "estoque-interno",
+        totalProdutos: listaI.length,
+        produtosEmAlerta: rupturaI.length,
+        produtosCriticos: 0, produtosGiroLento: 0, produtosParados: 0,
+        valorEmGiroLento: 0, valorParado: 0,
+        valorTotalEstoque: Math.round(valorTotalI * 100) / 100,
+        movimentacoesHojeCount: movHojeI.length,
+        saidasHoje: movHojeI.filter((m: any) => m.tipo === "saida").length,
+        entradasHoje: movHojeI.filter((m: any) => m.tipo === "entrada").length,
+        faturamentoProdutos30d: Math.round(receitaProdMes * 100) / 100,
+        produtos: listaI, alertas: rupturaI, movimentacoesHoje: [], rankingVendedores: [],
+      };
+      setCache(ck, resumoI, 60 * 1000);
+      return resumoI;
+    }
 
     const tzFmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
     const parts = tzFmt.formatToParts(new Date());
@@ -13601,6 +13668,60 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     }
   });
 
+  // ── CADASTRO INTERNO de produtos (o estoque do DONO; 0 token) ──
+  app.get("/api/estoque/produtos-internos", async (_req: Request, res: Response) => {
+    try { return res.json({ ok: true, produtos: await listarProdutosInternos() }); }
+    catch (e: any) { return res.status(500).json({ ok: false, error: e.message }); }
+  });
+  app.post("/api/estoque/produtos-internos", async (req: Request, res: Response) => {
+    try { const b = req.body || {}; const p = await addProdutoInterno({ nome: b.nome, categoria: b.categoria, minimo: b.minimo }); invalidateCache("estoque"); return res.json({ ok: true, produto: p }); }
+    catch (e: any) { return res.status(400).json({ ok: false, error: e.message }); }
+  });
+  app.put("/api/estoque/produtos-internos/:id", async (req: Request, res: Response) => {
+    try { const p = await atualizarProdutoInterno(String(req.params.id), req.body || {}); if (!p) return res.status(404).json({ ok: false, error: "não encontrado" }); invalidateCache("estoque"); return res.json({ ok: true, produto: p }); }
+    catch (e: any) { return res.status(400).json({ ok: false, error: e.message }); }
+  });
+  app.delete("/api/estoque/produtos-internos/:id", async (req: Request, res: Response) => {
+    try { const ok = await removerProdutoInterno(String(req.params.id)); invalidateCache("estoque"); return res.json({ ok }); }
+    catch (e: any) { return res.status(400).json({ ok: false, error: e.message }); }
+  });
+  // Importa a lista do dono de uma vez — cola uma linha por produto:
+  // "nome" ou "nome;quantidade;mínimo" (aceita ; , tab). Se vier quantidade, já
+  // lança o estoque inicial (inventário). Não duplica (casa por nome).
+  app.post("/api/estoque/produtos-internos/importar", async (req: Request, res: Response) => {
+    try {
+      const b = req.body || {};
+      let itens: any[] = [];
+      if (Array.isArray(b.itens)) itens = b.itens;
+      else if (typeof b.texto === "string") {
+        itens = b.texto.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean).map((l: string) => {
+          const parts = l.split(/[;\t,]/).map((x: string) => x.trim());
+          return { nome: parts[0], qtd: parts[1], minimo: parts[2] };
+        });
+      }
+      itens = itens.filter((x: any) => x && String(x.nome || "").trim());
+      if (!itens.length) return res.status(400).json({ ok: false, error: "envie 'texto' (uma linha por produto) ou 'itens'" });
+      const r = await importarProdutosInternos(itens.map((x: any) => ({ nome: x.nome, categoria: x.categoria, minimo: x.minimo })));
+      // estoque inicial: pra cada item com quantidade, lança inventário no interno
+      const internos = await listarProdutosInternos();
+      const idPorNome = new Map(internos.map((p: any) => [normProdNome(p.nome), p]));
+      const movs = await getMovimentacoesEstoque();
+      const deltas = getDeltasPorProduto(movs);
+      let comSaldo = 0;
+      for (const it of itens) {
+        const q = it.qtd;
+        if (q == null || q === "" || Number.isNaN(Number(q))) continue;
+        const interno: any = idPorNome.get(normProdNome(it.nome)); if (!interno) continue;
+        const saldoAnterior = Math.max(0, Number(deltas[interno.id] || 0));
+        await addMovimentacao({ produtoId: interno.id, tipo: "inventario", quantidade: Math.max(0, Number(q) || 0), motivo: "Estoque inicial (importação)", usuario: (req as any).user?.username || "admin", saldoAnterior });
+        deltas[interno.id] = Math.max(0, Number(q) || 0); comSaldo++;
+      }
+      if (comSaldo > 0) await kvSet("estoque_ultima_contagem", ymdHoje());
+      invalidateCache("estoque");
+      return res.json({ ok: true, ...r, comSaldo });
+    } catch (e: any) { return res.status(400).json({ ok: false, error: e.message }); }
+  });
+
   // POST /api/estoque/inventario-lote — PENTE FINO: contagem física de TODOS os
   // produtos de uma vez. Grava um "inventário" por item (saldo vira a contagem) e,
   // opcionalmente, o mínimo. Marca a data da contagem = baseline pra baixa automática.
@@ -13635,7 +13756,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   // Consolida a BAIXA das vendas de um dia (do raw da API no snapshot, 0 token).
   // Trava anti-dobra: só um dia DEPOIS da última contagem (senão a contagem já
   // refletiu essas vendas) e nunca 2×/dia (idempotente).
-  async function consolidarBaixaEstoque(data: string): Promise<{ ok: boolean; motivo?: string; produtos: number; unidades: number; itens: any[] }> {
+  async function consolidarBaixaEstoque(data: string): Promise<{ ok: boolean; motivo?: string; produtos: number; unidades: number; itens: any[]; naoCasou?: any[] }> {
     const consolidados: any = (await kvGet("estoque_consolidado")) || {};
     if (consolidados[data]) return { ok: false, motivo: "já consolidado", produtos: 0, unidades: 0, itens: [] };
     const ultimaContagem = String((await kvGet<string>("estoque_ultima_contagem")) || "");
@@ -13652,27 +13773,34 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       } catch { /* API indisponível */ }
     }
     if (!trans.length) return { ok: false, motivo: "sem transações pra esse dia (nem snapshot, nem API)", produtos: 0, unidades: 0, itens: [] };
-    const porProduto = new Map<string, { qtd: number; nome: string }>();
+    // Agrega o vendido por NOME (a baixa é no NOSSO produto interno, casado por nome).
+    const porNome = new Map<string, { qtd: number; nome: string }>();
     for (const t of trans) {
       for (const p of (t.produtos || [])) {
-        const id = String(p.id || p.produtoId || ""); const q = Number(p.quantidade || 0);
-        if (!id || q <= 0) continue;
-        const e = porProduto.get(id) || { qtd: 0, nome: p.nome || p.descricao || "" };
-        e.qtd += q; if (!e.nome && (p.nome || p.descricao)) e.nome = p.nome || p.descricao; porProduto.set(id, e);
+        const nome = String(p.nome || p.descricao || "").trim(); const q = Number(p.quantidade || 0);
+        if (!nome || q <= 0) continue;
+        const k = normProdNome(nome);
+        const e = porNome.get(k) || { qtd: 0, nome };
+        e.qtd += q; porNome.set(k, e);
       }
     }
-    if (porProduto.size === 0) { consolidados[data] = { produtos: 0, unidades: 0, em: new Date().toISOString() }; await kvSet("estoque_consolidado", consolidados); return { ok: true, produtos: 0, unidades: 0, itens: [] }; }
+    if (porNome.size === 0) { consolidados[data] = { produtos: 0, unidades: 0, em: new Date().toISOString() }; await kvSet("estoque_consolidado", consolidados); return { ok: true, produtos: 0, unidades: 0, itens: [] }; }
+    // casa com o cadastro INTERNO por nome normalizado; o que não casar fica de fora
+    const internos = await listarProdutosInternos();
+    const idPorNome = new Map(internos.filter((p: any) => p.ativo !== false).map((p: any) => [normProdNome(p.nome), p]));
     const custosMap = await getProdutosCustos();
-    const itens: any[] = []; let unidades = 0;
-    for (const [id, e] of Array.from(porProduto.entries())) {
-      await addMovimentacao({ produtoId: id, tipo: "saida", quantidade: e.qtd, custoUnitario: getCustoOf(custosMap, id), motivo: `Venda do dia ${data} (baixa automática)`, usuario: "sistema" });
-      itens.push({ produtoId: id, nome: e.nome, qtd: e.qtd }); unidades += e.qtd;
+    const itens: any[] = []; const naoCasou: any[] = []; let unidades = 0;
+    for (const [k, e] of Array.from(porNome.entries())) {
+      const interno: any = idPorNome.get(k);
+      if (!interno) { naoCasou.push({ nome: e.nome, qtd: e.qtd }); continue; }
+      await addMovimentacao({ produtoId: interno.id, tipo: "saida", quantidade: e.qtd, custoUnitario: getCustoOf(custosMap, interno.id), motivo: `Venda do dia ${data} (baixa automática)`, usuario: "sistema" });
+      itens.push({ produtoId: interno.id, nome: interno.nome, qtd: e.qtd }); unidades += e.qtd;
     }
-    consolidados[data] = { produtos: itens.length, unidades, em: new Date().toISOString() };
+    consolidados[data] = { produtos: itens.length, unidades, naoCasou: naoCasou.length, em: new Date().toISOString() };
     await kvSet("estoque_consolidado", consolidados);
     invalidateCache("estoque");
-    log(`[estoque] baixa consolidada ${data}: ${itens.length} produtos, ${unidades} un`, "estoque");
-    return { ok: true, produtos: itens.length, unidades, itens };
+    log(`[estoque] baixa ${data}: ${itens.length} baixados / ${unidades} un / ${naoCasou.length} sem produto interno`, "estoque");
+    return { ok: true, produtos: itens.length, unidades, itens, naoCasou };
   }
   // POST /api/estoque/consolidar/:data (ou /ontem) — dá baixa das vendas do dia.
   app.post("/api/estoque/consolidar/:data", async (req: Request, res: Response) => {

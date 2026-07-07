@@ -138,6 +138,19 @@ export default function Estoque() {
   const [ajustando, setAjustando] = useState<Produto | null>(null);
   const [historicoDe, setHistoricoDe] = useState<Produto | null>(null);
   const [penteFino, setPenteFino] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState("");
+  async function importarEstoque() {
+    setImporting(true); setImportMsg("");
+    try {
+      const r = await fetch(`${API_BASE}/api/estoque/produtos-internos/importar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texto: importText }) });
+      const j = await r.json();
+      if (j.ok) { setImportMsg(`${j.criados} criados, ${j.atualizados} atualizados${j.comSaldo ? `, ${j.comSaldo} com saldo inicial` : ""}.`); setImportText(""); await carregar(); }
+      else setImportMsg(j.error || "Erro ao importar.");
+    } catch { setImportMsg("Erro ao importar."); } finally { setImporting(false); }
+  }
 
   async function carregar() {
     setLoading(true);
@@ -209,7 +222,8 @@ export default function Estoque() {
             Pente fino, baixa automática das vendas e alerta de reposição — saldo, vendidos e o que repor.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button onClick={() => setImportOpen(v => !v)} variant="outline" size="sm"><Plus className="w-4 h-4 mr-1" />Importar meu estoque</Button>
           <Button onClick={() => setPenteFino(v => !v)} variant={penteFino ? "default" : "outline"} size="sm">
             <ClipboardList className="w-4 h-4 mr-1" />{penteFino ? "Sair do pente fino" : "Pente fino"}
           </Button>
@@ -219,6 +233,22 @@ export default function Estoque() {
           </Button>
         </div>
       </div>
+
+      {/* Importar meu estoque (cole a lista) */}
+      {importOpen && (
+        <Card className="bg-card border-primary/40">
+          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Package className="w-4 h-4 text-primary" />Importar o estoque da barbearia</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-[11px] text-muted-foreground">Cole a lista, <strong>uma linha por produto</strong>. Formatos aceitos: só o nome, ou <code>nome;quantidade;mínimo</code> (também aceita vírgula). Ex.:</p>
+            <pre className="text-[10px] bg-muted/40 rounded p-2 text-muted-foreground">Pomada Modeladora;12;4{"\n"}Shampoo Anticaspa;8;3{"\n"}Óleo para Barba;5;2</pre>
+            <textarea value={importText} onChange={e => setImportText(e.target.value)} rows={6} placeholder="Pomada Modeladora;12;4&#10;Shampoo;8;3" className="w-full rounded-md border bg-background text-sm p-2 font-mono" />
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-emerald-600">{importMsg}</span>
+              <Button size="sm" onClick={importarEstoque} disabled={importing || !importText.trim()}>{importing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}Importar</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Baixa automática (status + consolidar ontem) */}
       <BaixaAutomaticaCard />

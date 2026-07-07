@@ -7649,7 +7649,11 @@ Regras CRÍTICAS:
   async function ultimaDataCaixaFechada(): Promise<string> {
     let d = ymdAddDays(ymdHoje(), -1);
     for (let i = 0; i < 45; i++) {
-      try { const s: any = await getSnapshot(d); if (s && Number(s?.faturamento?.total || 0) > 0) return d; } catch {}
+      // pula domingo(0)/segunda(1) — barbearia fechada; pega o último dia que OPEROU
+      const dow = new Date(d + "T12:00:00Z").getUTCDay();
+      if (dow !== 0 && dow !== 1) {
+        try { const s: any = await getSnapshot(d); if (s && Number(s?.faturamento?.total || 0) > 50) return d; } catch {}
+      }
       d = ymdAddDays(d, -1);
     }
     return ymdAddDays(ymdHoje(), -1);

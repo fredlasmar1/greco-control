@@ -3685,56 +3685,39 @@ export async function registerRoutes(
     const fontesCache: { produtos: string | null; profissionais: string | null; transacoes: string | null } = {
       produtos: null, profissionais: null, transacoes: null,
     };
+    // v114 PERFORMANCE: CACHE-FIRST. Antes a Estoque batia na API da Trinks (catálogo +
+    // profissionais + 30d de transações + agendamentos) A CADA abertura → lento (e pior
+    // no 429, que espera/repete). Agora: se o cache kv está fresco (dentro do TTL), usa
+    // DIRETO (0 API, instantâneo); só bate na API quando o cache vence. Refresca sozinho.
+    const _idadeH = (iso?: string) => iso ? (Date.now() - new Date(iso).getTime()) / 3600000 : Infinity;
+    const _refrescaBg = (kvKey: string, campo: string, fetchFn: () => Promise<any>) => {
+      (async () => {
+        try { const d = await fetchFn(); const arr = Array.isArray(d) ? d : (d?.data || []); if (arr.length > 0) await kvSet(kvKey, { [campo]: arr, salvoEm: new Date().toISOString() }); } catch { /* segue com o cache */ }
+      })();
+    };
+    const carregarComCache = async (kvKey: string, campo: string, ttlH: number, fetchFn: () => Promise<any>, marcar: (s: string) => void): Promise<any[]> => {
+      const cache: any = await kvGet(kvKey).catch(() => null);
+      const temCache = Array.isArray(cache?.[campo]) && cache[campo].length > 0;
+      if (temCache) {
+        marcar(cache.salvoEm);
+        if (_idadeH(cache.salvoEm) >= ttlH) _refrescaBg(kvKey, campo, fetchFn); // velho → devolve já e atualiza em background
+        return cache[campo];
+      }
+      // sem cache nenhum → busca (bloqueia só na PRIMEIRÍSSIMA vez)
+      try {
+        const d = await fetchFn(); const arr = Array.isArray(d) ? d : (d?.data || []);
+        if (arr.length > 0) await kvSet(kvKey, { [campo]: arr, salvoEm: new Date().toISOString() }).catch(() => {});
+        return arr;
+      } catch { return []; }
+    };
 
-    const produtos: any[] = await trinksFetchAll("produtos").then(async (data) => {
-      const arr = Array.isArray(data) ? data : (data?.data || []);
-      if (arr.length > 0) {
-        await kvSet(KV_CACHE_PRODUTOS, { produtos: arr, salvoEm: new Date().toISOString() }).catch(()=>{});
-      }
-      return arr;
-    }).catch(async (e: any) => {
-      log(`estoque: erro produtos: ${e?.message} — usando cache kv`, "trinks");
-      const cache = await kvGet<{ produtos: any[]; salvoEm: string }>(KV_CACHE_PRODUTOS).catch(() => null);
-      if (cache?.produtos?.length) {
-        log(`estoque: cache produtos: ${cache.produtos.length} itens (salvo ${cache.salvoEm})`, "trinks");
-        fontesCache.produtos = cache.salvoEm;
-        return cache.produtos;
-      }
-      return [] as any[];
-    });
-    const profissionais: any[] = await trinksFetchAll("profissionais").then(async (data) => {
-      const arr = Array.isArray(data) ? data : (data?.data || []);
-      if (arr.length > 0) {
-        await kvSet(KV_CACHE_PROFS_TRINKS, { profissionais: arr, salvoEm: new Date().toISOString() }).catch(()=>{});
-      }
-      return arr;
-    }).catch(async (e: any) => {
-      log(`estoque: erro profissionais: ${e?.message} — usando cache kv`, "trinks");
-      const cache = await kvGet<{ profissionais: any[]; salvoEm: string }>(KV_CACHE_PROFS_TRINKS).catch(() => null);
-      if (cache?.profissionais?.length) {
-        fontesCache.profissionais = cache.salvoEm;
-        return cache.profissionais;
-      }
-      return [] as any[];
-    });
-    // Trinks /v1/transacoes usa intervalo semi-aberto [dataInicio, dataFim) — somar +1d.
-    const transFim = ymdAddDays(hoje, 1);
-    const transacoes: any[] = await trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: transFim }).then(async (data) => {
-      const arr = Array.isArray(data) ? data : (data?.data || []);
-      if (arr.length > 0) {
-        await kvSet(KV_CACHE_TRANS_30D, { transacoes: arr, salvoEm: new Date().toISOString(), periodo: { dataInicio: dataInicio30, dataFim: hoje } }).catch(()=>{});
-      }
-      return arr;
-    }).catch(async (e: any) => {
-      log(`estoque: erro transacoes: ${e?.message} — usando cache kv`, "trinks");
-      const cache = await kvGet<{ transacoes: any[]; salvoEm: string; periodo: any }>(KV_CACHE_TRANS_30D).catch(() => null);
-      if (cache?.transacoes?.length) {
-        log(`estoque: cache transacoes: ${cache.transacoes.length} itens (salvo ${cache.salvoEm}, periodo ${JSON.stringify(cache.periodo)})`, "trinks");
-        fontesCache.transacoes = cache.salvoEm;
-        return cache.transacoes;
-      }
-      return [] as any[];
-    });
+    const transFim = ymdAddDays(hoje, 1); // Trinks /v1/transacoes é semi-aberto [ini, fim)
+    // Catálogo e profissionais mudam pouco → cache 24h. Transações 30d → cache 6h.
+    const [produtos, profissionais, transacoes] = await Promise.all([
+      carregarComCache(KV_CACHE_PRODUTOS, "produtos", 24, () => trinksFetchAll("produtos"), (s) => fontesCache.produtos = s),
+      carregarComCache(KV_CACHE_PROFS_TRINKS, "profissionais", 24, () => trinksFetchAll("profissionais"), (s) => fontesCache.profissionais = s),
+      carregarComCache(KV_CACHE_TRANS_30D, "transacoes", 6, () => trinksFetchAll("transacoes", { dataInicio: dataInicio30, dataFim: transFim }), (s) => fontesCache.transacoes = s),
+    ]);
     // Agendamentos em janela reduzida (14d) para heurística de nomes
     const agendamentos: any[] = await getAgendamentosPreferCsv(
       { dataInicio: dataInicio14, dataFim: hoje },

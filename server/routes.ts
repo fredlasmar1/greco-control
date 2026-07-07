@@ -13658,8 +13658,17 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     const ultimaContagem = String((await kvGet<string>("estoque_ultima_contagem")) || "");
     if (ultimaContagem && data <= ultimaContagem) return { ok: false, motivo: `dia ≤ última contagem (${ultimaContagem}) — já refletido no pente fino`, produtos: 0, unidades: 0, itens: [] };
     const snap: any = await getSnapshot(data).catch(() => null);
-    const trans: any[] = Array.isArray(snap?.transacoesRaw) ? snap.transacoesRaw : [];
-    if (!trans.length) return { ok: false, motivo: "sem raw da API pra esse dia (não capturado)", produtos: 0, unidades: 0, itens: [] };
+    let trans: any[] = Array.isArray(snap?.transacoesRaw) ? snap.transacoesRaw : [];
+    // Fallback: snapshot do e-mail não traz transacoesRaw → busca as transações do dia
+    // na API (o "API" do Gmail→API→CSV; a qtd por produto só existe aqui). Cacheado.
+    if (!trans.length) {
+      try {
+        const fim = ymdAddDays(data, 1);
+        const api = await trinksFetchAllRange("transacoes", { dataInicio: data, dataFim: fim }).catch(() => []);
+        trans = (Array.isArray(api) ? api : []).filter((t: any) => String(t.dataHora || t.data || "").slice(0, 10) === data);
+      } catch { /* API indisponível */ }
+    }
+    if (!trans.length) return { ok: false, motivo: "sem transações pra esse dia (nem snapshot, nem API)", produtos: 0, unidades: 0, itens: [] };
     const porProduto = new Map<string, { qtd: number; nome: string }>();
     for (const t of trans) {
       for (const p of (t.produtos || [])) {

@@ -7783,14 +7783,14 @@ Regras CRÍTICAS:
   });
 
   // ── OBSERVAÇÕES / PROBLEMAS do caixa (log com autor e data) ──
-  app.get("/api/caixa-dia/observacoes", async (_req: Request, res: Response) => {
+  app.get("/api/caixa-observacoes", async (_req: Request, res: Response) => {
     try {
       const arr = (await kvGet<any[]>("caixa_observacoes")) || [];
       const lista = (Array.isArray(arr) ? arr : []).slice().sort((a, b) => String(b.criadoEm || "").localeCompare(String(a.criadoEm || "")));
       return res.json({ ok: true, observacoes: lista });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
-  app.post("/api/caixa-dia/observacoes", async (req: Request, res: Response) => {
+  app.post("/api/caixa-observacoes", async (req: Request, res: Response) => {
     try {
       const b = req.body || {};
       const texto = String(b.texto || "").trim();
@@ -7810,7 +7810,7 @@ Regras CRÍTICAS:
       return res.json({ ok: true, observacao: obs });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
-  app.put("/api/caixa-dia/observacoes/:id", async (req: Request, res: Response) => {
+  app.put("/api/caixa-observacoes/:id", async (req: Request, res: Response) => {
     try {
       const arr = (await kvGet<any[]>("caixa_observacoes")) || [];
       const i = (Array.isArray(arr) ? arr : []).findIndex((o: any) => o.id === req.params.id);
@@ -7821,7 +7821,7 @@ Regras CRÍTICAS:
       return res.json({ ok: true, observacao: arr[i] });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
-  app.delete("/api/caixa-dia/observacoes/:id", async (req: Request, res: Response) => {
+  app.delete("/api/caixa-observacoes/:id", async (req: Request, res: Response) => {
     try {
       const arr = (await kvGet<any[]>("caixa_observacoes")) || [];
       const nova = (Array.isArray(arr) ? arr : []).filter((o: any) => o.id !== req.params.id);

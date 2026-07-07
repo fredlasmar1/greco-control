@@ -224,16 +224,16 @@ function ObservacoesCaixa() {
   const [texto, setTexto] = useState("");
   const [tipo, setTipo] = useState<"problema" | "observacao">("problema");
   const [salvando, setSalvando] = useState(false);
-  async function carregar() { try { const r = await fetch(`${API_BASE}/api/caixa-dia/observacoes`); const j = await r.json(); if (j.ok) setLista(j.observacoes || []); } catch { /* */ } }
+  async function carregar() { try { const r = await fetch(`${API_BASE}/api/caixa-observacoes`); const j = await r.json(); if (j.ok) setLista(j.observacoes || []); } catch { /* */ } }
   useEffect(() => { carregar(); }, []);
   async function adicionar() {
     if (!texto.trim()) return;
     setSalvando(true);
-    try { await fetch(`${API_BASE}/api/caixa-dia/observacoes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texto, tipo, autor: user?.nome }) }); setTexto(""); await carregar(); }
+    try { await fetch(`${API_BASE}/api/caixa-observacoes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texto, tipo, autor: user?.nome }) }); setTexto(""); await carregar(); }
     finally { setSalvando(false); }
   }
-  async function resolver(id: string, resolvido: boolean) { await fetch(`${API_BASE}/api/caixa-dia/observacoes/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resolvido }) }); await carregar(); }
-  async function remover(id: string) { if (!confirm("Remover esta observação?")) return; await fetch(`${API_BASE}/api/caixa-dia/observacoes/${id}`, { method: "DELETE" }); await carregar(); }
+  async function resolver(id: string, resolvido: boolean) { await fetch(`${API_BASE}/api/caixa-observacoes/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resolvido }) }); await carregar(); }
+  async function remover(id: string) { if (!confirm("Remover esta observação?")) return; await fetch(`${API_BASE}/api/caixa-observacoes/${id}`, { method: "DELETE" }); await carregar(); }
   const abertos = lista.filter(o => !o.resolvido);
   return (
     <Card className="bg-card border-card-border">

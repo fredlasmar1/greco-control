@@ -225,7 +225,7 @@ export default function Estoque() {
         <div className="flex items-center gap-2 flex-wrap">
           <Button onClick={() => setImportOpen(v => !v)} variant="outline" size="sm"><Plus className="w-4 h-4 mr-1" />Importar meu estoque</Button>
           <Button onClick={() => setPenteFino(v => !v)} variant={penteFino ? "default" : "outline"} size="sm">
-            <ClipboardList className="w-4 h-4 mr-1" />{penteFino ? "Sair do pente fino" : "Pente fino"}
+            <ClipboardList className="w-4 h-4 mr-1" />{penteFino ? "Fechar edição" : "Editar meu estoque"}
           </Button>
           <Button onClick={carregar} disabled={loading} variant="outline" size="sm">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -256,6 +256,16 @@ export default function Estoque() {
       {/* Pente fino — contagem física de todos os produtos */}
       {penteFino && resumo && (
         <PenteFinoSection produtos={resumo.produtos} onSalvo={() => { setPenteFino(false); carregar(); }} />
+      )}
+
+      {/* CTA: tem produtos mas nenhum saldo ainda → editar */}
+      {!penteFino && resumo && resumo.produtos.length > 0 && !resumo.produtos.some(p => p.saldo > 0) && (
+        <Card className="bg-amber-500/5 border-amber-500/40">
+          <CardContent className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="text-xs flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" /><span>Você tem <strong>{resumo.produtos.length} produtos</strong> cadastrados, mas nenhum com saldo ainda. Informe quantos tem em estoque hoje.</span></div>
+            <Button size="sm" onClick={() => setPenteFino(true)} className="flex-shrink-0"><ClipboardList className="w-4 h-4 mr-1" />Editar estoque agora</Button>
+          </CardContent>
+        </Card>
       )}
 
       {/* Como funciona (discreto, premium) */}

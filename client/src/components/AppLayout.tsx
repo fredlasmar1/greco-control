@@ -139,13 +139,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer
                     transition-colors duration-150 mb-0.5
                     ${isActive
-                      ? "bg-primary/15 text-[#5B8AC4]"
+                      ? "bg-primary/15 text-[#5591C9]"
                       : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent"
                     }
                   `}
                   data-testid={`nav-${path.replace("/", "") || "dashboard"}`}
                 >
-                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#5B8AC4]" : ""}`} />
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#5591C9]" : ""}`} />
                   <span>{label}</span>
                   {path === "/duplicados" && duplicadosCount !== null && duplicadosCount > 0 && (
                     <span
@@ -157,7 +157,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     </span>
                   )}
                   {isActive && !(path === "/duplicados" && duplicadosCount && duplicadosCount > 0) && (
-                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#5B8AC4]" />
+                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#5591C9]" />
                   )}
                 </div>
               </Link>

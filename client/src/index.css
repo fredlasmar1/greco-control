@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 /* Greco Control — Dark-first barbershop CRM theme */
-/* Primary: Navy Blue #1E3A5F → HSL 213 52% 25% */
-/* Accent: Red #C41E2A → HSL 355 73% 44% */
+/* Primary: Navy Blue #1E3A5F → HSL 210 60% 31% */
+/* Accent: Red #C41E2A → HSL 6 80% 42% */
 
 :root {
   --button-outline: rgba(0,0,0, .10);
@@ -22,28 +22,28 @@
   --sidebar: 0 0% 9%;
   --sidebar-foreground: 0 0% 96%;
   --sidebar-border: 0 0% 16%;
-  --sidebar-primary: 213 52% 25%;
+  --sidebar-primary: 210 60% 31%;
   --sidebar-primary-foreground: 0 0% 98%;
-  --sidebar-accent: 213 38% 20%;
+  --sidebar-accent: 210 45% 20%;
   --sidebar-accent-foreground: 0 0% 98%;
-  --sidebar-ring: 213 52% 40%;
+  --sidebar-ring: 210 60% 46%;
   --popover: 0 0% 95%;
   --popover-foreground: 0 0% 9%;
   --popover-border: 0 0% 91%;
-  --primary: 213 52% 25%;
+  --primary: 210 60% 31%;
   --primary-foreground: 0 0% 98%;
   --secondary: 0 0% 92%;
   --secondary-foreground: 0 0% 9%;
   --muted: 0 0% 93%;
   --muted-foreground: 0 0% 40%;
-  --accent: 213 15% 92%;
+  --accent: 210 20% 92%;
   --accent-foreground: 0 0% 9%;
-  --destructive: 355 73% 44%;
+  --destructive: 6 80% 42%;
   --destructive-foreground: 0 0% 98%;
   --input: 0 0% 75%;
-  --ring: 213 52% 25%;
-  --chart-1: 213 52% 25%;
-  --chart-2: 355 73% 44%;
+  --ring: 210 60% 31%;
+  --chart-1: 210 60% 31%;
+  --chart-2: 6 80% 42%;
   --chart-3: 142 71% 45%;
   --chart-4: 48 96% 53%;
   --chart-5: 262 83% 48%;
@@ -99,17 +99,17 @@
   --sidebar-foreground: 0 0% 90%;
   --sidebar-border: 0 0% 15%;
   /* Navy blue accent */
-  --sidebar-primary: 213 52% 25%;
+  --sidebar-primary: 210 60% 31%;
   --sidebar-primary-foreground: 0 0% 98%;
-  --sidebar-accent: 213 20% 14%;
+  --sidebar-accent: 210 30% 15%;
   --sidebar-accent-foreground: 0 0% 90%;
-  --sidebar-ring: 213 52% 25%;
+  --sidebar-ring: 210 60% 31%;
   /* #222222 */
   --popover: 0 0% 13%;
   --popover-foreground: 0 0% 90%;
   --popover-border: 0 0% 20%;
   /* Navy blue primary */
-  --primary: 213 52% 25%;
+  --primary: 210 60% 31%;
   --primary-foreground: 0 0% 98%;
   --secondary: 0 0% 16%;
   --secondary-foreground: 0 0% 90%;
@@ -117,13 +117,13 @@
   --muted-foreground: 0 0% 53%;
   --accent: 213 15% 15%;
   --accent-foreground: 0 0% 90%;
-  --destructive: 355 73% 44%;
+  --destructive: 6 80% 42%;
   --destructive-foreground: 0 0% 98%;
   --input: 0 0% 22%;
-  --ring: 213 52% 25%;
+  --ring: 210 60% 31%;
   /* Chart colors: navy, red, green, yellow, purple */
-  --chart-1: 213 52% 35%;
-  --chart-2: 355 73% 50%;
+  --chart-1: 210 60% 42%;
+  --chart-2: 6 80% 50%;
   --chart-3: 142 71% 45%;
   --chart-4: 48 96% 53%;
   --chart-5: 262 83% 58%;

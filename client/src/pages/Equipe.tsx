@@ -24,7 +24,18 @@ import {
   Scissors,
   Package,
   PiggyBank,
+  Link2 as LinkIcon,
 } from "lucide-react";
+
+// Rótulos dos tipos de desconto lançados no Greco Metas.
+const TIPO_DESC_LABEL: Record<string, string> = {
+  vale: "Vale / adiantamento",
+  multa: "Multa",
+  consumo: "Consumo interno",
+  voucher: "Voucher",
+  compra: "Compra / curso",
+  outro: "Outro",
+};
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
 import { MonthSelector } from "@/components/MonthSelector";
@@ -98,6 +109,9 @@ type Linha = {
     multaNota?: string;
     comprasCartao?: number;
     comprasCartaoNota?: string;
+    descontoMetas?: number;
+    descontoMetasPorTipo?: Record<string, number>;
+    descontoMetasItens?: Array<{ id: number; tipo: string; valor: number; motivo: string | null }>;
     saldoAReceber: number;
     fechado: boolean;
   };
@@ -124,9 +138,11 @@ type RespApi = {
     totalConsumoInterno: number;
     totalMulta?: number;
     totalComprasCartao?: number;
+    totalDescontoMetas?: number;
     totalTaxaCartao: number;
     totalSaldo: number;
   };
+  descontosMetasOrfaos?: Array<{ nome: string | null; trinksId: string | null; total: number; porTipo?: Record<string, number> }>;
   faturamento?: {
     totalReais: number;
     totalAtendimentos: number;
@@ -490,8 +506,25 @@ export default function Equipe() {
               <Row label="Consumo interno" valor={-(data.totais.totalConsumoInterno || 0)} />
               <Row label="Multas" valor={-(data.totais.totalMulta || 0)} />
               <Row label="Compras/cursos no cartão" valor={-(data.totais.totalComprasCartao || 0)} />
+              {(data.totais.totalDescontoMetas || 0) > 0 && <Row label="Descontos do Greco Metas" valor={-(data.totais.totalDescontoMetas || 0)} />}
               <Row label="Ajustes" valor={data.totais.totalAjuste || 0} />
             </div>
+            {(data.totais.totalDescontoMetas || 0) > 0 && (
+              <div className="text-[10px] text-muted-foreground pt-2 flex items-center gap-1"><LinkIcon className="w-3 h-3" />Puxados automaticamente do Greco Metas (vale/multa/consumo/voucher/compra) e abatidos do salário.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Aviso: descontos lançados no Metas que não casaram com ninguém da folha */}
+      {(data?.descontosMetasOrfaos?.length || 0) > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs">
+          <div className="flex items-center gap-1.5 text-amber-500 font-semibold mb-1"><AlertTriangle className="w-3.5 h-3.5" /> Descontos do Greco Metas sem dono na folha</div>
+          <p className="text-muted-foreground mb-1.5">Lançados no Metas mas não casaram com nenhum colaborador deste mês (confira o nome/ID no Metas):</p>
+          <div className="flex flex-wrap gap-2">
+            {data!.descontosMetasOrfaos!.map((o, i) => (
+              <span key={i} className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300">{o.nome || o.trinksId || "—"}: −R$ {fmtBRL(o.total)}</span>
+            ))}
           </div>
         </div>
       )}
@@ -537,7 +570,7 @@ export default function Equipe() {
                     const editando = editandoId === l.profissionalId;
                     const expandido = expandedId === l.profissionalId;
                     const pct = producaoEquipe > 0 ? (l._producao / producaoEquipe) * 100 : 0;
-                    const descontos = l.pagamento.vale + l.pagamento.consumoInterno + (l.pagamento.multa || 0) + (l.pagamento.comprasCartao || 0) - l.pagamento.ajuste;
+                    const descontos = l.pagamento.vale + l.pagamento.consumoInterno + (l.pagamento.multa || 0) + (l.pagamento.comprasCartao || 0) + (l.pagamento.descontoMetas || 0) - l.pagamento.ajuste;
                     return (
                       <Fragment key={l.profissionalId}>
                         <tr
@@ -615,6 +648,7 @@ export default function Equipe() {
                                 {l.pagamento.consumoInterno > 0 && <div className="text-red-500">−{fmtBRL(l.pagamento.consumoInterno)} cons.</div>}
                                 {(l.pagamento.multa || 0) > 0 && <div className="text-red-500">−{fmtBRL(l.pagamento.multa || 0)} multa</div>}
                                 {(l.pagamento.comprasCartao || 0) > 0 && <div className="text-red-500">−{fmtBRL(l.pagamento.comprasCartao || 0)} cartão</div>}
+                                {(l.pagamento.descontoMetas || 0) > 0 && <div className="text-red-500" title="Descontos lançados no Greco Metas">−{fmtBRL(l.pagamento.descontoMetas || 0)} Metas</div>}
                                 {l.pagamento.ajuste !== 0 && <div className={l.pagamento.ajuste > 0 ? "text-emerald-500" : "text-red-500"}>{l.pagamento.ajuste > 0 ? "+" : "−"}{fmtBRL(Math.abs(l.pagamento.ajuste))} aj.</div>}
                                 {descontos === 0 && l.pagamento.ajuste === 0 && <span className="text-muted-foreground">—</span>}
                               </div>
@@ -674,8 +708,16 @@ export default function Equipe() {
                                   {l.pagamento.consumoInterno > 0 && <Row label={`Consumo${l.pagamento.consumoInternoNota ? ` — ${l.pagamento.consumoInternoNota}` : ""}`} valor={-l.pagamento.consumoInterno} />}
                                   {(l.pagamento.multa || 0) > 0 && <Row label={`Multa${l.pagamento.multaNota ? ` — ${l.pagamento.multaNota}` : ""}`} valor={-(l.pagamento.multa || 0)} />}
                                   {(l.pagamento.comprasCartao || 0) > 0 && <Row label={`Compras/cursos no cartão${l.pagamento.comprasCartaoNota ? ` — ${l.pagamento.comprasCartaoNota}` : ""}`} valor={-(l.pagamento.comprasCartao || 0)} />}
+                                  {(l.pagamento.descontoMetas || 0) > 0 && (
+                                    <>
+                                      <div className="text-[10px] uppercase tracking-wide text-red-400/80 font-semibold pt-1 flex items-center gap-1"><LinkIcon className="w-3 h-3" />Descontos do Greco Metas</div>
+                                      {(l.pagamento.descontoMetasItens || []).map((it) => (
+                                        <Row key={it.id} label={`${TIPO_DESC_LABEL[it.tipo] || it.tipo}${it.motivo ? ` — ${it.motivo}` : ""}`} valor={-(it.valor || 0)} />
+                                      ))}
+                                    </>
+                                  )}
                                   {l.pagamento.ajuste !== 0 && <Row label={`Ajuste${l.pagamento.ajusteNota ? ` — ${l.pagamento.ajusteNota}` : ""}`} valor={l.pagamento.ajuste} />}
-                                  {l.pagamento.vale === 0 && l.pagamento.consumoInterno === 0 && (l.pagamento.multa || 0) === 0 && (l.pagamento.comprasCartao || 0) === 0 && l.pagamento.ajuste === 0 && <div className="text-muted-foreground italic">Sem descontos.</div>}
+                                  {l.pagamento.vale === 0 && l.pagamento.consumoInterno === 0 && (l.pagamento.multa || 0) === 0 && (l.pagamento.comprasCartao || 0) === 0 && (l.pagamento.descontoMetas || 0) === 0 && l.pagamento.ajuste === 0 && <div className="text-muted-foreground italic">Sem descontos.</div>}
                                 </div>
                               </div>
                               {editando && (

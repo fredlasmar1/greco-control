@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
@@ -12727,6 +12727,11 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         multaNota: pagto?.multaNota || "",
         comprasCartao,
         comprasCartaoNota: pagto?.comprasCartaoNota || "",
+        // Descontos lançados no Greco Metas (vale/multa/consumo/voucher/compra).
+        // Preenchidos pelo handler /api/pagamento/:mes (via HUB) e já abatidos do saldo.
+        descontoMetas: 0,
+        descontoMetasPorTipo: {} as Record<string, number>,
+        descontoMetasItens: [] as any[],
         saldoAReceber,
         fechado: !!pagto?.fechado,
         fechadoEm: pagto?.fechadoEm || null,
@@ -13023,6 +13028,41 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         }
       }
 
+      // ── Descontos do Greco Metas (vale/multa/consumo/voucher/compra) ──
+      // Puxa do HUB e ABATE do salário de cada colaborador, casando por trinksId
+      // (== profissionalId da folha) e, como reforço, por nome. 0 token Trinks.
+      let descontosMetasOrfaos: any[] = [];
+      try {
+        const descMetas = await getMetasDescontos(mes);
+        if (descMetas && descMetas.porProfissional.length) {
+          const _normDm = (s: string) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+          const usados = new Set<number>();
+          for (const l of linhas) {
+            const alvoId = String(l.profissionalId || "");
+            const nomeTokens = _normDm((l.nome || "").split(" - ").join(" ")).split(" ").filter((t) => t.length >= 3);
+            let match = descMetas.porProfissional.find((p) => p.trinksId && String(p.trinksId) === alvoId);
+            if (!match) {
+              match = descMetas.porProfissional.find((p) => {
+                if (!p.nome) return false;
+                const pn = _normDm(p.nome);
+                return nomeTokens.some((t) => pn.includes(t)) || _normDm(l.nome).includes(pn);
+              });
+            }
+            if (match && match.total > 0) {
+              usados.add(match.professionalId ?? -1);
+              l.pagamento.descontoMetas = match.total;
+              l.pagamento.descontoMetasPorTipo = match.porTipo || {};
+              l.pagamento.descontoMetasItens = match.itens || [];
+              l.pagamento.saldoAReceber -= match.total; // bruto não muda; desconto abate do saldo
+
+            }
+          }
+          descontosMetasOrfaos = descMetas.porProfissional.filter((p) => !usados.has(p.professionalId ?? -1) && p.total > 0);
+        }
+      } catch (e) {
+        console.warn("[folha] descontos do Metas indisponíveis:", (e as any)?.message || e);
+      }
+
       // Ordena por nome
       linhas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
@@ -13049,13 +13089,14 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         totalConsumoInterno: acc.totalConsumoInterno + l.pagamento.consumoInterno,
         totalMulta: acc.totalMulta + (l.pagamento.multa || 0),
         totalComprasCartao: acc.totalComprasCartao + (l.pagamento.comprasCartao || 0),
+        totalDescontoMetas: acc.totalDescontoMetas + (l.pagamento.descontoMetas || 0),
         totalTaxaCartao: acc.totalTaxaCartao + l.bases.taxaCartaoEstimada,
         totalSaldo: acc.totalSaldo + l.pagamento.saldoAReceber,
       }), {
         totalBruto: 0, totalComissaoServicos: 0, totalComissaoProdutos: 0,
         totalComissaoPlano: 0, totalComissaoClubeGreco: 0,
         totalBonusExcedente: 0, totalBonusRanking: 0, totalBonusMetaCategoria: 0, totalSalarioFixo: 0,
-        totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalMulta: 0, totalComprasCartao: 0, totalTaxaCartao: 0, totalSaldo: 0,
+        totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalMulta: 0, totalComprasCartao: 0, totalDescontoMetas: 0, totalTaxaCartao: 0, totalSaldo: 0,
       });
 
       // Conferência de fechamento (0 tokens): o total OFICIAL do mês vem do e-mail
@@ -13088,6 +13129,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         linhas,
         totais,
         clubeOrfaos, // sellers do Clube Greco sem match em profissional ativo
+        descontosMetasOrfaos, // descontos do Metas que não casaram com ninguém da folha
         // Conferência: intercala as 3 fontes (email / CSV ranking / API) + composição
         conferencia: {
           oficialTrinks: oficialTrinksMes,               // FONTE 1: receita oficial (email diário)
@@ -13209,6 +13251,18 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }
+  });
+
+  // GET /api/descontos-metas/:mes — descontos de colaborador lançados no Greco
+  // Metas (vale/multa/consumo/voucher/compra) via HUB (0 token). A aba Pagamento
+  // da Equipe usa pra descontar do salário; aqui é a visão pro card/auditoria.
+  app.get("/api/descontos-metas/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : ymdHoje().slice(0, 7);
+      const data = await getMetasDescontos(mes);
+      if (!data) return res.json({ ok: true, mes, disponivel: false, motivo: "Hub do Greco Metas indisponível ou HUB_API_KEY não configurada.", total: 0, descontos: [], porProfissional: [] });
+      return res.json({ ok: true, mes, disponivel: true, ...data });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
   // GET /api/leads-metas/:mes — leads (cliente novo com desconto) puxados do Greco

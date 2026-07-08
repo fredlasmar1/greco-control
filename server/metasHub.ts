@@ -132,6 +132,42 @@ export async function getMetasLeadsHistorico(meses = 6): Promise<any[] | null> {
   } catch { return hit?.data || null; }
 }
 
+// DESCONTOS de colaborador lançados no Metas (vale, multa, consumo, voucher,
+// compra, outro) → aba "Pagamento da Equipe" do Control desconta do salário.
+export interface MetasDescontoItem { id: number; tipo: string; valor: number; motivo: string | null; createdAt: string; }
+export interface MetasDescontoProf {
+  professionalId: number | null;
+  trinksId: string | null;
+  nome: string | null;
+  total: number;
+  itens: MetasDescontoItem[];
+  porTipo: Record<string, number>;
+}
+export interface MetasDescontos {
+  total: number;
+  descontos: Array<MetasDescontoItem & { professionalId: number | null; trinksId: string | null; nome: string | null }>;
+  porProfissional: MetasDescontoProf[];
+}
+const descontosCache = new Map<string, { at: number; data: MetasDescontos }>();
+export async function getMetasDescontos(mes: string): Promise<MetasDescontos | null> {
+  if (!KEY) return null;
+  const hit = descontosCache.get(mes);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.data;
+  try {
+    const r = await fetch(`${BASE}/api/hub/descontos/${encodeURIComponent(mes)}`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return hit?.data || null;
+    const j = (await r.json()) as any;
+    if (!j?.ok) return hit?.data || null;
+    const data: MetasDescontos = {
+      total: Number(j.total || 0),
+      descontos: Array.isArray(j.descontos) ? j.descontos : [],
+      porProfissional: Array.isArray(j.porProfissional) ? j.porProfissional : [],
+    };
+    descontosCache.set(mes, { at: Date.now(), data });
+    return data;
+  } catch { return hit?.data || null; }
+}
+
 export async function getMetasVisitas(phones: string[], mes: string): Promise<Record<string, UsoMetas>> {
   if (!KEY || !phones.length) return {};
   const key = `${mes}|${phones.length}`;

@@ -660,13 +660,9 @@ export default function Dashboard() {
 
   // ─── Seletor de mês (Dashboard pode visualizar meses passados) ───
   const mesCorrente = useMemo(() => mesAtualSP(), []);
-  const [selectedMes, setSelectedMes] = useState<string>(() => {
-    if (typeof window === "undefined") return mesAtualSP();
-    return localStorage.getItem("dashboard.selectedMes") || mesAtualSP();
-  });
-  useEffect(() => {
-    try { localStorage.setItem("dashboard.selectedMes", selectedMes); } catch {}
-  }, [selectedMes]);
+  // Sempre abre no MÊS ATUAL (não lembra o último visto — evitava dar a impressão
+  // de "dashboard parado" quando ficava um mês passado salvo no navegador).
+  const [selectedMes, setSelectedMes] = useState<string>(() => mesAtualSP());
   const isMesCorrente = selectedMes === mesCorrente;
 
   // Quando o mês selecionado NÃO é o corrente, busca o pacote do mês pelo
@@ -1102,6 +1098,37 @@ export default function Dashboard() {
 
       {/* ───────── Retenção de Clientes (jan–jun) ───────── */}
       <RetencaoClientes />
+
+      {/* Clientes sumidos — CTA de reativação em DESTAQUE no topo (dono pediu) */}
+      {(clientesMes?.clientesSumidos?.total || 0) > 0 && (
+        <div className="rounded-2xl border-2 border-amber-500/50 bg-amber-500/5 p-4 flex items-center justify-between gap-3 flex-wrap" data-testid="sumidos-destaque">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-amber-500/15 grid place-items-center flex-none"><UserMinus className="w-5 h-5 text-amber-500" /></div>
+            <div>
+              <div className="text-[26px] leading-none font-extrabold text-amber-500 tabular-nums">{clientesMes.clientesSumidos.total}</div>
+              <div className="text-xs text-muted-foreground mt-1">clientes sumidos há 60+ dias — dinheiro na mesa pra reativar</div>
+            </div>
+          </div>
+          {(clientesMes.clientesSumidos.lista?.length || 0) > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="border-amber-500/50 text-amber-600 hover:bg-amber-500/10">Ver lista pra reativar</Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80 max-h-96 overflow-y-auto">
+                <p className="text-xs font-semibold mb-2 flex items-center gap-1"><UserMinus className="w-3.5 h-3.5 text-amber-600" /> Mais recuperáveis primeiro</p>
+                <div className="space-y-1">
+                  {clientesMes.clientesSumidos.lista.map((c: any, i: number) => (
+                    <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="truncate">{c.nome}</span>
+                      <span className="text-muted-foreground tabular-nums flex-shrink-0">{c.diasSemVir}d</span>
+                    </div>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
+      )}
 
       {/* ───────── Fase 1: Resumo do Mês (fonte canônica) ───────── */}
       {(canonicoMes || equipeMesDash) && (
@@ -1923,138 +1950,6 @@ export default function Dashboard() {
       {/* Telegram Notifications */}
       {isConnected && <TelegramCard apiBase={API_BASE} />}
 
-      {/* Period Filter */}
-      <Card className="bg-card border-card-border">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Faturamento por Período</span>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              {[
-                { label: "Hoje", key: "hoje" },
-                { label: "Ontem", key: "ontem" },
-                { label: "Esta Semana", key: "semana" },
-                { label: "Sem. Passada", key: "sem-passada" },
-                { label: "Este Mês", key: "mes" },
-                { label: "Mês Passado", key: "mes-passado" },
-              ].map((p) => (
-                <Button
-                  key={p.key}
-                  variant={periodFilter === p.key ? "default" : "outline"}
-                  size="sm"
-                  className={
-                    periodFilter === p.key
-                      ? "bg-primary hover:bg-primary/80 text-white h-7 text-xs"
-                      : "h-7 text-xs"
-                  }
-                  onClick={() => {
-                    setPeriodFilter(p.key);
-                    setCustomStart("");
-                    setCustomEnd("");
-                  }}
-                >
-                  {p.label}
-                </Button>
-              ))}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant={periodFilter === "custom" ? "default" : "outline"}
-                    size="sm"
-                    className={
-                      periodFilter === "custom"
-                        ? "bg-primary hover:bg-primary/80 text-white h-7 text-xs"
-                        : "h-7 text-xs"
-                    }
-                  >
-                    <CalendarRange className="w-3 h-3 mr-1" />
-                    Personalizado
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-3 bg-card border-card-border" align="end">
-                  <div className="flex items-center gap-2">
-                    <div>
-                      <Label className="text-xs text-muted-foreground">De</Label>
-                      <Input
-                        type="date"
-                        value={customStart}
-                        onChange={(e) => setCustomStart(e.target.value)}
-                        className="h-8 text-xs w-36"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs text-muted-foreground">Até</Label>
-                      <Input
-                        type="date"
-                        value={customEnd}
-                        onChange={(e) => setCustomEnd(e.target.value)}
-                        className="h-8 text-xs w-36"
-                      />
-                    </div>
-                    <Button
-                      size="sm"
-                      className="bg-primary hover:bg-primary/80 text-white h-8 mt-4"
-                      disabled={!customStart || !customEnd}
-                      onClick={() => setPeriodFilter("custom")}
-                    >
-                      Filtrar
-                    </Button>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-          </div>
-          {periodFilter && (
-            <div className="mt-3 pt-3 border-t border-card-border flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground">{periodLabel}</p>
-                <p className="text-2xl font-bold text-primary" data-testid="revenue-period">
-                  {formatCurrency(periodRevenue)}
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs text-muted-foreground"
-                onClick={() => {
-                  setPeriodFilter("");
-                  setCustomStart("");
-                  setCustomEnd("");
-                }}
-              >
-                Limpar filtro
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard
-          title="Ticket Médio"
-          value={(!isMesCorrente && (trinksMesLoading || !hasTrinksDataEffective)) ? "—" : formatCurrency(totals.avgTicket)}
-          trend={3.2}
-          icon={<BarChart3 className="w-4 h-4 text-primary" />}
-        />
-        <KPICard
-          title="Taxa de Ocupação"
-          value={(!isMesCorrente && (trinksMesLoading || !hasTrinksDataEffective)) ? "—" : formatPercent(totals.occupationRate)}
-          trend={-1.5}
-          icon={<TrendingUp className="w-4 h-4 text-primary" />}
-        />
-        {isMesCorrente && (
-          <KPICard
-            title="Atendimentos Hoje"
-            value={`${todayClients} clientes`}
-            trend={12.0}
-            icon={<Users className="w-4 h-4 text-primary" />}
-          />
-        )}
-      </div>
-
       {/* Revenue Chart + Goal Progress */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2 bg-card border-card-border">
@@ -2090,34 +1985,6 @@ export default function Dashboard() {
         </Card>
 
         <div className="space-y-4">
-          {/* Goal Progress */}
-          <Card className="bg-card border-card-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">
-                Meta Mensal
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-center mb-3">
-                <p className="text-2xl font-bold text-primary">
-                  {formatPercent(progressPercent)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {formatCurrency(totals.totalRevenue)} de{" "}
-                  {formatCurrency(target)}
-                </p>
-              </div>
-              <Progress
-                value={progressPercent}
-                className="h-2 [&>div]:bg-primary"
-              />
-              <p className="text-xs text-muted-foreground mt-3 text-center">
-                Faltam {formatCurrency(target - totals.totalRevenue)} para a
-                meta
-              </p>
-            </CardContent>
-          </Card>
-
           {/* Payment Methods */}
           <Card className="bg-card border-card-border">
             <CardHeader className="pb-2">

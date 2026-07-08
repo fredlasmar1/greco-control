@@ -346,15 +346,11 @@ function ConciliacaoUltimoCaixa() {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="rounded-md border p-3">
-          {d.fonteVendido === "gmail" ? (
-            <>
-              <div className="flex items-center justify-between gap-2 py-1.5 border-b flex-wrap">
-                <div className="text-sm font-medium min-w-[80px]">Cartão <span className="text-[10px] text-muted-foreground font-normal">(créd+déb)</span></div>
-                <div className="text-xs text-muted-foreground tabular-nums">vendido R$ {fmt(d.vendido.cartao)}</div>
-                <Toggle on={f.credito.bateu} onSet={v => setForma("credito", { bateu: v })} />
-              </div>
-              <div className="text-[10px] text-amber-500/90 py-1">Números do Gmail (canônico). O split crédito × débito vem do CSV Caixa — este dia ainda não foi importado.</div>
-            </>
+          {d.fonteVendido !== "csv" ? (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-2.5 mb-1">
+              <div className="text-xs font-semibold text-amber-500 flex items-center gap-1.5"><Landmark className="w-3.5 h-3.5" />Só o total do dia (R$ {fmt(d.totalDia)}) veio do Gmail</div>
+              <p className="text-[11px] text-muted-foreground mt-1">O e-mail diário da Trinks <strong>não traz o detalhe por forma</strong> (pix/cartão/dinheiro). Pra conferir cada forma, <strong>importe o CSV Caixa de {labelDia(d.data)}</strong> em <em>Importar Trinks</em> — aí as formas aparecem preenchidas. Você ainda pode lançar os valores na mão abaixo.</p>
+            </div>
           ) : (
             <>
               <FormaLinha label="Débito" k="debito" vendido={d.vendido.debito} caiu={d.caiuItau.debito} />

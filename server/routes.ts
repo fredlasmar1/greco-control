@@ -11670,6 +11670,41 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
+  // Custos de PRODUTO (Precificação) pro Greco Metas — consumo interno de produto
+  // real cobra pelo custo. Junta produtos_custos (por ID Trinks) com o nome do
+  // catálogo; fallback no catalogo_produtos (CSV, por nome). Só devolve custo > 0.
+  app.get("/api/hub/custos-produtos", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const norm = (s: any) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const custos = await getProdutosCustos();
+      const out: any[] = [];
+      const seen = new Set<string>();
+      let produtos: any[] = [];
+      try { produtos = await trinksFetchAll("produtos"); } catch { produtos = []; }
+      for (const p of produtos || []) {
+        const id = String(p?.id ?? "");
+        const nome = String(p?.nome || p?.descricao || "").trim();
+        if (!nome) continue;
+        const c = id ? custos[id] : undefined;
+        const custo = Number(c?.custo || 0);
+        if (custo <= 0) continue;
+        out.push({ id, nome, categoria: p?.categoria?.nome || p?.categoriaNome || "", custo, precoVenda: Number(c?.precoVenda || 0) });
+        seen.add(norm(nome));
+      }
+      // fallback: catálogo importado por CSV (nome + custo), pros que não vieram da API
+      const cat: any = await kvGet("catalogo_produtos");
+      for (const p of (cat?.produtos || [])) {
+        const nome = String(p?.nome || "").trim();
+        const custo = Number(p?.custo || 0);
+        if (!nome || custo <= 0 || seen.has(norm(nome))) continue;
+        out.push({ id: "", nome, categoria: p?.categoria || "", custo, precoVenda: Number(p?.preco || 0) });
+        seen.add(norm(nome));
+      }
+      return res.json({ ok: true, sistema: "greco-control", total: out.length, produtos: out });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   app.get("/api/hub/faturamento/:mes", async (req: Request, res: Response) => {
     if (!requireHubKey(req, res)) return;
     try {

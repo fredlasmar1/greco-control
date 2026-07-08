@@ -126,13 +126,19 @@ export default function Viabilidade() {
                 </div>
                 {[
                   ["Comissões", v.comissao], ["Taxa de cartão", v.taxaCartao],
-                  ["Material (fichas)", v.material], ["Outras variáveis (extrato)", v.outrosExtrato],
+                  ["Material (fichas)", v.material], ["Compras do mês (Telegram)", v.compras],
+                  ["Outras variáveis (extrato)", v.outrosExtrato],
                 ].map(([lbl, val]: any) => (
                   <div key={lbl} className="flex items-center justify-between text-[11px] text-muted-foreground/80">
                     <span>{lbl}{lbl === "Material (fichas)" && (val === 0) ? " ⚠ vazias" : ""}</span>
                     <span className="tabular-nums">{formatCurrency(val || 0)}</span>
                   </div>
                 ))}
+                {data?.compras && (data.compras.excluidoLabor > 0 || data.compras.excluidoDuplicadoExtrato > 0) && (
+                  <div className="text-[10px] text-muted-foreground/60 pl-1 pt-0.5">
+                    Fora do cálculo (evita 2×): {data.compras.excluidoLabor > 0 ? `Salários R$ ${formatCurrency(data.compras.excluidoLabor)}` : ""}{data.compras.excluidoLabor > 0 && data.compras.excluidoDuplicadoExtrato > 0 ? " · " : ""}{data.compras.excluidoDuplicadoExtrato > 0 ? `já no extrato R$ ${formatCurrency(data.compras.excluidoDuplicadoExtrato)}` : ""}
+                  </div>
+                )}
               </div>
               {/* Margem de contribuição */}
               <div className="flex items-center justify-between border-t border-border/50 pt-2" data-testid="via-margem-contrib">

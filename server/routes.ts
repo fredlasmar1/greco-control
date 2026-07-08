@@ -8928,7 +8928,34 @@ Regras CRÍTICAS:
       const taxaCartao = ((Number(b.cartaoCredito || 0) + Number(b.cartaoDebito || 0)) * Number(cfg.taxaCartaoPct || 0)) / 100;
       // O que sobra de totalVariaveis (que já inclui comissão+material) é o extrato variável/imposto.
       const variavelExtrato = Math.max(0, Number(totais.totalVariaveis || 0) - comissao - material);
-      const variavelTotal = comissao + material + taxaCartao + variavelExtrato;
+
+      // ── Compras do Mês (registradas no Telegram) como SAÍDA. Trava anti-dupla:
+      //    (a) exclui "Salários & Equipe" — já entra via comissões/folha; (b) exclui
+      //    compras que batem com uma saída do extrato bancário (mesmo valor, ±3 dias)
+      //    — pra não contar 2× o que foi pago pelo Itaú e já importado.
+      const comprasMes = await listarCompras(mes).catch(() => [] as any[]);
+      const bankOutMes = transacoesBanco.filter(t => t.date.startsWith(mes) && t.amount < 0 && t.incluidoNoFluxo !== false && !t.transferenciaParId);
+      const diasEntre = (a: string, b: string) => Math.abs((new Date(a + "T12:00:00Z").getTime() - new Date(b + "T12:00:00Z").getTime()) / 86400000);
+      const jaNoExtrato = (c: any) => bankOutMes.some(t => Math.abs(Math.abs(t.amount) - Number(c.valor || 0)) < 0.5 && diasEntre(t.date, String(c.data || (mes + "-01"))) <= 3);
+      let comprasIncluido = 0, comprasLabor = 0, comprasDup = 0;
+      const comprasPorCat: Record<string, number> = {};
+      for (const c of (comprasMes as any[])) {
+        const v = Number(c.valor || 0);
+        if ((c.categoria || "") === "Salários & Equipe") { comprasLabor += v; continue; }
+        if (jaNoExtrato(c)) { comprasDup += v; continue; }
+        comprasIncluido += v;
+        comprasPorCat[c.categoria || "Outros"] = (comprasPorCat[c.categoria || "Outros"] || 0) + v;
+      }
+      const comprasTotalRegistrado = (comprasMes as any[]).reduce((s, c) => s + Number(c.valor || 0), 0);
+      if (comprasTotalRegistrado > 0) {
+        const brl = (n: number) => Number(n).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        let nota = `Compras do mês (Telegram): R$ ${brl(comprasIncluido)} entraram nas saídas.`;
+        if (comprasLabor > 0) nota += ` R$ ${brl(comprasLabor)} de Salários & Equipe foram EXCLUÍDOS (já contam na folha/comissões).`;
+        if (comprasDup > 0) nota += ` R$ ${brl(comprasDup)} foram EXCLUÍDOS por já aparecerem no extrato do Itaú (evita contar 2×).`;
+        try { (notas as any[]).push(nota); } catch {}
+      }
+
+      const variavelTotal = comissao + material + taxaCartao + variavelExtrato + comprasIncluido;
 
       const margemContribuicao = receita - variavelTotal;
       const fixo = Number(totais.totalFixas || 0);
@@ -8983,7 +9010,15 @@ Regras CRÍTICAS:
           comissao: r2(comissao),
           taxaCartao: r2(taxaCartao),
           material: r2(material),
+          compras: r2(comprasIncluido),
           outrosExtrato: r2(variavelExtrato),
+        },
+        compras: {
+          incluidoNoResultado: r2(comprasIncluido),
+          porCategoria: Object.entries(comprasPorCat).map(([nome, total]) => ({ nome, total: r2(total) })).sort((a, b) => b.total - a.total),
+          excluidoLabor: r2(comprasLabor),                 // Salários & Equipe (já na folha)
+          excluidoDuplicadoExtrato: r2(comprasDup),        // já apareceu no extrato do Itaú
+          totalRegistrado: r2(comprasTotalRegistrado),
         },
         margemContribuicao: r2(margemContribuicao),
         fixo: r2(fixo),

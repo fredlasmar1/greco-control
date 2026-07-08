@@ -8937,11 +8937,31 @@ Regras CRÍTICAS:
       const bankOutMes = transacoesBanco.filter(t => t.date.startsWith(mes) && t.amount < 0 && t.incluidoNoFluxo !== false && !t.transferenciaParId);
       const diasEntre = (a: string, b: string) => Math.abs((new Date(a + "T12:00:00Z").getTime() - new Date(b + "T12:00:00Z").getTime()) / 86400000);
       const jaNoExtrato = (c: any) => bankOutMes.some(t => Math.abs(Math.abs(t.amount) - Number(c.valor || 0)) < 0.5 && diasEntre(t.date, String(c.data || (mes + "-01"))) <= 3);
-      let comprasIncluido = 0, comprasLabor = 0, comprasDup = 0;
+      const _normC = (s: string) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+      // Nomes da equipe (pra pegar PIX de salário que a IA rotulou como "Outros").
+      let equipeTokens: string[] = [];
+      try {
+        const metasEq = await getAllMetas();
+        equipeTokens = Array.from(new Set(Object.values(metasEq)
+          .flatMap((m: any) => _normC(String(m?.nome || "")).split(" "))
+          .filter((t) => t.length >= 4)));
+      } catch { /* segue sem equipe */ }
+      const ehBeneficiarioInterno = (loja: string) => {
+        const l = _normC(loja);
+        if (!l || l === "-") return false;
+        if (/greco|barbearia|frederico|lasmar/.test(l)) return true;       // transferência interna
+        const toks = l.split(" ");
+        return equipeTokens.some((n) => toks.includes(n));                  // é um membro da equipe
+      };
+      let comprasIncluido = 0, comprasLabor = 0, comprasInterno = 0, comprasDup = 0;
       const comprasPorCat: Record<string, number> = {};
       for (const c of (comprasMes as any[])) {
         const v = Number(c.valor || 0);
-        if ((c.categoria || "") === "Salários & Equipe") { comprasLabor += v; continue; }
+        if ((c.categoria || "") === "Salários & Equipe" || ehBeneficiarioInterno(c.loja)) {
+          // salário/equipe (já na folha) OU transferência interna pra própria Greco
+          if ((c.categoria || "") === "Salários & Equipe") comprasLabor += v; else comprasInterno += v;
+          continue;
+        }
         if (jaNoExtrato(c)) { comprasDup += v; continue; }
         comprasIncluido += v;
         comprasPorCat[c.categoria || "Outros"] = (comprasPorCat[c.categoria || "Outros"] || 0) + v;
@@ -8950,8 +8970,9 @@ Regras CRÍTICAS:
       if (comprasTotalRegistrado > 0) {
         const brl = (n: number) => Number(n).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         let nota = `Compras do mês (Telegram): R$ ${brl(comprasIncluido)} entraram nas saídas.`;
-        if (comprasLabor > 0) nota += ` R$ ${brl(comprasLabor)} de Salários & Equipe foram EXCLUÍDOS (já contam na folha/comissões).`;
-        if (comprasDup > 0) nota += ` R$ ${brl(comprasDup)} foram EXCLUÍDOS por já aparecerem no extrato do Itaú (evita contar 2×).`;
+        if (comprasLabor > 0) nota += ` R$ ${brl(comprasLabor)} de Salários & Equipe EXCLUÍDOS (já na folha/comissões).`;
+        if (comprasInterno > 0) nota += ` R$ ${brl(comprasInterno)} de transferências internas (PIX pra própria Greco/equipe) EXCLUÍDOS.`;
+        if (comprasDup > 0) nota += ` R$ ${brl(comprasDup)} EXCLUÍDOS por já estarem no extrato do Itaú (evita 2×).`;
         try { (notas as any[]).push(nota); } catch {}
       }
 
@@ -9017,6 +9038,7 @@ Regras CRÍTICAS:
           incluidoNoResultado: r2(comprasIncluido),
           porCategoria: Object.entries(comprasPorCat).map(([nome, total]) => ({ nome, total: r2(total) })).sort((a, b) => b.total - a.total),
           excluidoLabor: r2(comprasLabor),                 // Salários & Equipe (já na folha)
+          excluidoInterno: r2(comprasInterno),             // PIX pra própria Greco/equipe (transferência)
           excluidoDuplicadoExtrato: r2(comprasDup),        // já apareceu no extrato do Itaú
           totalRegistrado: r2(comprasTotalRegistrado),
         },

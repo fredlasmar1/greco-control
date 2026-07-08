@@ -7715,16 +7715,31 @@ Regras CRÍTICAS:
       const r2 = (n: number) => Math.round(n * 100) / 100;
       const mes = data.slice(0, 7);
       const snap: any = await getSnapshot(data).catch(() => null);
-      // vendido por forma (CSV Caixa; PIX = coluna "Outros"; plano = pré-pago)
-      const vend = { credito: 0, debito: 0, pix: 0, dinheiro: 0, plano: 0 };
+      // vendido por forma — CANÔNICO Gmail → CSV. O CSV Caixa (quando importado)
+      // dá o split crédito/débito exato; SEM CSV, cai no snapshot do Gmail (o
+      // cartão vem COMBINADO, sem split, mas os números aparecem em vez de zerar).
+      const vend = { credito: 0, debito: 0, cartao: 0, pix: 0, dinheiro: 0, plano: 0 };
       let planosQtd = 0, comandas = 0;
+      let fonteVendido: 'csv' | 'gmail' | 'nenhuma' = 'nenhuma';
       const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
       const rows: any[] = Array.isArray(caixaPayload?.rows) ? caixaPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
-      for (const r of rows) {
-        vend.credito += Number(r.totalCredito || 0); vend.debito += Number(r.totalDebito || 0);
-        vend.dinheiro += Number(r.totalDinheiro || 0); vend.plano += Number(r.totalPrePago || 0);
-        vend.pix += Number(r.totalOutros || 0); comandas++;
-        if (Number(r.totalPacotes || 0) > 0 || Number(r.totalPrePago || 0) > 0) planosQtd++;
+      if (rows.length > 0) {
+        fonteVendido = 'csv';
+        for (const r of rows) {
+          vend.credito += Number(r.totalCredito || 0); vend.debito += Number(r.totalDebito || 0);
+          vend.dinheiro += Number(r.totalDinheiro || 0); vend.plano += Number(r.totalPrePago || 0);
+          vend.pix += Number(r.totalOutros || 0); comandas++;
+          if (Number(r.totalPacotes || 0) > 0 || Number(r.totalPrePago || 0) > 0) planosQtd++;
+        }
+        vend.cartao = vend.credito + vend.debito;
+      } else if (snap?.faturamento) {
+        // Gmail (canônico): não separa crédito/débito → cartão combinado.
+        fonteVendido = 'gmail';
+        const f = snap.faturamento;
+        vend.pix = Number(f.pix || 0);
+        vend.dinheiro = Number(f.dinheiro || 0);
+        vend.plano = Number(f.plano || 0);
+        vend.cartao = Number(f.cartao || 0);
       }
       // caiu no Itaú (D+1 útil pra cartão; mesmo dia pro PIX)
       const d1 = new Date(data + "T12:00:00Z"); d1.setUTCDate(d1.getUTCDate() + 1);
@@ -7752,7 +7767,8 @@ Regras CRÍTICAS:
         temDados: rows.length > 0 || !!snap,
         totalDia: r2(Number(snap?.faturamento?.total || 0) || rows.reduce((s, r) => s + Number(r.totalGeral || 0), 0)),
         comandas,
-        vendido: { credito: r2(vend.credito), debito: r2(vend.debito), pix: r2(vend.pix), dinheiro: r2(vend.dinheiro), plano: r2(vend.plano) },
+        vendido: { credito: r2(vend.credito), debito: r2(vend.debito), cartao: r2(vend.cartao), pix: r2(vend.pix), dinheiro: r2(vend.dinheiro), plano: r2(vend.plano) },
+        fonteVendido, // 'csv' (split créd/déb) | 'gmail' (cartão combinado) | 'nenhuma'
         caiuItau: { credito: r2(caiuCredito), debito: r2(caiuDebito), pix: r2(caiuPix) },
         planosQtd,
         infinitepay: { itens: infinitepayItens, total: r2(infinitepayItens.reduce((s, x) => s + x.valor, 0)) },

@@ -346,8 +346,21 @@ function ConciliacaoUltimoCaixa() {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="rounded-md border p-3">
-          <FormaLinha label="Débito" k="debito" vendido={d.vendido.debito} caiu={d.caiuItau.debito} />
-          <FormaLinha label="Crédito" k="credito" vendido={d.vendido.credito} caiu={d.caiuItau.credito} />
+          {d.fonteVendido === "gmail" ? (
+            <>
+              <div className="flex items-center justify-between gap-2 py-1.5 border-b flex-wrap">
+                <div className="text-sm font-medium min-w-[80px]">Cartão <span className="text-[10px] text-muted-foreground font-normal">(créd+déb)</span></div>
+                <div className="text-xs text-muted-foreground tabular-nums">vendido R$ {fmt(d.vendido.cartao)}</div>
+                <Toggle on={f.credito.bateu} onSet={v => setForma("credito", { bateu: v })} />
+              </div>
+              <div className="text-[10px] text-amber-500/90 py-1">Números do Gmail (canônico). O split crédito × débito vem do CSV Caixa — este dia ainda não foi importado.</div>
+            </>
+          ) : (
+            <>
+              <FormaLinha label="Débito" k="debito" vendido={d.vendido.debito} caiu={d.caiuItau.debito} />
+              <FormaLinha label="Crédito" k="credito" vendido={d.vendido.credito} caiu={d.caiuItau.credito} />
+            </>
+          )}
           {/* PIX */}
           <div className="flex items-center justify-between gap-2 py-1.5 border-b flex-wrap">
             <div className="text-sm font-medium min-w-[80px]">PIX</div>

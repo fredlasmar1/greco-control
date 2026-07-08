@@ -23,6 +23,7 @@ import {
   getRevenueByRange,
 } from "@/lib/demoData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { KpiTile, RankRow, SectionHeader, GoalBar } from "@/components/premium";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -1140,34 +1141,56 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          {/* Cards de métricas */}
+          {/* Metas da casa — 3 barras (Dia / Semana / Mês) do padrão Noite */}
+          {isMesCorrente && (() => {
+            const metaDia = 5000, metaSemana = 25000, metaMesCasa = target || 100000;
+            const vDia = hoje?.total ?? revenueSummary.dayRevenue ?? 0;
+            const vSemana = revenueSummary.weekRevenue ?? 0;
+            const vMes = fatMes ?? revenueSummary.monthRevenue ?? 0;
+            return (
+              <Card className="bg-card border-card-border"><CardContent className="p-4 sm:p-5">
+                <SectionHeader eyebrow="Metas da casa" title="Progresso do período" icon={<Target className="w-4 h-4 text-primary" />} />
+                <div className="flex flex-col gap-3.5">
+                  <GoalBar label="Hoje" current={formatCurrency(vDia)} target={formatCurrency(metaDia)} pct={(vDia / metaDia) * 100} />
+                  <GoalBar label="Semana" current={formatCurrency(vSemana)} target={formatCurrency(metaSemana)} pct={(vSemana / metaSemana) * 100} />
+                  <GoalBar label="Mês" current={formatCurrency(vMes)} target={formatCurrency(metaMesCasa)} pct={(vMes / metaMesCasa) * 100} />
+                </div>
+              </CardContent></Card>
+            );
+          })()}
+
+          {/* Cards de métricas — padrão Noite (KPI com chip de ícone) */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* Ticket médio */}
-            <Card className="bg-card border-card-border"><CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-1"><TrendingUp className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Ticket médio</span></div>
-              <p className="text-xl font-bold" data-testid="resumo-ticket">{formatCurrency(ticketMes)}</p>
-              {varTicketPct != null && (
-                <span className={`text-[11px] font-semibold ${varTicketPct >= 0 ? "text-emerald-600" : "text-red-600"}`}>{varTicketPct >= 0 ? "▲" : "▼"} {Math.abs(varTicketPct).toFixed(1)}% vs mês ant.</span>
-              )}
-            </CardContent></Card>
-            {/* Comandas */}
-            <Card className="bg-card border-card-border"><CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-1"><BarChart3 className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Comandas</span></div>
-              <p className="text-xl font-bold" data-testid="resumo-comandas">{comandasMes}</p>
-              {mediaComandasDiaUtil > 0 && <span className="text-[11px] text-muted-foreground">{mediaComandasDiaUtil.toFixed(1)}/dia útil</span>}
-            </CardContent></Card>
-            {/* Receita por tipo (serviços/produtos) */}
-            <Card className="bg-card border-card-border"><CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-1"><Package className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Serviços / Produtos</span></div>
-              <p className="text-sm font-bold leading-tight">{formatCurrency(servicosMes)}<span className="text-[11px] font-normal text-muted-foreground"> serv.</span></p>
-              <p className="text-sm font-bold leading-tight">{formatCurrency(produtosMes)}<span className="text-[11px] font-normal text-muted-foreground"> prod.</span></p>
-            </CardContent></Card>
-            {/* Retenção + novos */}
-            <Card className="bg-card border-card-border"><CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-1"><Users className="w-4 h-4 text-primary" /><span className="text-[11px] text-muted-foreground uppercase tracking-wide">Retenção</span></div>
-              <p className="text-xl font-bold" data-testid="resumo-retencao">{retornoMes.toFixed(0)}%</p>
-              <span className="text-[11px] text-muted-foreground">{novosClientesMes} novos clientes</span>
-            </CardContent></Card>
+            <KpiTile
+              label="Ticket médio"
+              icon={<TrendingUp className="w-3.5 h-3.5" />}
+              value={formatCurrency(ticketMes)}
+              data-testid="resumo-ticket"
+              sub={varTicketPct != null ? `${varTicketPct >= 0 ? "▲" : "▼"} ${Math.abs(varTicketPct).toFixed(1)}% vs mês ant.` : undefined}
+              subTone={varTicketPct != null ? (varTicketPct >= 0 ? "up" : "down") : "muted"}
+            />
+            <KpiTile
+              label="Comandas"
+              icon={<BarChart3 className="w-3.5 h-3.5" />}
+              value={comandasMes}
+              data-testid="resumo-comandas"
+              sub={mediaComandasDiaUtil > 0 ? `${mediaComandasDiaUtil.toFixed(1)}/dia útil` : undefined}
+            />
+            <KpiTile
+              label="Serviços / Produtos"
+              icon={<Package className="w-3.5 h-3.5" />}
+              accent="violet"
+              value={<span className="text-[19px]">{formatCurrency(servicosMes)}</span>}
+              sub={<>serv. · <b className="text-foreground">{formatCurrency(produtosMes)}</b> prod.</>}
+            />
+            <KpiTile
+              label="Retenção"
+              icon={<Users className="w-3.5 h-3.5" />}
+              accent="emerald"
+              value={`${retornoMes.toFixed(0)}%`}
+              data-testid="resumo-retencao"
+              sub={`${novosClientesMes} novos clientes`}
+            />
           </div>
 
           {/* ── Fase 2: cards de cliente (Ranking de Clientes importado) ── */}
@@ -1230,27 +1253,29 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Top 5 profissionais */}
-          {topProfsMes.length > 0 && (
-            <Card className="bg-card border-card-border"><CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-3"><Users className="w-4 h-4 text-primary" /><span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Top profissionais do mês</span></div>
-              <div className="space-y-2">
-                {topProfsMes.map((p: any, i: number) => (
-                  <div key={p.id} className="flex items-center justify-between gap-2 text-sm" data-testid={`resumo-topprof-${i}`}>
-                    <span className="flex items-center gap-2 min-w-0">
-                      <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
-                      <span className="truncate">{(p.nome || "").split(" - ").pop()}</span>
-                    </span>
-                    <span className="flex items-center gap-3 flex-shrink-0 tabular-nums">
-                      <span className="font-semibold">{formatCurrency(p.faturamento?.total || 0)}</span>
-                      <span className="text-[11px] text-muted-foreground hidden sm:inline">tkt {formatCurrency(p.ticketMedio || 0)}</span>
-                      <span className="text-[11px] text-muted-foreground hidden md:inline">ret {Number(p.pctRetorno || 0).toFixed(0)}%</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </CardContent></Card>
-          )}
+          {/* Ranking de produção — padrão Noite (mini-barra por barbeiro) */}
+          {topProfsMes.length > 0 && (() => {
+            const maxProf = Math.max(1, ...topProfsMes.map((p: any) => p.faturamento?.total || 0));
+            return (
+              <Card className="bg-card border-card-border"><CardContent className="p-4">
+                <SectionHeader eyebrow="Equipe" title="Ranking de produção · mês" icon={<Users className="w-4 h-4 text-primary" />} />
+                <div className="flex flex-col gap-3">
+                  {topProfsMes.map((p: any, i: number) => (
+                    <div key={p.id} data-testid={`resumo-topprof-${i}`}>
+                      <RankRow
+                        pos={i + 1}
+                        lead={i === 0}
+                        name={(p.nome || "").split(" - ").pop()}
+                        amount={formatCurrency(p.faturamento?.total || 0)}
+                        pct={((p.faturamento?.total || 0) / maxProf) * 100}
+                        sub={`tkt ${formatCurrency(p.ticketMedio || 0)} · ret ${Number(p.pctRetorno || 0).toFixed(0)}%`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </CardContent></Card>
+            );
+          })()}
         </div>
       )}
 

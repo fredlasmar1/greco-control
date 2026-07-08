@@ -346,16 +346,19 @@ function ConciliacaoUltimoCaixa() {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="rounded-md border p-3">
-          {d.fonteVendido !== "csv" ? (
-            <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-2.5 mb-1">
-              <div className="text-xs font-semibold text-amber-500 flex items-center gap-1.5"><Landmark className="w-3.5 h-3.5" />Só o total do dia (R$ {fmt(d.totalDia)}) veio do Gmail</div>
-              <p className="text-[11px] text-muted-foreground mt-1">O e-mail diário da Trinks <strong>não traz o detalhe por forma</strong> (pix/cartão/dinheiro). Pra conferir cada forma, <strong>importe o CSV Caixa de {labelDia(d.data)}</strong> em <em>Importar Trinks</em> — aí as formas aparecem preenchidas. Você ainda pode lançar os valores na mão abaixo.</p>
-            </div>
-          ) : (
+          {d.fonteVendido === "api" || d.fonteVendido === "csv" ? (
             <>
+              <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
+                Split por forma: {d.fonteVendido === "api" ? "API Trinks ao vivo (via Greco Metas, 0 token)" : "CSV Caixa importado"}
+              </div>
               <FormaLinha label="Débito" k="debito" vendido={d.vendido.debito} caiu={d.caiuItau.debito} />
               <FormaLinha label="Crédito" k="credito" vendido={d.vendido.credito} caiu={d.caiuItau.credito} />
             </>
+          ) : (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-2.5 mb-1">
+              <div className="text-xs font-semibold text-amber-500 flex items-center gap-1.5"><Landmark className="w-3.5 h-3.5" />Só o total do dia (R$ {fmt(d.totalDia)}) — sem detalhe por forma</div>
+              <p className="text-[11px] text-muted-foreground mt-1">A API da Trinks (via Greco Metas) não respondeu agora e não há CSV Caixa deste dia. Tente atualizar, ou importe o CSV de {labelDia(d.data)}. Você ainda pode lançar os valores na mão abaixo.</p>
+            </div>
           )}
           {/* PIX */}
           <div className="flex items-center justify-between gap-2 py-1.5 border-b flex-wrap">

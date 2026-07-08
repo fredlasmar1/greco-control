@@ -7728,15 +7728,43 @@ Regras CRÍTICAS:
       const r2 = (n: number) => Math.round(n * 100) / 100;
       const mes = data.slice(0, 7);
       const snap: any = await getSnapshot(data).catch(() => null);
-      // vendido por forma — CANÔNICO Gmail → CSV. O CSV Caixa (quando importado)
-      // dá o split crédito/débito exato; SEM CSV, cai no snapshot do Gmail (o
-      // cartão vem COMBINADO, sem split, mas os números aparecem em vez de zerar).
-      const vend = { credito: 0, debito: 0, cartao: 0, pix: 0, dinheiro: 0, plano: 0 };
+      // vendido por forma — CANÔNICO Gmail → API → CSV. O e-mail (Gmail) dá só o
+      // TOTAL do dia; o split por forma (créd/déb/pix/dinheiro/plano) vem da API
+      // Trinks — roteada pelo HUB do Greco Metas (0 token do Control) — e, como
+      // reserva, do CSV Caixa importado à mão.
+      const vend = { credito: 0, debito: 0, cartao: 0, pix: 0, dinheiro: 0, plano: 0, voucher: 0 };
       let planosQtd = 0, comandas = 0;
-      let fonteVendido: 'csv' | 'gmail' | 'nenhuma' = 'nenhuma';
+      let fonteVendido: 'api' | 'csv' | 'gmail' | 'nenhuma' = 'nenhuma';
+      // 1) API (via HUB Metas, 0 token): transações do dia → soma formasPagamentos.
+      //    A Trinks trata dataFim como EXCLUSIVO → pede o dia seguinte.
+      try {
+        const transFim = ymdAddDays(data, 1);
+        const tx: any = await trinksFetchAll("transacoes", { dataInicio: data, dataFim: transFim });
+        const arr: any[] = Array.isArray(tx) ? tx : (tx?.data || []);
+        if (arr.length > 0) {
+          for (const t of arr) {
+            let temPlano = false;
+            for (const fp of (t.formasPagamentos || [])) {
+              const v = Number(fp.valor || 0);
+              const nome = String(fp.nome || "").toLowerCase();
+              if (nome.includes("créd") || nome.includes("cred")) vend.credito += v;
+              else if (nome.includes("déb") || nome.includes("deb")) vend.debito += v;
+              else if (nome.includes("pix")) vend.pix += v;
+              else if (nome.includes("dinheiro") || nome.includes("espécie") || nome.includes("especie")) vend.dinheiro += v;
+              else if (nome.includes("pacote") || nome.includes("pré") || nome.includes("pre-pago") || nome.includes("plano")) { vend.plano += v; temPlano = true; }
+              else if (nome.includes("voucher") || nome.includes("cortesia")) vend.voucher += v;
+            }
+            comandas++;
+            if (temPlano) planosQtd++;
+          }
+          vend.cartao = vend.credito + vend.debito;
+          fonteVendido = 'api';
+        }
+      } catch (e) { /* HUB/API indisponível → cai pro CSV/Gmail */ }
+      // 2) CSV Caixa (reserva) — só se a API não trouxe nada.
       const caixaPayload: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
       const rows: any[] = Array.isArray(caixaPayload?.rows) ? caixaPayload.rows.filter((r: any) => (r.data || "").startsWith(data)) : [];
-      if (rows.length > 0) {
+      if (fonteVendido === 'nenhuma' && rows.length > 0) {
         fonteVendido = 'csv';
         for (const r of rows) {
           vend.credito += Number(r.totalCredito || 0); vend.debito += Number(r.totalDebito || 0);
@@ -7745,14 +7773,13 @@ Regras CRÍTICAS:
           if (Number(r.totalPacotes || 0) > 0 || Number(r.totalPrePago || 0) > 0) planosQtd++;
         }
         vend.cartao = vend.credito + vend.debito;
-      } else if (snap?.faturamento) {
-        // Gmail (canônico): não separa crédito/débito → cartão combinado.
+      }
+      // 3) Gmail (reserva final): só o total tem; sem split por forma.
+      if (fonteVendido === 'nenhuma' && snap?.faturamento) {
         fonteVendido = 'gmail';
         const f = snap.faturamento;
-        vend.pix = Number(f.pix || 0);
-        vend.dinheiro = Number(f.dinheiro || 0);
-        vend.plano = Number(f.plano || 0);
-        vend.cartao = Number(f.cartao || 0);
+        vend.pix = Number(f.pix || 0); vend.dinheiro = Number(f.dinheiro || 0);
+        vend.plano = Number(f.plano || 0); vend.cartao = Number(f.cartao || 0);
       }
       // caiu no Itaú (D+1 útil pra cartão; mesmo dia pro PIX)
       const d1 = new Date(data + "T12:00:00Z"); d1.setUTCDate(d1.getUTCDate() + 1);
@@ -7780,8 +7807,8 @@ Regras CRÍTICAS:
         temDados: rows.length > 0 || !!snap,
         totalDia: r2(Number(snap?.faturamento?.total || 0) || rows.reduce((s, r) => s + Number(r.totalGeral || 0), 0)),
         comandas,
-        vendido: { credito: r2(vend.credito), debito: r2(vend.debito), cartao: r2(vend.cartao), pix: r2(vend.pix), dinheiro: r2(vend.dinheiro), plano: r2(vend.plano) },
-        fonteVendido, // 'csv' (split créd/déb) | 'gmail' (cartão combinado) | 'nenhuma'
+        vendido: { credito: r2(vend.credito), debito: r2(vend.debito), cartao: r2(vend.cartao), pix: r2(vend.pix), dinheiro: r2(vend.dinheiro), plano: r2(vend.plano), voucher: r2(vend.voucher) },
+        fonteVendido, // 'api' (HUB Metas) | 'csv' | 'gmail' (só total) | 'nenhuma'
         caiuItau: { credito: r2(caiuCredito), debito: r2(caiuDebito), pix: r2(caiuPix) },
         planosQtd,
         infinitepay: { itens: infinitepayItens, total: r2(infinitepayItens.reduce((s, x) => s + x.valor, 0)) },

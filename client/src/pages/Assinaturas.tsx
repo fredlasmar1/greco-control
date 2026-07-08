@@ -13,6 +13,7 @@ import {
   Crown, FileText, ExternalLink, Upload, AlertTriangle, Calendar, Clock,
   Eye, X, Pencil, Banknote, UserPlus, ChevronLeft, ChevronRight,
 } from "lucide-react";
+import { KpiTile } from "@/components/premium";
 
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 
@@ -147,9 +148,9 @@ function ContadorClube() {
           <span className="text-[10px] text-muted-foreground">receita das mensalidades × valor de tabela consumido</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div><p className="text-[10px] text-muted-foreground uppercase">Receita do Clube</p><p className="text-lg font-bold text-emerald-500">R$ {fmt(d.receitaMensal)}</p><p className="text-[10px] text-muted-foreground">{d.assinantesAtivos} ativos</p></div>
-          <div><p className="text-[10px] text-muted-foreground uppercase">Consumido (tabela)</p><p className="text-lg font-bold text-amber-500">R$ {fmt(d.consumidoTotal)}</p><p className="text-[10px] text-muted-foreground">{d.atendimentosTotal} atend. · ticket R$ {fmt(d.ticketMedioConsumo)}</p></div>
-          <div className="col-span-2"><p className="text-[10px] text-muted-foreground uppercase">{prej ? "Prejuízo (furo)" : "Sobra"}</p><p className={`text-2xl font-bold ${prej ? "text-red-500" : "text-emerald-500"}`}>{prej ? "−" : "+"}R$ {fmt(Math.abs(d.saldo))}</p><p className="text-[10px] text-muted-foreground">{prej ? "assinantes consumiram MAIS do que a mensalidade arrecada" : "o Clube está no azul este mês"}</p></div>
+          <KpiTile label="Receita do Clube" icon={<Crown className="w-3.5 h-3.5" />} accent="emerald" value={`R$ ${fmt(d.receitaMensal)}`} sub={`${d.assinantesAtivos} ativos`} />
+          <KpiTile label="Consumido (tabela)" icon={<Banknote className="w-3.5 h-3.5" />} accent="amber" value={`R$ ${fmt(d.consumidoTotal)}`} sub={`${d.atendimentosTotal} atend. · ticket R$ ${fmt(d.ticketMedioConsumo)}`} />
+          <KpiTile className="col-span-2" label={prej ? "Prejuízo (furo)" : "Sobra"} icon={<DollarSign className="w-3.5 h-3.5" />} accent={prej ? "red" : "emerald"} value={`${prej ? "−" : "+"}R$ ${fmt(Math.abs(d.saldo))}`} sub={prej ? "assinantes consumiram MAIS do que a mensalidade arrecada" : "o Clube está no azul este mês"} />
         </div>
         {d.porBarbeiro?.length > 0 && (
           <div className="border-t border-card-border pt-2">

@@ -42,6 +42,7 @@ import {
   Users,
   DollarSign,
 } from "lucide-react";
+import { KpiTile } from "@/components/premium";
 import {
   PieChart,
   Pie,
@@ -668,59 +669,18 @@ export default function Financeiro() {
         <>
           {/* ─── KPI Cards — Consolidado do Extrato ───────────── */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Card className="bg-card border-card-border" data-testid="kpi-receitas-extrato">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-muted-foreground">Entradas (Receita)</p>
-                  <ArrowUpRight className="w-4 h-4 text-green-500" />
-                </div>
-                <p className="text-xl font-bold text-green-500">{formatCurrency(analysis.totalReceitas)}</p>
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  {entries.filter(e => e.amount > 0).length} lançamentos
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-card-border" data-testid="kpi-despesas-extrato">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-muted-foreground">Saídas (Despesas)</p>
-                  <ArrowDownRight className="w-4 h-4 text-red-400" />
-                </div>
-                <p className="text-xl font-bold text-red-400">{formatCurrency(analysis.totalDespesas)}</p>
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  {entries.filter(e => e.amount < 0).length} lançamentos
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-card-border" data-testid="kpi-saldo-extrato">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-muted-foreground">Saldo do Mês</p>
-                  <Scale className={`w-4 h-4 ${analysis.saldo >= 0 ? "text-green-500" : "text-red-500"}`} />
-                </div>
-                <p className={`text-xl font-bold ${analysis.saldo >= 0 ? "text-green-500" : "text-red-500"}`}>
-                  {formatCurrency(analysis.saldo)}
-                </p>
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  Margem: {analysis.margemLucro.toFixed(1)}%
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-card-border" data-testid="kpi-media-extrato">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-muted-foreground">Média Receita/Dia</p>
-                  <CalendarDays className="w-4 h-4 text-primary" />
-                </div>
-                <p className="text-xl font-bold text-foreground">{formatCurrency(analysis.mediaReceitaDia)}</p>
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  {analysis.diasComMovimento} dias com movimento
-                </p>
-              </CardContent>
-            </Card>
+            <KpiTile label="Entradas (Receita)" icon={<ArrowUpRight className="w-3.5 h-3.5" />} accent="emerald"
+              value={<span className="text-emerald-400">{formatCurrency(analysis.totalReceitas)}</span>}
+              sub={`${entries.filter(e => e.amount > 0).length} lançamentos`} data-testid="kpi-receitas-extrato" />
+            <KpiTile label="Saídas (Despesas)" icon={<ArrowDownRight className="w-3.5 h-3.5" />} accent="red"
+              value={<span className="text-red-400">{formatCurrency(analysis.totalDespesas)}</span>}
+              sub={`${entries.filter(e => e.amount < 0).length} lançamentos`} data-testid="kpi-despesas-extrato" />
+            <KpiTile label="Saldo do Mês" icon={<Scale className="w-3.5 h-3.5" />} accent={analysis.saldo >= 0 ? "emerald" : "red"}
+              value={<span className={analysis.saldo >= 0 ? "text-emerald-400" : "text-red-400"}>{formatCurrency(analysis.saldo)}</span>}
+              sub={`Margem: ${analysis.margemLucro.toFixed(1)}%`} data-testid="kpi-saldo-extrato" />
+            <KpiTile label="Média Receita/Dia" icon={<CalendarDays className="w-3.5 h-3.5" />}
+              value={formatCurrency(analysis.mediaReceitaDia)}
+              sub={`${analysis.diasComMovimento} dias com movimento`} data-testid="kpi-media-extrato" />
           </div>
 
           {/* ─── Composição de Despesas ────────────────────────── */}

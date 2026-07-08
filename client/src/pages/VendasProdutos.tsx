@@ -18,6 +18,7 @@ import {
   Pencil,
   X,
 } from "lucide-react";
+import { KpiTile } from "@/components/premium";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
 import { MonthSelector } from "@/components/MonthSelector";
@@ -203,14 +204,8 @@ export default function VendasProdutos() {
             const bom = data.totais.receitaBomboniere ?? 0;
             return (
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="rounded-lg border-2 border-emerald-500/50 bg-emerald-500/5 p-3">
-                  <div className="text-[10px] uppercase tracking-wide text-emerald-600 font-semibold">Comissionável · dá % pra equipe</div>
-                  <div className="text-xl font-bold tabular-nums text-foreground">R$ {fmtBRL(com)}</div>
-                </div>
-                <div className="rounded-lg border-2 border-amber-500/50 bg-amber-500/5 p-3">
-                  <div className="text-[10px] uppercase tracking-wide text-amber-600 font-semibold">Bomboniere · não comissiona</div>
-                  <div className="text-xl font-bold tabular-nums text-foreground">R$ {fmtBRL(bom)}</div>
-                </div>
+                <KpiTile label="Comissionável · dá % pra equipe" icon={<Percent className="w-3.5 h-3.5" />} accent="emerald" value={`R$ ${fmtBRL(com)}`} />
+                <KpiTile label="Bomboniere · não comissiona" icon={<Package className="w-3.5 h-3.5" />} accent="amber" value={`R$ ${fmtBRL(bom)}`} />
               </div>
             );
           })()}

@@ -796,14 +796,14 @@ function KpiCard({ icon, label, valor, valorTexto, sub, destaque }: { icon: Reac
   return (
     <Card className={`bg-card border-card-border ${destaque ? "border-primary/40" : ""}`}>
       <CardContent className="p-4">
-        <div className="flex items-center gap-2 mb-2 text-muted-foreground">
-          <div className="w-7 h-7 rounded-md bg-primary/15 flex items-center justify-center text-primary">{icon}</div>
-          <p className="text-xs">{label}</p>
+        <div className="flex items-center gap-2 text-[10.5px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+          <span className="grid place-items-center w-6 h-6 rounded-lg bg-primary/15 text-primary flex-none">{icon}</span>
+          <span className="truncate">{label}</span>
         </div>
-        <p className={`font-bold ${destaque ? "text-2xl text-primary" : "text-xl"}`}>
+        <p className={`mt-2 font-extrabold tracking-[-0.02em] tabular-nums ${destaque ? "text-[26px] text-primary" : "text-[22px]"}`}>
           {valorTexto != null ? valorTexto : `R$ ${fmtBRL(valor || 0)}`}
         </p>
-        {sub && <p className="text-[11px] text-muted-foreground mt-0.5">{sub}</p>}
+        {sub && <p className="text-[11px] text-muted-foreground mt-1">{sub}</p>}
       </CardContent>
     </Card>
   );

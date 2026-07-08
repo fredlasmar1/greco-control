@@ -86,56 +86,57 @@
   --opaque-button-border-intensity: 9;
   --elevate-1: rgba(255,255,255, .04);
   --elevate-2: rgba(255,255,255, .09);
-  /* #0f0f0f */
-  --background: 0 0% 6%;
-  --foreground: 0 0% 90%;
-  /* #333333 */
-  --border: 0 0% 20%;
-  /* #1a1a1a */
-  --card: 0 0% 10%;
-  --card-foreground: 0 0% 90%;
-  --card-border: 0 0% 15%;
-  /* #141414 */
-  --sidebar: 0 0% 8%;
-  --sidebar-foreground: 0 0% 90%;
-  --sidebar-border: 0 0% 15%;
-  /* Navy blue accent */
-  --sidebar-primary: 210 60% 31%;
-  --sidebar-primary-foreground: 0 0% 98%;
-  --sidebar-accent: 210 30% 15%;
-  --sidebar-accent-foreground: 0 0% 90%;
-  --sidebar-ring: 210 60% 31%;
-  /* #222222 */
-  --popover: 0 0% 13%;
-  --popover-foreground: 0 0% 90%;
-  --popover-border: 0 0% 20%;
-  /* Navy blue primary */
-  --primary: 210 60% 31%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 0 0% 16%;
-  --secondary-foreground: 0 0% 90%;
-  --muted: 0 0% 16%;
-  --muted-foreground: 0 0% 53%;
-  --accent: 213 15% 15%;
-  --accent-foreground: 0 0% 90%;
-  --destructive: 6 80% 42%;
-  --destructive-foreground: 0 0% 98%;
-  --input: 0 0% 22%;
-  --ring: 210 60% 31%;
-  /* Chart colors: navy, red, green, yellow, purple */
-  --chart-1: 210 60% 42%;
-  --chart-2: 6 80% 50%;
-  --chart-3: 142 71% 45%;
-  --chart-4: 48 96% 53%;
-  --chart-5: 262 83% 58%;
-  --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 2px 4px -1px hsl(0 0% 0% / 0.00);
-  --shadow-lg: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 4px 6px -1px hsl(0 0% 0% / 0.00);
-  --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 8px 10px -1px hsl(0 0% 0% / 0.00);
-  --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+  /* ===== NOITE — escuro premium (carvão azulado + azul/vermelho da marca) ===== */
+  /* #0f1114 */
+  --background: 220 16% 7%;
+  --foreground: 220 16% 92%;
+  --border: 220 12% 18%;
+  /* card #16181d */
+  --card: 220 15% 11%;
+  --card-foreground: 220 16% 92%;
+  --card-border: 220 12% 17%;
+  /* sidebar #101216 */
+  --sidebar: 220 18% 8%;
+  --sidebar-foreground: 220 16% 95%;
+  --sidebar-border: 220 12% 16%;
+  /* Azul da marca (mais claro no escuro p/ legibilidade) */
+  --sidebar-primary: 210 64% 50%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 210 40% 18%;
+  --sidebar-accent-foreground: 0 0% 96%;
+  --sidebar-ring: 210 64% 52%;
+  --popover: 220 15% 12%;
+  --popover-foreground: 220 16% 92%;
+  --popover-border: 220 12% 20%;
+  /* Azul da marca */
+  --primary: 210 64% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 16%;
+  --secondary-foreground: 220 16% 92%;
+  --muted: 220 14% 16%;
+  --muted-foreground: 220 10% 60%;
+  --accent: 210 30% 18%;
+  --accent-foreground: 0 0% 96%;
+  /* Vermelho da marca (mais vivo no escuro) */
+  --destructive: 6 76% 54%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 220 12% 22%;
+  --ring: 210 64% 52%;
+  /* Chart: azul-marca, vermelho-marca, verde, âmbar, roxo */
+  --chart-1: 210 66% 56%;
+  --chart-2: 6 78% 58%;
+  --chart-3: 152 60% 48%;
+  --chart-4: 40 92% 58%;
+  --chart-5: 262 70% 66%;
+  /* Sombras reais para o escuro (profundidade premium) */
+  --shadow-2xs: 0 1px 2px 0 hsl(0 0% 0% / 0.30);
+  --shadow-xs: 0 2px 4px 0 hsl(0 0% 0% / 0.35);
+  --shadow-sm: 0 1px 0 0 hsl(0 0% 100% / 0.03) inset, 0 4px 12px -4px hsl(0 0% 0% / 0.55);
+  --shadow: 0 1px 0 0 hsl(0 0% 100% / 0.03) inset, 0 8px 24px -8px hsl(0 0% 0% / 0.6);
+  --shadow-md: 0 1px 0 0 hsl(0 0% 100% / 0.04) inset, 0 14px 34px -10px hsl(0 0% 0% / 0.65);
+  --shadow-lg: 0 1px 0 0 hsl(0 0% 100% / 0.04) inset, 0 22px 48px -14px hsl(0 0% 0% / 0.7);
+  --shadow-xl: 0 30px 64px -18px hsl(0 0% 0% / 0.75);
+  --shadow-2xl: 0 40px 90px -24px hsl(0 0% 0% / 0.85);
 
   --sidebar-primary-border: hsl(var(--sidebar-primary));
   --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
@@ -167,18 +168,18 @@
 
 /* ===== Acabamento PREMIUM global (tema claro) ===== */
 
-/* Fundo com leve profundidade: off-white frio + brilho azul-marca no topo */
+/* Fundo com profundidade: brilho azul-marca no topo + toque de vermelho no canto */
 body {
   background-color: hsl(var(--background));
   background-image:
-    radial-gradient(1100px 460px at 50% -260px, hsl(210 60% 31% / 0.07), transparent 72%),
-    radial-gradient(900px 500px at 100% 0%, hsl(6 80% 42% / 0.035), transparent 70%);
+    radial-gradient(1200px 540px at 50% -300px, hsl(210 70% 46% / 0.12), transparent 72%),
+    radial-gradient(900px 560px at 100% -60px, hsl(6 72% 46% / 0.06), transparent 70%);
   background-attachment: fixed;
 }
 
-/* Cards ganham elevação real, hairline fria e um leve degradê de luz no topo */
+/* Cards: elevação real + leve véu de luz no topo (funciona claro e escuro) */
 .bg-card {
-  background-image: linear-gradient(180deg, hsl(0 0% 100%), hsl(210 24% 99.2%));
+  background-image: linear-gradient(180deg, hsl(0 0% 100% / 0.035), transparent 55%);
   box-shadow: var(--shadow-sm);
   border-color: hsl(var(--card-border));
 }

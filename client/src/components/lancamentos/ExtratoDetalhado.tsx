@@ -345,7 +345,7 @@ export default function ExtratoDetalhado({ mes, onChanged }: Props) {
                           ))}
                         </SelectContent>
                       </Select>
-                      {cat && tipoContaCli(cat.tipo) === "neutro" && <div className="text-[9px] text-slate-400 mt-0.5">não conta no resultado</div>}
+                      {cat && tipoContaCli(cat.tipo) === "neutro" && <div className="text-[9px] text-muted-foreground mt-0.5">não conta no resultado</div>}
                       {cat && t.regraIdAplicada && <div className="text-[9px] text-cyan-400/70 mt-0.5">por regra</div>}
                     </td>
                     <td className={`py-2 px-2 text-right tabular-nums font-medium whitespace-nowrap ${t.amount < 0 ? "text-red-400" : "text-emerald-400"}`}>

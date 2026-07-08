@@ -146,7 +146,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   descartavel: "bg-purple-500/15 text-purple-400",
   quimico: "bg-amber-500/15 text-amber-400",
   energia: "bg-cyan-500/15 text-cyan-400",
-  outro: "bg-slate-500/15 text-slate-400",
+  outro: "bg-slate-500/15 text-muted-foreground",
 };
 
 // ─── Cost Detail Dialog ───────────────────────────────────

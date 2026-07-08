@@ -139,7 +139,7 @@ export default function MeuPainel() {
             <p className="text-sm text-muted-foreground mb-3">
               de <span className="font-semibold text-foreground">{formatCurrency(data.meta)}</span>
             </p>
-            <Progress value={pctMes} className="h-2 mb-2 bg-white/10 [&>div]:bg-primary" />
+            <Progress value={pctMes} className="h-2 mb-2 bg-card/10 [&>div]:bg-primary" />
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-primary">{pctMes.toFixed(1)}% atingido</span>
               <span className={onTrack ? "text-emerald-400" : "text-amber-400"}>

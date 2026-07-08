@@ -173,7 +173,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         {/* Header */}
-        <header className="h-14 border-b border-border/70 flex items-center justify-between px-4 bg-background/75 backdrop-blur-xl sticky top-0 z-30 flex-shrink-0 shadow-[0_1px_0_0_hsl(214_22%_90%/0.6)]">
+        <header className="h-14 border-b border-border/70 flex items-center justify-between px-4 bg-background/70 backdrop-blur-xl sticky top-0 z-30 flex-shrink-0 shadow-[0_1px_0_0_hsl(0_0%_100%/0.04)]">
           <div className="flex items-center gap-3 min-w-0">
             <button
               className="lg:hidden p-2.5 rounded-md hover:bg-muted"

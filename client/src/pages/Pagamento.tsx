@@ -375,9 +375,9 @@ export default function Pagamento() {
                 const semBase = !c.temRanking || !c.temOficial;
                 const confere = c.temRanking && oficial > 0 && ratio >= 0.55;
                 return (
-                  <div className={`mt-3 mb-2 p-3 rounded-lg border ${semBase ? "border-slate-200 bg-slate-50" : confere ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
+                  <div className={`mt-3 mb-2 p-3 rounded-lg border ${semBase ? "border-border bg-muted/40" : confere ? "border-emerald-500/40 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
                     <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                      <div className="text-xs uppercase tracking-wide font-semibold text-slate-600">Conferência do fechamento — antes de pagar</div>
+                      <div className="text-xs uppercase tracking-wide font-semibold text-muted-foreground">Conferência do fechamento — antes de pagar</div>
                       {!c.temRanking ? (
                         <Badge variant="outline" className="gap-1"><AlertTriangle className="w-3 h-3" />Sem ranking do mês — cálculo ao vivo</Badge>
                       ) : !c.temOficial ? (
@@ -419,54 +419,54 @@ export default function Pagamento() {
                   .filter((p: any) => p.servicos > 0 || p.produtos > 0)
                   .sort((a: any, b: any) => b.servicos - a.servicos);
                 return (
-                  <div className="mt-3 mb-2 p-3 rounded-lg border border-slate-200 bg-slate-50">
-                    <div className="text-xs uppercase tracking-wide font-semibold text-slate-600 mb-2">Fechamento do mês — todas as fontes se conferem</div>
+                  <div className="mt-3 mb-2 p-3 rounded-lg border border-border bg-muted/40">
+                    <div className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-2">Fechamento do mês — todas as fontes se conferem</div>
                     {/* 3 fontes lado a lado */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
-                      <div className="rounded border bg-white p-2">
+                      <div className="rounded border bg-card p-2">
                         <div className="text-[10px] text-muted-foreground">📧 E-mail oficial (Gmail)</div>
-                        <div className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(conf.oficialTrinks || 0)}</div>
+                        <div className="tabular-nums font-semibold text-foreground">R$ {fmtBRL(conf.oficialTrinks || 0)}</div>
                       </div>
-                      <div className="rounded border bg-white p-2">
+                      <div className="rounded border bg-card p-2">
                         <div className="text-[10px] text-muted-foreground">📊 Ranking CSV (serv+prod)</div>
-                        <div className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(t.faturamento || 0)}</div>
+                        <div className="tabular-nums font-semibold text-foreground">R$ {fmtBRL(t.faturamento || 0)}</div>
                       </div>
-                      <div className="rounded border bg-white p-2">
+                      <div className="rounded border bg-card p-2">
                         <div className="text-[10px] text-muted-foreground">🔌 API Trinks (período)</div>
                         {(conf.apiPeriodo || 0) > 0
-                          ? <div className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(conf.apiPeriodo || 0)}</div>
+                          ? <div className="tabular-nums font-semibold text-foreground">R$ {fmtBRL(conf.apiPeriodo || 0)}</div>
                           : <div className="text-xs font-medium text-emerald-600">não consultada · 0 tokens</div>}
                       </div>
                     </div>
                     {/* composição pra fechar */}
-                    <div className="rounded border bg-white p-3 mb-3">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-2">Composição (base pra fechar o pagamento)</div>
+                    <div className="rounded border bg-card p-3 mb-3">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Composição (base pra fechar o pagamento)</div>
                       <div className="space-y-1 text-sm">
                         <Row label="Serviços (ranking)" valor={servicos} />
                         <Row label="Produtos (ranking)" valor={produtos} />
-                        <div className="border-t pt-1 flex items-baseline justify-between text-slate-700 font-medium">
+                        <div className="border-t pt-1 flex items-baseline justify-between text-foreground font-medium">
                           <span>Subtotal (serviços + produtos)</span>
                           <span className="tabular-nums">R$ {fmtBRL(subtotal)}</span>
                         </div>
                         <div className="pt-1.5 text-[11px] text-muted-foreground">+ Planos / Clube (dois critérios) → total do mês:</div>
                         <div className="flex items-baseline justify-between">
                           <span className="pl-2">mensal reconhecido (R$ {fmtBRL(planoMensal)})</span>
-                          <span className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(totalMensal)}</span>
+                          <span className="tabular-nums font-semibold text-foreground">R$ {fmtBRL(totalMensal)}</span>
                         </div>
                         <div className="flex items-baseline justify-between">
                           <span className="pl-2">valor vendido (R$ {fmtBRL(planoVendido)})</span>
-                          <span className="tabular-nums font-semibold text-slate-900">R$ {fmtBRL(totalVendido)}</span>
+                          <span className="tabular-nums font-semibold text-foreground">R$ {fmtBRL(totalVendido)}</span>
                         </div>
                       </div>
                     </div>
                     {/* ranking de produção por barbeiro */}
-                    <div className="rounded border bg-white p-3">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-2">Quem mais produziu (serviços)</div>
+                    <div className="rounded border bg-card p-3">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">Quem mais produziu (serviços)</div>
                       <div className="space-y-0.5 text-xs">
                         {profs.map((p: any, i: number) => (
                           <div key={p.nome} className="flex items-baseline justify-between gap-2">
                             <span className="truncate">{i === 0 ? "🥇 " : `${i + 1}. `}{apel(p.nome)}</span>
-                            <span className="tabular-nums whitespace-nowrap text-slate-900">R$ {fmtBRL(p.servicos)}{p.produtos > 0 && <span className="text-muted-foreground"> · prod {fmtBRL(p.produtos)}</span>}</span>
+                            <span className="tabular-nums whitespace-nowrap text-foreground">R$ {fmtBRL(p.servicos)}{p.produtos > 0 && <span className="text-muted-foreground"> · prod {fmtBRL(p.produtos)}</span>}</span>
                           </div>
                         ))}
                       </div>

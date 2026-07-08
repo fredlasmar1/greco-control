@@ -205,11 +205,11 @@ export default function VendasProdutos() {
               <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="rounded-lg border-2 border-emerald-500/50 bg-emerald-500/5 p-3">
                   <div className="text-[10px] uppercase tracking-wide text-emerald-600 font-semibold">Comissionável · dá % pra equipe</div>
-                  <div className="text-xl font-bold tabular-nums text-slate-900">R$ {fmtBRL(com)}</div>
+                  <div className="text-xl font-bold tabular-nums text-foreground">R$ {fmtBRL(com)}</div>
                 </div>
                 <div className="rounded-lg border-2 border-amber-500/50 bg-amber-500/5 p-3">
                   <div className="text-[10px] uppercase tracking-wide text-amber-600 font-semibold">Bomboniere · não comissiona</div>
-                  <div className="text-xl font-bold tabular-nums text-slate-900">R$ {fmtBRL(bom)}</div>
+                  <div className="text-xl font-bold tabular-nums text-foreground">R$ {fmtBRL(bom)}</div>
                 </div>
               </div>
             );
@@ -257,16 +257,16 @@ export default function VendasProdutos() {
           <CardContent>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
               <div className="rounded-lg border p-3">
-                <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Total vendido</div>
-                <div className="text-lg font-bold tabular-nums text-slate-900">R$ {fmtBRL(csvProd.total)}</div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Total vendido</div>
+                <div className="text-lg font-bold tabular-nums text-foreground">R$ {fmtBRL(csvProd.total)}</div>
               </div>
               <div className="rounded-lg border-2 border-emerald-500/50 bg-emerald-500/5 p-3">
                 <div className="text-[10px] uppercase tracking-wide text-emerald-600 font-semibold">Comissionável · % equipe</div>
-                <div className="text-lg font-bold tabular-nums text-slate-900">R$ {fmtBRL(csvProd.comissionavel)}</div>
+                <div className="text-lg font-bold tabular-nums text-foreground">R$ {fmtBRL(csvProd.comissionavel)}</div>
               </div>
               <div className="rounded-lg border-2 border-amber-500/50 bg-amber-500/5 p-3">
                 <div className="text-[10px] uppercase tracking-wide text-amber-600 font-semibold">Bomboniere · não comissiona</div>
-                <div className="text-lg font-bold tabular-nums text-slate-900">R$ {fmtBRL(csvProd.bomboniere)}</div>
+                <div className="text-lg font-bold tabular-nums text-foreground">R$ {fmtBRL(csvProd.bomboniere)}</div>
               </div>
             </div>
             {(() => {

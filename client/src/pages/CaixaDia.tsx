@@ -421,30 +421,30 @@ function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void
   return (
     <div className="space-y-3">
       {/* CALCULADORA DO MÊS por forma */}
-      <div className="rounded-2xl border-2 border-sky-400/50 ring-1 ring-black/5 bg-white p-4" data-testid="calculadora-mes">
+      <div className="rounded-2xl border-2 border-sky-400/50 ring-1 ring-white/10 bg-card p-4" data-testid="calculadora-mes">
         <div className="flex items-center justify-between mb-3">
           <span className="text-[11px] uppercase tracking-[0.2em] text-sky-600 font-semibold">Recebimentos · {mesLabel}</span>
-          <span className="text-[10px] text-slate-500">fonte: Caixa Trinks</span>
+          <span className="text-[10px] text-muted-foreground">fonte: Caixa Trinks</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
           {formas.map(f => (
-            <div key={f.lbl} className="rounded-lg bg-slate-50 border border-slate-200 p-2.5">
+            <div key={f.lbl} className="rounded-lg bg-muted/40 border border-border p-2.5">
               <div className={`text-[10px] uppercase tracking-wide ${f.cor} font-semibold`}>{f.lbl}</div>
-              <div className="text-base font-bold text-slate-900 tabular-nums mt-0.5">R$ {fmt(f.v || 0)}</div>
+              <div className="text-base font-bold text-foreground tabular-nums mt-0.5">R$ {fmt(f.v || 0)}</div>
             </div>
           ))}
         </div>
-        <div className="mt-3 pt-3 border-t border-slate-200 flex items-end justify-between flex-wrap gap-3">
+        <div className="mt-3 pt-3 border-t border-border flex items-end justify-between flex-wrap gap-3">
           <div>
             <div className="text-[10px] text-emerald-600/70 uppercase tracking-wide">Receita do mês (oficial Trinks)</div>
-            <div className="text-2xl font-bold text-slate-900 tabular-nums">R$ {fmt(c.totalOficial > 0 ? c.totalOficial : c.totalCaixa)}</div>
+            <div className="text-2xl font-bold text-foreground tabular-nums">R$ {fmt(c.totalOficial > 0 ? c.totalOficial : c.totalCaixa)}</div>
           </div>
-          <div className="text-right text-[10px] text-slate-500 space-y-0.5">
-            <div>Passou pelo caixa: <span className="text-slate-700 tabular-nums">R$ {fmt(c.totalCaixa || 0)}</span></div>
+          <div className="text-right text-[10px] text-muted-foreground space-y-0.5">
+            <div>Passou pelo caixa: <span className="text-foreground tabular-nums">R$ {fmt(c.totalCaixa || 0)}</span></div>
             {c.recorrente > 0 && <div>A conciliar (caixa parcial): <span className="text-amber-600/80 tabular-nums">R$ {fmt(c.recorrente)}</span></div>}
           </div>
         </div>
-        <div className="text-[10px] text-slate-400 mt-1">Receita oficial = "Total do mês" do e-mail Trinks (bate com a Trinks). A diferença pro caixa = dias ainda não importados no CSV de Caixa. As formas acima são o que já entrou pelo caixa.</div>
+        <div className="text-[10px] text-muted-foreground mt-1">Receita oficial = "Total do mês" do e-mail Trinks (bate com a Trinks). A diferença pro caixa = dias ainda não importados no CSV de Caixa. As formas acima são o que já entrou pelo caixa.</div>
       </div>
 
       {/* FECHAMENTOS por dia */}
@@ -497,16 +497,16 @@ function CaixaDinheiroMes() {
   return (
     <div className="space-y-3">
       {/* Caixa em dinheiro */}
-      <div className="rounded-2xl border-2 border-emerald-500/40 ring-1 ring-black/5 bg-white p-4" data-testid="caixa-dinheiro">
+      <div className="rounded-2xl border-2 border-emerald-500/40 ring-1 ring-white/10 bg-card p-4" data-testid="caixa-dinheiro">
         <div className="flex items-center justify-between mb-3">
           <span className="text-[11px] uppercase tracking-[0.2em] text-emerald-600 font-semibold">Caixa em Dinheiro · {mesLabel}</span>
-          <span className="text-[10px] text-slate-500">fonte: e-mail Trinks</span>
+          <span className="text-[10px] text-muted-foreground">fonte: e-mail Trinks</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {[["Recebido", t.recebido, "text-emerald-600"], ["Despesas", t.despesas, "text-red-600"], ["Sangria", t.sangria, "text-amber-600"], ["Saldo", t.saldo, "text-slate-900"]].map(([lbl, v, cor]: any) => (
-            <div key={lbl} className="rounded-lg bg-slate-50 border border-slate-200 p-2.5">
+          {[["Recebido", t.recebido, "text-emerald-600"], ["Despesas", t.despesas, "text-red-600"], ["Sangria", t.sangria, "text-amber-600"], ["Saldo", t.saldo, "text-foreground"]].map(([lbl, v, cor]: any) => (
+            <div key={lbl} className="rounded-lg bg-muted/40 border border-border p-2.5">
               <div className={`text-[10px] uppercase tracking-wide ${cor} font-semibold`}>{lbl}</div>
-              <div className="text-base font-bold text-slate-900 tabular-nums mt-0.5">R$ {fmt(v || 0)}</div>
+              <div className="text-base font-bold text-foreground tabular-nums mt-0.5">R$ {fmt(v || 0)}</div>
             </div>
           ))}
         </div>
@@ -517,7 +517,7 @@ function CaixaDinheiroMes() {
           <summary className="text-[11px] text-muted-foreground cursor-pointer">Ver por dia ({(d.dias || []).length} dias)</summary>
           <div className="overflow-x-auto max-h-[280px] overflow-y-auto mt-2">
             <table className="w-full text-xs">
-              <thead className="text-[10px] uppercase text-muted-foreground border-b border-border/50 sticky top-0 bg-white">
+              <thead className="text-[10px] uppercase text-muted-foreground border-b border-border/50 sticky top-0 bg-card">
                 <tr><th className="text-left p-1.5">Dia</th><th className="text-right p-1.5">Recebido</th><th className="text-right p-1.5">Despesas</th><th className="text-right p-1.5">Sangria</th><th className="text-right p-1.5">Saldo</th></tr>
               </thead>
               <tbody>

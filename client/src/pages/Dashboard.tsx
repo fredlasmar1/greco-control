@@ -296,7 +296,7 @@ function FecharDiaDialog() {
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs">
+    <div className="bg-card border border-border rounded-lg px-3 py-2 text-xs">
       <p className="text-muted-foreground mb-1">Dia {label}</p>
       {payload.map((p: any, i: number) => (
         <p key={i} className="font-medium" style={{ color: p.color }}>
@@ -1075,7 +1075,7 @@ export default function Dashboard() {
           return (
             <div className={`rounded-lg border p-3 ${estourou ? "border-red-500/50 bg-red-500/5" : trinksContador.trinks429Agora ? "border-amber-500/40 bg-amber-500/5" : "border-card-border bg-card"}`} data-testid="trinks-contador">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">API Trinks · fatia do mês</span>
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">API Trinks · fatia do mês</span>
                 <span className="text-[10px] text-muted-foreground">{trinksContador.mesRef || ""}</span>
               </div>
               <div className="flex items-baseline gap-2 flex-wrap">
@@ -1085,7 +1085,7 @@ export default function Dashboard() {
                 <span className="text-[11px] text-muted-foreground ml-auto tabular-nums">restam {restam.toLocaleString("pt-BR")}</span>
               </div>
               {/* barra de progresso */}
-              <div className="mt-2 h-2 rounded-full bg-slate-200 overflow-hidden">
+              <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
                 <div className={`h-full rounded-full transition-all ${cor}`} style={{ width: `${Math.min(100, pct)}%` }} />
               </div>
               <div className="mt-1.5 text-[10px] text-muted-foreground">
@@ -1124,7 +1124,7 @@ export default function Dashboard() {
                   </span>
                 )}
               </div>
-              <Progress value={Math.min(100, pctMeta)} className="h-2 my-2 bg-slate-50 [&>div]:bg-primary" />
+              <Progress value={Math.min(100, pctMeta)} className="h-2 my-2 bg-muted/40 [&>div]:bg-primary" />
               <div className="flex items-center justify-between text-xs flex-wrap gap-2">
                 <span className="font-semibold text-primary">{pctMeta.toFixed(1)}% da meta</span>
                 {faltaMeta > 0 && <span className="text-muted-foreground">Falta {formatCurrency(faltaMeta)}</span>}
@@ -2600,11 +2600,11 @@ function FaturamentoAno() {
   const melhor = meses.reduce((a, b) => (b.receita > a.receita ? b : a), meses[0]);
   const rot = (m: string) => (NOME_MES_RET[m.slice(5)] || m);
   return (
-    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-black/5 bg-white p-5" data-testid="faturamento-ano">
+    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/10 bg-card p-5" data-testid="faturamento-ano">
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
           <div className="text-[11px] uppercase tracking-[0.25em] text-red-600 font-semibold">Faturamento acumulado · 2026</div>
-          <div className="text-3xl font-bold text-slate-900 tabular-nums">{formatCurrency(total)}</div>
+          <div className="text-3xl font-bold text-foreground tabular-nums">{formatCurrency(total)}</div>
           <div className="text-[11px] text-muted-foreground">
             {rot(meses[0].mes)}–{rot(meses[meses.length - 1].mes)} · {comandas.toLocaleString("pt-BR")} atendimentos
           </div>
@@ -2627,9 +2627,9 @@ function FaturamentoAno() {
           const varPct = ant > 0 ? ((m.receita - ant) / ant) * 100 : null;
           const subiu = varPct !== null && varPct >= 0;
           return (
-            <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-slate-50 border border-slate-200 p-2" title={`${rot(m.mes)}: ${formatCurrency(m.receita)}`}>
+            <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-muted/40 border border-border p-2" title={`${rot(m.mes)}: ${formatCurrency(m.receita)}`}>
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{rot(m.mes)}</span>
-              <span className="text-[13px] font-bold text-slate-900 tabular-nums leading-tight">{formatCurrency(m.receita)}</span>
+              <span className="text-[13px] font-bold text-foreground tabular-nums leading-tight">{formatCurrency(m.receita)}</span>
               {varPct === null ? (
                 <span className="text-[10px] text-muted-foreground">—</span>
               ) : (
@@ -2637,7 +2637,7 @@ function FaturamentoAno() {
                   {subiu ? "▲" : "▼"} {subiu ? "+" : ""}{varPct.toFixed(0)}%
                 </span>
               )}
-              <div className="w-full bg-slate-50 rounded h-1.5 overflow-hidden">
+              <div className="w-full bg-muted/40 rounded h-1.5 overflow-hidden">
                 <div className={`h-full rounded ${subiu || varPct === null ? "bg-emerald-500/50" : "bg-red-500/50"}`} style={{ width: `${Math.max(6, (m.receita / max) * 100)}%` }} />
               </div>
             </div>
@@ -2669,15 +2669,15 @@ function ClientesAtendidosMes() {
     return <span className={`text-[10px] font-semibold tabular-nums ${up ? "text-emerald-600" : "text-red-600"}`}>{up ? "▲" : "▼"} {up ? "+" : ""}{v.toFixed(0)}%</span>;
   };
   return (
-    <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-black/5 bg-white p-5" data-testid="clientes-atendidos-mes">
+    <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/10 bg-card p-5" data-testid="clientes-atendidos-mes">
       <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
         <div>
           <div className="text-[11px] uppercase tracking-[0.25em] text-sky-600 font-semibold">Clientes & Serviços · 2026</div>
           <div className="text-[11px] text-muted-foreground mt-0.5">Evolução de clientes atendidos e serviços executados, mês a mês.</div>
         </div>
         <div className="flex gap-4 text-xs">
-          <div className="text-right"><div className="text-[10px] text-muted-foreground">Clientes (Jan–Jun)</div><div className="font-semibold tabular-nums text-slate-900">{totC.toLocaleString("pt-BR")}</div></div>
-          <div className="text-right"><div className="text-[10px] text-muted-foreground">Serviços (Jan–Jun)</div><div className="font-semibold tabular-nums text-slate-900">{totA.toLocaleString("pt-BR")}</div></div>
+          <div className="text-right"><div className="text-[10px] text-muted-foreground">Clientes (Jan–Jun)</div><div className="font-semibold tabular-nums text-foreground">{totC.toLocaleString("pt-BR")}</div></div>
+          <div className="text-right"><div className="text-[10px] text-muted-foreground">Serviços (Jan–Jun)</div><div className="font-semibold tabular-nums text-foreground">{totA.toLocaleString("pt-BR")}</div></div>
         </div>
       </div>
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
@@ -2685,21 +2685,21 @@ function ClientesAtendidosMes() {
           const antC = idx > 0 ? meses[idx - 1].clientesUnicos : 0;
           const antA = idx > 0 ? meses[idx - 1].comandas : 0;
           return (
-            <div key={m.mes} className="flex flex-col gap-1.5 rounded-lg bg-slate-50 border border-slate-200 p-2.5">
+            <div key={m.mes} className="flex flex-col gap-1.5 rounded-lg bg-muted/40 border border-border p-2.5">
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground text-center">{rot(m.mes)}</span>
               {/* clientes */}
               <div className="flex flex-col items-center">
                 <span className="text-[9px] text-sky-600/70 uppercase tracking-wide">👤 clientes</span>
-                <span className="text-base font-bold text-slate-900 tabular-nums leading-tight">{(m.clientesUnicos || 0).toLocaleString("pt-BR")}</span>
+                <span className="text-base font-bold text-foreground tabular-nums leading-tight">{(m.clientesUnicos || 0).toLocaleString("pt-BR")}</span>
                 {varBadge(m.clientesUnicos, antC)}
-                <div className="w-full bg-slate-50 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-sky-500/50" style={{ width: `${Math.max(6, (m.clientesUnicos / maxC) * 100)}%` }} /></div>
+                <div className="w-full bg-muted/40 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-sky-500/50" style={{ width: `${Math.max(6, (m.clientesUnicos / maxC) * 100)}%` }} /></div>
               </div>
               {/* serviços/atendimentos */}
-              <div className="flex flex-col items-center pt-1.5 border-t border-slate-200">
+              <div className="flex flex-col items-center pt-1.5 border-t border-border">
                 <span className="text-[9px] text-emerald-600/70 uppercase tracking-wide">✂️ serviços</span>
-                <span className="text-base font-bold text-slate-900 tabular-nums leading-tight">{(m.comandas || 0).toLocaleString("pt-BR")}</span>
+                <span className="text-base font-bold text-foreground tabular-nums leading-tight">{(m.comandas || 0).toLocaleString("pt-BR")}</span>
                 {varBadge(m.comandas, antA)}
-                <div className="w-full bg-slate-50 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-emerald-500/50" style={{ width: `${Math.max(6, (m.comandas / maxA) * 100)}%` }} /></div>
+                <div className="w-full bg-muted/40 rounded h-1 mt-0.5 overflow-hidden"><div className="h-full bg-emerald-500/50" style={{ width: `${Math.max(6, (m.comandas / maxA) * 100)}%` }} /></div>
               </div>
             </div>
           );
@@ -2724,7 +2724,7 @@ function OcupacaoMes() {
   const cor = (p: number) => (p >= 85 ? "text-red-600" : p >= 65 ? "text-emerald-600" : "text-sky-600");
   const corBar = (p: number) => (p >= 85 ? "bg-red-500/60" : p >= 65 ? "bg-emerald-500/60" : "bg-sky-500/60");
   return (
-    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-black/5 bg-white p-5" data-testid="ocupacao-mes">
+    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/10 bg-card p-5" data-testid="ocupacao-mes">
       <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
         <div>
           <div className="text-[11px] uppercase tracking-[0.25em] text-red-600 font-semibold">Taxa de Ocupação · 2026</div>
@@ -2737,10 +2737,10 @@ function OcupacaoMes() {
       </div>
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
         {meses.map((m: any) => (
-          <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-slate-50 border border-slate-200 p-2.5">
+          <div key={m.mes} className="flex flex-col items-center gap-1 rounded-lg bg-muted/40 border border-border p-2.5">
             <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{rot(m.mes)}</span>
             <span className={`text-lg font-bold tabular-nums leading-tight ${cor(m.ocupacaoPct)}`}>{m.ocupacaoPct.toFixed(0)}%</span>
-            <div className="w-full bg-slate-50 rounded h-1.5 overflow-hidden"><div className={`h-full ${corBar(m.ocupacaoPct)}`} style={{ width: `${Math.min(100, m.ocupacaoPct)}%` }} /></div>
+            <div className="w-full bg-muted/40 rounded h-1.5 overflow-hidden"><div className={`h-full ${corBar(m.ocupacaoPct)}`} style={{ width: `${Math.min(100, m.ocupacaoPct)}%` }} /></div>
             <span className="text-[9px] text-muted-foreground tabular-nums">{m.atendimentos} atend</span>
           </div>
         ))}
@@ -2806,7 +2806,7 @@ function FaturamentoPorFonte() {
   const servForaRanking = totServico - servNoRanking;
 
   return (
-    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-black/5 bg-white p-5 space-y-3" data-testid="faturamento-por-fonte">
+    <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/10 bg-card p-5 space-y-3" data-testid="faturamento-por-fonte">
       <h2 className="text-sm font-bold flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> Faturamento por fonte — onde atacar</h2>
 
       {/* fatias por tipo */}
@@ -2843,7 +2843,7 @@ function FaturamentoPorFonte() {
                 {profs.slice(0, 12).map((p, i) => (
                   <tr key={i} className="border-b border-border/20">
                     <td className="py-1 pr-2 truncate max-w-[180px]">{p.nome}</td>
-                    <td className="py-1 pr-2"><span className={`text-[9px] px-1.5 py-0.5 rounded text-slate-900 ${corFunc[p.func] || "bg-slate-500"}/70`}>{p.func.slice(0, -1)}</span></td>
+                    <td className="py-1 pr-2"><span className={`text-[9px] px-1.5 py-0.5 rounded text-foreground ${corFunc[p.func] || "bg-slate-500"}/70`}>{p.func.slice(0, -1)}</span></td>
                     <td className="py-1 text-right tabular-nums font-semibold">{formatCurrency(p.servicos)}</td>
                   </tr>
                 ))}
@@ -2880,7 +2880,7 @@ function Anel({ pct, size = 76, stroke = 7 }: { pct: number; size?: number; stro
   );
 }
 function Barra({ pct }: { pct: number }) {
-  return <div className="w-full h-1.5 rounded-full bg-slate-50 overflow-hidden"><div className={`h-full ${_corBar(pct)} rounded-full`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>;
+  return <div className="w-full h-1.5 rounded-full bg-muted/40 overflow-hidden"><div className={`h-full ${_corBar(pct)} rounded-full`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>;
 }
 
 function PainelExecutivo() {
@@ -2908,7 +2908,7 @@ function PainelExecutivo() {
     // mais recente que o caixa CSV; preenche o card Hoje sem travar a tela.
     fetch(`${API_BASE}/api/dashboard/hoje`).then(r => r.json()).then(h => { if (h?.ok) setHojeVivo(h); }).catch(() => {});
   }, [API_BASE]);
-  if (carregando) return <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-black/5 bg-white p-6 text-sm text-slate-500">Carregando painel…</div>;
+  if (carregando) return <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/10 bg-card p-6 text-sm text-muted-foreground">Carregando painel…</div>;
   if (!d) return null;
   // v79: o snapshot (último dia fechado pelo cron) substitui o "último dia do caixa"
   // quando é mais recente — ambos vêm do banco (0 token).
@@ -2932,17 +2932,17 @@ function PainelExecutivo() {
   return (
    <div className="space-y-3">
     {/* ───── CONSULTA por dia / semana (v89) ───── */}
-    <div className="rounded-2xl border border-slate-200 bg-white p-4" data-testid="painel-busca">
+    <div className="rounded-2xl border border-border bg-card p-4" data-testid="painel-busca">
       <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
         <div className="flex items-center gap-2">
           <Search className="w-4 h-4 text-sky-600" />
-          <span className="text-[11px] uppercase tracking-[0.2em] text-slate-600 font-semibold">Consultar período</span>
+          <span className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground font-semibold">Consultar período</span>
         </div>
         {/* toggle dia / semana */}
-        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+        <div className="flex rounded-lg border border-border overflow-hidden text-xs">
           {(["dia", "semana"] as const).map((m) => (
             <button key={m} onClick={() => buscarConsulta(m, dataConsulta || hojeStr)}
-              className={`px-3 py-1 transition-colors ${modoConsulta === m ? "bg-sky-500/20 text-sky-300 font-semibold" : "text-slate-500 hover:text-slate-700"}`}
+              className={`px-3 py-1 transition-colors ${modoConsulta === m ? "bg-sky-500/20 text-sky-300 font-semibold" : "text-muted-foreground hover:text-foreground"}`}
               data-testid={`consulta-modo-${m}`}>{m === "dia" ? "Dia" : "Semana"}</button>
           ))}
         </div>
@@ -2951,26 +2951,26 @@ function PainelExecutivo() {
       <div className="flex items-center gap-2 flex-wrap">
         {/* navegação ← data → */}
         <button onClick={() => dataConsulta && buscarConsulta(modoConsulta, addD(dataConsulta, modoConsulta === "dia" ? -1 : -7))}
-          className="w-8 h-8 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 flex items-center justify-center" data-testid="consulta-prev">‹</button>
+          className="w-8 h-8 rounded-lg border border-border text-muted-foreground hover:bg-muted flex items-center justify-center" data-testid="consulta-prev">‹</button>
         <input type="date" value={dataConsulta} max={hojeStr} onChange={(e) => buscarConsulta(modoConsulta, e.target.value)}
-          className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-900 [color-scheme:light]" data-testid="consulta-data" />
+          className="bg-muted/40 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground [color-scheme:light]" data-testid="consulta-data" />
         <button onClick={() => dataConsulta && buscarConsulta(modoConsulta, addD(dataConsulta, modoConsulta === "dia" ? 1 : 7))}
           disabled={!dataConsulta || dataConsulta >= hojeStr}
-          className="w-8 h-8 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-30 flex items-center justify-center" data-testid="consulta-next">›</button>
+          className="w-8 h-8 rounded-lg border border-border text-muted-foreground hover:bg-muted disabled:opacity-30 flex items-center justify-center" data-testid="consulta-next">›</button>
         {/* atalhos */}
         <div className="flex gap-1.5 ml-1 flex-wrap">
-          <button onClick={() => buscarConsulta("dia", addD(hojeStr, -1))} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Ontem</button>
-          <button onClick={() => buscarConsulta("semana", hojeStr)} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Esta semana</button>
-          <button onClick={() => buscarConsulta("semana", addD(hojeStr, -7))} className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100">Semana passada</button>
+          <button onClick={() => buscarConsulta("dia", addD(hojeStr, -1))} className="px-2.5 py-1 rounded-lg border border-border text-[11px] text-muted-foreground hover:bg-muted">Ontem</button>
+          <button onClick={() => buscarConsulta("semana", hojeStr)} className="px-2.5 py-1 rounded-lg border border-border text-[11px] text-muted-foreground hover:bg-muted">Esta semana</button>
+          <button onClick={() => buscarConsulta("semana", addD(hojeStr, -7))} className="px-2.5 py-1 rounded-lg border border-border text-[11px] text-muted-foreground hover:bg-muted">Semana passada</button>
         </div>
       </div>
 
       {/* resultado em card */}
-      {buscandoConsulta && !resConsulta && <div className="text-xs text-slate-500 mt-3">Buscando…</div>}
+      {buscandoConsulta && !resConsulta && <div className="text-xs text-muted-foreground mt-3">Buscando…</div>}
       {resConsulta && (
-        <div className="mt-3 rounded-xl border border-sky-400/30 bg-slate-50 p-4 flex items-center gap-4" data-testid="consulta-resultado">
+        <div className="mt-3 rounded-xl border border-sky-400/30 bg-muted/40 p-4 flex items-center gap-4" data-testid="consulta-resultado">
           {(resConsulta.tipo === "dia" && !resConsulta.encontrado) ? (
-            <div className="text-sm text-slate-500">📭 {_dm(resConsulta.data)} — sem fechamento registrado nesse dia (domingo/segunda fechado, ou ainda não importado).</div>
+            <div className="text-sm text-muted-foreground">📭 {_dm(resConsulta.data)} — sem fechamento registrado nesse dia (domingo/segunda fechado, ou ainda não importado).</div>
           ) : (
             <>
               <Anel pct={pctConsulta} />
@@ -2978,8 +2978,8 @@ function PainelExecutivo() {
                 <div className="text-[10px] uppercase tracking-wide text-sky-600/70">
                   {resConsulta.tipo === "dia" ? `Dia ${_dm(resConsulta.data)}` : `Semana ${_dm(resConsulta.inicio)} – ${_dm(resConsulta.fim)}`}
                 </div>
-                <div className="text-2xl font-bold text-slate-900 tabular-nums leading-tight">{formatCurrency(resConsulta.realizado)}</div>
-                <div className="text-[11px] text-slate-500">{pctConsulta}% da meta ({formatCurrency(metaConsulta)})
+                <div className="text-2xl font-bold text-foreground tabular-nums leading-tight">{formatCurrency(resConsulta.realizado)}</div>
+                <div className="text-[11px] text-muted-foreground">{pctConsulta}% da meta ({formatCurrency(metaConsulta)})
                   {resConsulta.tipo === "dia" && resConsulta.atendimentos > 0 && <span className="text-sky-600/80"> · {resConsulta.atendimentos} atendimentos</span>}
                 </div>
               </div>
@@ -2991,7 +2991,7 @@ function PainelExecutivo() {
 
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
       {/* ───── ÚLTIMO FECHAMENTO (ontem) ───── */}
-      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-black/5 bg-white p-5" data-testid="painel-hoje">
+      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/10 bg-card p-5" data-testid="painel-hoje">
         <div className="flex items-center justify-between mb-4">
           <span className="text-[11px] uppercase tracking-[0.25em] text-sky-600 font-semibold">{hoje.ehHoje ? "Hoje" : "Último fechamento"}</span>
           <span className={`text-[9px] px-2 py-0.5 rounded-full border ${hoje.ehHoje ? "border-emerald-500/40 text-emerald-600" : "border-sky-500/40 text-sky-600"}`}>
@@ -3001,8 +3001,8 @@ function PainelExecutivo() {
         <div className="flex items-center gap-4">
           <Anel pct={hoje.pct} />
           <div className="min-w-0">
-            <div className="text-2xl font-bold text-slate-900 tabular-nums leading-tight">{formatCurrency(hoje.realizado)}</div>
-            <div className="text-[11px] text-slate-500">de {formatCurrency(hoje.meta)}</div>
+            <div className="text-2xl font-bold text-foreground tabular-nums leading-tight">{formatCurrency(hoje.realizado)}</div>
+            <div className="text-[11px] text-muted-foreground">de {formatCurrency(hoje.meta)}</div>
             <div className="text-[11px] text-sky-600/80 mt-1">{hoje.atendimentos} atendimentos</div>
           </div>
         </div>
@@ -3010,26 +3010,26 @@ function PainelExecutivo() {
       </div>
 
       {/* ───── SEMANA ───── */}
-      <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-black/5 bg-white p-5" data-testid="painel-semana">
+      <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/10 bg-card p-5" data-testid="painel-semana">
         <div className="flex items-center justify-between mb-3">
           <span className="text-[11px] uppercase tracking-[0.25em] text-sky-600 font-semibold">Semana</span>
-          <span className="text-[10px] text-slate-500">{_dm(semana.inicio)}–{_dm(semana.fim)}</span>
+          <span className="text-[10px] text-muted-foreground">{_dm(semana.inicio)}–{_dm(semana.fim)}</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold text-slate-900 tabular-nums">{formatCurrency(semana.realizado)}</span>
+          <span className="text-2xl font-bold text-foreground tabular-nums">{formatCurrency(semana.realizado)}</span>
           <span className={`text-sm font-bold tabular-nums ${_corPct(semana.pct)}`}>{semana.pct}%</span>
         </div>
-        <div className="text-[11px] text-slate-500 mb-2">de {formatCurrency(semana.meta)}</div>
+        <div className="text-[11px] text-muted-foreground mb-2">de {formatCurrency(semana.meta)}</div>
         <Barra pct={semana.pct} />
         <div className="grid grid-cols-3 gap-2 mt-3">
           {cats.map(c => {
             const p = c.m > 0 ? Math.round((c.v / c.m) * 100) : 0;
             return (
-              <div key={c.lbl} className={`rounded-lg bg-slate-50 ring-1 ${c.ring} p-2`}>
+              <div key={c.lbl} className={`rounded-lg bg-muted/40 ring-1 ${c.ring} p-2`}>
                 <div className={`text-[9px] uppercase tracking-wide ${c.txt} font-semibold`}>{c.lbl}</div>
-                <div className="text-sm font-bold text-slate-900 tabular-nums my-0.5">{formatCurrency(c.v)}</div>
-                <div className="h-1 rounded-full bg-slate-50 overflow-hidden mb-1"><div className={`h-full ${c.bar} rounded-full`} style={{ width: `${Math.min(100, p)}%` }} /></div>
-                <div className="text-[9px] text-slate-400 tabular-nums">{p}% · meta {formatCurrency(c.m)}</div>
+                <div className="text-sm font-bold text-foreground tabular-nums my-0.5">{formatCurrency(c.v)}</div>
+                <div className="h-1 rounded-full bg-muted/40 overflow-hidden mb-1"><div className={`h-full ${c.bar} rounded-full`} style={{ width: `${Math.min(100, p)}%` }} /></div>
+                <div className="text-[9px] text-muted-foreground tabular-nums">{p}% · meta {formatCurrency(c.m)}</div>
               </div>
             );
           })}
@@ -3037,15 +3037,15 @@ function PainelExecutivo() {
       </div>
 
       {/* ───── MÊS ───── */}
-      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-black/5 bg-white p-5" data-testid="painel-mes">
+      <div className="rounded-2xl border-2 border-sky-400/60 ring-1 ring-white/10 bg-card p-5" data-testid="painel-mes">
         <div className="flex items-center justify-between mb-3">
           <span className="text-[11px] uppercase tracking-[0.25em] text-sky-600 font-semibold">Mês · {mes.mes}</span>
           <span className={`text-sm font-bold tabular-nums ${_corPct(mes.pct)}`}>{mes.pct}%</span>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold text-slate-900 tabular-nums">{formatCurrency(mes.realizado)}</span>
+          <span className="text-2xl font-bold text-foreground tabular-nums">{formatCurrency(mes.realizado)}</span>
         </div>
-        <div className="text-[11px] text-slate-500 mb-2">de {formatCurrency(mes.meta)}{mes.melhorDia && <> · melhor {_dm(mes.melhorDia.dia)} <span className="text-emerald-600">{formatCurrency(mes.melhorDia.valor)}</span></>}</div>
+        <div className="text-[11px] text-muted-foreground mb-2">de {formatCurrency(mes.meta)}{mes.melhorDia && <> · melhor {_dm(mes.melhorDia.dia)} <span className="text-emerald-600">{formatCurrency(mes.melhorDia.valor)}</span></>}</div>
         <Barra pct={mes.pct} />
         <div className="flex items-end gap-[2px] mt-3 h-16">
           {(mes.porDia || []).map((x: any) => (
@@ -3054,7 +3054,7 @@ function PainelExecutivo() {
             </div>
           ))}
         </div>
-        <div className="flex justify-between text-[8px] text-slate-400 mt-0.5"><span>{mes.porDia?.[0] && _dm(mes.porDia[0].dia)}</span><span className="text-emerald-600/60">▮ acima</span><span className="text-red-600/60">▮ abaixo R${Math.round(metaDiaMes)}/dia</span><span>{mes.porDia?.length ? _dm(mes.porDia[mes.porDia.length - 1].dia) : ""}</span></div>
+        <div className="flex justify-between text-[8px] text-muted-foreground mt-0.5"><span>{mes.porDia?.[0] && _dm(mes.porDia[0].dia)}</span><span className="text-emerald-600/60">▮ acima</span><span className="text-red-600/60">▮ abaixo R${Math.round(metaDiaMes)}/dia</span><span>{mes.porDia?.length ? _dm(mes.porDia[mes.porDia.length - 1].dia) : ""}</span></div>
       </div>
     </div>
    </div>
@@ -3085,7 +3085,7 @@ function AvisoCSV() {
         <span>{atual ? "✓" : "📋"}</span>
         <span className="flex-1 truncate">
           {atual ? "CSVs em dia." : "Lembre de atualizar os CSVs"}
-          {partes.length > 0 && <span className="text-slate-500"> · {partes.join(" · ")}</span>}
+          {partes.length > 0 && <span className="text-muted-foreground"> · {partes.join(" · ")}</span>}
         </span>
         <span className="text-[10px] opacity-70 whitespace-nowrap">Importar Trinks →</span>
       </div>

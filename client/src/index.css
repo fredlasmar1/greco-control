@@ -12,12 +12,12 @@
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
-  --background: 0 0% 100%;
-  --foreground: 0 0% 9%;
-  --border: 0 0% 91%;
-  --card: 0 0% 98%;
-  --card-foreground: 0 0% 9%;
-  --card-border: 0 0% 94%;
+  --background: 210 24% 97%;
+  --foreground: 216 28% 12%;
+  --border: 214 22% 90%;
+  --card: 0 0% 100%;
+  --card-foreground: 216 28% 12%;
+  --card-border: 214 24% 91%;
   /* Sidebar (abas) sempre PRETA, mesmo no tema claro do conteúdo */
   --sidebar: 0 0% 9%;
   --sidebar-foreground: 0 0% 96%;
@@ -51,14 +51,15 @@
   --font-serif: Georgia, serif;
   --font-mono: JetBrains Mono, monospace;
   --radius: .5rem;
-  --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 2px 4px -1px hsl(0 0% 0% / 0.00);
-  --shadow-lg: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 4px 6px -1px hsl(0 0% 0% / 0.00);
-  --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 8px 10px -1px hsl(0 0% 0% / 0.00);
-  --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+  /* Sombras reais com leve tint azul-carvão da marca (profundidade premium) */
+  --shadow-2xs: 0 1px 2px 0 hsl(215 30% 12% / 0.04);
+  --shadow-xs: 0 1px 3px 0 hsl(215 30% 12% / 0.06);
+  --shadow-sm: 0 1px 2px 0 hsl(215 30% 12% / 0.05), 0 2px 6px -1px hsl(215 30% 12% / 0.08);
+  --shadow: 0 2px 4px -1px hsl(215 30% 12% / 0.06), 0 6px 16px -3px hsl(215 30% 12% / 0.10);
+  --shadow-md: 0 4px 8px -2px hsl(215 30% 12% / 0.08), 0 10px 24px -5px hsl(215 30% 12% / 0.12);
+  --shadow-lg: 0 8px 16px -4px hsl(215 30% 12% / 0.10), 0 18px 36px -8px hsl(215 30% 12% / 0.14);
+  --shadow-xl: 0 16px 32px -8px hsl(215 30% 12% / 0.14), 0 28px 56px -12px hsl(215 30% 12% / 0.18);
+  --shadow-2xl: 0 24px 60px -12px hsl(215 30% 12% / 0.24);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
@@ -155,8 +156,44 @@
 /* Sidebar preta: itens de nav (text-muted-foreground) precisam de cinza claro,
    não o cinza escuro do tema claro do conteúdo. Escopado só na aside. */
 [data-testid="sidebar"] {
-  --muted-foreground: 0 0% 64%;
+  --muted-foreground: 0 0% 62%;
+  /* Gradiente carvão (cor da wordmark do logo) + hairline e sombra de profundidade */
+  background-color: hsl(0 0% 9%);
+  background-image:
+    radial-gradient(120% 60% at 0% 0%, hsl(210 60% 31% / 0.14), transparent 60%),
+    linear-gradient(180deg, hsl(0 0% 12%) 0%, hsl(0 0% 8%) 55%, hsl(0 0% 6%) 100%);
+  box-shadow: inset -1px 0 0 0 hsl(0 0% 100% / 0.05), 6px 0 28px -12px hsl(0 0% 0% / 0.55);
 }
+
+/* ===== Acabamento PREMIUM global (tema claro) ===== */
+
+/* Fundo com leve profundidade: off-white frio + brilho azul-marca no topo */
+body {
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(1100px 460px at 50% -260px, hsl(210 60% 31% / 0.07), transparent 72%),
+    radial-gradient(900px 500px at 100% 0%, hsl(6 80% 42% / 0.035), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* Cards ganham elevação real, hairline fria e um leve degradê de luz no topo */
+.bg-card {
+  background-image: linear-gradient(180deg, hsl(0 0% 100%), hsl(210 24% 99.2%));
+  box-shadow: var(--shadow-sm);
+  border-color: hsl(var(--card-border));
+}
+.bg-card:where(.hover\:shadow-md, .transition-shadow):hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* Títulos com tracking premium */
+h1, h2, h3 {
+  letter-spacing: -0.02em;
+}
+h1 { font-weight: 700; }
+
+/* Números/monetário mais nítidos */
+.tabular-nums { font-variant-numeric: tabular-nums; }
 
 @layer base {
   * {

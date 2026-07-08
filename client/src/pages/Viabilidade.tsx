@@ -134,11 +134,11 @@ export default function Viabilidade() {
                     <span className="tabular-nums">{formatCurrency(val || 0)}</span>
                   </div>
                 ))}
-                {data?.compras && (data.compras.excluidoLabor > 0 || data.compras.excluidoInterno > 0 || data.compras.excluidoDuplicadoExtrato > 0) && (
+                {data?.compras && (data.compras.excluidoLabor > 0 || data.compras.excluidoAClassificar > 0 || data.compras.excluidoDuplicadoExtrato > 0) && (
                   <div className="text-[10px] text-muted-foreground/60 pl-1 pt-0.5">
-                    Fora do cálculo (evita 2×):
+                    Fora do cálculo:
                     {data.compras.excluidoLabor > 0 ? ` Salários R$ ${formatCurrency(data.compras.excluidoLabor)}` : ""}
-                    {data.compras.excluidoInterno > 0 ? ` · transf. internas R$ ${formatCurrency(data.compras.excluidoInterno)}` : ""}
+                    {data.compras.excluidoAClassificar > 0 ? ` · "Outros" R$ ${formatCurrency(data.compras.excluidoAClassificar)} (categorize p/ contar)` : ""}
                     {data.compras.excluidoDuplicadoExtrato > 0 ? ` · já no extrato R$ ${formatCurrency(data.compras.excluidoDuplicadoExtrato)}` : ""}
                   </div>
                 )}

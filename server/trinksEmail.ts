@@ -7,6 +7,46 @@ import { simpleParser } from "mailparser";
 import { saveSnapshot, getSnapshot, type SnapshotDia } from "./snapshotDiario";
 import { kvSet } from "./db";
 import { log } from "./index";
+import { decodeCsvBuffer, detectTrinksType } from "./trinksImport";
+
+// DIAGNÓSTICO (temporário): inspeciona os ANEXOS dos últimos e-mails "Resumo do dia"
+// pra descobrir o formato do CSV que a Trinks manda (colunas/tipo), antes de parsear.
+export async function inspecionarAnexosEmailTrinks(opts?: { dias?: number; max?: number }): Promise<any> {
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) return { ok: false, erro: "GMAIL_USER/GMAIL_APP_PASSWORD não configurados" };
+  const client = new ImapFlow({ host: "imap.gmail.com", port: 993, secure: true, auth: { user, pass }, logger: false });
+  const emails: any[] = [];
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      const since = new Date(); since.setDate(since.getDate() - (opts?.dias ?? 7));
+      const uids = await client.search({ from: "atendimento@trinks.com", subject: "Resumo do dia", since }, { uid: true });
+      const lista = Array.isArray(uids) ? uids.slice(-(opts?.max ?? 3)) : [];
+      for (const uid of lista) {
+        const msg: any = await client.fetchOne(String(uid), { source: true }, { uid: true });
+        if (!msg?.source) continue;
+        const parsed = await simpleParser(msg.source);
+        const anexos = (parsed.attachments || []).map((a: any) => {
+          const info: any = { filename: a.filename, contentType: a.contentType, size: a.content?.length || 0 };
+          try {
+            const text = decodeCsvBuffer(a.content);
+            info.tipoDetectado = detectTrinksType(text);
+            info.primeirasLinhas = text.split(/\r?\n/).slice(0, 4);
+          } catch (e: any) { info.erroDecode = String(e?.message || e); }
+          return info;
+        });
+        emails.push({ assunto: parsed.subject, data: parsed.date, nAnexos: anexos.length, anexos });
+      }
+    } finally { lock.release(); }
+    await client.logout();
+    return { ok: true, emails };
+  } catch (err: any) {
+    try { await client.close(); } catch {}
+    return { ok: false, erro: err.message };
+  }
+}
 
 function numBR(s: string): number {
   const n = Number(String(s || "").replace(/\./g, "").replace(",", "."));

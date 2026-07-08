@@ -86,7 +86,7 @@ import {
   getSnapshot, saveSnapshot, listSnapshotsDoMes, snapshotVazio, classificarFormaPagamento,
   type SnapshotDia, type FonteSnapshot,
 } from "./snapshotDiario";
-import { sincronizarEmailsTrinks } from "./trinksEmail";
+import { sincronizarEmailsTrinks, inspecionarAnexosEmailTrinks } from "./trinksEmail";
 import {
   listFechamentos as listCaixaFechamentos,
   getFechamento as getCaixaFechamento,
@@ -2896,6 +2896,19 @@ export async function registerRoutes(
       const dias = Number(req.body?.dias) || 7;
       const max = Number(req.body?.max) || 12;
       const r = await sincronizarEmailsTrinks({ dias, max });
+      return res.status(r.ok ? 200 : 500).json(r);
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/trinks-email/anexos — DIAGNÓSTICO: mostra os anexos dos últimos
+  // e-mails "Resumo do dia" (formato do CSV que a Trinks manda). Temporário.
+  app.get("/api/trinks-email/anexos", async (req: Request, res: Response) => {
+    try {
+      const dias = Number(req.query.dias) || 7;
+      const max = Number(req.query.max) || 3;
+      const r = await inspecionarAnexosEmailTrinks({ dias, max });
       return res.status(r.ok ? 200 : 500).json(r);
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });

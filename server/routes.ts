@@ -11080,7 +11080,7 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       if (uniq.length) equipeHint = `\nEQUIPE (se o beneficiário do PIX/pagamento for uma destas pessoas, a categoria É "Salários & Equipe"): ${uniq.join(", ")}.`;
     } catch { /* segue sem hint */ }
     return `Você lê comprovantes de PIX, notas de compra e mensagens de compra de uma BARBEARIA. Responda APENAS JSON (sem markdown):
-{"ehComprovante": true, "tipoDoc": "pagamento|nota_produtos|texto_compra", "valor": 84.00, "data": "YYYY-MM-DD", "loja": "beneficiário/estabelecimento/fornecedor", "tipo": "pix|compra|boleto|outro", "categoria": "<uma de: ${cats}>", "descricao": "resumo curto", "confianca": "alta|media|baixa", "itens": [{"produto": "nome", "quantidade": 1, "custoUnitario": 15.00}]}
+{"ehComprovante": true, "tipoDoc": "pagamento|nota_produtos|texto_compra", "valor": 84.00, "data": "YYYY-MM-DD", "loja": "beneficiário/estabelecimento/fornecedor", "tipo": "pix|dinheiro|compra|boleto|outro", "categoria": "<uma de: ${cats}>", "descricao": "resumo curto", "confianca": "alta|media|baixa", "itens": [{"produto": "nome", "quantidade": 1, "custoUnitario": 15.00}]}
 Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56).
 PIX — MUITO IMPORTANTE: o campo "loja" é SEMPRE o DESTINATÁRIO (quem RECEBEU o dinheiro). NUNCA use o PAGADOR (a conta/origem que ENVIOU) — num comprovante de PIX enviado pela barbearia, o pagador é a própria GRECO ("Greco Barbearia", "Greco Barbearia Anápolis", "GRECO BARBEARIA LTDA", o CNPJ dela, "Frederico"/dono) e ISSO NÃO É o beneficiário. Procure o bloco "destino"/"para"/"quem recebeu"/"favorecido"/"recebedor" e use ESSE nome. Se o destinatário for um COLABORADOR da EQUIPE (lista abaixo), use o nome dele e categoria "Salários & Equipe". Se por engano só houver o nome da Greco como recebedor, ponha confianca "baixa".
 Se NÃO for comprovante/nota/compra, responda {"ehComprovante": false}.${equipeHint}
@@ -11168,7 +11168,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       loja: String(dados.loja || "").trim() || "—",
       categoria: normalizarCategoria(dados.categoria),
       descricao: String(dados.descricao || ""),
-      tipo: (["pix", "compra", "boleto", "outro"].includes(dados.tipo) ? dados.tipo : "compra") as any,
+      tipo: (["pix", "dinheiro", "compra", "boleto", "outro"].includes(dados.tipo) ? dados.tipo : "compra") as any,
       confianca: (["alta", "media", "baixa"].includes(dados.confianca) ? dados.confianca : "media") as any,
       telegramFileId: ctx.fileId, telegramFrom: ctx.from, origem: "telegram" as const,
     };
@@ -11293,14 +11293,23 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       else if (msg.document && /^image\/|application\/pdf/.test(String(msg.document.mime_type || ""))) fileId = msg.document.file_id;
       if (fileId) { await processarComprovanteTelegram(fileId, chatId, from).catch(erroTrace); return; }
 
-      // 3) Texto de compra sem nota (heurística: palavra de compra + número)
-      if (txtRaw.length >= 6 && /\d/.test(txtRaw) && /(compr|paguei|gastei|pagamos|custou|custo|nota|fornecedor)/i.test(txtRaw)) {
+      // 3) Texto de compra/DESPESA sem nota. Dispara a IA quando há uma palavra de
+      // gasto OU um valor em dinheiro (R$/reais/decimal). A IA (ehComprovante) filtra
+      // o que não for gasto, então pode ser generoso — antes o gatilho era estreito
+      // (só compr/paguei/gastei...) e ignorava em SILÊNCIO despesas ditas de outro
+      // jeito (ex.: "despesa material 30 em dinheiro") → não entrava nos gastos.
+      const temNumero = /\d/.test(txtRaw);
+      const temPalavraGasto = /(compr|paguei|paga|pagamos|pagar|gastei|gasto|gastamos|custou|custo|nota|fornecedor|despesa|sa[ií]da|dinheiro|esp[eé]cie|boleto|d[eé]bito|cr[eé]dito|\bpix\b|comprovante|abasteci|abastecimento)/i.test(txtRaw);
+      const temValorRS = /(r\$\s*\d|\d+\s*reais|\breais\b|\d[.,]\d{2}\b)/i.test(txtRaw);
+      if (txtRaw.length >= 5 && temNumero && (temPalavraGasto || temValorRS)) {
         await processarTextoCompra(txtRaw, chatId, from).catch(erroTrace);
         return;
       }
 
-      // senão: chat normal → ignora (mas registra se veio mídia não reconhecida)
+      // senão: chat normal → ignora (mas registra se veio mídia não reconhecida).
+      // Se tinha número mas não bateu o gatilho, registra pra diagnóstico (não some).
       if (msg.photo || msg.document) kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "sem_fileid", temPhoto: !!msg.photo, temDoc: !!msg.document, docMime: msg.document?.mime_type || null }).catch(() => {});
+      else if (txtRaw.length >= 5 && temNumero) kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "texto_ignorado_sem_gatilho", texto: txtRaw.slice(0, 120) }).catch(() => {});
     } catch (err: any) {
       log(`[compras] webhook erro: ${err.message}`, "compras");
     }

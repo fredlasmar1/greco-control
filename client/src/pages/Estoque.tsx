@@ -528,6 +528,7 @@ export default function Estoque() {
                         <th className="text-right py-2 px-2 font-medium hidden sm:table-cell">Faturamento (30d)</th>
                         <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Preço compra</th>
                         <th className="text-right py-2 px-2 font-medium hidden lg:table-cell">Preço venda</th>
+                        <th className="text-right py-2 px-2 font-medium">Margem</th>
                         <th className="text-left py-2 px-2 font-medium hidden md:table-cell">Última venda</th>
                         <th className="text-center py-2 px-2 font-medium">Status</th>
                         <th className="text-center py-2 px-2 font-medium w-28">Ações</th>
@@ -537,6 +538,9 @@ export default function Estoque() {
                       {produtosFiltrados.map((p) => {
                         const custo = Number(p.custo ?? p.custoMedio ?? 0);
                         const precoVenda = Number(p.valorVenda || 0);
+                        const margemRs = precoVenda > 0 && custo > 0 ? precoVenda - custo : null;
+                        const margemPct = margemRs !== null && precoVenda > 0 ? (margemRs / precoVenda) * 100 : null;
+                        const corMargem = margemPct === null ? "" : margemPct < 20 ? "text-red-400" : margemPct < 40 ? "text-amber-400" : "text-emerald-400";
                         return (
                         <tr key={p.id} className="border-b border-border/50 hover:bg-muted/30">
                           <td className="py-2 px-2">
@@ -581,6 +585,16 @@ export default function Estoque() {
                                 {p.precoVendaManual ? <span className="ml-1 text-[10px]">(manual)</span> : null}
                               </span>
                             ) : "-"}
+                          </td>
+                          <td className="py-2 px-2 text-right tabular-nums">
+                            {margemPct !== null ? (
+                              <div>
+                                <div className={`font-semibold ${corMargem}`}>{margemPct.toFixed(0)}%</div>
+                                <div className="text-[10px] text-muted-foreground">{formatCurrency(margemRs!)}</div>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">{custo > 0 || precoVenda > 0 ? "-" : "cadastrar"}</span>
+                            )}
                           </td>
                           <td className="py-2 px-2 text-muted-foreground text-xs hidden md:table-cell">
                             {formatarDiasUltimaVenda(p.diasDesdeUltimaVenda)}

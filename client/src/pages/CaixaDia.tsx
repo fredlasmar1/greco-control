@@ -339,13 +339,21 @@ function ConciliacaoUltimoCaixa() {
   );
 
   return (
-    <Card className="border-primary/30">
+    <Card className="rounded-2xl border-2 border-primary/40 ring-1 ring-white/10 bg-card">
       <CardHeader className="pb-2">
-        <CardTitle className="text-base flex items-center gap-2"><Landmark className="w-4 h-4 text-primary" />Conciliação do último caixa fechado — {labelDia(d.data)}</CardTitle>
-        <p className="text-xs text-muted-foreground">Total do dia R$ {fmt(d.totalDia)} · {d.comandas} comandas. Confira cada forma contra o banco. {salvo ? <span className="text-emerald-500">✓ conferido</span> : <span className="text-amber-500">pendente</span>}</p>
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-primary font-semibold">
+          <Landmark className="w-3.5 h-3.5" />Conciliação do último caixa · {labelDia(d.data)}
+        </div>
+        <div className="flex items-end justify-between flex-wrap gap-2 mt-1">
+          <div className="text-2xl font-bold text-foreground tabular-nums">R$ {fmt(d.totalDia)}</div>
+          <div className="text-right text-[11px] text-muted-foreground">
+            <div>{d.comandas} comandas · confira cada forma contra o banco</div>
+            <div>{salvo ? <span className="text-emerald-500 font-semibold">✓ conferido</span> : <span className="text-amber-500 font-semibold">● pendente</span>}</div>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="rounded-md border p-3">
+        <div className="rounded-xl bg-muted/40 border border-border p-3">
           {d.fonteVendido === "api" || d.fonteVendido === "csv" ? (
             <>
               <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
@@ -379,11 +387,11 @@ function ConciliacaoUltimoCaixa() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="rounded-md border p-3">
-            <label className="text-[10px] uppercase text-muted-foreground">Clientes de plano (quantos)</label>
+          <div className="rounded-xl bg-muted/40 border border-border p-3">
+            <label className="text-[10px] uppercase tracking-wide text-muted-foreground">Clientes de plano (quantos)</label>
             <Input type="number" value={f.planosQtd ?? 0} onChange={e => { setF({ ...f, planosQtd: Number(e.target.value) || 0 }); setSalvo(false); }} className="h-8 mt-1 w-28" />
           </div>
-          <div className="rounded-md border p-3">
+          <div className="rounded-xl bg-muted/40 border border-border p-3">
             <label className="text-[10px] uppercase text-muted-foreground flex items-center gap-1">InfinitePay — algum pagamento?</label>
             <div className="flex items-center gap-2 mt-1">
               <Toggle on={f.infinitepay.teve} onSet={v => { setF({ ...f, infinitepay: { ...f.infinitepay, teve: v } }); setSalvo(false); }} />

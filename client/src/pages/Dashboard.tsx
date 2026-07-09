@@ -2667,7 +2667,7 @@ function OcupacaoMes() {
   const rot = (m: string) => (NOME_MES_RET[m.slice(5)] || m);
   const meses = d.meses;
   const media = meses.length ? meses.reduce((s: number, m: any) => s + m.ocupacaoPct, 0) / meses.length : 0;
-  const cor = (p: number) => (p >= 85 ? "text-red-600" : p >= 65 ? "text-emerald-600" : "text-sky-600");
+  const cor = (p: number) => (p >= 85 ? "text-red-600" : p >= 65 ? "text-emerald-600" : "text-foreground");
   const corBar = (p: number) => (p >= 85 ? "bg-red-500/60" : p >= 65 ? "bg-emerald-500/60" : "bg-sky-500/60");
   return (
     <div className="rounded-2xl border-2 border-red-500/60 ring-1 ring-white/10 bg-card p-5" data-testid="ocupacao-mes">
@@ -2691,7 +2691,7 @@ function OcupacaoMes() {
           </div>
         ))}
       </div>
-      <p className="text-[10px] text-muted-foreground mt-2">Premissa: {d.nBarbeiros} barbeiros · ter–sex 11h, sáb 10h · {d.duracaoMin}min/atendimento. Azul &lt;65% (espaço) · verde 65–85% (saudável) · vermelho &gt;85% (no limite). Mês recente pode ser parcial.</p>
+      <p className="text-[10px] text-muted-foreground mt-2">Premissa: {d.nBarbeiros} barbeiros · ter–sex 11h, sáb 10h · {d.duracaoMin}min/atendimento. Branco &lt;65% (espaço) · verde 65–85% (saudável) · vermelho &gt;85% (no limite). Mês recente pode ser parcial.</p>
     </div>
   );
 }

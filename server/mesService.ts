@@ -360,11 +360,29 @@ export async function getMesData(
       || resFinanceiro || resCaixa || null;
   }
 
+  // ── RECONCILIAÇÃO (dono: "tudo tem que se comunicar") ──
+  // O faturamento OFICIAL do mês é o "Total do Mês" do e-mail Trinks (Gmail),
+  // gravado em `trinks_total_mes` pelo cron diário — é a AUTORIDADE (inclui
+  // Clube/recorrente) e o MESMO número do /api/historico/mensal. Quando existe,
+  // ele MANDA no total do mês; a fonte escolhida (snapshot/CSV/API) segue dando
+  // o breakdown e as comandas. Antes o total vinha da soma dos snapshots (mês
+  // corrente) ou do CSV (mês fechado) → divergia do histórico. Agora bate.
+  const _tmMes: any = await kvGet(`trinks_total_mes:${mes}`);
+  const oficialGmail = Number(_tmMes?.total || 0);
+  (fontesAuditoria as any).gmailOficial = {
+    disponivel: oficialGmail > 0,
+    faturamento: oficialGmail,
+    atualizadoEm: _tmMes?.atualizadoEm || null,
+  };
+  // guarda o total da fonte escolhida como referência de auditoria
+  if (escolhida) (fontesAuditoria as any).faturamentoFonteEscolhida = escolhida.faturamento;
+
   const data: MesData = escolhida ? {
     mes,
     fonte: escolhida.fonte,
     comandas: escolhida.comandas,
-    faturamento: escolhida.faturamento,
+    // Gmail oficial manda; se não houver (mês sem e-mail), usa a fonte escolhida.
+    faturamento: oficialGmail > 0 ? oficialGmail : escolhida.faturamento,
     breakdown: calcularBreakdown(escolhida.transacoes),
     transacoes: escolhida.transacoes,
     agendamentos: escolhida.agendamentos,
@@ -372,9 +390,9 @@ export async function getMesData(
     capturadoEm: new Date().toISOString(),
   } : {
     mes,
-    fonte: "vazio",
+    fonte: oficialGmail > 0 ? "gmail" : "vazio",
     comandas: 0,
-    faturamento: 0,
+    faturamento: oficialGmail > 0 ? oficialGmail : 0,
     breakdown: { pix: 0, cartaoCredito: 0, cartaoDebito: 0, dinheiro: 0, plano: 0, voucher: 0, outros: 0 },
     transacoes: [],
     agendamentos: [],

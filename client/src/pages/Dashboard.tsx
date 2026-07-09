@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { authFetch, useAuth } from "@/lib/authStore";
+import { useAuth } from "@/lib/authStore";
 import { useStore } from "@/lib/store";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -733,13 +733,7 @@ export default function Dashboard() {
   const [equipeMesDash, setEquipeMesDash] = useState<any>(null);
   // Fase 1: mês anterior p/ comparação (faturamento + ticket).
   const [mesAnteriorCmp, setMesAnteriorCmp] = useState<{ faturamento: number; ticketMedio: number } | null>(null);
-  // v54: contador de consumo da Trinks (auditoria real — chamadas/429).
-  const [trinksContador, setTrinksContador] = useState<any>(null);
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${API_BASE}/api/trinks/contador`).then(r => r.json()).then(d => { if (!cancelled && d?.ok) setTrinksContador(d); }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [API_BASE]);
+  // v96: contador de consumo da Trinks removido do Dashboard (vive no Greco Metas).
 
   // Fase 2: agregados de cliente do "Ranking de Clientes" (sem PII).
   const [clientesMes, setClientesMes] = useState<any>(null);
@@ -1107,44 +1101,11 @@ export default function Dashboard() {
       {/* v40: 2 painéis lado a lado — Trinks API (canônico) + CSV importado
           (auditoria). Cada um com seus próprios totais e badges. Em telas
           pequenas empilha vertical. */}
+      {/* v96: contador de tokens Trinks REMOVIDO daqui — é o mesmo da conta,
+          já exibido no Greco Metas (era número duplicado). */}
       <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
         <DashboardApiSummaryCard mes={selectedMes} />
         <DashboardImportSummaryCard mes={selectedMes} />
-
-        {/* v95: medidor de consumo da Trinks (fatia do mês, igual grecometas) */}
-        {trinksContador && (() => {
-          const consumo = trinksContador.consumoMes || 0;
-          const fatia = trinksContador.fatiaMensal || 0;
-          const estourou = trinksContador.fatiaEstourada;
-          const pct = fatia > 0 ? Math.round((consumo / fatia) * 100) : 0;
-          const restam = Math.max(0, fatia - consumo);
-          const cor = estourou ? "bg-red-500" : pct >= 75 ? "bg-amber-500" : "bg-emerald-500";
-          const corTexto = estourou ? "text-red-600" : pct >= 75 ? "text-amber-600" : "text-emerald-600";
-          return (
-            <div className={`rounded-lg border p-3 ${estourou ? "border-red-500/50 bg-red-500/5" : trinksContador.trinks429Agora ? "border-amber-500/40 bg-amber-500/5" : "border-card-border bg-card"}`} data-testid="trinks-contador">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">API Trinks · fatia do mês</span>
-                <span className="text-[10px] text-muted-foreground">{trinksContador.mesRef || ""}</span>
-              </div>
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <span className={`text-lg font-bold tabular-nums ${estourou ? "text-red-600" : "text-foreground"}`}>{consumo.toLocaleString("pt-BR")}</span>
-                <span className="text-sm text-muted-foreground tabular-nums">/ {fatia.toLocaleString("pt-BR")}</span>
-                <span className={`text-xs font-semibold ${corTexto}`}>{pct}%</span>
-                <span className="text-[11px] text-muted-foreground ml-auto tabular-nums">restam {restam.toLocaleString("pt-BR")}</span>
-              </div>
-              {/* barra de progresso */}
-              <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
-                <div className={`h-full rounded-full transition-all ${cor}`} style={{ width: `${Math.min(100, pct)}%` }} />
-              </div>
-              <div className="mt-1.5 text-[10px] text-muted-foreground">
-                hoje {trinksContador.hoje.ok} ok{trinksContador.hoje.rate429 > 0 ? ` · ${trinksContador.hoje.rate429} recusadas` : ""} · plano 5.000 dividido: Greco Control 2.000 + Greco Metas 3.000
-              </div>
-              {estourou && <div className="text-red-600 mt-1 text-[11px] font-medium">⚠ Fatia do mês atingida — o sistema parou de chamar a Trinks e está usando e-mail/CSV (0 token). A cota do Greco Metas está preservada.</div>}
-              {!estourou && trinksContador.trinks429Agora && <div className="text-amber-600 mt-1 text-[11px]">⚠ Trinks recusando agora (limite da conta) — usando CSV.</div>}
-            </div>
-          );
-        })()}
-        <TrinksCotaControls />
       </div>
 
       {/* ───────── Retenção de Clientes (jan–jun) ───────── */}
@@ -2359,68 +2320,8 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
   );
 }
 
-// Cota Trinks configurável do Greco Control: registrar tokens comprados + editar
-// a fatia base. Espelha o Grecometas. Tokens comprados zeram no mês que vem.
-function TrinksCotaControls() {
-  const API_BASE = (globalThis as any).__API_BASE__ || "";
-  const [cota, setCota] = useState<any>(null);
-  const [tokens, setTokens] = useState("");
-  const [fatia, setFatia] = useState("");
-  const load = useCallback(() => {
-    fetch(`${API_BASE}/api/trinks/cota`)
-      .then((r) => r.json())
-      .then((d) => { if (d?.ok) { setCota(d); setFatia(String(d.fatiaBase)); } })
-      .catch(() => {});
-  }, [API_BASE]);
-  useEffect(() => { load(); }, [load]);
-  const isAdmin = useAuth((s) => s.isAdmin());
-  if (!cota) return null;
-  const comprar = async () => {
-    const q = Number(tokens);
-    if (!q || q <= 0) return;
-    const r = await authFetch(`/api/trinks/cota/comprar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quantidade: q }) });
-    if (r.status === 403) { alert("Apenas administradores podem alterar a cota."); return; }
-    setTokens("");
-    load();
-  };
-  const salvarFatia = async () => {
-    const r = await authFetch(`/api/trinks/cota`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fatiaBase: Number(fatia) }) });
-    if (r.status === 403) { alert("Apenas administradores podem alterar a cota."); return; }
-    load();
-  };
-  return (
-    <div className="rounded-md border border-card-border bg-card p-2.5 text-[11px]" data-testid="trinks-cota-controls">
-      <div className="flex items-center gap-2 flex-wrap mb-2">
-        <span className="text-muted-foreground">Cota Trinks (Greco Control)</span>
-        <span className="font-bold text-foreground">
-          {cota.fatiaBase.toLocaleString("pt-BR")}
-          {cota.extras > 0 && <> + {cota.extras.toLocaleString("pt-BR")} comprados</>} = {cota.fatiaEfetiva.toLocaleString("pt-BR")}/mês
-        </span>
-      </div>
-      {isAdmin ? (
-      <div className="flex items-end gap-3 flex-wrap">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-muted-foreground">Comprei tokens</span>
-          <div className="flex gap-1">
-            <input type="number" value={tokens} onChange={(e) => setTokens(e.target.value)} placeholder="qtd" className="w-20 px-2 py-1 rounded border border-card-border bg-background text-foreground" />
-            <button onClick={comprar} className="px-2 py-1 rounded bg-emerald-600 text-white font-bold">+ Registrar</button>
-          </div>
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-muted-foreground">Fatia base/mês</span>
-          <div className="flex gap-1">
-            <input type="number" value={fatia} onChange={(e) => setFatia(e.target.value)} className="w-20 px-2 py-1 rounded border border-card-border bg-background text-foreground" />
-            <button onClick={salvarFatia} className="px-2 py-1 rounded bg-secondary text-foreground font-bold border border-card-border">Salvar</button>
-          </div>
-        </label>
-        <span className="text-muted-foreground self-center">Tokens comprados zeram no mês que vem.</span>
-      </div>
-      ) : (
-        <span className="text-muted-foreground">Só administradores alteram a cota.</span>
-      )}
-    </div>
-  );
-}
+// v96: TrinksCotaControls removido — a cota/consumo da Trinks é gerida no Greco
+// Metas (fonte única). Aqui virava número duplicado.
 
 // ─── v67: Retenção de Clientes (jan–jun) — entender o gargalo ─────────────────
 const NOME_MES_RET: Record<string, string> = { "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr", "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago", "09": "Set", "10": "Out", "11": "Nov", "12": "Dez" };

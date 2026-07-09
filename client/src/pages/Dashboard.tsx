@@ -519,6 +519,57 @@ function FonteSourceBadge({
   );
 }
 
+// Painel de RECONCILIAÇÃO — "tudo tem que se comunicar": mostra o mesmo
+// faturamento por fonte (Gmail oficial = autoridade; API/Metas ao vivo; CSV;
+// ranking), com o gap vs o oficial e a explicação de cada divergência.
+function ReconciliacaoFontes({ mes, apiBase }: { mes: string; apiBase: string }) {
+  const [d, setD] = useState<any>(null);
+  const [aberto, setAberto] = useState(false);
+  useEffect(() => {
+    let cancel = false;
+    fetch(`${apiBase}/api/reconciliacao/${mes}`).then(r => r.json()).then(j => { if (!cancel && j?.ok) setD(j); }).catch(() => {});
+    return () => { cancel = true; };
+  }, [mes, apiBase]);
+  if (!d || !d.fontes?.length) return null;
+  const fmt = (n: number) => formatCurrency(n);
+  return (
+    <Card className="bg-card border-card-border">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="min-w-0">
+            <div className="text-[10.5px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Reconciliação</div>
+            <h3 className="text-[15px] font-bold tracking-tight flex items-center gap-2 mt-0.5"><BarChart3 className="w-4 h-4 text-primary" /> As fontes se comunicam?</h3>
+          </div>
+          <button onClick={() => setAberto(v => !v)} className="text-xs text-muted-foreground hover:text-foreground flex-none">{aberto ? "ocultar" : "ver detalhe"}</button>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          {d.fontes.map((f: any) => {
+            const bate = Math.abs(f.diffPct || 0) < 2;
+            const cor = bate ? "text-emerald-400" : (f.diff > 0 ? "text-sky-400" : "text-amber-400");
+            return (
+              <div key={f.chave} className="flex items-center justify-between gap-3 py-1.5 border-b border-border/40 last:border-0">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold flex items-center gap-2 flex-wrap">
+                    {f.nome}
+                    {f.autoridade && <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-primary/15 text-primary">autoridade</span>}
+                    {f.qtd ? <span className="text-[10px] text-muted-foreground tabular-nums">{f.qtd} {f.chave === "metas" || f.chave === "csvCaixa" ? "atend." : "tx"}</span> : null}
+                  </div>
+                  {aberto && <div className="text-[11px] text-muted-foreground mt-0.5">{f.nota}</div>}
+                </div>
+                <div className="text-right flex-none">
+                  <div className="text-[14px] font-extrabold tabular-nums text-foreground">{fmt(f.valor)}</div>
+                  {!f.autoridade && <div className={`text-[10.5px] tabular-nums ${cor}`}>{f.diff >= 0 ? "+" : ""}{fmt(f.diff)} ({f.diffPct >= 0 ? "+" : ""}{Number(f.diffPct).toFixed(0)}%)</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[10.5px] text-muted-foreground mt-2">O <b className="text-primary">Gmail</b> é a autoridade. {d.mesCorrente ? "Mês em andamento: API/Metas ficam maiores (têm o dia de hoje); o Ranking fica menor (sem Clube)." : "Mês fechado — as fontes devem convergir."}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const { isConnected, trinks, lastSync, isSyncing, syncData } =
     useTrinksStore();
@@ -1949,6 +2000,9 @@ export default function Dashboard() {
 
       {/* Telegram Notifications */}
       {isConnected && <TelegramCard apiBase={API_BASE} />}
+
+      {/* Reconciliação de fontes — "tudo tem que se comunicar" */}
+      <ReconciliacaoFontes mes={selectedMes} apiBase={API_BASE} />
 
       {/* Revenue Chart + Goal Progress */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

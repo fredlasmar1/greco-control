@@ -5602,6 +5602,51 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/reconciliacao/:mes — "tudo tem que se comunicar": mostra o MESMO
+  // faturamento visto por cada fonte (Gmail oficial = autoridade; API/Metas ao
+  // vivo; CSV Caixa/Financeiro; Ranking) lado a lado, com o gap vs o oficial e a
+  // explicação de cada divergência. 0 token do Control (API vem do HUB do Metas).
+  app.get("/api/reconciliacao/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : ymdHoje().slice(0, 7);
+      const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+      const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes }).catch(() => null);
+      const fa: any = md?.fontesAuditoria || {};
+      const oficial = Number(fa.gmailOficial?.faturamento || md?.faturamento || 0);
+      // 1º dia do mês seguinte (dataFim EXCLUSIVO na Trinks)
+      const [y, m] = mes.split("-").map(Number);
+      const prox = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+      // API transações do mês (via HUB Metas, 0 token)
+      let apiSoma = 0, apiN = 0;
+      try {
+        const tx = await getMetasTrinks("transacoes", { dataInicio: `${mes}-01`, dataFim: prox });
+        if (Array.isArray(tx)) { apiN = tx.length; apiSoma = tx.reduce((s: number, t: any) => s + Number(t.totalPagar || 0), 0); }
+      } catch { /* HUB indisponível */ }
+      const metas = await getMetasResumoMes(mes).catch(() => null);
+      let rankTotal = 0;
+      try { const rc: any = await getRankComissaoMap(mes); rankTotal = Number(rc?.producaoServicos || 0); } catch { /* sem ranking */ }
+
+      const fontes: any[] = [
+        { chave: "gmail", nome: "Gmail — Total do mês", valor: r2(oficial), autoridade: true, nota: "Oficial: comandas fechadas + Clube. É a base de tudo (fecha com o e-mail de ontem)." },
+        { chave: "api", nome: "API Trinks (ao vivo)", valor: r2(apiSoma), qtd: apiN || undefined, nota: "Todas as transações do mês, INCLUINDO hoje. No mês corrente fica maior que o Gmail (o e-mail só tem até ontem)." },
+        { chave: "metas", nome: "Greco Metas (ao vivo)", valor: r2(metas?.servicoRS || 0), qtd: metas?.atendimentos, nota: "Serviços por atendimento (agenda). Ao vivo, sem produtos/Clube." },
+        { chave: "csvCaixa", nome: "CSV Caixa", valor: r2(fa.csvCaixa?.faturamento || 0), qtd: fa.csvCaixa?.comandas, nota: "O que passou pelo caixa. Falta os dias ainda não importados." },
+        { chave: "csvFinanceiro", nome: "CSV Financeiro", valor: r2(fa.csvFinanceiro?.faturamento || 0), nota: "Recebimentos por data prevista, líquido de troco." },
+        { chave: "ranking", nome: "Ranking por barbeiro", valor: r2(rankTotal), nota: "Serviços por profissional (CSV). Não inclui Clube/recorrente → sempre menor." },
+      ].filter((f) => f.autoridade || f.valor > 0);
+      for (const f of fontes) { f.diff = r2(f.valor - oficial); f.diffPct = oficial > 0 ? r2(((f.valor - oficial) / oficial) * 100) : 0; }
+
+      const hojeMes = ymdHoje().slice(0, 7) === mes;
+      return res.json({
+        ok: true, mes, mesCorrente: hojeMes,
+        oficial: r2(oficial),
+        fonteBreakdown: md?.fonte || null,
+        fontes,
+        atualizadoEm: fa.gmailOficial?.atualizadoEm || md?.capturadoEm || null,
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err?.message || "Erro interno." }); }
+  });
+
   // ─── GET /api/mes/:mes/fonte — badge da fonte do mês ──
   // v42.1: a DECISÃO de qual fonte representa o mês é do mesService (autoridade
   // ÚNICA). resolverFonte virou helper de metadados — usada aqui só para os

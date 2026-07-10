@@ -9535,6 +9535,43 @@ Regras CRÍTICAS:
           if (!c.nome && r.clienteNome) c.nome = String(r.clienteNome).trim();
         }
       }
+      // v96: MÊS CORRENTE ao vivo. O CSV Caixa importa com atraso (fica dias pra
+      // trás), então clientes que vieram nos últimos dias apareciam como "sumidos".
+      // Puxa os agendamentos FINALIZADOS do Metas (banco, 0 token Trinks) e mescla.
+      // Conta visita só quando o dia é mais recente que o último já conhecido pelo
+      // CSV — evita dobrar os dias que os dois já cobrem.
+      const mesCorrente = ymdHoje().slice(0, 7);
+      let fonteMesCorrente: "csv" | "metas-ao-vivo" = "csv";
+      let mescladosMetas = 0;
+      try {
+        const ags = await getMetasAgendamentos(`${mesCorrente}-01`, ymdHoje());
+        if (Array.isArray(ags) && ags.length > 0) {
+          const isCompleto = (a: any) => {
+            const st = a.status;
+            const nome = typeof st === "string" ? st : (st?.descricao || st?.nome || "");
+            return /finalizado|realizado|concluido|concluído/i.test(nome);
+          };
+          const ordenados = [...ags].sort((a, b) => String(a.dataHoraInicio || "").localeCompare(String(b.dataHoraInicio || "")));
+          for (const a of ordenados) {
+            if (!isCompleto(a)) continue;
+            const id = String(a.cliente?.id || a.clienteId || "").trim();
+            if (!id) continue;
+            const dt = String(a.dataHoraInicio || a.dataHora || "").slice(0, 10);
+            if (!dt.startsWith(mesCorrente)) continue;
+            let c = porCliente.get(id);
+            if (!c) { c = { nome: String(a.cliente?.nome || a.clienteNome || "").trim(), meses: new Set(), visitas: 0, valorTotal: 0, ultimaData: "" }; porCliente.set(id, c); }
+            c.meses.add(mesCorrente);
+            if (dt > c.ultimaData) { c.visitas += 1; c.ultimaData = dt; }
+            if (!c.nome && a.cliente?.nome) c.nome = String(a.cliente.nome).trim();
+            mescladosMetas++;
+          }
+          if (mescladosMetas > 0) {
+            fonteMesCorrente = "metas-ao-vivo";
+            if (!mesesDisp.includes(mesCorrente)) mesesDisp.push(mesCorrente);
+          }
+        }
+      } catch { /* HUB indisponível → segue só com CSV */ }
+
       const r2 = (n: number) => Math.round(n * 100) / 100;
       const ultimoMes = mesesDisp[mesesDisp.length - 1] || "";
       const idxMes = (mes: string) => mesesDisp.indexOf(mes);
@@ -9590,6 +9627,7 @@ Regras CRÍTICAS:
 
       return res.json({
         ok: true, mesesDisponiveis: mesesDisp, ultimoMes, totalClientes, meses,
+        fonteMesCorrente, mescladosMetas,
         frequencia: { umaVisita: umaVez, duasATres: duasTres, quatroMais, pctUmaVisita: totalClientes ? r2((umaVez / totalClientes) * 100) : 0 },
         recorrenciaMeses: mesesDistrib,
         fieis, pctFieis: totalClientes ? r2((fieis / totalClientes) * 100) : 0,

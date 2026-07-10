@@ -2415,7 +2415,11 @@ function RetencaoClientes() {
   return (
     <div className="rounded-lg border border-card-border bg-card p-4 space-y-3" data-testid="retencao-clientes">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-sm font-bold flex items-center gap-2"><Users className="w-4 h-4 text-sky-600" /> Retenção de Clientes (jan–jun)</h2>
+        <h2 className="text-sm font-bold flex items-center gap-2">
+          <Users className="w-4 h-4 text-sky-600" /> Retenção de Clientes
+          {d.mesesDisponiveis?.length ? <span className="text-muted-foreground font-normal">({rot(d.mesesDisponiveis[0])}–{rot(d.mesesDisponiveis[d.mesesDisponiveis.length - 1])})</span> : null}
+          {d.fonteMesCorrente === "metas-ao-vivo" && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 font-semibold">● mês ao vivo (Metas)</span>}
+        </h2>
         <span className="text-[11px] text-muted-foreground">{d.totalClientes.toLocaleString("pt-BR")} clientes únicos no período</span>
       </div>
 

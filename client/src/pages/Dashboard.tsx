@@ -62,6 +62,8 @@ import {
   Repeat,
   UserMinus,
   Search,
+  Trophy,
+  Minus,
 } from "lucide-react";
 import {
   LineChart,
@@ -1110,6 +1112,9 @@ export default function Dashboard() {
 
       {/* ───────── Retenção de Clientes (jan–jun) ───────── */}
       <RetencaoClientes />
+
+      {/* ───────── Ranking de Colaboradores (evolução mês a mês) ───────── */}
+      <RankingColaboradores />
 
       {/* Clientes sumidos — CTA de reativação em DESTAQUE no topo (dono pediu) */}
       {(clientesMes?.clientesSumidos?.total || 0) > 0 && (
@@ -2325,6 +2330,79 @@ function EstoqueAlertaCard({ apiBase }: { apiBase: string }) {
 
 // ─── v67: Retenção de Clientes (jan–jun) — entender o gargalo ─────────────────
 const NOME_MES_RET: Record<string, string> = { "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr", "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago", "09": "Set", "10": "Out", "11": "Nov", "12": "Dez" };
+
+// ─── v96: Ranking de Colaboradores (evolução mês a mês) ──────────────────────
+// Melhor→pior por faturamento médio/mês, com média de atendimentos/mês,
+// ticket médio e tendência (evoluindo/estagnado/decrescendo). Fonte: /api/equipe/evolucao.
+function RankingColaboradores() {
+  const API_BASE = (globalThis as any).__API_BASE__ || "";
+  const [d, setD] = useState<any>(null);
+  const [erro, setErro] = useState(false);
+  useEffect(() => {
+    fetch(`${API_BASE}/api/equipe/evolucao?meses=6`).then((r) => r.json()).then((x) => { if (x?.ok) setD(x); else setErro(true); }).catch(() => setErro(true));
+  }, [API_BASE]);
+  if (erro || !d || !d.colaboradores?.length) return null;
+
+  const rotMes = (m: string) => NOME_MES_RET[m.slice(5)] || m;
+  const janela = d.meses?.length ? `${rotMes(d.meses[0])}–${rotMes(d.meses[d.meses.length - 1])}` : "";
+  const fmtR = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const apelido = (nome: string) => (String(nome || "").split(/[-–—]/)[0].trim() || String(nome || ""));
+  const n = d.colaboradores.length;
+
+  const trendBadge = (t: string) => {
+    if (t === "evoluindo") return <span className="inline-flex items-center gap-1 text-emerald-500 text-xs font-semibold"><ArrowUp className="w-3.5 h-3.5" />evoluindo</span>;
+    if (t === "decrescendo") return <span className="inline-flex items-center gap-1 text-red-500 text-xs font-semibold"><ArrowDown className="w-3.5 h-3.5" />decrescendo</span>;
+    return <span className="inline-flex items-center gap-1 text-muted-foreground text-xs font-semibold"><Minus className="w-3.5 h-3.5" />estagnado</span>;
+  };
+
+  return (
+    <div className="rounded-2xl border-2 border-amber-500/40 ring-1 ring-white/10 bg-card p-5" data-testid="ranking-colaboradores">
+      <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.25em] text-amber-500 font-semibold flex items-center gap-1.5"><Trophy className="w-3.5 h-3.5" />Ranking de Colaboradores</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">Melhor → pior por faturamento médio/mês · {janela} · fonte: ranking Trinks (CSV)</div>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[10px] uppercase text-muted-foreground border-b border-border">
+              <th className="text-left py-2 px-2">#</th>
+              <th className="text-left py-2 px-2">Colaborador</th>
+              <th className="text-right py-2 px-2">Atend./mês</th>
+              <th className="text-right py-2 px-2">Ticket médio</th>
+              <th className="text-right py-2 px-2 hidden sm:table-cell">Fat. médio/mês</th>
+              <th className="text-right py-2 px-2">Tendência</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.colaboradores.map((c: any) => {
+              const melhor = c.posicao === 1;
+              const pior = c.posicao === n && n > 1;
+              return (
+                <tr key={c.id} className={`border-b border-border/40 ${melhor ? "bg-emerald-500/5" : pior ? "bg-red-500/5" : ""}`} data-testid={`colab-${c.id}`}>
+                  <td className="py-2 px-2 tabular-nums font-bold">
+                    {melhor ? "🥇" : pior ? <span className="text-red-500">{c.posicao}º</span> : `${c.posicao}º`}
+                  </td>
+                  <td className="py-2 px-2">
+                    <div className="font-medium">{apelido(c.nome)}</div>
+                    <div className="text-[10px] text-muted-foreground">{c.mesesAtivos} {c.mesesAtivos === 1 ? "mês" : "meses"} c/ dados</div>
+                  </td>
+                  <td className="py-2 px-2 text-right tabular-nums font-semibold">{c.mediaAtendMes.toLocaleString("pt-BR")}</td>
+                  <td className="py-2 px-2 text-right tabular-nums">R$ {fmtR(c.ticketMedio)}</td>
+                  <td className="py-2 px-2 text-right tabular-nums hidden sm:table-cell">R$ {fmtR(c.mediaFatMes)}</td>
+                  <td className="py-2 px-2 text-right">{trendBadge(c.trend)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-3">Média/mês = total do período ÷ meses com dados. Ticket médio = faturamento ÷ atendimentos. Tendência compara a metade recente vs a antiga do faturamento (±8%). 🥇 melhor · último (vermelho) = atenção.</p>
+    </div>
+  );
+}
+
 function RetencaoClientes() {
   const API_BASE = (globalThis as any).__API_BASE__ || "";
   const [d, setD] = useState<any>(null);

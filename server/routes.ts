@@ -15057,6 +15057,85 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     };
   }
 
+  // GET /api/equipe/evolucao — ranking de colaboradores ao longo dos meses.
+  // Melhor→pior por faturamento médio/mês, com média de atendimentos/mês,
+  // ticket médio e tendência (evoluindo/estagnado/decrescendo).
+  // Fonte: ranking×categoria congelado por mês (CSV) — barato, sem gastar Trinks.
+  app.get("/api/equipe/evolucao", async (req: Request, res: Response) => {
+    try {
+      const nMeses = Math.min(12, Math.max(3, Number(req.query.meses) || 6));
+      const hoje = ymdHoje();
+      const [ay, am] = hoje.slice(0, 7).split("-").map(Number);
+      const meses: string[] = [];
+      for (let i = nMeses - 1; i >= 0; i--) {
+        const d = new Date(Date.UTC(ay, am - 1 - i, 1, 12));
+        meses.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+      }
+      const metas = await getAllMetas();
+      const inativos = await getProfsInativos();
+
+      type Ponto = { mes: string; atend: number; fat: number };
+      const serie = new Map<string, { id: string; nome: string; pontos: Ponto[] }>();
+      const mesesComDados: string[] = [];
+      for (const mes of meses) {
+        const rank = await montarEquipeDeRanking(mes, metas);
+        if (!rank) continue;
+        mesesComDados.push(mes);
+        for (const p of rank.byId.values()) {
+          const id = String(p.id);
+          if (inativos.has(id)) continue;
+          if (String(p.nome || "").startsWith("Profissional ")) continue;
+          const atend = Number(p.atendimentos?.total || 0);
+          const fat = Number(p.faturamento?.total || 0);
+          if (atend <= 0 && fat <= 0) continue;
+          let e = serie.get(id);
+          if (!e) { e = { id, nome: p.nome, pontos: [] }; serie.set(id, e); }
+          e.pontos.push({ mes, atend, fat });
+        }
+      }
+
+      // Tendência: compara a média da metade recente vs a metade antiga da série.
+      function tendencia(vals: number[]): "evoluindo" | "estagnado" | "decrescendo" {
+        if (vals.length < 2) return "estagnado";
+        const meio = Math.floor(vals.length / 2);
+        const antigos = vals.slice(0, vals.length - meio);
+        const recentes = vals.slice(vals.length - meio);
+        const media = (a: number[]) => a.reduce((s, x) => s + x, 0) / (a.length || 1);
+        const mA = media(antigos), mR = media(recentes);
+        if (mA <= 0) return mR > 0 ? "evoluindo" : "estagnado";
+        const delta = (mR - mA) / mA;
+        if (delta >= 0.08) return "evoluindo";
+        if (delta <= -0.08) return "decrescendo";
+        return "estagnado";
+      }
+
+      const colaboradores = Array.from(serie.values()).map(e => {
+        const nMes = e.pontos.length;
+        const totalAtend = e.pontos.reduce((s, p) => s + p.atend, 0);
+        const totalFat = e.pontos.reduce((s, p) => s + p.fat, 0);
+        const mediaAtendMes = nMes > 0 ? totalAtend / nMes : 0;
+        const mediaFatMes = nMes > 0 ? totalFat / nMes : 0;
+        const ticketMedio = totalAtend > 0 ? totalFat / totalAtend : 0;
+        return {
+          id: e.id, nome: e.nome, mesesAtivos: nMes,
+          mediaAtendMes: Math.round(mediaAtendMes * 10) / 10,
+          mediaFatMes: Math.round(mediaFatMes * 100) / 100,
+          ticketMedio: Math.round(ticketMedio * 100) / 100,
+          totalAtend, totalFat: Math.round(totalFat * 100) / 100,
+          trend: tendencia(e.pontos.map(p => p.fat)),
+          trendAtend: tendencia(e.pontos.map(p => p.atend)),
+          serie: e.pontos.map(p => ({ mes: p.mes, atend: p.atend, fat: Math.round(p.fat * 100) / 100 })),
+        };
+      }).sort((a, b) => b.mediaFatMes - a.mediaFatMes);
+      colaboradores.forEach((c, i) => (c as any).posicao = i + 1);
+
+      return res.json({ ok: true, meses: mesesComDados, nColaboradores: colaboradores.length, colaboradores });
+    } catch (err: any) {
+      log(`[equipe/evolucao] erro: ${err?.message}`, "equipe");
+      return res.status(500).json({ ok: false, error: err?.message || "erro" });
+    }
+  });
+
   // POST /api/telegram/individual/:tipo/:id — envia para um profissional
   app.post("/api/telegram/individual/:tipo/:id", async (req: Request, res: Response) => {
     try {

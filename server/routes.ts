@@ -15131,7 +15131,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
           trendAtend: tendencia(e.pontos.map(p => p.atend)),
           serie: e.pontos.map(p => ({ mes: p.mes, atend: p.atend, fat: Math.round(p.fat * 100) / 100 })),
         };
-      }).sort((a, b) => b.mediaFatMes - a.mediaFatMes);
+      }).filter(c => c.totalFat > 0) // tira ruído (nome de meta sem produção, ex.: dono)
+        .sort((a, b) => b.mediaFatMes - a.mediaFatMes);
       colaboradores.forEach((c, i) => (c as any).posicao = i + 1);
 
       return res.json({ ok: true, meses: mesesComDados, nColaboradores: colaboradores.length, colaboradores });

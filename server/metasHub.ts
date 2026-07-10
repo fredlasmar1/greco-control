@@ -168,6 +168,44 @@ export async function getMetasDescontos(mes: string): Promise<MetasDescontos | n
   } catch { return hit?.data || null; }
 }
 
+// REATIVAR/COBRAR do Metas (motor de reativação: base rec_clients deduplicada +
+// rec_reactivations). Alimenta a Retenção do Control com a lista AUTORITATIVA de
+// quem reativar (com telefone/quem-atende), a saúde da carteira e o placar do mês.
+export interface MetasReativacaoSeg { clube: number; fiel: number; poucas: number; novo: number; total: number; }
+export interface MetasReativacao {
+  mes: string;
+  saude: { emDia: MetasReativacaoSeg; atrasados: MetasReativacaoSeg; sumidos: MetasReativacaoSeg };
+  placar: { reativadosMes: number; aguardando: number; reativadosPorPessoa: Array<{ pessoa: string; total: number }> };
+  totalReativar: number;
+  topReativar: Array<{
+    id: number; nome: string; phone: string | null; status: string; classificacao: string | null;
+    ultimaVisita: string | null; diasSemVir: number | null; totalVisitas: number;
+    profissional: string | null; statusContato: string | null; reativadoPor: string | null;
+  }>;
+}
+const reativacaoCache = new Map<string, { at: number; data: MetasReativacao }>();
+export async function getMetasReativacao(mes: string, limit = 150): Promise<MetasReativacao | null> {
+  if (!KEY) return null;
+  const ck = `${mes}|${limit}`;
+  const hit = reativacaoCache.get(ck);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.data;
+  try {
+    const r = await fetch(`${BASE}/api/hub/reativacao/${encodeURIComponent(mes)}?limit=${limit}`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return hit?.data || null;
+    const j = (await r.json()) as any;
+    if (!j?.ok) return hit?.data || null;
+    const data: MetasReativacao = {
+      mes: j.mes || mes,
+      saude: j.saude || { emDia: {}, atrasados: {}, sumidos: {} },
+      placar: j.placar || { reativadosMes: 0, aguardando: 0, reativadosPorPessoa: [] },
+      totalReativar: Number(j.totalReativar || 0),
+      topReativar: Array.isArray(j.topReativar) ? j.topReativar : [],
+    };
+    reativacaoCache.set(ck, { at: Date.now(), data });
+    return data;
+  } catch { return hit?.data || null; }
+}
+
 export async function getMetasVisitas(phones: string[], mes: string): Promise<Record<string, UsoMetas>> {
   if (!KEY || !phones.length) return {};
   const key = `${mes}|${phones.length}`;

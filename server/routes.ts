@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos, getMetasReativacao } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
@@ -9625,9 +9625,15 @@ Regras CRÍTICAS:
       // prioridade de reativação: quem mais gastou primeiro
       listaInativos.sort((a, b) => b.valorTotal - a.valorTotal);
 
+      // v96: base Reativar/Cobrar AUTORITATIVA do Metas (rec_clients deduplicada +
+      // rec_reactivations) — lista com telefone/quem-atende, saúde da carteira e
+      // placar do mês. Substitui a lista de sumidos do CSV quando disponível.
+      let reativacao: any = null;
+      try { reativacao = await getMetasReativacao(mesCorrente, 150); } catch { /* HUB down → só CSV */ }
+
       return res.json({
         ok: true, mesesDisponiveis: mesesDisp, ultimoMes, totalClientes, meses,
-        fonteMesCorrente, mescladosMetas,
+        fonteMesCorrente, mescladosMetas, reativacao,
         frequencia: { umaVisita: umaVez, duasATres: duasTres, quatroMais, pctUmaVisita: totalClientes ? r2((umaVez / totalClientes) * 100) : 0 },
         recorrenciaMeses: mesesDistrib,
         fieis, pctFieis: totalClientes ? r2((fieis / totalClientes) * 100) : 0,

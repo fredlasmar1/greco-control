@@ -335,11 +335,49 @@ export function montarResumoManha(
         msg += `${prefix} 👥 ${escapeHtml(e.nome)}${e.observacao ? ` — <i>${escapeHtml(e.observacao)}</i>` : ""}\n`;
       });
     }
+    // Total das contas de hoje (soma só as com valor; sinaliza as variáveis).
+    const totalHoje = contas.reduce((s, c) => s + (c.valor != null && c.valor > 0 ? c.valor : 0), 0);
+    const variaveis = contas.filter(c => c.valor == null || c.valor <= 0).length;
+    if (totalHoje > 0 || variaveis > 0) {
+      msg += `<b>Σ Total de hoje: ${formatCurrency(totalHoje)}</b>`;
+      msg += variaveis > 0 ? ` <i>(+${variaveis} valor variável)</i>\n` : `\n`;
+    }
     msg += `\n`;
   }
 
   msg += `🔗 <a href="https://grecocontrol.com.br/">Abrir Dashboard</a>`;
 
+  return msg;
+}
+
+/**
+ * Resumo do MÊS: todas as contas ativas por dia de vencimento + total geral.
+ * Enviado sob demanda (botão na página Contas Mensais).
+ */
+export function montarResumoContasMes(
+  resumo: {
+    contas: { nome: string; diaVencimento: number; valor: number | null; observacao?: string }[];
+    totalConhecido: number;
+    qtdContas: number;
+    qtdVariaveis: number;
+  },
+  mesLabel: string,
+): string {
+  let msg = `📋 <b>Contas do mês</b>\n<i>${escapeHtml(mesLabel)}</i>\n\n`;
+  if (resumo.contas.length === 0) {
+    msg += `Nenhuma conta cadastrada.\n\n`;
+  } else {
+    resumo.contas.forEach((c, i) => {
+      const last = i === resumo.contas.length - 1;
+      const prefix = last ? "└" : "├";
+      const dia = String(c.diaVencimento).padStart(2, "0");
+      const valorTxt = c.valor != null && c.valor > 0 ? `<b>${formatCurrency(c.valor)}</b>` : `<i>variável</i>`;
+      msg += `${prefix} Dia ${dia} · ${escapeHtml(c.nome)} — ${valorTxt}\n`;
+    });
+  }
+  msg += `\n<b>Σ Total do mês: ${formatCurrency(resumo.totalConhecido)}</b>`;
+  if (resumo.qtdVariaveis > 0) msg += ` <i>(+${resumo.qtdVariaveis} valor variável, não somado)</i>`;
+  msg += `\n\n🔗 <a href="https://grecocontrol.com.br/contas-mensais">Abrir Contas</a>`;
   return msg;
 }
 

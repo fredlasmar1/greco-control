@@ -29,6 +29,7 @@ import {
   bootstrapContasIniciais,
   contasParaAvisarHoje,
   pagamentosEquipeParaAvisarHoje,
+  resumoContasMes,
 } from "./contasMensais";
 import type { PagamentoHojeItem } from "./telegram";
 import { registrarEventoTrinks, comOrigem, resumoUltimosDias, lerUltimosDias } from "./trinksAuditLog";
@@ -40,6 +41,7 @@ import {
   getChatId,
   montarResumoManha,
   montarResumoNoite,
+  montarResumoContasMes,
   montarAlertasEstoque,
   baixarArquivoTelegram,
   setWebhookTelegram,
@@ -12216,6 +12218,29 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const aviso = `⚠️ *Resumo da noite indisponível*\n\nNão foi possível fechar o dia agora: ${motivo}.\n\nO sistema continua rodando — amanhã cedo tento de novo. Para conferir o dia, abra o Dashboard (dados do CSV).`;
       const r = await enviarMensagem(aviso).catch(() => ({ ok: false }));
       return res.status(200).json({ ok: false, fallbackEnviado: !!(r as any).ok, error: err.message });
+    }
+  });
+
+  // GET /api/contas-mensais/resumo — total do mês (soma das contas ativas) p/ a página.
+  app.get("/api/contas-mensais/resumo", async (_req: Request, res: Response) => {
+    try {
+      const resumo = await resumoContasMes();
+      return res.json({ ok: true, ...resumo });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "erro" });
+    }
+  });
+
+  // POST /api/telegram/contas-mes — envia o resumo do mês (todas as contas + total) no Telegram.
+  app.post("/api/telegram/contas-mes", async (_req: Request, res: Response) => {
+    try {
+      const resumo = await resumoContasMes();
+      const mesLabel = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", month: "long", year: "numeric" });
+      const msg = montarResumoContasMes(resumo, mesLabel);
+      const r = await enviarMensagem(msg);
+      return res.json({ ...r, enviado: r.ok, total: resumo.totalConhecido, qtdContas: resumo.qtdContas });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "erro" });
     }
   });
 

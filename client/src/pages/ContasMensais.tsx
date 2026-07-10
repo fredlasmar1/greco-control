@@ -11,7 +11,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, Wallet, Info, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Wallet, Info, Loader2, Send } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { formatCurrency } from "@/lib/demoData";
 
@@ -234,6 +234,24 @@ export default function ContasMensais() {
   const [erro, setErro] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editando, setEditando] = useState<ContaMensal | null>(null);
+  const [enviandoTg, setEnviandoTg] = useState(false);
+  const [tgMsg, setTgMsg] = useState<string | null>(null);
+
+  async function enviarResumoTelegram() {
+    setEnviandoTg(true);
+    setTgMsg(null);
+    try {
+      const res = await apiRequest("POST", "/api/telegram/contas-mes");
+      const j = await res.json();
+      setTgMsg(j?.enviado
+        ? `✓ Resumo enviado no Telegram — total ${formatCurrency(j.total || 0)} (${j.qtdContas} contas)`
+        : `Não enviado: ${j?.error || "Telegram não configurado"}`);
+    } catch (e: any) {
+      setTgMsg(`Erro: ${e?.message || "falha ao enviar"}`);
+    } finally {
+      setEnviandoTg(false);
+    }
+  }
 
   async function carregar() {
     setLoading(true);
@@ -307,6 +325,35 @@ export default function ContasMensais() {
           precisa cadastrar aqui.
         </p>
       </div>
+
+      {/* Total do mês a pagar + enviar resumo no Telegram */}
+      {!loading && contas && contas.length > 0 && (() => {
+        const comValor = contas.filter((c) => c.valor != null && (c.valor as number) > 0);
+        const total = comValor.reduce((s, c) => s + (c.valor || 0), 0);
+        const variaveis = contas.length - comValor.length;
+        return (
+          <div className="rounded-2xl border-2 border-primary/40 ring-1 ring-white/10 bg-card p-4 flex items-center justify-between gap-3 flex-wrap" data-testid="contas-total">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.2em] text-primary font-semibold">Total do mês a pagar</div>
+              <div className="text-2xl font-bold text-foreground tabular-nums mt-1">{formatCurrency(total)}</div>
+              <div className="text-[11px] text-muted-foreground">{contas.length} contas{variaveis > 0 ? ` · ${variaveis} de valor variável (não somadas)` : ""}</div>
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                variant="outline"
+                onClick={enviarResumoTelegram}
+                disabled={enviandoTg}
+                className="border-primary/40 text-primary hover:bg-primary/10"
+                data-testid="enviar-contas-telegram"
+              >
+                {enviandoTg ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+                Enviar resumo no Telegram
+              </Button>
+              {tgMsg && <span className="text-[11px] text-muted-foreground max-w-[240px] text-right">{tgMsg}</span>}
+            </div>
+          </div>
+        );
+      })()}
 
       <Card className="bg-card border-card-border">
         <CardHeader className="pb-2">

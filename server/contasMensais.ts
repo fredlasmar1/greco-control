@@ -175,6 +175,34 @@ export async function contasParaAvisarHoje(hoje: Date = new Date()): Promise<Con
   });
 }
 
+/**
+ * Resumo do MÊS: todas as contas ativas ordenadas por dia de vencimento, com o
+ * total geral a pagar no mês. `totalConhecido` soma só as que têm valor; as de
+ * valor variável entram em `qtdVariaveis` (não dá pra somar). Usado pela página
+ * (card de total) e pela mensagem mensal do Telegram.
+ */
+export interface ResumoContasMes {
+  contas: ContaMensal[];       // ativas, ordenadas por diaVencimento
+  totalConhecido: number;      // soma dos valores cadastrados
+  qtdContas: number;           // total de contas ativas
+  qtdComValor: number;         // quantas têm valor
+  qtdVariaveis: number;        // quantas são valor variável (null)
+}
+export async function resumoContasMes(): Promise<ResumoContasMes> {
+  const contas = (await listarContas())
+    .filter((c) => c.ativa)
+    .sort((a, b) => a.diaVencimento - b.diaVencimento || a.nome.localeCompare(b.nome));
+  const comValor = contas.filter((c) => c.valor != null && c.valor > 0);
+  const totalConhecido = comValor.reduce((s, c) => s + (c.valor || 0), 0);
+  return {
+    contas,
+    totalConhecido: Math.round(totalConhecido * 100) / 100,
+    qtdContas: contas.length,
+    qtdComValor: comValor.length,
+    qtdVariaveis: contas.length - comValor.length,
+  };
+}
+
 // ─── Pagamentos da equipe (dia 1 e dia 15) ──────────────────────────────────
 
 export interface PagamentoEquipe {

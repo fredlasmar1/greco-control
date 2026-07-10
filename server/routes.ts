@@ -3280,20 +3280,37 @@ export async function registerRoutes(
         resp.periodoFim = mensal.periodoFim || "";
       }
 
-      // ── Sumidos: prefere a base (janela longa); fallback no mensal (≈0). ──
-      const fonteSumidos = temBase ? base : (temMensal ? mensal : null);
-      if (fonteSumidos) {
-        const sumidos = (fonteSumidos.rows as any[])
-          .map(r => ({ nome: r.nome, dias: diasDesde(r.ultimoAtendimento) }))
-          .filter(x => x.dias !== null && (x.dias as number) > 60) as { nome: string; dias: number }[];
-        sumidos.sort((a, b) => a.dias - b.dias); // mais recuperáveis primeiro
-        resp.clientesSumidos = {
-          total: sumidos.length,
-          lista: sumidos.slice(0, 20).map(x => ({ nome: x.nome, diasSemVir: x.dias })),
-          fonte: temBase ? "base" : "mensal",
-          baseGeradoEm: temBase ? (base.geradoEm || "") : "",
-          basePeriodo: temBase ? `${base.periodoInicio} → ${base.periodoFim}` : "",
-        };
+      // ── Sumidos: prefere a BASE VIVA do Metas (Reativar/Cobrar — deduplicada e ao
+      // vivo). O CSV "Ranking de Clientes" só atualiza quando o dono reexporta, então
+      // desatualiza (era o motivo do 569 velho). Fallback no CSV base/mensal. ──
+      let sumidosMetas: any = null;
+      try {
+        const rea = await getMetasReativacao(mes, 100);
+        if (rea && rea.saude?.sumidos) {
+          sumidosMetas = {
+            total: rea.saude.sumidos.total || 0,
+            lista: (rea.topReativar || []).slice(0, 20).map((c: any) => ({ nome: c.nome, diasSemVir: c.diasSemVir, phone: c.phone || null })),
+            fonte: "metas-vivo",
+          };
+        }
+      } catch { /* HUB indisponível → cai no CSV */ }
+      if (sumidosMetas) {
+        resp.clientesSumidos = sumidosMetas;
+      } else {
+        const fonteSumidos = temBase ? base : (temMensal ? mensal : null);
+        if (fonteSumidos) {
+          const sumidos = (fonteSumidos.rows as any[])
+            .map(r => ({ nome: r.nome, dias: diasDesde(r.ultimoAtendimento) }))
+            .filter(x => x.dias !== null && (x.dias as number) > 60) as { nome: string; dias: number }[];
+          sumidos.sort((a, b) => a.dias - b.dias); // mais recuperáveis primeiro
+          resp.clientesSumidos = {
+            total: sumidos.length,
+            lista: sumidos.slice(0, 20).map(x => ({ nome: x.nome, diasSemVir: x.dias })),
+            fonte: temBase ? "base" : "mensal",
+            baseGeradoEm: temBase ? (base.geradoEm || "") : "",
+            basePeriodo: temBase ? `${base.periodoInicio} → ${base.periodoFim}` : "",
+          };
+        }
       }
 
       return res.json(resp);

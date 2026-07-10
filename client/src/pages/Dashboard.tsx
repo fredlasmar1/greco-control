@@ -1123,7 +1123,11 @@ export default function Dashboard() {
             <div className="w-11 h-11 rounded-xl bg-amber-500/15 grid place-items-center flex-none"><UserMinus className="w-5 h-5 text-amber-500" /></div>
             <div>
               <div className="text-[26px] leading-none font-extrabold text-amber-500 tabular-nums">{clientesMes.clientesSumidos.total}</div>
-              <div className="text-xs text-muted-foreground mt-1">clientes sumidos há 60+ dias — dinheiro na mesa pra reativar</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {clientesMes.clientesSumidos.fonte === "metas-vivo"
+                  ? "clientes sumidos — base viva do Metas (ao vivo) · dinheiro na mesa pra reativar"
+                  : "clientes sumidos há 60+ dias — dinheiro na mesa pra reativar"}
+              </div>
             </div>
           </div>
           {(clientesMes.clientesSumidos.lista?.length || 0) > 0 && (
@@ -1132,14 +1136,18 @@ export default function Dashboard() {
                 <Button variant="outline" size="sm" className="border-amber-500/50 text-amber-600 hover:bg-amber-500/10">Ver lista pra reativar</Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-80 max-h-96 overflow-y-auto">
-                <p className="text-xs font-semibold mb-2 flex items-center gap-1"><UserMinus className="w-3.5 h-3.5 text-amber-600" /> Mais recuperáveis primeiro</p>
+                <p className="text-xs font-semibold mb-2 flex items-center gap-1"><UserMinus className="w-3.5 h-3.5 text-amber-600" /> {clientesMes.clientesSumidos.fonte === "metas-vivo" ? "Mais tempo sem vir primeiro" : "Mais recuperáveis primeiro"}</p>
                 <div className="space-y-1">
-                  {clientesMes.clientesSumidos.lista.map((c: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="truncate">{c.nome}</span>
-                      <span className="text-muted-foreground tabular-nums flex-shrink-0">{c.diasSemVir}d</span>
-                    </div>
-                  ))}
+                  {clientesMes.clientesSumidos.lista.map((c: any, i: number) => {
+                    const tel = String(c.phone || "").replace(/\D/g, "");
+                    const wa = tel.length >= 10 ? `https://wa.me/55${tel.slice(-11)}` : null;
+                    return (
+                      <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                        {wa ? <a href={wa} target="_blank" rel="noreferrer" className="truncate text-emerald-600 hover:underline" title="Abrir WhatsApp">{c.nome}</a> : <span className="truncate">{c.nome}</span>}
+                        <span className="text-muted-foreground tabular-nums flex-shrink-0">{c.diasSemVir}d</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </PopoverContent>
             </Popover>

@@ -15066,9 +15066,14 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const nMeses = Math.min(12, Math.max(3, Number(req.query.meses) || 6));
       const hoje = ymdHoje();
       const [ay, am] = hoje.slice(0, 7).split("-").map(Number);
+      // Média e tendência só fazem sentido em meses COMPLETOS — o mês corrente é
+      // parcial e distorceria tudo (todos "decrescendo"). Janela termina no mês
+      // completo anterior, exceto se hoje já for o último dia do mês.
+      const ehUltimoDiaDoMes = hoje === ultimoDiaDoMes(hoje);
+      const offsetFim = ehUltimoDiaDoMes ? 1 : 2; // 1 = inclui mês corrente (completo); 2 = só até o anterior
       const meses: string[] = [];
       for (let i = nMeses - 1; i >= 0; i--) {
-        const d = new Date(Date.UTC(ay, am - 1 - i, 1, 12));
+        const d = new Date(Date.UTC(ay, am - offsetFim - i, 1, 12));
         meses.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
       }
       const metas = await getAllMetas();

@@ -2411,6 +2411,7 @@ function RetencaoClientes() {
   }, [API_BASE]);
   if (!d || !d.meses?.length) return null;
   const rot = (m: string) => NOME_MES_RET[m.slice(5)] || m;
+  const apelidoNome = (s: string) => (String(s || "").trim().split(/[\s-]+/)[0] || "—");
 
   return (
     <div className="rounded-lg border border-card-border bg-card p-4 space-y-3" data-testid="retencao-clientes">
@@ -2480,8 +2481,70 @@ function RetencaoClientes() {
         <p className="text-red-600">🎯 Gargalo: <strong>{d.frequencia.pctUmaVisita}% dos clientes vieram 1 vez só</strong>. Reduzir isso (1ª visita → 2ª) é onde está o maior ganho — campanha de retorno pra quem veio uma vez.</p>
       </div>
 
-      {/* v86: lista de clientes pra reativar (sumiram, ordenados por valor gasto) */}
-      {Array.isArray(d.listaInativos) && d.listaInativos.length > 0 && (
+      {/* v96: Saúde da carteira + placar de reativação (base viva Reativar/Cobrar do Metas) */}
+      {d.reativacao && (
+        <div className="border-t border-border/50 pt-3 space-y-2" data-testid="reativacao-metas">
+          <span className="text-[10px] uppercase tracking-[0.15em] text-emerald-500 font-semibold">Reativar/Cobrar · base viva do Metas</span>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { lbl: "Em dia", v: d.reativacao.saude?.emDia?.total || 0, cor: "text-emerald-600" },
+              { lbl: "Atrasados", v: d.reativacao.saude?.atrasados?.total || 0, cor: "text-amber-600" },
+              { lbl: "Sumidos", v: d.reativacao.saude?.sumidos?.total || 0, cor: "text-red-600" },
+            ].map((x) => (
+              <div key={x.lbl} className="rounded-lg bg-muted/40 border border-border p-2 text-center">
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{x.lbl}</div>
+                <div className={`text-lg font-bold tabular-nums ${x.cor}`}>{x.v}</div>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
+            <span>✅ Reativados no mês: <strong className="text-emerald-600">{d.reativacao.placar?.reativadosMes || 0}</strong></span>
+            <span>⏳ Aguardando voltar: <strong className="text-amber-600">{d.reativacao.placar?.aguardando || 0}</strong></span>
+            {(d.reativacao.placar?.reativadosPorPessoa || []).slice(0, 3).map((p: any) => (
+              <span key={p.pessoa}>{apelidoNome(p.pessoa)}: <strong className="text-foreground">{p.total}</strong></span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Lista pra reativar — prefere a base VIVA do Metas (telefone + quem atende + status) */}
+      {Array.isArray(d.reativacao?.topReativar) && d.reativacao.topReativar.length > 0 ? (
+        <details className="border-t border-border/50 pt-2">
+          <summary className="text-xs font-semibold cursor-pointer text-amber-600">📞 Clientes pra reativar — {d.reativacao.totalReativar} sumidos (base viva do Metas, com telefone)</summary>
+          <div className="overflow-x-auto max-h-[320px] overflow-y-auto mt-2">
+            <table className="w-full text-xs">
+              <thead className="text-[10px] uppercase text-muted-foreground border-b border-border sticky top-0 bg-card">
+                <tr>
+                  <th className="text-left p-1.5">Cliente</th>
+                  <th className="text-left p-1.5">Telefone</th>
+                  <th className="text-right p-1.5">Visitas</th>
+                  <th className="text-right p-1.5">Sem vir</th>
+                  <th className="text-left p-1.5 hidden sm:table-cell">Atende</th>
+                  <th className="text-right p-1.5">Contato</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.reativacao.topReativar.map((c: any) => {
+                  const tel = String(c.phone || "").replace(/\D/g, "");
+                  const wa = tel.length >= 10 ? `https://wa.me/55${tel.slice(-11)}` : null;
+                  const contatoLabel: Record<string, string> = { contacted: "contatado", responded: "respondeu", returned: "voltou", lost: "não volta" };
+                  return (
+                    <tr key={c.id} className="border-b border-border/20">
+                      <td className="p-1.5 font-medium truncate max-w-[140px]" title={c.nome}>{c.nome}</td>
+                      <td className="p-1.5">{wa ? <a href={wa} target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">{c.phone}</a> : <span className="text-muted-foreground">—</span>}</td>
+                      <td className="p-1.5 text-right tabular-nums">{c.totalVisitas}</td>
+                      <td className="p-1.5 text-right tabular-nums text-amber-600">{c.diasSemVir != null ? `${c.diasSemVir}d` : "—"}</td>
+                      <td className="p-1.5 hidden sm:table-cell text-muted-foreground truncate max-w-[100px]" title={c.profissional || ""}>{apelidoNome(c.profissional || "—")}</td>
+                      <td className="p-1.5 text-right">{c.statusContato ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">{contatoLabel[c.statusContato] || c.statusContato}</span> : <span className="text-muted-foreground">—</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-1">Base viva do Greco Metas (Reativar/Cobrar): clientes deduplicados, ordenados por dias sem vir, com telefone (clique = WhatsApp) e status de contato. Substitui a lista antiga do CSV.</p>
+        </details>
+      ) : Array.isArray(d.listaInativos) && d.listaInativos.length > 0 && (
         <details className="border-t border-border/50 pt-2">
           <summary className="text-xs font-semibold cursor-pointer text-amber-600">📞 Clientes pra reativar — {d.listaInativos.length} sumidos que já vinham (do mais valioso)</summary>
           <div className="overflow-x-auto max-h-[320px] overflow-y-auto mt-2">

@@ -1923,7 +1923,7 @@ export async function registerRoutes(
     let minhaComissao: number | null = null;
     let fonteMes: "ranking-csv" | "ao-vivo" = "ao-vivo";
     try {
-      const rankEquipe = await montarEquipeDeRanking(currentMonth, await getAllMetas());
+      const rankEquipe = await overlayEquipeAoVivo(currentMonth, await montarEquipeDeRanking(currentMonth, await getAllMetas()));
       const meu = rankEquipe?.byId.get(String(user.barberId));
       if (meu) {
         mesFat = meu.faturamento.total;
@@ -11928,7 +11928,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : ymdHoje().slice(0, 7);
       const _tm: any = await kvGet(`trinks_total_mes:${mes}`);
       const oficial = Number(_tm?.total || 0); // kv guarda { total, ... }
-      const eq = await montarEquipeDeRanking(mes, await getAllMetas()).catch(() => null);
+      const eq = await overlayEquipeAoVivo(mes, await montarEquipeDeRanking(mes, await getAllMetas()).catch(() => null)).catch(() => null);
       const porBarbeiro = eq ? Array.from((eq as any).byId.values()).map((v: any) => ({
         nome: v.nome,
         servicos: Math.round((v.faturamento?.servicos || 0) * 100) / 100,
@@ -12834,6 +12834,70 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       pctRetornoMedio: tot.atendimentos > 0 ? tot._retPond / tot.atendimentos : 0,
     };
     return { byId, totais: totaisOut };
+  }
+
+  // OVERLAY AO VIVO — SÓ EXIBIÇÃO e SÓ mês corrente/aberto. A CSV de ranking pode
+  // estar velha (importada num dia X do mês), congelando serviço/atendimentos por
+  // barbeiro. Aqui sobrepomos esses dois campos com o AO VIVO do Metas
+  // (appointments, via /api/hub/resumo-mes). Produto/plano ficam da CSV. A COMISSÃO
+  // NÃO é tocada (fica na CSV) — a folha do mês fechado continua idêntica.
+  // Decisão do dono (18/jul): mês aberto = ao vivo só na exibição; mês fechado = CSV.
+  async function overlayEquipeAoVivo(
+    mes: string,
+    eq: null | { byId: Map<string, any>; totais: any },
+  ): Promise<null | { byId: Map<string, any>; totais: any }> {
+    if (!eq) return eq;
+    if (mes !== ymdHoje().slice(0, 7)) return eq; // só mês corrente
+    const metas = await getMetasResumoMes(mes).catch(() => null);
+    const mb = metas?.porBarbeiro;
+    if (!Array.isArray(mb) || mb.length === 0) return eq;
+    // casamento de nome self-contained (o Metas manda "NOME COMPLETO"; a CSV manda
+    // "APELIDO - NOME COMPLETO"). Normaliza e casa por prefixo/token, igual à conferência.
+    const norm = (s: any) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    const casa = (a: string, b: string) => {
+      if (!a || !b) return false;
+      if (a === b || a.startsWith(b) || b.startsWith(a)) return true;
+      const ta = a.split(" ")[0], tb = b.split(" ")[0];
+      return !!ta && ta === tb; // mesmo primeiro nome
+    };
+    const entries = Array.from(eq.byId.values());
+    const usados = new Set<any>();
+    for (const m of mb) {
+      // nome do Metas pode vir "APELIDO - NOME"; pega a parte mais longa
+      const partes = String(m.nome || "").split(/[-–—]/);
+      const nmMetas = norm(partes.length > 1 ? partes.slice(1).join(" ") : partes[0]);
+      let alvo: any = null;
+      for (const e of entries) {
+        if (usados.has(e)) continue;
+        const pe = String(e.nome || "").split(/[-–—]/);
+        const nmCtrl = norm(pe.length > 1 ? pe.slice(1).join(" ") : pe[0]);
+        if (casa(nmMetas, nmCtrl)) { alvo = e; break; }
+      }
+      if (!alvo || !alvo.faturamento) continue;
+      usados.add(alvo);
+      const serv = Math.round(Number(m.servicoRS || 0) * 100) / 100;
+      const atend = Number(m.atendimentos || 0);
+      const prod = Number(alvo.faturamento.produtos || 0);
+      const plano = Number(alvo.faturamento.plano || 0);
+      alvo.faturamento.servicos = serv;
+      alvo.faturamento.servicosBruto = serv;
+      alvo.faturamento.servicosLiquido = serv;
+      alvo.faturamento.avulso = serv;
+      alvo.faturamento.total = Math.round((serv + prod + plano) * 100) / 100;
+      if (alvo.atendimentos) { alvo.atendimentos.total = atend; alvo.atendimentos.avulso = atend; }
+      alvo.ticketMedio = atend > 0 ? alvo.faturamento.total / atend : 0;
+      alvo.fonteServico = "metas-ao-vivo";
+    }
+    // recomputa os totais de faturamento/atendimentos/serviço (só exibição)
+    let fat = 0, at = 0, sb = 0, sl = 0;
+    for (const e of entries) {
+      fat += Number(e.faturamento?.total || 0);
+      at += Number(e.atendimentos?.total || 0);
+      sb += Number(e.faturamento?.servicosBruto || 0);
+      sl += Number(e.faturamento?.servicosLiquido || 0);
+    }
+    eq.totais = { ...eq.totais, faturamento: Math.round(fat * 100) / 100, atendimentos: at, servicosBruto: Math.round(sb * 100) / 100, servicosLiquido: Math.round(sl * 100) / 100 };
+    return eq;
   }
 
   async function calcularLinhaPagamento(
@@ -14857,7 +14921,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
 
       // Bloco 1 (v42.4): tem ranking do mês → fonte CONGELADA (ranking×categoria,
       // deduplicada). Sem ranking → cálculo ao vivo (preserva o dia corrente).
-      const rankEquipe = await montarEquipeDeRanking(mes, metasMes);
+      const rankEquipe = await overlayEquipeAoVivo(mes, await montarEquipeDeRanking(mes, metasMes));
       const fonteEquipe: "ranking-csv" | "ao-vivo" = rankEquipe ? "ranking-csv" : "ao-vivo";
 
       let profsRanked: any[];
@@ -15169,7 +15233,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       const serie = new Map<string, { id: string; nome: string; pontos: Ponto[] }>();
       const mesesComDados: string[] = [];
       for (const mes of meses) {
-        const rank = await montarEquipeDeRanking(mes, metas);
+        const rank = await overlayEquipeAoVivo(mes, await montarEquipeDeRanking(mes, metas));
         if (!rank) continue;
         mesesComDados.push(mes);
         for (const p of rank.byId.values()) {

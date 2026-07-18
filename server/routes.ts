@@ -215,7 +215,10 @@ const DATA_DIR = (() => {
       return candidate;
     }
   } catch { /* não gravável, usa cwd */ }
-  log(`⚠️ Persistência: usando cwd (dados se perdem em cada deploy). Configure Volume no Railway em /data`, "data");
+  // Não é alarme: o Postgres (kv_store) é a fonte autoritativa — loadData lê o DB
+  // primeiro e só cai no arquivo se ele falhar. Estes JSONs são backup local, e no
+  // Railway ficam no cwd efêmero. Um Volume em /data só os tornaria duráveis também.
+  log(`Persistência: Postgres (autoritativo) + backup em arquivo no cwd, que é efêmero no Railway. Para durar o backup também, monte um Volume em /data`, "data");
   return process.cwd();
 })();
 
@@ -1588,7 +1591,7 @@ export async function registerRoutes(
       const [
         dbUsuarios, dbFinanceiro, dbMetas, dbMetasBarb, dbChecklist,
         dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore,
-        dbAssinaturaClientes, dbAssinaturaPlanos,
+        dbAssinaturaClientes, dbAssinaturaPlanos, dbMetaDiaria,
       ] = await Promise.all([
         kvGet<typeof usuarios>("usuarios"),
         kvGet<typeof financeEntries>("financeiro"),
@@ -1602,6 +1605,7 @@ export async function registerRoutes(
         kvGet<typeof storeData>("store"),
         kvGet<typeof assinaturaClientes>("assinaturas_clientes"),
         kvGet<typeof assinaturaPlanos>("assinaturas_planos"),
+        kvGet<{ valor: number }>("meta_diaria"),
       ]);
       if (Array.isArray(dbUsuarios) && dbUsuarios.length > 0) usuarios = dbUsuarios;
       if (Array.isArray(dbFinanceiro)) financeEntries = dbFinanceiro;
@@ -1615,6 +1619,13 @@ export async function registerRoutes(
       if (dbStore && typeof dbStore === "object") { storeData = dbStore; syncComissaoConfig(); }
       if (Array.isArray(dbAssinaturaClientes)) assinaturaClientes = dbAssinaturaClientes;
       if (Array.isArray(dbAssinaturaPlanos) && dbAssinaturaPlanos.length > 0) assinaturaPlanos = dbAssinaturaPlanos;
+      // A meta diária era salva no Postgres (saveMetaDiaria) mas lida SÓ do arquivo,
+      // que em produção fica no cwd efêmero — então toda alteração do dono voltava
+      // pro default de R$5.000 no deploy seguinte, sem aviso. O DB manda.
+      if (dbMetaDiaria && typeof dbMetaDiaria.valor === "number") {
+        metaDiaria = dbMetaDiaria.valor;
+        log(`Meta diária: R$${metaDiaria} carregada do Postgres`, "metas");
+      }
 
       // Se este é o primeiro boot com DB, migra os dados que estão em memória para ele
       const anyData = [dbUsuarios, dbFinanceiro, dbMetas, dbMetasBarb, dbChecklist, dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore].some(v => v !== null);
@@ -1633,6 +1644,7 @@ export async function registerRoutes(
           kvSet("store", storeData),
           kvSet("assinaturas_clientes", assinaturaClientes),
           kvSet("assinaturas_planos", assinaturaPlanos),
+          kvSet("meta_diaria", { valor: metaDiaria }),
         ]);
       }
       log("Dados carregados do Postgres", "db");
@@ -12284,6 +12296,19 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const last = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
     return `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
   }
+  // Último dia de FUNCIONAMENTO anterior a `ymd` (a casa abre ter–sáb, dow 2..6,
+  // mesma convenção de contarDiasUteis). Usado pelo resumo "matinal", que fala do
+  // dia que fechou: numa terça, o dia anterior útil é o sábado, não a segunda.
+  function diaUtilAnterior(ymd: string): string {
+    let cur = ymdAddDays(ymd, -1);
+    for (let i = 0; i < 7; i++) {
+      const [y, m, d] = cur.split("-").map(Number);
+      const dow = new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay();
+      if (dow >= 2 && dow <= 6) return cur;
+      cur = ymdAddDays(cur, -1);
+    }
+    return ymdAddDays(ymd, -1); // inalcançável (sempre há dia útil em 7 dias)
+  }
 
   // ─── EQUIPE: endpoints CRUD de metas ──────────────────────────────
   // ─── Configuração financeira (taxa cartão global) ──────────
@@ -15170,6 +15195,10 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
   async function montarPayloadIndividual(
     profissionalId: string,
     incluir: { dia?: boolean; semana?: boolean; mes?: boolean },
+    // opts.dataDia: dia de referência do bloco "dia". O resumo matinal roda às 8h
+    // e fala do dia que FECHOU (dia útil anterior); sem isso o bloco viria zerado,
+    // porque às 8h o dia corrente ainda não teve movimento.
+    opts?: { dataDia?: string },
   ): Promise<PayloadIndividual | null> {
     const metas = await getAllMetas();
     const meta = metas[profissionalId];
@@ -15182,7 +15211,8 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     const diasUteisTotal = contarDiasUteis(`${mes}-01`, ultimoDia);
     const diasUteisDecorridos = contarDiasUteis(`${mes}-01`, hoje);
 
-    const diaData = incluir.dia    ? await calcularPeriodoPorProfissional(hoje, hoje)    : null;
+    const diaRef = opts?.dataDia || hoje;
+    const diaData = incluir.dia    ? await calcularPeriodoPorProfissional(diaRef, diaRef)  : null;
     const semData = incluir.semana ? await calcularPeriodoPorProfissional(semIni, semFim) : null;
     const mesData = incluir.mes    ? await calcularPeriodoPorProfissional(mesIni, mesFim) : null;
 
@@ -15200,7 +15230,7 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
     return {
       profissional: { id: profissionalId, nome: meta.nome },
       meta,
-      dia: profDia ? { dataReferencia: hoje, reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count, servicosReais: profDia.servicos.reais, servicosCount: profDia.servicos.count, servicosBruto: profDia.servicos.bruto, servicosLiquido: profDia.servicos.liquido, produtosReais: profDia.produtos.reais, produtosCount: profDia.produtos.count, produtosBruto: profDia.produtos.bruto, produtosLiquido: profDia.produtos.liquido, produtosBrutoComissionavel: profDia.produtos.brutoComissionavel || 0, produtosLiquidoComissionavel: profDia.produtos.liquidoComissionavel || 0 } : undefined,
+      dia: profDia ? { dataReferencia: diaRef, reais: profDia.total.reais, count: profDia.total.count, avulsoReais: profDia.avulso.reais, avulsoCount: profDia.avulso.count, planoReais: profDia.plano.reais, planoCount: profDia.plano.count, servicosReais: profDia.servicos.reais, servicosCount: profDia.servicos.count, servicosBruto: profDia.servicos.bruto, servicosLiquido: profDia.servicos.liquido, produtosReais: profDia.produtos.reais, produtosCount: profDia.produtos.count, produtosBruto: profDia.produtos.bruto, produtosLiquido: profDia.produtos.liquido, produtosBrutoComissionavel: profDia.produtos.brutoComissionavel || 0, produtosLiquidoComissionavel: profDia.produtos.liquidoComissionavel || 0 } : undefined,
       semana: profSem ? { dataInicio: semIni, dataFim: semFim, reais: profSem.total.reais, count: profSem.total.count, avulsoReais: profSem.avulso.reais, avulsoCount: profSem.avulso.count, planoReais: profSem.plano.reais, planoCount: profSem.plano.count, servicosReais: profSem.servicos.reais, servicosCount: profSem.servicos.count, servicosBruto: profSem.servicos.bruto, servicosLiquido: profSem.servicos.liquido, produtosReais: profSem.produtos.reais, produtosCount: profSem.produtos.count, produtosBruto: profSem.produtos.bruto, produtosLiquido: profSem.produtos.liquido, produtosBrutoComissionavel: profSem.produtos.brutoComissionavel || 0, produtosLiquidoComissionavel: profSem.produtos.liquidoComissionavel || 0 } : undefined,
       mes: profMes ? { mes, diasUteisDecorridos, diasUteisTotal, reais: profMes.total.reais, count: profMes.total.count, avulsoReais: profMes.avulso.reais, avulsoCount: profMes.avulso.count, planoReais: profMes.plano.reais, planoCount: profMes.plano.count, servicosReais: profMes.servicos.reais, servicosCount: profMes.servicos.count, servicosBruto: profMes.servicos.bruto, servicosLiquido: profMes.servicos.liquido, produtosReais: profMes.produtos.reais, produtosCount: profMes.produtos.count, produtosBruto: profMes.produtos.bruto, produtosLiquido: profMes.produtos.liquido, produtosBrutoComissionavel: profMes.produtos.brutoComissionavel || 0, produtosLiquidoComissionavel: profMes.produtos.liquidoComissionavel || 0 } : undefined,
       posicaoEquipeMes,
@@ -15640,7 +15670,11 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         }
       }, { timezone: "America/Sao_Paulo" });
 
-      log("[cron] schedulers Telegram ativos: geral 8h/20h (ter-sáb) + lembrete CSV 19h (ter-sáb) + alerta estoque 9h (ter-sáb) + individual MATINAL 8h/SEMANAL sáb 21h/MENSAL último dia útil 21h + snapshot 23h30 (refinamento 6h)", "telegram");
+      // ATENÇÃO: esta linha lista só o que está REALMENTE registrado acima. Vários
+      // crons foram desativados (`if (false)`) e a lista antiga continuou anunciando
+      // todos, o que induz a diagnóstico errado na hora do problema. Ao ligar/desligar
+      // um cron, atualize aqui junto.
+      log("[cron] schedulers Telegram ativos: geral manhã 8h (ter-sáb) + alerta estoque 9h (ter) + estoque baixa 8h30 (diário) + snapshot 23h50 (diário) + sync e-mail Trinks 7h (diário). DESATIVADOS: geral noite 20h, lembrete CSV 19h, individual matinal/semanal/mensal, refino 6h, pré-fetch 3h", "telegram");
     } catch (err: any) {
       log(`[cron] falha ao registrar schedulers: ${err.message}`, "telegram");
     }

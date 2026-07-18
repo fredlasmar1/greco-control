@@ -5648,18 +5648,38 @@ export async function registerRoutes(
       const [y, m] = mes.split("-").map(Number);
       const prox = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
       // API transações do mês (via HUB Metas, 0 token)
-      let apiSoma = 0, apiN = 0;
+      // A comparação justa exclui HOJE: o "Total do mês" do Gmail vem do e-mail da
+      // manhã, ou seja, fecha ONTEM. Comparar o mês inteiro da API contra ele acusa
+      // uma divergência que é só o movimento de hoje — e no começo do mês isso vira
+      // um percentual assustador (em 08/jul deu +23%, sendo que era 1 dia de 6).
+      // Mesma requisição, só separando por dataReferencia: 0 chamada Trinks a mais.
+      let apiSoma = 0, apiN = 0, apiSomaAteOntem = 0, apiNAteOntem = 0;
       try {
         const tx = await getMetasTrinks("transacoes", { dataInicio: `${mes}-01`, dataFim: prox });
-        if (Array.isArray(tx)) { apiN = tx.length; apiSoma = tx.reduce((s: number, t: any) => s + Number(t.totalPagar || 0), 0); }
+        if (Array.isArray(tx)) {
+          const hojeYmd = ymdHoje();
+          for (const t of tx) {
+            const v = Number(t.totalPagar || 0);
+            apiN += 1; apiSoma += v;
+            const dia = String(t.dataReferencia || t.dataHora || "").slice(0, 10);
+            if (dia && dia < hojeYmd) { apiNAteOntem += 1; apiSomaAteOntem += v; }
+          }
+        }
       } catch { /* HUB indisponível */ }
+      // Fora do mês corrente não existe "hoje" a excluir — as duas janelas coincidem.
+      const mesEhCorrente = mes === ymdHoje().slice(0, 7);
+      const apiComparavel = mesEhCorrente ? apiSomaAteOntem : apiSoma;
       const metas = await getMetasResumoMes(mes).catch(() => null);
       let rankTotal = 0;
       try { const rc: any = await getRankComissaoMap(mes); rankTotal = Number(rc?.producaoServicos || 0); } catch { /* sem ranking */ }
 
       const fontes: any[] = [
         { chave: "gmail", nome: "Gmail — Total do mês", valor: r2(oficial), autoridade: true, nota: "Oficial: comandas fechadas + Clube. É a base de tudo (fecha com o e-mail de ontem)." },
-        { chave: "api", nome: "API Trinks (ao vivo)", valor: r2(apiSoma), qtd: apiN || undefined, nota: "Todas as transações do mês, INCLUINDO hoje. No mês corrente fica maior que o Gmail (o e-mail só tem até ontem)." },
+        { chave: "api", nome: "API Trinks (ao vivo)", valor: r2(apiComparavel), qtd: (mesEhCorrente ? apiNAteOntem : apiN) || undefined,
+          valorAoVivo: r2(apiSoma), qtdAoVivo: apiN || undefined, hojeRS: r2(apiSoma - apiSomaAteOntem), hojeQtd: apiN - apiNAteOntem,
+          nota: mesEhCorrente
+            ? "Comparada ATÉ ONTEM, mesma janela do Gmail. O total ao vivo (com hoje) vem em valorAoVivo — a diferença entre os dois é só o movimento de hoje, não divergência."
+            : "Todas as transações do mês fechado." },
         { chave: "metas", nome: "Greco Metas (ao vivo)", valor: r2(metas?.servicoRS || 0), qtd: metas?.atendimentos, nota: "Serviços por atendimento (agenda). Ao vivo, sem produtos/Clube." },
         { chave: "csvCaixa", nome: "CSV Caixa", valor: r2(fa.csvCaixa?.faturamento || 0), qtd: fa.csvCaixa?.comandas, nota: "O que passou pelo caixa. Falta os dias ainda não importados." },
         { chave: "csvFinanceiro", nome: "CSV Financeiro", valor: r2(fa.csvFinanceiro?.faturamento || 0), nota: "Recebimentos por data prevista, líquido de troco." },

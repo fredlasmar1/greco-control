@@ -561,6 +561,8 @@ function ReconciliacaoFontes({ mes, apiBase }: { mes: string; apiBase: string })
                 <div className="text-right flex-none">
                   <div className="text-[14px] font-extrabold tabular-nums text-foreground">{fmt(f.valor)}</div>
                   {!f.autoridade && <div className={`text-[10.5px] tabular-nums ${cor}`}>{f.diff >= 0 ? "+" : ""}{fmt(f.diff)} ({f.diffPct >= 0 ? "+" : ""}{Number(f.diffPct).toFixed(0)}%)</div>}
+                  {/* O movimento de hoje não é divergência — some do diff e aparece à parte. */}
+                  {f.hojeRS > 0 && <div className="text-[10px] text-muted-foreground tabular-nums">+ {fmt(f.hojeRS)} hoje{f.hojeQtd ? ` (${f.hojeQtd} tx)` : ""}</div>}
                 </div>
               </div>
             );

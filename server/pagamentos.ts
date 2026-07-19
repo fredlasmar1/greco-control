@@ -5,7 +5,7 @@
 //
 // kv_store: chave "pagamentos" -> { [mes: "YYYY-MM"]: { [profId]: PagamentoMes } }
 
-import { kvGet, kvSet } from "./db";
+import { kvGet, kvGetParaEscrita, kvSet } from "./db";
 import { log } from "./index";
 
 export interface PagamentoMes {
@@ -158,4 +158,38 @@ export async function reabrirMes(mes: string, profissionalId: string): Promise<P
   await kvSet(KV_KEY, all);
   invalidate();
   return novo;
+}
+
+// ─── LEDGER DE PAGAMENTOS DE FOLHA (fecha o circuito folha↔pagamento) ─────────
+// Um pagamento a funcionário via Telegram é uma de duas coisas (o dono responde
+// qual, não adivinhamos): (a) VALE/adiantamento do mês corrente → abate do saldo
+// (campo `vale` acima); (b) FECHAMENTO do mês anterior → quita a folha daquele
+// mês, NÃO abate o corrente. Sem distinguir, o dinheiro somia dos dois lados: o
+// pagamento do dia 3 (comissão do mês passado) abatia o mês errado.
+// Este ledger guarda os pagamentos de FECHAMENTO por mês-referência.
+export interface PagamentoFolhaItem {
+  profissionalId: string;
+  nome: string;
+  valor: number;
+  data: string;        // YYYY-MM-DD do comprovante
+  origem: string;      // "telegram" | "manual"
+  registradoEm: string;
+}
+const folhaPagKey = (mesRef: string) => `folha_pagamentos:${mesRef}`;
+
+export async function getPagamentosFolha(mesRef: string): Promise<PagamentoFolhaItem[]> {
+  const d = await kvGet<PagamentoFolhaItem[]>(folhaPagKey(mesRef));
+  return Array.isArray(d) ? d : [];
+}
+
+// Registra um pagamento que QUITA a folha de `mesRef`. Leitura estrita: se o
+// banco falhar, ESTOURA em vez de gravar por cima de lista vazia (mesma trava
+// das compras — perder o mês seria catastrófico).
+export async function registrarPagamentoFolha(mesRef: string, item: Omit<PagamentoFolhaItem, "registradoEm">): Promise<PagamentoFolhaItem[]> {
+  const d = await kvGetParaEscrita<PagamentoFolhaItem[]>(folhaPagKey(mesRef));
+  if (d !== null && !Array.isArray(d)) throw new Error(`folha_pagamentos:${mesRef} corrompida (esperava array)`);
+  const lista = Array.isArray(d) ? d.slice() : [];
+  lista.push({ ...item, registradoEm: new Date().toISOString() });
+  await kvSet(folhaPagKey(mesRef), lista);
+  return lista;
 }

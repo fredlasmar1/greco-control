@@ -167,6 +167,8 @@ import {
 } from "./estoqueInterno";
 import {
   getPagamentoMes,
+  getPagamentosFolha,
+  registrarPagamentoFolha,
   getPagamentosDoMes,
   upsertPagamentoMes,
   fecharMes as fecharPagMes,
@@ -11584,27 +11586,63 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const from = String(pend.from || "alguém");
     const [tipo, arg] = String(data).split("|");
 
+    // Escolheu a pessoa → guarda o profId e PERGUNTA o mês-referência. Não
+    // adivinhamos por data (dia 5 escorrega pro 6 no fim de semana): quem sabe se
+    // é vale do mês ou fechamento do anterior é o dono.
     if (tipo === "q" && arg && arg !== "nao") {
       const metas = await getAllMetas();
       const meta: any = (metas as any)[arg];
       const nome = String(meta?.nome || arg).split("-").pop()!.trim();
+      await kvSet(`compras_pergunta:${chatId}`, { ...pend, profId: arg, nomeFunc: nome });
+      const mesRef = String(pend.compra.mes);
+      const mesAnt = mesAnterior(mesRef);
+      await responderCallbackCompras(callbackId, nome);
+      await enviarMensagemCompras(
+        `👤 <b>R$ ${fmtBRLc(Number(pend.compra.valor) || 0)}</b> → <b>${nome}</b>\n\nEsse pagamento é o quê?`,
+        chatId,
+        [[{ texto: `Vale/adiantamento de ${mesLabelBR(mesRef)}`, data: "qv" }],
+         [{ texto: `Fechamento de ${mesLabelBR(mesAnt)} (comissão/salário)`, data: "qf" }]]);
+      await traçoCompras(from, "perguntou_mesref", { profId: arg, valor: pend.compra.valor });
+      return;
+    }
+
+    // Vale/adiantamento do mês corrente → ABATE do saldo (campo vale).
+    if (tipo === "qv" && pend.profId) {
+      const arg2 = String(pend.profId), nome = String(pend.nomeFunc || arg2);
       const mes = String(pend.compra.mes);
       const valor = Number(pend.compra.valor) || 0;
-      // ACUMULA: pode haver mais de um vale no mês (dia 15, dia 25...).
-      const atual: any = await getPagamentoMes(mes, arg).catch(() => null);
+      const atual: any = await getPagamentoMes(mes, arg2).catch(() => null);
       const valeNovo = Math.round(((Number(atual?.vale) || 0) + valor) * 100) / 100;
       const nota = [String(atual?.valeNota || "").trim(),
-        `${pend.compra.data.split("-").reverse().join("/")} R$ ${fmtBRLc(valor)} (Telegram)`]
-        .filter(Boolean).join(" · ");
-      await upsertPagamentoMes(mes, arg, { vale: valeNovo, valeNota: nota } as any);
-      // registra a compra marcada como abatida na folha (fica no histórico, fora do lucro)
+        `${pend.compra.data.split("-").reverse().join("/")} R$ ${fmtBRLc(valor)} (Telegram)`].filter(Boolean).join(" · ");
+      await upsertPagamentoMes(mes, arg2, { vale: valeNovo, valeNota: nota } as any);
       await salvarCompra({ ...pend.compra, categoria: "Salários & Equipe",
-        descricao: `${pend.compra.descricao || "Pagamento"} — ${nome}`.slice(0, 180) } as any);
+        descricao: `Vale ${mesLabelBR(mes)} — ${nome}`.slice(0, 180) } as any);
       await kvSet(`compras_pergunta:${chatId}`, null);
-      await responderCallbackCompras(callbackId, `Abatido da folha de ${nome}`);
-      await traçoCompras(from, "vale_lancado", { profId: arg, valor, mes });
+      await responderCallbackCompras(callbackId, `Vale de ${nome}`);
+      await traçoCompras(from, "vale_lancado", { profId: arg2, valor, mes });
       await enviarMensagemCompras(
-        `✅ <b>Pagamento registrado</b>\n💰 R$ ${fmtBRLc(valor)} → <b>${nome}</b>\n\n📉 Abatido da folha de ${mes.split("-").reverse().join("/")}: vale acumulado <b>R$ ${fmtBRLc(valeNovo)}</b>.\n<i>Não entra como despesa no lucro — a comissão cheia já entra.</i>`,
+        `✅ <b>Vale registrado</b>\n💰 R$ ${fmtBRLc(valor)} → <b>${nome}</b>\n\n📉 Abate do saldo de ${mesLabelBR(mes)}: vale acumulado <b>R$ ${fmtBRLc(valeNovo)}</b>.\n<i>Não é despesa no lucro — a comissão cheia já entra.</i>`,
+        chatId);
+      return;
+    }
+
+    // Fechamento do mês ANTERIOR (comissão/salário) → quita a folha daquele mês,
+    // NÃO abate o corrente. Vai pro ledger folha_pagamentos.
+    if (tipo === "qf" && pend.profId) {
+      const arg2 = String(pend.profId), nome = String(pend.nomeFunc || arg2);
+      const mesRef = String(pend.compra.mes);
+      const mesAnt = mesAnterior(mesRef);
+      const valor = Number(pend.compra.valor) || 0;
+      await registrarPagamentoFolha(mesAnt, { profissionalId: arg2, nome, valor, data: pend.compra.data, origem: "telegram" });
+      await salvarCompra({ ...pend.compra, categoria: "Salários & Equipe",
+        descricao: `Fechamento ${mesLabelBR(mesAnt)} — ${nome}`.slice(0, 180) } as any);
+      await kvSet(`compras_pergunta:${chatId}`, null);
+      await responderCallbackCompras(callbackId, `Fechamento de ${nome}`);
+      await traçoCompras(from, "folha_paga", { profId: arg2, valor, mesRef: mesAnt });
+      const jaPago = (await getPagamentosFolha(mesAnt)).filter(p => p.profissionalId === arg2).reduce((s, p) => s + p.valor, 0);
+      await enviarMensagemCompras(
+        `✅ <b>Fechamento registrado</b>\n💰 R$ ${fmtBRLc(valor)} → <b>${nome}</b>\n\n📗 Quita a folha de <b>${mesLabelBR(mesAnt)}</b> (pago acumulado a ${nome}: R$ ${fmtBRLc(jaPago)}).\n<i>Não abate o mês corrente nem entra no lucro.</i>`,
         chatId);
       return;
     }
@@ -12538,6 +12576,18 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const last = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
     return `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
   }
+  // "YYYY-MM" do mês anterior a um "YYYY-MM".
+  function mesAnterior(mes: string): string {
+    const [y, m] = mes.split("-").map(Number);
+    return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+  }
+  // "YYYY-MM" → "julho/2026" (rótulo humano, sem depender de new Date sem args).
+  function mesLabelBR(mes: string): string {
+    const nomes = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+    const [y, m] = mes.split("-").map(Number);
+    return `${nomes[m - 1] || m}/${y}`;
+  }
+
   // Há quantos dias o Ranking CSV do mês foi gerado. O CSV é import MANUAL e a folha
   // paga comissão em cima dele: se ficar parado, a comissão trava no dia do import
   // enquanto o mês continua (jul/2026: 13 dias parado = comissão sobre 26% do mês).
@@ -13478,6 +13528,44 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   }
 
   // GET /api/pagamento/:mes — linha de pagamento de TODOS os profissionais com meta
+  // RECONCILIAÇÃO folha↔pagamento: fecha o circuito que fazia o dinheiro sumir dos
+  // dois lados. Mostra, por mês: (a) os VALES adiantados no mês (abatem o saldo) e
+  // (b) os pagamentos de FECHAMENTO que quitaram a folha deste mês (registrados
+  // quando o dono paga a comissão/salário do mês seguinte, até dia 5). Assim dá
+  // pra ver "a folha de junho foi paga?" separado de "os vales de julho".
+  app.get("/api/folha/reconciliacao/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      // Vales adiantados DENTRO do mês (dia 15) — abatem o saldo do próprio mês.
+      const pagsMes = await getPagamentosDoMes(mes);
+      const vales = Object.values(pagsMes)
+        .filter((p: any) => Number(p?.vale || 0) > 0)
+        .map((p: any) => ({ profissionalId: p.profissionalId, vale: r2(Number(p.vale || 0)), nota: p.valeNota || null }));
+      // Pagamentos de FECHAMENTO que quitaram a folha DESTE mês (feitos no mês
+      // seguinte, normalmente até dia 5). Vêm do ledger folha_pagamentos.
+      const fechamento = await getPagamentosFolha(mes);
+      const porPessoaFech: Record<string, { nome: string; total: number; itens: any[] }> = {};
+      for (const f of fechamento) {
+        const k = f.profissionalId;
+        const g = porPessoaFech[k] || (porPessoaFech[k] = { nome: f.nome, total: 0, itens: [] });
+        g.total = r2(g.total + Number(f.valor || 0));
+        g.itens.push({ valor: r2(Number(f.valor || 0)), data: f.data });
+      }
+      return res.json({
+        ok: true, mes,
+        totalValesMes: r2(vales.reduce((s, v) => s + v.vale, 0)),
+        vales,
+        totalFolhaPaga: r2(fechamento.reduce((s, f) => s + Number(f.valor || 0), 0)),
+        folhaPagaPorPessoa: Object.entries(porPessoaFech).map(([id, v]) => ({ profissionalId: id, ...v })),
+        nota: "Vales = adiantamentos do próprio mês (abatem o saldo). Folha paga = pagamentos de fechamento que quitaram este mês (feitos no mês seguinte, até ~dia 5).",
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   app.get("/api/pagamento/:mes", async (req: Request, res: Response) => {
     try {
       const mes = String(req.params.mes || "");

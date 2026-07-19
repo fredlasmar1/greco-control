@@ -149,6 +149,35 @@ export interface MetasDescontos {
   porProfissional: MetasDescontoProf[];
 }
 const descontosCache = new Map<string, { at: number; data: MetasDescontos }>();
+
+// BANCO DE HORAS das assistentes (ponto batido na barbearia, vem do Metas). O
+// Control usa isto pra alimentar o salarioFixo de quem ganha por hora (Débora,
+// Ellen). ⚠️ a Larissa BATE PONTO mas é CLT — quem paga por hora é decidido na
+// folha (allowlist), não aqui: esta função só traz o que o Metas registrou.
+export interface MetasHoraAssistente { nome: string | null; trinksId: string | null; horas: number; valor: number; dias: number; turnosAbertos: number; }
+export interface MetasBancoHoras { mes: string; taxaPadrao: number; totalHoras: number; totalValor: number; porAssistente: MetasHoraAssistente[]; }
+const bancoHorasCache = new Map<string, { at: number; data: MetasBancoHoras }>();
+export async function getMetasBancoHoras(mes: string): Promise<MetasBancoHoras | null> {
+  if (!KEY) return null;
+  const hit = bancoHorasCache.get(mes);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.data;
+  try {
+    const r = await fetch(`${BASE}/api/hub/banco-horas/${encodeURIComponent(mes)}`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return hit?.data || null;
+    const j = (await r.json()) as any;
+    if (!j?.ok) return hit?.data || null;
+    const data: MetasBancoHoras = {
+      mes: j.mes || mes,
+      taxaPadrao: Number(j.taxaPadrao || 10),
+      totalHoras: Number(j.totalHoras || 0),
+      totalValor: Number(j.totalValor || 0),
+      porAssistente: Array.isArray(j.porAssistente) ? j.porAssistente : [],
+    };
+    bancoHorasCache.set(mes, { at: Date.now(), data });
+    return data;
+  } catch { return hit?.data || null; }
+}
+
 export async function getMetasDescontos(mes: string): Promise<MetasDescontos | null> {
   if (!KEY) return null;
   const hit = descontosCache.get(mes);

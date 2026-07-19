@@ -18,8 +18,14 @@ export interface MetaProfissional {
   // Bônus de meta: % sobre o que excedeu a meta mensal (serviços).
   // Ex: meta R$10k, fez R$12k, pctBonusExcedente=10 → bônus = R$2k * 10% = R$200
   pctBonusExcedente?: number; // 0..100
-  // Salário fixo mensal somado ao saldo (default 0).
+  // Salário fixo mensal somado ao saldo (default 0). Camila R$3.000, Guilherme R$1.000.
   salarioFixo?: number;       // R$ por mês
+  // Paga por HORA (R$10/h do banco de ponto do Metas) em vez de salarioFixo estático.
+  // Débora e Ellen. ⚠️ a Larissa bate ponto mas é CLT → NÃO leva pagaPorHora.
+  pagaPorHora?: boolean;
+  // Papel, só pra exibição/organização da folha (barbeiro/assistente/secretaria/
+  // limpeza/administrativo). Não muda cálculo — o cálculo é regido por pct*/salarioFixo/pagaPorHora.
+  papel?: string;
   // Modo de comissão deste profissional. 'global' (default) usa o setting da empresa.
   // 'bruto' = comissão sobre preço cheio. 'liquido' = comissão sobre (preço − insumos).
   modoComissao?: 'bruto' | 'liquido' | 'global';

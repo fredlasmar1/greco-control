@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos, getMetasReativacao } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos, getMetasReativacao, getMetasBancoHoras } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
@@ -12915,7 +12915,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const modoIn = String(body.modoComissao || "global").toLowerCase();
       const modoSan: 'bruto' | 'liquido' | 'global' =
         modoIn === 'bruto' || modoIn === 'liquido' ? (modoIn as 'bruto' | 'liquido') : 'global';
-      const meta = await upsertMeta({
+      // upsertMeta mescla ({...atual, ...input}); campos ausentes do body são
+      // PRESERVADOS. pagaPorHora/papel só entram quando vêm no body (undefined
+      // não sobrescreve) pra não zerar o que já estava lá.
+      const patch: any = {
         profissionalId: id,
         nome: body.nome || "",
         metaReais: Number(body.metaReais || 0),
@@ -12928,7 +12931,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         pctBonusExcedente: clampPct(body.pctBonusExcedente),
         salarioFixo: Math.max(0, Number(body.salarioFixo) || 0),
         modoComissao: modoSan,
-      });
+      };
+      if (body.pagaPorHora !== undefined) patch.pagaPorHora = !!body.pagaPorHora;
+      if (body.papel !== undefined) patch.papel = String(body.papel || "");
+      const meta = await upsertMeta(patch);
       return res.json({ ok: true, meta });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
@@ -13191,6 +13197,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     meta: any,
     pagto: any,
     clubeGreco?: { assinantes: number; valorVendasRS: number; comissaoRS: number; pctEfetivo: number },
+    // Banco de horas do Metas, keyed por trinksId → {valor, horas, dias}. Só é
+    // usado por quem tem meta.pagaPorHora (Débora, Ellen ganham R$10/h). A Larissa
+    // bate ponto mas é CLT, então NÃO leva pagaPorHora — não puxa daqui.
+    bancoHoras?: Map<string, { valor: number; horas: number; dias: number }>,
   ) {
     const servicosLiquido = profMes?.servicos?.liquido || 0;
     const produtosLiquidoComissionavel = profMes?.produtos?.liquidoComissionavel || 0;
@@ -13208,7 +13218,12 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const pctPlanoFonte: 'profissional' | 'global' = meta?.pctPlano && meta.pctPlano > 0 ? 'profissional' : 'global';
     const pctBonusExcedente = Number(meta?.pctBonusExcedente || 0);
     const metaReais = Number(meta?.metaReais || 0);
-    const salarioFixo = Number(meta?.salarioFixo || 0);
+    // Salário fixo = valor estático da meta (Camila R$3.000, Guilherme R$1.000)
+    // OU, pra quem ganha por HORA (meta.pagaPorHora), as horas do banco de ponto
+    // do Metas × R$10. Nunca os dois — pagaPorHora manda no fixo da pessoa.
+    const _horaInfo = (meta?.pagaPorHora && bancoHoras) ? bancoHoras.get(String(profissionalId)) : undefined;
+    const salarioFixo = _horaInfo ? Number(_horaInfo.valor || 0) : Number(meta?.salarioFixo || 0);
+    const fixoFonte: 'horas' | 'valor' = _horaInfo ? 'horas' : 'valor';
 
     // Sócio NÃO ganha bônus (nem excedente de meta, nem top-1). André é sócio.
     // Lista configurável em settings.profissionaisSocio (default: Carlos André).
@@ -13333,6 +13348,9 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         servicosBruto,                       // produção de serviços comparada ao limiar
         bateuMetaCategoria,
         salarioFixo,
+        fixoFonte,                                    // 'horas' = veio do ponto; 'valor' = fixo do cadastro
+        fixoHoras: _horaInfo?.horas ?? null,          // horas do banco de ponto (só se pagaPorHora)
+        fixoDias: _horaInfo?.dias ?? null,
         totalBruto,
       },
       // Detalhe Clube Greco (assinaturas vendidas via aba Assinaturas)
@@ -13599,12 +13617,20 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         }
       }
 
+      // Banco de horas UMA vez (fora do Promise.all — senão os 12 disparam
+      // concorrente e batem o HUB junto). Mapa trinksId → {valor, horas, dias}
+      // pra alimentar o salarioFixo de quem paga por hora (Débora, Ellen).
+      const _bh = await getMetasBancoHoras(mes).catch(() => null);
+      const bancoHoras = new Map<string, { valor: number; horas: number; dias: number }>();
+      for (const a of (_bh?.porAssistente || [])) {
+        if (a.trinksId) bancoHoras.set(String(a.trinksId), { valor: Number(a.valor || 0), horas: Number(a.horas || 0), dias: Number(a.dias || 0) });
+      }
       let linhas = await Promise.all(Array.from(ids).map(async (id) => {
         const profMes = periodo.porProfissional[id];
         const meta = metas[id];
         const pagto = pagamentosMes[id];
         const clube = matchClubePorProfId.get(id);
-        return calcularLinhaPagamento(mes, id, profMes, meta, pagto, clube);
+        return calcularLinhaPagamento(mes, id, profMes, meta, pagto, clube, bancoHoras);
       }));
 
       // v91: descarta linhas-fantasma — ids SEM meta E sem nenhum valor a pagar.

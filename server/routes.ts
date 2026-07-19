@@ -47,6 +47,7 @@ import {
   setWebhookTelegram,
   getMeTelegram,
   enviarMensagemCompras,
+  responderCallbackCompras,
   isComprasBotConfigured,
   type ResumoDiaData,
   type ResumoAmanhaData,
@@ -11391,7 +11392,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   // Decide: NOTA de produtos (tem itens) → pede confirmação; senão → salva direto.
   // semConfirmacao=true (texto do grupo, que é SEMPRE compra) → salva na hora e
   // aplica os custos dos itens em silêncio, sem esperar "SIM".
-  async function finalizarCompra(dados: any, ctx: { chatId: string; from: string; fileId?: string; foto?: { b64: string; mime: string }; semConfirmacao?: boolean }): Promise<void> {
+  async function finalizarCompra(dados: any, ctx: { chatId: string; from: string; fileId?: string; foto?: { b64: string; mime: string }; semConfirmacao?: boolean; jaPerguntado?: boolean }): Promise<void> {
     const { chatId, from } = ctx;
     if (dados.ehComprovante === false || !(Number(dados.valor) > 0)) {
       await traçoCompras(from, "nao_comprovante", { valor: dados.valor });
@@ -11402,6 +11403,33 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const itens = Array.isArray(dados.itens)
       ? dados.itens.filter((it: any) => String(it?.produto || "").trim() && Number(it?.custoUnitario || 0) > 0)
       : [];
+    // PERGUNTAR EM VEZ DE ADIVINHAR (decisão do dono, 19/07). Dois casos param aqui:
+    // (a) pagamento a funcionário → precisa saber DE QUEM pra abater da folha, senão
+    //     o dinheiro some dos dois lados (não vira despesa porque "já está na folha",
+    //     e não abate da folha porque ninguém lançou);
+    // (b) categoria incerta → antes caía em "Outros", que fica FORA do lucro.
+    // Em ambos guardamos a compra e devolvemos botões; o registro sai no callback.
+    if (!ctx.jaPerguntado) {
+      const ehLabor = String(compra.categoria) === "Salários & Equipe";
+      const incerta = String(compra.categoria) === "Outros" || compra.confianca === "baixa";
+      if (ehLabor || incerta) {
+        await kvSet(`compras_pergunta:${chatId}`, { compra, itens, foto: ctx.foto || null, from, criadoEm: new Date().toISOString() });
+        if (ehLabor) {
+          await perguntarDeQuem(chatId, compra, from);
+          return;
+        }
+        const cats = CATEGORIAS_COMPRA.filter(c => c !== "Outros");
+        const linhas: any[][] = [];
+        for (let i = 0; i < cats.length; i += 2) {
+          linhas.push(cats.slice(i, i + 2).map(c => ({ texto: c.slice(0, 24), data: `c|${CATEGORIAS_COMPRA.indexOf(c)}` })));
+        }
+        await enviarMensagemCompras(
+          `🏷️ <b>R$ ${fmtBRLc(compra.valor)}</b> — que tipo de gasto é?\n<i>${compra.loja || compra.descricao || ""}</i>\n\nSó registro depois que você disser, pra não cair em "Outros" e ficar fora do lucro.`,
+          chatId, linhas);
+        await traçoCompras(from, "perguntou_categoria", { valor: compra.valor });
+        return;
+      }
+    }
     if (itens.length > 0 && !ctx.semConfirmacao) {
       await kvSet(`compras_pending:${chatId}`, { compra, itens, foto: ctx.foto || null, criadoEm: new Date().toISOString() });
       let msg = `📦 <b>Nota de compra lida</b> — confira antes de eu salvar os custos:\n💰 Total: <b>R$ ${fmtBRLc(compra.valor)}</b> · 🏪 ${compra.loja}\n\n<b>Itens (custo unitário):</b>\n`;
@@ -11521,6 +11549,98 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     await enviarMensagemCompras(msg, chatId);
   }
 
+  /** Botões com a equipe: "esse pagamento é de quem?" — a resposta vira vale na folha. */
+  async function perguntarDeQuem(chatId: string, compra: any, from: string): Promise<void> {
+    const metas = await getAllMetas();
+    const pessoas = Object.values(metas as Record<string, any>)
+      .filter(m => m?.profissionalId && m?.nome)
+      .map(m => ({ id: String(m.profissionalId), nome: String(m.nome).split("-").pop()!.trim() }))
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+    const linhas: any[][] = [];
+    for (let i = 0; i < pessoas.length; i += 2) {
+      linhas.push(pessoas.slice(i, i + 2).map(p => ({ texto: p.nome.slice(0, 18), data: `q|${p.id}` })));
+    }
+    linhas.push([{ texto: "↩︎ Não é pagamento a funcionário", data: "q|nao" }]);
+    await enviarMensagemCompras(
+      `👤 <b>R$ ${fmtBRLc(compra.valor)}</b> — pagamento pra quem?\n<i>${compra.loja || compra.descricao || ""}</i>\n\nVou abater da folha da pessoa.`,
+      chatId, linhas);
+    await traçoCompras(from, "perguntou_quem", { valor: compra.valor });
+  }
+
+  /**
+   * Resposta do dono a uma pergunta do bot (toque num botão).
+   *  q|<profId>  → o gasto é pagamento a essa pessoa: vira VALE na folha dela
+   *                (acumula, não substitui) e NÃO entra como despesa no lucro,
+   *                porque a comissão cheia já entra lá — contar duas vezes dobraria.
+   *  q|nao       → não era pagamento a funcionário: cai na pergunta de categoria.
+   *  c|<idx>     → categoria escolhida; registra normal.
+   */
+  async function tratarRespostaCompras(chatId: string, data: string, callbackId: string): Promise<void> {
+    const pend: any = await kvGet(`compras_pergunta:${chatId}`);
+    if (!pend?.compra) {
+      await responderCallbackCompras(callbackId, "Essa pergunta já foi respondida.");
+      return;
+    }
+    const from = String(pend.from || "alguém");
+    const [tipo, arg] = String(data).split("|");
+
+    if (tipo === "q" && arg && arg !== "nao") {
+      const metas = await getAllMetas();
+      const meta: any = (metas as any)[arg];
+      const nome = String(meta?.nome || arg).split("-").pop()!.trim();
+      const mes = String(pend.compra.mes);
+      const valor = Number(pend.compra.valor) || 0;
+      // ACUMULA: pode haver mais de um vale no mês (dia 15, dia 25...).
+      const atual: any = await getPagamentoMes(mes, arg).catch(() => null);
+      const valeNovo = Math.round(((Number(atual?.vale) || 0) + valor) * 100) / 100;
+      const nota = [String(atual?.valeNota || "").trim(),
+        `${pend.compra.data.split("-").reverse().join("/")} R$ ${fmtBRLc(valor)} (Telegram)`]
+        .filter(Boolean).join(" · ");
+      await upsertPagamentoMes(mes, arg, { vale: valeNovo, valeNota: nota } as any);
+      // registra a compra marcada como abatida na folha (fica no histórico, fora do lucro)
+      await salvarCompra({ ...pend.compra, categoria: "Salários & Equipe",
+        descricao: `${pend.compra.descricao || "Pagamento"} — ${nome}`.slice(0, 180) } as any);
+      await kvSet(`compras_pergunta:${chatId}`, null);
+      await responderCallbackCompras(callbackId, `Abatido da folha de ${nome}`);
+      await traçoCompras(from, "vale_lancado", { profId: arg, valor, mes });
+      await enviarMensagemCompras(
+        `✅ <b>Pagamento registrado</b>\n💰 R$ ${fmtBRLc(valor)} → <b>${nome}</b>\n\n📉 Abatido da folha de ${mes.split("-").reverse().join("/")}: vale acumulado <b>R$ ${fmtBRLc(valeNovo)}</b>.\n<i>Não entra como despesa no lucro — a comissão cheia já entra.</i>`,
+        chatId);
+      return;
+    }
+
+    if (tipo === "c" || (tipo === "q" && arg === "nao")) {
+      if (tipo === "q") {
+        // não era funcionário → agora pergunta a categoria
+        const cats = CATEGORIAS_COMPRA.filter(c => c !== "Outros");
+        const linhas: any[][] = [];
+        for (let i = 0; i < cats.length; i += 2) {
+          linhas.push(cats.slice(i, i + 2).map(c => ({ texto: c.slice(0, 24), data: `c|${CATEGORIAS_COMPRA.indexOf(c)}` })));
+        }
+        await responderCallbackCompras(callbackId, "Ok — então que tipo é?");
+        await enviarMensagemCompras(`🏷️ <b>R$ ${fmtBRLc(pend.compra.valor)}</b> — que tipo de gasto é?`, chatId, linhas);
+        return;
+      }
+      const cat = CATEGORIAS_COMPRA[Number(arg)] || "Outros";
+      // Se ele escolher "Salários & Equipe" aqui, ainda precisamos saber DE QUEM —
+      // senão cai no mesmo buraco: fora do lucro (excluidoLabor) e sem abater da
+      // folha. Volta pra pergunta de quem, em vez de registrar.
+      if (cat === "Salários & Equipe") {
+        await kvSet(`compras_pergunta:${chatId}`, { ...pend, compra: { ...pend.compra, categoria: cat } });
+        await responderCallbackCompras(callbackId, "É pagamento a funcionário — de quem?");
+        await perguntarDeQuem(chatId, { ...pend.compra, categoria: cat }, from);
+        return;
+      }
+      await kvSet(`compras_pergunta:${chatId}`, null);
+      await responderCallbackCompras(callbackId, cat);
+      await finalizarCompra(
+        { ...pend.compra, ehComprovante: true, categoria: cat, itens: pend.itens || [] },
+        { chatId, from, foto: pend.foto || undefined, semConfirmacao: true, jaPerguntado: true });
+      return;
+    }
+    await responderCallbackCompras(callbackId, "Não entendi essa resposta.");
+  }
+
   // POST /api/telegram/webhook/:secret — receptor de mensagens do grupo.
   app.post("/api/telegram/webhook/:secret", async (req: Request, res: Response) => {
     try {
@@ -11530,7 +11650,15 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         return res.status(403).json({ ok: false });
       }
       const msg = req.body?.message;
+      const cb = req.body?.callback_query;
       res.json({ ok: true }); // ACK imediato pro Telegram (processa em background)
+      // Toque num botão (resposta a "de quem é?" / "que categoria?")
+      if (cb) {
+        const cbChat = String(cb.message?.chat?.id || "");
+        await tratarRespostaCompras(cbChat, String(cb.data || ""), String(cb.id || ""))
+          .catch(e => log(`[compras] callback erro: ${e.message}`, "compras"));
+        return;
+      }
       if (!msg) return;
       const chatId = String(msg.chat?.id || "");
       const from = String(msg.from?.first_name || msg.from?.username || "alguém");
@@ -11569,18 +11697,25 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       // o que não for gasto, então pode ser generoso — antes o gatilho era estreito
       // (só compr/paguei/gastei...) e ignorava em SILÊNCIO despesas ditas de outro
       // jeito (ex.: "despesa material 30 em dinheiro") → não entrava nos gastos.
+      // REGRA DO DONO (19/07): "esse grupo é SEMPRE de compra e nunca de venda —
+      // tudo que eu mandar tem que somar como despesa". Então QUALQUER texto com
+      // número é candidato a gasto. O gatilho antigo exigia palavra de gasto OU
+      // "R$/vírgula", e por isso "mais 150 pro Pedro" era ignorado EM SILÊNCIO —
+      // exatamente a reclamação. Se houver número, processa; a pergunta de
+      // categoria/de-quem resolve o resto. Sem número, o bot AVISA em vez de sumir.
       const temNumero = /\d/.test(txtRaw);
-      const temPalavraGasto = /(compr|paguei|paga|pagamos|pagar|gastei|gasto|gastamos|custou|custo|nota|fornecedor|despesa|sa[ií]da|dinheiro|esp[eé]cie|boleto|d[eé]bito|cr[eé]dito|\bpix\b|comprovante|abasteci|abastecimento)/i.test(txtRaw);
-      const temValorRS = /(r\$\s*\d|\d+\s*reais|\breais\b|\d[.,]\d{2}\b)/i.test(txtRaw);
-      if (txtRaw.length >= 5 && temNumero && (temPalavraGasto || temValorRS)) {
+      if (txtRaw.length >= 3 && temNumero) {
         await processarTextoCompra(txtRaw, chatId, from).catch(erroTrace);
         return;
       }
 
-      // senão: chat normal → ignora (mas registra se veio mídia não reconhecida).
-      // Se tinha número mas não bateu o gatilho, registra pra diagnóstico (não some).
-      if (msg.photo || msg.document) kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "sem_fileid", temPhoto: !!msg.photo, temDoc: !!msg.document, docMime: msg.document?.mime_type || null }).catch(() => {});
-      else if (txtRaw.length >= 5 && temNumero) kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "texto_ignorado_sem_gatilho", texto: txtRaw.slice(0, 120) }).catch(() => {});
+      if (msg.photo || msg.document) { kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "sem_fileid", temPhoto: !!msg.photo, temDoc: !!msg.document, docMime: msg.document?.mime_type || null }).catch(() => {}); return; }
+      // Texto sem número nenhum: pode ser conversa ("bom dia") ou um gasto mal
+      // digitado. Nada de silêncio — o dono precisa saber que não entrou.
+      if (txtRaw.length >= 3) {
+        kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from, etapa: "texto_sem_valor", texto: txtRaw.slice(0, 120) }).catch(() => {});
+        await enviarMensagemCompras(`🤔 Não achei valor nenhum em "<i>${txtRaw.slice(0, 60)}</i>". Se foi um gasto, me manda com o valor (ex.: <b>pregos 12</b>) que eu registro.`, chatId).catch(() => {});
+      }
     } catch (err: any) {
       log(`[compras] webhook erro: ${err.message}`, "compras");
     }

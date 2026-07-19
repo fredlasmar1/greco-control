@@ -20,23 +20,48 @@ export function isComprasBotConfigured(): boolean {
   return !!COMPRAS_BOT_TOKEN;
 }
 
-/** Envia mensagem pelo bot de COMPRAS (grupo de comprovantes). */
+/** Um botão do teclado inline. `data` volta no callback_query (máx 64 bytes). */
+export interface BotaoCompras { texto: string; data: string; }
+
+/**
+ * Envia mensagem pelo bot de COMPRAS (grupo de comprovantes).
+ * `botoes` (opcional) monta um teclado inline — usado pra PERGUNTAR em vez de
+ * adivinhar: "esse pagamento é de quem?" / "que categoria?". Decisão do dono
+ * (19/07): a IA só classifica o óbvio; na dúvida, pergunta.
+ */
 export async function enviarMensagemCompras(
   texto: string,
   chatId: string,
+  botoes?: BotaoCompras[][],
 ): Promise<{ ok: boolean; error?: string }> {
   if (!COMPRAS_BOT_TOKEN) return { ok: false, error: "TELEGRAM_COMPRAS_BOT_TOKEN não configurado" };
   try {
+    const body: any = { chat_id: chatId, text: texto, parse_mode: "HTML", disable_web_page_preview: true };
+    if (botoes?.length) {
+      body.reply_markup = { inline_keyboard: botoes.map(l => l.map(b => ({ text: b.texto, callback_data: b.data }))) };
+    }
     const res = await fetch(`https://api.telegram.org/bot${COMPRAS_BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: "HTML", disable_web_page_preview: true }),
+      body: JSON.stringify(body),
     });
     const data: any = await res.json();
     return data.ok ? { ok: true } : { ok: false, error: data.description || `HTTP ${res.status}` };
   } catch (err: any) {
     return { ok: false, error: err.message };
   }
+}
+
+/** Tira o "relógio girando" do botão que o dono tocou. */
+export async function responderCallbackCompras(callbackId: string, texto?: string): Promise<void> {
+  if (!COMPRAS_BOT_TOKEN) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${COMPRAS_BOT_TOKEN}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackId, text: texto || "" }),
+    });
+  } catch { /* cosmético */ }
 }
 
 export function getChatId(): string {

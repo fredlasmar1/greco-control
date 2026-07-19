@@ -11368,7 +11368,9 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   }
 
   // Decide: NOTA de produtos (tem itens) → pede confirmação; senão → salva direto.
-  async function finalizarCompra(dados: any, ctx: { chatId: string; from: string; fileId?: string; foto?: { b64: string; mime: string } }): Promise<void> {
+  // semConfirmacao=true (texto do grupo, que é SEMPRE compra) → salva na hora e
+  // aplica os custos dos itens em silêncio, sem esperar "SIM".
+  async function finalizarCompra(dados: any, ctx: { chatId: string; from: string; fileId?: string; foto?: { b64: string; mime: string }; semConfirmacao?: boolean }): Promise<void> {
     const { chatId, from } = ctx;
     if (dados.ehComprovante === false || !(Number(dados.valor) > 0)) {
       await traçoCompras(from, "nao_comprovante", { valor: dados.valor });
@@ -11379,7 +11381,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const itens = Array.isArray(dados.itens)
       ? dados.itens.filter((it: any) => String(it?.produto || "").trim() && Number(it?.custoUnitario || 0) > 0)
       : [];
-    if (itens.length > 0) {
+    if (itens.length > 0 && !ctx.semConfirmacao) {
       await kvSet(`compras_pending:${chatId}`, { compra, itens, foto: ctx.foto || null, criadoEm: new Date().toISOString() });
       let msg = `📦 <b>Nota de compra lida</b> — confira antes de eu salvar os custos:\n💰 Total: <b>R$ ${fmtBRLc(compra.valor)}</b> · 🏪 ${compra.loja}\n\n<b>Itens (custo unitário):</b>\n`;
       for (const it of itens.slice(0, 20)) msg += `· ${String(it.produto)} — ${Number(it.quantidade || 1)}× R$ ${fmtBRLc(Number(it.custoUnitario))}\n`;
@@ -11391,10 +11393,20 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     }
     const nova = await salvarCompra(compra as any);
     await guardarFotoCompra(nova, ctx.foto);
+    // Texto de compra de produtos (itens + semConfirmacao): aplica os custos em
+    // silêncio (best-effort). A compra já entrou; isso só enriquece a margem.
+    let custosMsg = "";
+    if (itens.length > 0 && ctx.semConfirmacao) {
+      try {
+        const { atualizados } = await atualizarCustosDeItens(itens);
+        if (atualizados.length) custosMsg = `\n📈 ${atualizados.length} custo(s) de produto atualizado(s)`;
+      } catch { /* segue — a compra já está salva */ }
+    }
     await traçoCompras(from, "salvo", { valor: compra.valor, mes: compra.mes });
     const totalMes = resumoCompras(await listarCompras(compra.mes)).total;
     let msg = `✅ <b>Compra registrada</b>\n💰 <b>R$ ${fmtBRLc(compra.valor)}</b>\n🏪 ${compra.loja}\n🏷️ ${compra.categoria}\n📅 ${compra.data.split("-").reverse().join("/")}`;
     if (compra.descricao) msg += `\n📝 ${compra.descricao}`;
+    if (custosMsg) msg += custosMsg;
     if (compra.confianca === "baixa") msg += `\n⚠️ <i>Confira no app.</i>`;
     if (compra.telegramFrom) msg += `\n👤 via ${compra.telegramFrom}`;
     msg += `\n\n<i>Total de compras em ${compra.mes.split("-").reverse().join("/")}: R$ ${fmtBRLc(totalMes)}</i>`;
@@ -11411,11 +11423,54 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     await finalizarCompra(dados, { chatId, from, fileId, foto: { b64: arq.buffer.toString("base64"), mime: arq.mime } });
   }
 
+  // Extrai um valor em R$ de um texto livre (fallback quando a IA falha/recusa).
+  // Aceita "R$ 12,00", "12,00", "1.234,56", "12 reais", "12.50", "12".
+  function parseBRLNum(s: string): number {
+    let x = String(s || "").replace(/[^\d.,]/g, "");
+    if (!x) return 0;
+    if (x.includes(",")) x = x.replace(/\./g, "").replace(",", "."); // 1.234,56 → 1234.56
+    const n = Number(x);
+    return Number.isFinite(n) ? Math.abs(n) : 0;
+  }
+  function extrairValorDoTexto(texto: string): number {
+    const t = String(texto || "");
+    const m =
+      t.match(/r\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+(?:[.,]\d{1,2})?)/i) ||   // R$ 1.234,56 / R$ 12,00 / R$12
+      t.match(/(\d{1,3}(?:\.\d{3})*,\d{2})/) ||                              // 1.234,56 / 12,00
+      t.match(/(\d+(?:[.,]\d{1,2})?)\s*reais/i) ||                          // 12 reais / 12,50 reais
+      t.match(/(\d+(?:[.,]\d{1,2})?)/);                                     // qualquer número (último recurso)
+    return m ? parseBRLNum(m[1]) : 0;
+  }
+
   async function processarTextoCompra(texto: string, chatId: string, from: string): Promise<void> {
     await traçoCompras(from, "texto_recebido");
-    const dados = await extrairCompraTextoIA(texto);
-    if (!dados) { await enviarMensagemCompras("⚠️ Não consegui interpretar a mensagem (IA indisponível).", chatId); return; }
-    await finalizarCompra(dados, { chatId, from });
+    let dados = await extrairCompraTextoIA(texto);
+    // Este grupo é SEMPRE compra (nunca venda). Se a IA caiu ou disse "não é
+    // compra" mas há um valor na mensagem, registra assim mesmo (regex fallback)
+    // — nada que o dono manda pode ficar de fora da soma.
+    if (!dados || dados.ehComprovante === false || !(Number(dados?.valor) > 0)) {
+      const valorTxt = extrairValorDoTexto(texto);
+      if (valorTxt > 0) {
+        dados = {
+          ehComprovante: true,
+          valor: valorTxt,
+          tipo: "compra",
+          categoria: dados?.categoria,
+          loja: dados?.loja,
+          descricao: (dados?.descricao && String(dados.descricao).trim()) || texto.slice(0, 90),
+          confianca: "baixa",
+          data: dados?.data,
+          itens: [],
+        };
+      } else {
+        await enviarMensagemCompras("🤔 Não achei um valor nessa mensagem. Ex.: “compra de R$ 12,00 pregos”.", chatId);
+        return;
+      }
+    }
+    // Grupo é sempre COMPRA → nunca venda. Garante o tipo/registro.
+    dados.ehComprovante = true;
+    if (!["pix", "dinheiro", "compra", "boleto", "outro"].includes(dados.tipo)) dados.tipo = "compra";
+    await finalizarCompra(dados, { chatId, from, semConfirmacao: true });
   }
 
   // Confirmação (SIM): atualiza custos (casa por nome) + registra a compra.

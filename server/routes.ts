@@ -11424,11 +11424,22 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       } catch { /* segue — a compra já está salva */ }
     }
     await traçoCompras(from, "salvo", { valor: compra.valor, mes: compra.mes });
-    const totalMes = resumoCompras(await listarCompras(compra.mes)).total;
+    const doMes = await listarCompras(compra.mes);
+    const totalMes = resumoCompras(doMes).total;
+    // AVISO de possível duplicata (não bloqueia). Serve principalmente pro
+    // reenvio dos comprovantes na recuperação de um mês: mandar o mesmo recibo
+    // duas vezes dobraria o gasto em silêncio. Repetição legítima existe (dois
+    // pagamentos iguais no mesmo dia), então só alertamos — quem decide é o dono.
+    const iguais = doMes.filter(c =>
+      c.id !== nova.id &&
+      Math.abs(Number(c.valor) - Number(nova.valor)) < 0.01 &&
+      String(c.data) === String(nova.data) &&
+      String(c.loja || "").trim().toLowerCase() === String(nova.loja || "").trim().toLowerCase());
     let msg = `✅ <b>Compra registrada</b>\n💰 <b>R$ ${fmtBRLc(compra.valor)}</b>\n🏪 ${compra.loja}\n🏷️ ${compra.categoria}\n📅 ${compra.data.split("-").reverse().join("/")}`;
     if (compra.descricao) msg += `\n📝 ${compra.descricao}`;
     if (custosMsg) msg += custosMsg;
     if (compra.confianca === "baixa") msg += `\n⚠️ <i>Confira no app.</i>`;
+    if (iguais.length > 0) msg += `\n\n🔁 <b>Atenção:</b> já havia ${iguais.length} compra(s) de R$ ${fmtBRLc(nova.valor)} em ${nova.loja} nesta mesma data. Se foi reenvio, apague a repetida no app.`;
     if (compra.telegramFrom) msg += `\n👤 via ${compra.telegramFrom}`;
     msg += `\n\n<i>Total de compras em ${compra.mes.split("-").reverse().join("/")}: R$ ${fmtBRLc(totalMes)}</i>`;
     await enviarMensagemCompras(msg, chatId);

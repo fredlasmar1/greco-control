@@ -6,7 +6,7 @@
  * Fluxo: foto no grupo → webhook → Claude extrai {valor,data,loja,categoria} →
  * salvarCompra → bot confirma no grupo → aparece na aba "Compras do Mês".
  */
-import { kvGet, kvSet } from "./db";
+import { kvGet, kvGetParaEscrita, kvSet } from "./db";
 
 // Categorias de compra — os principais gastos de uma barbearia. A IA escolhe uma.
 export const CATEGORIAS_COMPRA = [
@@ -81,10 +81,18 @@ export async function listarCompras(mes: string): Promise<Compra[]> {
   return arr.slice().sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")) || String(b.criadoEm || "").localeCompare(String(a.criadoEm || "")));
 }
 
+// Leitura para read-modify-write: estoura se o banco falhar, em vez de devolver
+// lista vazia. Sem isso, um blip de conexão faz a regravação apagar o mês inteiro.
+async function listarComprasParaEscrita(mes: string): Promise<Compra[]> {
+  const d = await kvGetParaEscrita<Compra[]>(kvKey(mes));
+  if (d !== null && !Array.isArray(d)) throw new Error(`compras:${mes} corrompida (esperava array)`);
+  return Array.isArray(d) ? d.slice() : [];
+}
+
 export async function salvarCompra(
   input: Omit<Compra, "id" | "criadoEm" | "atualizadoEm"> & { id?: string },
 ): Promise<Compra> {
-  const lista = await listarCompras(input.mes);
+  const lista = await listarComprasParaEscrita(input.mes);
   const agora = new Date().toISOString();
   const nova: Compra = {
     ...input,
@@ -98,7 +106,7 @@ export async function salvarCompra(
 }
 
 export async function atualizarCompra(mes: string, id: string, patch: Partial<Compra>): Promise<Compra | null> {
-  const lista = await listarCompras(mes);
+  const lista = await listarComprasParaEscrita(mes);
   const i = lista.findIndex(c => c.id === id);
   if (i < 0) return null;
   lista[i] = { ...lista[i], ...patch, id, mes, atualizadoEm: new Date().toISOString() };
@@ -107,7 +115,7 @@ export async function atualizarCompra(mes: string, id: string, patch: Partial<Co
 }
 
 export async function removerCompra(mes: string, id: string): Promise<boolean> {
-  const lista = await listarCompras(mes);
+  const lista = await listarComprasParaEscrita(mes);
   const nova = lista.filter(c => c.id !== id);
   if (nova.length === lista.length) return false;
   await kvSet(kvKey(mes), nova);

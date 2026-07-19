@@ -52,6 +52,18 @@ export async function kvGet<T = any>(key: string): Promise<T | null> {
   }
 }
 
+// Igual ao kvGet, mas ESTOURA em vez de devolver null quando a leitura falha.
+// Existe porque kvGet achata "não existe" e "não consegui ler" no mesmo null —
+// inofensivo em leitura, destrutivo em read-modify-write: um blip de conexão faz
+// a lista vir vazia, o código adiciona 1 item e a gravação APAGA o resto.
+// Foi exatamente assim que 52 compras de julho viraram 1 (Connection terminated
+// unexpectedly). Use SEMPRE esta variante antes de regravar uma coleção inteira.
+export async function kvGetParaEscrita<T = any>(key: string): Promise<T | null> {
+  if (!pool || !dbReady) throw new Error(`kv indisponível para escrita (key=${key})`);
+  const r = await pool.query("SELECT value FROM kv_store WHERE key = $1", [key]);
+  return r.rows[0]?.value ?? null;
+}
+
 export async function kvSet(key: string, value: any): Promise<boolean> {
   if (!pool || !dbReady) return false;
   try {

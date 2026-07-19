@@ -8,7 +8,7 @@ import * as crypto from "crypto";
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
-import { kvGet, kvSet, waitForDb, isDbReady } from "./db";
+import { kvGet, kvGetParaEscrita, kvSet, waitForDb, isDbReady } from "./db";
 import { buildSnapshot, buildSystemPrompt, buildMessages, type ConselheiroDataSources } from "./conselheiro";
 import * as trinksImport from "./trinksImport";
 import * as XLSX from "xlsx";
@@ -253,9 +253,28 @@ async function loadData<T>(dbKey: string, file: string, defaultValue: T): Promis
   return defaultValue;
 }
 
+// TRAVA ANTI-APAGAMENTO (18/07). Estas coleções vivem em memória e são regravadas
+// INTEIRAS a cada alteração. Se a carga inicial do Postgres falhar, os arrays ficam
+// vazios e a primeira alteração grava o vazio POR CIMA dos dados bons — foi assim
+// que 52 compras de julho viraram 1 (lá o read-modify-write era por chamada; aqui o
+// risco é o mesmo, só que dura a vida toda do processo).
+// Só liberamos a escrita no DB depois de uma carga inicial COMPROVADAMENTE bem
+// sucedida. Enquanto não houver, o backup em arquivo continua sendo gravado — o
+// dado do usuário não se perde, só não sobrescreve o banco.
+let dbCarregouOk = false;
+function podeGravarNoDb(dbKey: string): boolean {
+  if (dbCarregouOk) return true;
+  log(`⚠️ NÃO gravando "${dbKey}" no Postgres: a carga inicial do banco não foi confirmada. O banco mantém o dado bom; só o backup em arquivo foi atualizado.`, "db");
+  return false;
+}
+/** kvSet de coleção inteira — passa pela trava. Use SEMPRE que regravar uma lista. */
+function kvSetColecao(dbKey: string, data: any) {
+  if (podeGravarNoDb(dbKey)) kvSet(dbKey, data).catch(() => {});
+}
+
 function persistData(dbKey: string, file: string, data: any) {
-  // Grava no DB (async, fire-and-forget)
-  kvSet(dbKey, data).catch(() => {});
+  // Grava no DB (async, fire-and-forget) — só se a carga inicial foi confirmada
+  kvSetColecao(dbKey, data);
   // Grava no arquivo (sync, backup local)
   try {
     fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
@@ -579,7 +598,7 @@ function saveResolvedDuplicates() {
 }
 
 function saveFinanceEntries() {
-  kvSet("financeiro", financeEntries).catch(() => {});
+  kvSetColecao("financeiro", financeEntries);
   try {
     fs.writeFileSync(FINANCEIRO_FILE, JSON.stringify(financeEntries, null, 2), "utf-8");
   } catch (err) {
@@ -672,12 +691,12 @@ try {
 } catch { log("Consolidação transações: starting fresh", "consolidacao"); }
 
 function saveContasConsolidacao() {
-  kvSet("consolidacao_contas", contasConsolidacao).catch(() => {});
+  kvSetColecao("consolidacao_contas", contasConsolidacao);
   try { fs.writeFileSync(CONSOLIDACAO_CONTAS_FILE, JSON.stringify(contasConsolidacao, null, 2), "utf-8"); }
   catch { log("Consolidação contas: could not save", "consolidacao"); }
 }
 function saveTransacoesBanco() {
-  kvSet("consolidacao_transacoes", transacoesBanco).catch(() => {});
+  kvSetColecao("consolidacao_transacoes", transacoesBanco);
   try { fs.writeFileSync(CONSOLIDACAO_TRANSACOES_FILE, JSON.stringify(transacoesBanco, null, 2), "utf-8"); }
   catch { log("Consolidação transações: could not save", "consolidacao"); }
 }
@@ -779,7 +798,7 @@ try {
 
 function saveStore() {
   storeData.updatedAt = new Date().toISOString();
-  kvSet("store", storeData).catch(() => {});
+  kvSetColecao("store", storeData);
   try {
     fs.writeFileSync(STORE_FILE, JSON.stringify(storeData, null, 2), "utf-8");
   } catch { log("Store: could not save", "store"); }
@@ -1593,19 +1612,19 @@ export async function registerRoutes(
         dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore,
         dbAssinaturaClientes, dbAssinaturaPlanos, dbMetaDiaria,
       ] = await Promise.all([
-        kvGet<typeof usuarios>("usuarios"),
-        kvGet<typeof financeEntries>("financeiro"),
-        kvGet<typeof metasHistorico>("metas"),
-        kvGet<typeof metasBarbeiros>("metas_barbeiros"),
-        kvGet<typeof checklistData>("checklist"),
-        kvGet<typeof contasConsolidacao>("consolidacao_contas"),
-        kvGet<typeof transacoesBanco>("consolidacao_transacoes"),
-        kvGet<typeof regrasGastos>("regras_gastos"),
-        kvGet<typeof resolvedDuplicateIds>("duplicados_resolvidos"),
-        kvGet<typeof storeData>("store"),
-        kvGet<typeof assinaturaClientes>("assinaturas_clientes"),
-        kvGet<typeof assinaturaPlanos>("assinaturas_planos"),
-        kvGet<{ valor: number }>("meta_diaria"),
+        kvGetParaEscrita<typeof usuarios>("usuarios"),
+        kvGetParaEscrita<typeof financeEntries>("financeiro"),
+        kvGetParaEscrita<typeof metasHistorico>("metas"),
+        kvGetParaEscrita<typeof metasBarbeiros>("metas_barbeiros"),
+        kvGetParaEscrita<typeof checklistData>("checklist"),
+        kvGetParaEscrita<typeof contasConsolidacao>("consolidacao_contas"),
+        kvGetParaEscrita<typeof transacoesBanco>("consolidacao_transacoes"),
+        kvGetParaEscrita<typeof regrasGastos>("regras_gastos"),
+        kvGetParaEscrita<typeof resolvedDuplicateIds>("duplicados_resolvidos"),
+        kvGetParaEscrita<typeof storeData>("store"),
+        kvGetParaEscrita<typeof assinaturaClientes>("assinaturas_clientes"),
+        kvGetParaEscrita<typeof assinaturaPlanos>("assinaturas_planos"),
+        kvGetParaEscrita<{ valor: number }>("meta_diaria"),
       ]);
       if (Array.isArray(dbUsuarios) && dbUsuarios.length > 0) usuarios = dbUsuarios;
       if (Array.isArray(dbFinanceiro)) financeEntries = dbFinanceiro;
@@ -1647,6 +1666,8 @@ export async function registerRoutes(
           kvSet("meta_diaria", { valor: metaDiaria }),
         ]);
       }
+      // Carga CONFIRMADA: só a partir daqui as coleções podem sobrescrever o banco.
+      dbCarregouOk = true;
       log("Dados carregados do Postgres", "db");
     }
   } catch (err: any) {

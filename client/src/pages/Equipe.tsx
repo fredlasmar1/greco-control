@@ -158,6 +158,10 @@ type RespApi = {
     temRanking: boolean;
     apiPeriodo: number;
     temOficial: boolean;
+    // quanto da receita oficial do mês o Ranking CSV está cobrindo (null sem oficial)
+    coberturaPct?: number | null;
+    rankingImportadoEm?: string | null;
+    rankingDiasParado?: number | null;
   };
   aguardandoRanking?: boolean;
 };
@@ -277,6 +281,16 @@ export default function Equipe() {
 
   const monthLabel = labelMesPtBR(mes);
   const fonte = equipe?.fonte as string | undefined;
+  // O Ranking CSV é import MANUAL e a comissão sai dele. Desde o overlay ao vivo, esta
+  // tela mostra serviço/atendimento de AGORA junto de comissão do dia do import — se o
+  // CSV envelhecer, os dois deixam de conversar (jul/2026: 13 dias, comissão sobre 26%
+  // do mês) e a tela parece quebrada. A partir de 3 dias, avisamos em vez de dizer
+  // "definitiva".
+  const rankDias = equipe?.rankingCsv?.diasParado as number | null | undefined;
+  const rankData = equipe?.rankingCsv?.geradoEm as string | null | undefined;
+  const rankVelho = typeof rankDias === "number" && rankDias >= 3;
+  const cobertura = data?.conferencia?.coberturaPct as number | null | undefined;
+  const fmtDia = (s?: string | null) => (s ? s.split("-").reverse().join("/") : "?");
   const semRanking = !!equipe?.semRanking;
 
   // ── Linhas com movimento (esconde profissionais zerados) ──
@@ -349,9 +363,18 @@ export default function Equipe() {
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
                 Feito pra fechar o pagamento — dados <strong>Gmail → CSV → API</strong> (0 token no caminho normal).
-                {fonte === "ranking-csv" && <span className="text-emerald-500 ml-1">• Comissão definitiva (Ranking CSV)</span>}
+                {fonte === "ranking-csv" && !rankVelho && <span className="text-emerald-500 ml-1">• Comissão definitiva (Ranking CSV)</span>}
+                {fonte === "ranking-csv" && rankVelho && <span className="text-amber-500 ml-1">• Comissão do Ranking CSV de {fmtDia(rankData)}</span>}
                 {fonte === "ao-vivo" && <span className="text-amber-500 ml-1">• Provisório (ao vivo)</span>}
               </p>
+              {rankVelho && (
+                <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed">
+                  <strong className="text-amber-500">Ranking CSV parado há {rankDias} dias</strong> (gerado em {fmtDia(rankData)}).
+                  Serviço e atendimento acima estão <strong>ao vivo</strong>, mas a <strong>comissão sai do CSV</strong>
+                  {typeof cobertura === "number" ? <> — que hoje cobre <strong>{cobertura}%</strong> da receita oficial do mês</> : null}.
+                  Reimporte em <strong>Importar Trinks</strong> antes de fechar o pagamento, senão a comissão sai a menos.
+                </div>
+              )}
             </div>
             <MonthSelector
               selectedMes={mes}

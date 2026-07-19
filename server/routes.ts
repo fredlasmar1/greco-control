@@ -12403,6 +12403,23 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const last = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
     return `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
   }
+  // Há quantos dias o Ranking CSV do mês foi gerado. O CSV é import MANUAL e a folha
+  // paga comissão em cima dele: se ficar parado, a comissão trava no dia do import
+  // enquanto o mês continua (jul/2026: 13 dias parado = comissão sobre 26% do mês).
+  // O payload guarda `geradoEm` no formato "DD/MM/AAAA às HH:mm".
+  async function idadeDoRanking(mes: string): Promise<{ geradoEm: string | null; diasParado: number | null }> {
+    try {
+      const rk: any = await kvGet(trinksImport.kvKeyFor("ranking", mes));
+      const g = String(rk?.geradoEm || "");
+      const m = g.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+      if (!m) return { geradoEm: rk?.geradoEm || null, diasParado: null };
+      const ymd = `${m[3]}-${m[2]}-${m[1]}`;
+      const hoje = ymdHoje();
+      const dt = (s: string) => { const [y, mo, d] = s.split("-").map(Number); return Date.UTC(y, mo - 1, d, 12); };
+      return { geradoEm: ymd, diasParado: Math.round((dt(hoje) - dt(ymd)) / 86400000) };
+    } catch { return { geradoEm: null, diasParado: null }; }
+  }
+
   // Último dia de FUNCIONAMENTO anterior a `ymd` (a casa abre ter–sáb, dow 2..6,
   // mesma convenção de contarDiasUteis). Usado pelo resumo "matinal", que fala do
   // dia que fechou: numa terça, o dia anterior útil é o sábado, não a segunda.
@@ -13579,6 +13596,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const _tmMesPag: any = await kvGet(`trinks_total_mes:${mes}`);
       const oficialTrinksMes = Number(_tmMesPag?.total || 0);
       const _rankConf = await getRankComissaoMap(mes);
+      const { geradoEm: rankingImportadoEmMes, diasParado: rankingDiasParadoMes } = await idadeDoRanking(mes);
       // Plano/Clube no mês (0 tokens, das Assinaturas). Dois critérios:
       //   - VENDIDO: valor cheio das assinaturas pagas no mês (Σ planValue).
       //   - MENSAL: valor reconhecido no mês (Σ planValue ÷ meses de contrato).
@@ -13609,6 +13627,14 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           planoVendido: planoVendidoMes,                 // planos/Clube vendidos no mês (valor cheio)
           planoMensal: Math.round(planoMensalMes * 100) / 100, // planos reconhecidos no mês (÷ meses)
           apiPeriodo: periodoSemApi ? 0 : (periodo.totais?.reais || 0), // FONTE 3: API (0 = não consultada, folha veio do ranking)
+          // IDADE do ranking. O CSV é import MANUAL: em jul/2026 ficou 13 dias parado
+          // (06/07) enquanto o mês seguia, e a folha calculava comissão sobre 26% da
+          // receita. O número sozinho não denuncia isso — a data, sim.
+          rankingImportadoEm: rankingImportadoEmMes,
+          rankingDiasParado: rankingDiasParadoMes,
+          coberturaPct: oficialTrinksMes > 0
+            ? Math.round((_rankConf.producaoServicos / oficialTrinksMes) * 1000) / 10
+            : null,
           // aliases retrocompat
           producaoRankingServicos: _rankConf.producaoServicos,
           temRanking: _rankConf.temRanking,
@@ -15143,6 +15169,11 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
         profissionais: profsRanked,
         config: configOut,
         canonico: canonicoAudit,
+        // Idade do Ranking CSV. Desde o overlay ao vivo (18/07) esta tela mistura duas
+        // épocas: serviço/atendimento vêm do Metas AGORA, mas produto, plano e COMISSÃO
+        // continuam saindo do CSV do dia do import. Sem isso à vista, a tela parece
+        // simplesmente errada — o dono viu R$50 mil de produção com comissão de 5 dias atrás.
+        rankingCsv: await idadeDoRanking(mes),
         fetchedAt: new Date().toISOString(),
       });
     } catch (err: any) {
@@ -15512,7 +15543,17 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
             montarPagamentosHoje(),
             montarAcumuladoSemanaMes().catch(() => null),
           ]);
-          const msg = montarResumoManha(hoje, amanhaData, ontem, pagamentos, acumulado);
+          let msg = montarResumoManha(hoje, amanhaData, ontem, pagamentos, acumulado);
+          // AVISO DE RANKING VELHO. O CSV é import manual e a folha paga em cima dele:
+          // em jul/2026 ficou 13 dias parado e a comissão travou em 26% do mês, sem que
+          // nada avisasse. A partir de 5 dias o dono é cutucado aqui, não na tela.
+          try {
+            const mesAtual = ymdHoje().slice(0, 7);
+            const { geradoEm, diasParado } = await idadeDoRanking(mesAtual);
+            if (typeof diasParado === "number" && diasParado >= 5) {
+              msg += `\n\n⚠️ <b>Ranking CSV parado há ${diasParado} dias</b> (gerado em ${String(geradoEm).split("-").reverse().join("/")}).\nA comissão da equipe é calculada em cima dele — reimporte em <b>Importar Trinks</b> antes de fechar o pagamento, senão sai a menos.`;
+            }
+          } catch { /* aviso é acessório, não derruba o resumo */ }
           const r = await enviarMensagem(msg);
           log(`[cron] resumo manhã: ${r.ok ? "OK" : "FALHOU: " + r.error} (${pagamentos.length} pagamentos)`, "telegram");
         } catch (err: any) {

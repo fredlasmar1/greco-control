@@ -2006,7 +2006,7 @@ export default function Dashboard() {
                     stroke="#1E3A5F"
                     strokeWidth={2}
                     dot={{ r: 3, fill: "#1E3A5F" }}
-                    activeDot={{ r: 5, fill: "#5591C9" }}
+                    activeDot={{ r: 5, fill: "#E23B2E" }}
                   />
                 </LineChart>
               </ResponsiveContainer>

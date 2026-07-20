@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, Link } from "wouter";
-import grecoLogo from "../../logo-greco.png";
+import grecoLogo from "../../greco-logo-dark.png";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/authStore";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
@@ -59,9 +59,10 @@ const navItems = [
   { path: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 
-function GrecoLogo() {
+function GrecoLogo({ className = "h-6 w-auto" }: { className?: string }) {
+  // Wordmark oficial GRECO SPORT BARBER (branco+/// vermelho, fundo transparente).
   return (
-    <img src={grecoLogo} alt="Greco Barbearia" className="w-8 h-8 rounded-lg object-contain" />
+    <img src={grecoLogo} alt="Greco Sport Barber" className={`${className} object-contain`} />
   );
 }
 
@@ -112,12 +113,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         data-testid="sidebar"
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 px-4 h-14 border-b border-sidebar-border">
+        <div className="flex items-center gap-2.5 px-4 h-14 border-b border-sidebar-border">
           <GrecoLogo />
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-sidebar-foreground leading-tight">Greco Control</span>
-            <span className="text-[10px] text-muted-foreground leading-tight">Gestão de Barbearia</span>
-          </div>
+          <span className="text-[9px] font-bold tracking-[0.22em] text-muted-foreground self-end mb-2.5">CONTROL</span>
           <button
             className="ml-auto lg:hidden p-1 rounded hover:bg-sidebar-accent"
             onClick={() => setSidebarOpen(false)}
@@ -138,13 +136,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer
                     transition-colors duration-150 mb-0.5
                     ${isActive
-                      ? "bg-gradient-to-r from-[#205080]/35 via-[#205080]/12 to-transparent text-[#8BB8E8] shadow-[inset_2px_0_0_0_#5591C9]"
+                      ? "bg-gradient-to-r from-[#8B0A0A]/45 via-[#8B0A0A]/15 to-transparent text-[#F3968C] shadow-[inset_2px_0_0_0_#E23B2E]"
                       : "text-muted-foreground hover:text-sidebar-foreground hover:bg-white/[0.05]"
                     }
                   `}
                   data-testid={`nav-${path.replace("/", "") || "dashboard"}`}
                 >
-                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#5591C9]" : ""}`} />
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#E23B2E]" : ""}`} />
                   <span>{label}</span>
                   {path === "/duplicados" && duplicadosCount !== null && duplicadosCount > 0 && (
                     <span
@@ -156,7 +154,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     </span>
                   )}
                   {isActive && !(path === "/duplicados" && duplicadosCount && duplicadosCount > 0) && (
-                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#5591C9]" />
+                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#E23B2E]" />
                   )}
                 </div>
               </Link>
@@ -182,10 +180,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <GrecoLogo />
-            <span className="text-base font-bold tracking-tight text-foreground hidden sm:block">
-              Greco Control
-            </span>
+            <GrecoLogo className="h-5 w-auto" />
             <span className="text-muted-foreground hidden sm:block" aria-hidden>·</span>
             <h1 className="text-base font-medium text-muted-foreground truncate" data-testid="page-title">
               {getPageTitle(location)}

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/authStore";
-import grecoLogo from "../../logo-greco.png";
+import grecoLogo from "../../greco-mark.png";
 import { Loader2, AlertCircle } from "lucide-react";
 
 export default function Login() {
@@ -54,8 +54,8 @@ export default function Login() {
       <Card className="w-full max-w-sm bg-card border-card-border">
         <CardContent className="p-6">
           <div className="flex flex-col items-center mb-6">
-            <img src={grecoLogo} alt="Greco" className="w-16 h-16 mb-3 rounded-lg" />
-            <h1 className="text-lg font-bold">Greco Control</h1>
+            <img src={grecoLogo} alt="Greco Sport Barber" className="w-16 h-16 mb-3 rounded-xl" />
+            <h1 className="text-lg font-bold tracking-wide">GRECO <span className="text-primary">SPORT BARBER</span></h1>
             <p className="text-xs text-muted-foreground mt-1">Entre com seu usuário e senha</p>
           </div>
 
@@ -111,7 +111,7 @@ export default function Login() {
           </form>
 
           <p className="text-[10px] text-muted-foreground text-center mt-6">
-            Greco Barbearia &middot; Sistema de gestão
+            Greco Sport Barber &middot; Sistema de gestão
           </p>
         </CardContent>
       </Card>

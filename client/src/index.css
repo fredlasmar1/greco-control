@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* Greco Control — Dark-first barbershop CRM theme */
-/* Primary: Navy Blue #1E3A5F → HSL 210 60% 31% */
+/* Primary: Greco Vermelho #AA0101 → HSL 0 90% 37% */
 /* Accent: Red #C41E2A → HSL 6 80% 42% */
 
 :root {
@@ -12,7 +12,7 @@
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
-  --background: 210 24% 97%;
+  --background: 0 12% 97%;
   --foreground: 216 28% 12%;
   --border: 214 22% 90%;
   --card: 0 0% 100%;
@@ -22,27 +22,27 @@
   --sidebar: 0 0% 9%;
   --sidebar-foreground: 0 0% 96%;
   --sidebar-border: 0 0% 16%;
-  --sidebar-primary: 210 60% 31%;
+  --sidebar-primary: 0 84% 42%;
   --sidebar-primary-foreground: 0 0% 98%;
-  --sidebar-accent: 210 45% 20%;
+  --sidebar-accent: 0 55% 22%;
   --sidebar-accent-foreground: 0 0% 98%;
-  --sidebar-ring: 210 60% 46%;
+  --sidebar-ring: 0 80% 48%;
   --popover: 0 0% 95%;
   --popover-foreground: 0 0% 9%;
   --popover-border: 0 0% 91%;
-  --primary: 210 60% 31%;
+  --primary: 0 90% 37%;
   --primary-foreground: 0 0% 98%;
   --secondary: 0 0% 92%;
   --secondary-foreground: 0 0% 9%;
   --muted: 0 0% 93%;
   --muted-foreground: 0 0% 40%;
-  --accent: 210 20% 92%;
+  --accent: 0 40% 93%;
   --accent-foreground: 0 0% 9%;
   --destructive: 6 80% 42%;
   --destructive-foreground: 0 0% 98%;
   --input: 0 0% 75%;
-  --ring: 210 60% 31%;
-  --chart-1: 210 60% 31%;
+  --ring: 0 90% 37%;
+  --chart-1: 0 90% 40%;
   --chart-2: 6 80% 42%;
   --chart-3: 142 71% 45%;
   --chart-4: 48 96% 53%;
@@ -100,30 +100,30 @@
   --sidebar-foreground: 220 16% 95%;
   --sidebar-border: 220 12% 16%;
   /* Azul da marca (mais claro no escuro p/ legibilidade) */
-  --sidebar-primary: 210 64% 50%;
+  --sidebar-primary: 0 82% 50%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 210 40% 18%;
+  --sidebar-accent: 0 50% 22%;
   --sidebar-accent-foreground: 0 0% 96%;
-  --sidebar-ring: 210 64% 52%;
+  --sidebar-ring: 0 82% 54%;
   --popover: 220 15% 12%;
   --popover-foreground: 220 16% 92%;
   --popover-border: 220 12% 20%;
   /* Azul da marca */
-  --primary: 210 64% 50%;
+  --primary: 0 82% 50%;
   --primary-foreground: 0 0% 100%;
   --secondary: 220 14% 16%;
   --secondary-foreground: 220 16% 92%;
   --muted: 220 14% 16%;
   --muted-foreground: 220 10% 60%;
-  --accent: 210 30% 18%;
+  --accent: 0 45% 22%;
   --accent-foreground: 0 0% 96%;
   /* Vermelho da marca (mais vivo no escuro) */
   --destructive: 6 76% 54%;
   --destructive-foreground: 0 0% 100%;
   --input: 220 12% 22%;
-  --ring: 210 64% 52%;
+  --ring: 0 82% 54%;
   /* Chart: azul-marca, vermelho-marca, verde, âmbar, roxo */
-  --chart-1: 210 66% 56%;
+  --chart-1: 0 82% 56%;
   --chart-2: 6 78% 58%;
   --chart-3: 152 60% 48%;
   --chart-4: 40 92% 58%;
@@ -161,7 +161,7 @@
   /* Gradiente carvão (cor da wordmark do logo) + hairline e sombra de profundidade */
   background-color: hsl(0 0% 9%);
   background-image:
-    radial-gradient(120% 60% at 0% 0%, hsl(210 60% 31% / 0.14), transparent 60%),
+    radial-gradient(120% 60% at 0% 0%, hsl(0 84% 40% / 0.14), transparent 60%),
     linear-gradient(180deg, hsl(0 0% 12%) 0%, hsl(0 0% 8%) 55%, hsl(0 0% 6%) 100%);
   box-shadow: inset -1px 0 0 0 hsl(0 0% 100% / 0.05), 6px 0 28px -12px hsl(0 0% 0% / 0.55);
 }
@@ -172,7 +172,7 @@
 body {
   background-color: hsl(var(--background));
   background-image:
-    radial-gradient(1200px 540px at 50% -300px, hsl(210 70% 46% / 0.12), transparent 72%),
+    radial-gradient(1200px 540px at 50% -300px, hsl(0 82% 50% / 0.12), transparent 72%),
     radial-gradient(900px 560px at 100% -60px, hsl(6 72% 46% / 0.06), transparent 70%);
   background-attachment: fixed;
 }

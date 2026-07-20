@@ -9,14 +9,14 @@ import React from "react";
 type Accent = "blue" | "red" | "emerald" | "amber" | "violet";
 
 const ACCENT_CHIP: Record<Accent, string> = {
-  blue: "bg-primary/15 text-primary",
+  blue: "bg-sky-500/15 text-sky-400",
   red: "bg-red-500/15 text-red-400",
   emerald: "bg-emerald-500/15 text-emerald-400",
   amber: "bg-amber-500/15 text-amber-400",
   violet: "bg-violet-500/15 text-violet-400",
 };
 const BAR_FILL: Record<Accent, string> = {
-  blue: "from-[#205080] to-[#4f92cf]",
+  blue: "from-sky-700 to-sky-400",
   red: "from-[#8f1f1a] to-[#d0453a]",
   emerald: "from-emerald-700 to-emerald-400",
   amber: "from-amber-700 to-amber-400",

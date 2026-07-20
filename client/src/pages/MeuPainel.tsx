@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { authFetch, useAuth } from "@/lib/authStore";
 import { formatCurrency } from "@/lib/demoData";
-import grecoLogo from "../../logo-greco.png";
+import grecoLogo from "../../greco-mark.png";
 import {
   Target, Users, Calendar, TrendingUp, Clock,
   LogOut, Loader2, Trophy, AlertCircle, RefreshCw,
@@ -69,8 +69,8 @@ export default function MeuPainel() {
       <div className="min-h-screen flex flex-col bg-background p-4">
         <header className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
-            <img src={grecoLogo} alt="Greco" className="w-8 h-8 rounded" />
-            <span className="font-semibold text-sm">Greco Control</span>
+            <img src={grecoLogo} alt="Greco Sport Barber" className="w-8 h-8 rounded-md" />
+            <span className="font-semibold text-sm">GRECO <span className="text-primary">SPORT BARBER</span></span>
           </div>
           <Button variant="ghost" size="sm" onClick={logout}>
             <LogOut className="w-4 h-4" />
@@ -103,7 +103,7 @@ export default function MeuPainel() {
       {/* Header fixo */}
       <header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
-          <img src={grecoLogo} alt="Greco" className="w-8 h-8 rounded flex-shrink-0" />
+          <img src={grecoLogo} alt="Greco Sport Barber" className="w-8 h-8 rounded-md flex-shrink-0" />
           <div className="min-w-0">
             <p className="text-[10px] text-muted-foreground leading-tight">{saudacao},</p>
             <p className="text-sm font-semibold truncate leading-tight">{user?.nome}</p>

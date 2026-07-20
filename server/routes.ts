@@ -63,6 +63,7 @@ import {
   NATUREZA_PADRAO,
   getMemoriaBeneficiario,
   setMemoriaBeneficiario,
+  naturezaDaCompra,
 } from "./compras";
 import {
   listarAgenda,
@@ -8414,6 +8415,67 @@ Regras CRÍTICAS:
     };
   }
 
+  // CUSTO FIXO REAL DO MÊS CORRENTE — junta TODAS as despesas fixas de verdade,
+  // não só o extrato: (1) fixas do computeTotaisDoMes (extrato/lançamentos),
+  // (2) SALÁRIO FIXO real da equipe (Camila/Guilherme fixo + Débora/Ellen por hora
+  // do banco de ponto + Larissa CLT via salarioFixo), (3) COMPRAS classificadas
+  // como fixas (natureza=fixo, classe=operacional), deduplicadas contra o extrato.
+  // É a base pro custo fixo POR ATENDIMENTO refletir o custo real por serviço —
+  // antes o salário fixo e as compras nem entravam, e a margem saía otimista.
+  async function custoFixoRealDoMes(mes: string): Promise<{
+    total: number; fixasExtrato: number; salarioFixo: number; comprasFixas: number;
+    detalheSalario: Array<{ nome: string; valor: number; fonte: string }>;
+    comprasFixasExcluidasDup: number;
+  }> {
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    // (1) fixas já conhecidas (extrato + lançamentos)
+    let fixasExtrato = 0;
+    try { fixasExtrato = Number((await computeTotaisDoMes(mes))?.totalFixas || 0); } catch {}
+
+    // (2) salário fixo real da equipe (mesma regra da folha: fixo estático OU horas)
+    const metas = await getAllMetas().catch(() => ({} as any));
+    const bh = await getMetasBancoHoras(mes).catch(() => null);
+    const horasPorTrinks = new Map<string, number>();
+    for (const a of (bh?.porAssistente || [])) if (a.trinksId) horasPorTrinks.set(String(a.trinksId), Number(a.valor || 0));
+    let salarioFixo = 0;
+    const detalheSalario: Array<{ nome: string; valor: number; fonte: string }> = [];
+    for (const [id, m] of Object.entries(metas as Record<string, any>)) {
+      const nome = String(m?.nome || id).split("-").pop()!.trim();
+      if (m?.pagaPorHora) {
+        const v = horasPorTrinks.get(String(id)) || 0;
+        if (v > 0) { salarioFixo += v; detalheSalario.push({ nome, valor: r2(v), fonte: "horas" }); }
+      } else {
+        const v = Number(m?.salarioFixo || 0);
+        if (v > 0) { salarioFixo += v; detalheSalario.push({ nome, valor: r2(v), fonte: "fixo" }); }
+      }
+    }
+
+    // (3) compras fixas do mês (natureza=fixo, classe operacional), dedup vs extrato.
+    // Dedup próprio (o jaNoExtrato da Viabilidade é local dela): mesma saída no
+    // extrato, valor ±0,5 e até 3 dias → já contada, não soma de novo.
+    let comprasFixas = 0, comprasDup = 0;
+    const bankOut = transacoesBanco.filter(t => t.date.startsWith(mes) && t.amount < 0 && t.incluidoNoFluxo !== false && !t.transferenciaParId);
+    const diasBetween = (a: string, b: string) => Math.abs((new Date(a + "T12:00:00Z").getTime() - new Date(b + "T12:00:00Z").getTime()) / 86400000);
+    const jaNoExtratoLocal = (c: any) => bankOut.some(t => Math.abs(Math.abs(t.amount) - Number(c.valor || 0)) < 0.5 && diasBetween(t.date, String(c.data || (mes + "-01"))) <= 3);
+    try {
+      const comprasMes: any[] = await listarCompras(mes);
+      for (const c of comprasMes) {
+        const classe = String(c.classe || "operacional");
+        if (classe !== "operacional") continue;               // investimento/perda fora
+        if (naturezaDaCompra(c) !== "fixo") continue;          // só as fixas
+        if (String(c.categoria) === "Salários & Equipe") continue; // já contado no salário fixo
+        if (jaNoExtratoLocal(c)) { comprasDup += Number(c.valor || 0); continue; } // evita 2× com o extrato
+        comprasFixas += Number(c.valor || 0);
+      }
+    } catch {}
+
+    return {
+      total: r2(fixasExtrato + salarioFixo + comprasFixas),
+      fixasExtrato: r2(fixasExtrato), salarioFixo: r2(salarioFixo), comprasFixas: r2(comprasFixas),
+      detalheSalario, comprasFixasExcluidasDup: r2(comprasDup),
+    };
+  }
+
   // A2: margem por categoria (Express/Clássico/VIP + Produtos) do ranking de
   // profissionais. Estética PENDENTE (precisa do relatório por serviço). Custo
   // fixo do mês é rateado por participação na receita de serviço; taxa+imposto da config.
@@ -8952,8 +9014,15 @@ Regras CRÍTICAS:
       // v74: custo fixo POR ATENDIMENTO = média das fixas ÷ média de atendimentos
       // dos MESES FECHADOS (decisão do dono — "fechamento mensal", estável).
       const cfaMedio = await custoFixoAtendimentoMedio(mes);
-      const custoFixoPorAtendimento = cfaMedio.custoFixoPorAtendimento;
       const mediaAtd = { media: cfaMedio.mediaAtendimentos, meses: cfaMedio.meses };
+
+      // CUSTO FIXO REAL (mês corrente): salário fixo + compras fixas + extrato.
+      // Preferido sobre a média histórica quando temos atendimentos do mês, porque
+      // a média puxa de meses SEM salário fixo conhecido (subestima). Divide pelos
+      // atendimentos reais do mês (Metas/CSV). Mantém a média como fallback.
+      const cfReal = await custoFixoRealDoMes(mes).catch(() => null);
+      let custoFixoPorAtendimento = cfaMedio.custoFixoPorAtendimento;
+      let custoFixoFonte: "real-mes" | "media-historica" = "media-historica";
 
       // Parte 1: ocupação REAL estimada (pra comparar com o chute manual).
       // minutos usados ÷ minutos disponíveis. Usa duração real da agenda quando
@@ -8978,6 +9047,15 @@ Regras CRÍTICAS:
         }
         ocupacaoRealEstimada = minutosDisponiveis > 0 ? Math.round((minutosUsados / minutosDisponiveis) * 1000) / 10 : 0;
       } catch { /* sem dados → mantém 0 */ }
+
+      // Se temos custo fixo REAL e atendimentos do mês, usa o real (÷ atendimentos
+      // do mês) em vez da média histórica — que puxa de meses sem salário fixo
+      // conhecido e subestima. É o conserto pedido: o custo por serviço passa a
+      // enxergar o salário fixo e as compras fixas de verdade.
+      if (cfReal && cfReal.total > 0 && comandas > 0) {
+        custoFixoPorAtendimento = Math.round((cfReal.total / comandas) * 100) / 100;
+        custoFixoFonte = "real-mes";
+      }
 
       // Parte 2: quantos lançamentos compõem o totalFixas (pra denunciar fixas
       // incompletas). Conta extrato (categoria tipo fixo/recorrente, exclui
@@ -9009,7 +9087,9 @@ Regras CRÍTICAS:
         totalFixas: totais.totalFixas,
         minutosProdutivosMes: cfm.minutosProdutivosMes,
         custoFixoPorMinuto: cfm.custoFixoPorMinuto,
-        custoFixoPorAtendimento,                 // v70/v74
+        custoFixoPorAtendimento,                 // v70/v74/real
+        custoFixoFonte,                          // "real-mes" (salário+compras+extrato ÷ atend do mês) | "media-historica"
+        custoFixoReal: cfReal,                   // breakdown: fixasExtrato + salarioFixo + comprasFixas + detalhe
         mediaAtendimentos: mediaAtd.media,       // v70
         mesesMediaAtendimentos: mediaAtd.meses,  // v70
         mediaFixas: cfaMedio.mediaFixas,         // v74 (média das fixas dos meses fechados)

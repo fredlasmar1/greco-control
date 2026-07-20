@@ -898,7 +898,7 @@ function CsvEmailStatusCard() {
   }
 
   return (
-    <Card className="border-cyan-500/30">
+    <Card className="border-red-500/30">
       <CardHeader className="pb-2">
         <CardTitle className="text-base flex items-center gap-2 flex-wrap">
           📧 Importação automática por email (Trinks)
@@ -962,7 +962,7 @@ function CsvEmailStatusCard() {
               O trigger automático só busca emails das últimas <b>48 horas</b>. Pra puxar histórico (ex: desde 01/05), rode UMA das funções abaixo no Apps Script:
             </p>
             <ol className="list-decimal list-inside space-y-1 text-[11px]">
-              <li>Abre o Apps Script (<a className="text-cyan-400 underline" href="https://script.google.com" target="_blank" rel="noreferrer">script.google.com</a>) → seu projeto "Greco Trinks Import"</li>
+              <li>Abre o Apps Script (<a className="text-red-400 underline" href="https://script.google.com" target="_blank" rel="noreferrer">script.google.com</a>) → seu projeto "Greco Trinks Import"</li>
               <li>No menu superior, ao lado de ▶ Run, escolhe a função desejada:
                 <div className="ml-4 mt-1 space-y-0.5 font-mono text-[10px]">
                   <div><code className="bg-muted/40 px-1 rounded">importarUltimos7Dias</code> — últimos 7 dias</div>
@@ -981,10 +981,10 @@ function CsvEmailStatusCard() {
         )}
 
         {open && (
-          <div className="rounded-md border border-cyan-500/30 bg-cyan-500/5 p-3 text-xs space-y-2">
+          <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 text-xs space-y-2">
             <p className="font-medium">📋 Passo a passo (5 min, configura uma vez):</p>
             <ol className="list-decimal list-inside space-y-1 text-[11px]">
-              <li>Acesse <a href="https://script.google.com" target="_blank" rel="noreferrer" className="text-cyan-400 underline">script.google.com</a> → <b>Novo projeto</b></li>
+              <li>Acesse <a href="https://script.google.com" target="_blank" rel="noreferrer" className="text-red-400 underline">script.google.com</a> → <b>Novo projeto</b></li>
               <li>Apague o conteúdo e cole o script disponível em <code className="bg-muted/40 px-1 rounded">/docs/apps-script-trinks-import.gs</code> (no repositório)</li>
               <li>No topo do script, defina <code className="bg-muted/40 px-1 rounded">URL_API</code> e <code className="bg-muted/40 px-1 rounded">TOKEN</code> (mesmo valor da env <code>TRINKS_CSV_TOKEN</code> no Railway)</li>
               <li>Salve, clique no relógio ⏰ <b>Triggers</b> → <b>Adicionar trigger</b>:

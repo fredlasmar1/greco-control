@@ -65,7 +65,7 @@ export default function Evolucao() {
 
       {/* Clientes mês a mês */}
       <Card className="bg-card border-card-border">
-        <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Users className="w-4 h-4 text-sky-400" /> Clientes por mês (novos × recorrentes)</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Users className="w-4 h-4 text-red-400" /> Clientes por mês (novos × recorrentes)</CardTitle></CardHeader>
         <CardContent className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="text-[10px] uppercase text-muted-foreground border-b border-border">
@@ -85,7 +85,7 @@ export default function Evolucao() {
                   <tr key={m.mes} className="border-b border-border/30">
                     <td className="p-2 font-medium">{rotulo(m.mes)}</td>
                     <td className="p-2 text-right tabular-nums">{m.clientesUnicos}</td>
-                    <td className="p-2 text-right tabular-nums text-sky-400">{m.clientesNovos}</td>
+                    <td className="p-2 text-right tabular-nums text-red-400">{m.clientesNovos}</td>
                     <td className="p-2 text-right tabular-nums text-emerald-400">{m.clientesRecorrentes}</td>
                     <td className="p-2 text-right tabular-nums">{pctRec}%</td>
                     <td className="p-2 text-right tabular-nums">{formatCurrency(m.ticketMedio)}</td>

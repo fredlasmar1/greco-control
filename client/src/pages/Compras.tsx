@@ -224,10 +224,10 @@ export default function Compras() {
                 <p className="text-[11px] text-muted-foreground mt-0.5">{data?.resumo.count || 0} compra{(data?.resumo.count || 0) !== 1 ? "s" : ""}</p>
               </CardContent>
             </Card>
-            <Card className="bg-card border-card-border border-sky-500/40">
+            <Card className="bg-card border-card-border border-red-500/40">
               <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-sky-500 inline-block" />Custo fixo</p>
-                <p className="text-2xl font-bold text-sky-500">R$ {fmtBRL(fixo)}</p>
+                <p className="text-xs text-muted-foreground flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />Custo fixo</p>
+                <p className="text-2xl font-bold text-red-500">R$ {fmtBRL(fixo)}</p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">{total > 0 ? Math.round((fixo / total) * 100) : 0}% do mês</p>
               </CardContent>
             </Card>
@@ -293,7 +293,7 @@ export default function Compras() {
                                   <span className="font-medium">{c.loja}</span>
                                   {c.descricao && <div className="text-[10px] text-muted-foreground">{c.descricao}</div>}
                                   <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                                    {c.origem === "telegram" && <Badge variant="outline" className="text-[9px] h-4 border-sky-500/40 text-sky-500 bg-sky-500/10 gap-0.5"><Send className="w-2.5 h-2.5" />{c.telegramFrom ? `via ${c.telegramFrom}` : "Telegram"}</Badge>}
+                                    {c.origem === "telegram" && <Badge variant="outline" className="text-[9px] h-4 border-red-500/40 text-red-500 bg-red-500/10 gap-0.5"><Send className="w-2.5 h-2.5" />{c.telegramFrom ? `via ${c.telegramFrom}` : "Telegram"}</Badge>}
                                     {c.origem === "manual" && <Badge variant="outline" className="text-[9px] h-4">manual</Badge>}
                                     {c.tipo === "pix" && <Badge variant="outline" className="text-[9px] h-4">PIX</Badge>}
                                     {c.confianca === "baixa" && <Badge variant="outline" className="text-[9px] h-4 border-amber-500/40 text-amber-500">confira</Badge>}
@@ -313,7 +313,7 @@ export default function Compras() {
                               <button
                                 type="button" onClick={() => toggleNatureza(c)} title="Clique para alternar fixo/variável"
                                 className={`text-[10px] h-5 px-2 rounded-full border font-medium transition-colors ${nat === "fixo"
-                                  ? "border-sky-500/40 text-sky-500 bg-sky-500/10 hover:bg-sky-500/20"
+                                  ? "border-red-500/40 text-red-500 bg-red-500/10 hover:bg-red-500/20"
                                   : "border-amber-500/40 text-amber-500 bg-amber-500/10 hover:bg-amber-500/20"}`}
                               >{nat === "fixo" ? "Fixo" : "Variável"}</button>
                             </td>
@@ -584,7 +584,7 @@ function Agenda({ mes, monthLabel, cats, naturezaPadrao, onPago }: {
                         </td>
                         <td className="py-2 px-2"><Badge variant="secondary" className="text-[10px]">{it.categoria}</Badge></td>
                         <td className="py-2 px-2">
-                          <span className={`text-[10px] h-5 px-2 rounded-full border font-medium inline-flex items-center ${it.natureza === "fixo" ? "border-sky-500/40 text-sky-500 bg-sky-500/10" : "border-amber-500/40 text-amber-500 bg-amber-500/10"}`}>{it.natureza === "fixo" ? "Fixo" : "Variável"}</span>
+                          <span className={`text-[10px] h-5 px-2 rounded-full border font-medium inline-flex items-center ${it.natureza === "fixo" ? "border-red-500/40 text-red-500 bg-red-500/10" : "border-amber-500/40 text-amber-500 bg-amber-500/10"}`}>{it.natureza === "fixo" ? "Fixo" : "Variável"}</span>
                         </td>
                         <td className="py-2 px-2 text-right tabular-nums font-semibold">R$ {fmtBRL(it.valor)}</td>
                         <td className="py-2 px-2">
@@ -649,7 +649,7 @@ function CalendarioPagamentos({ mes, itens, hoje, onMarcarPago, onDesmarcar }: {
   const chipCls = (s: string) => s === "pago" ? "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 line-through"
     : s === "atrasado" ? "bg-red-500/15 text-red-600 border-red-500/40"
     : s === "hoje" ? "bg-amber-500/15 text-amber-600 border-amber-500/40"
-    : "bg-sky-500/15 text-sky-600 border-sky-500/30";
+    : "bg-red-500/15 text-red-600 border-red-500/30";
   const totalDia = (arr: ItemAgenda[]) => arr.reduce((s, it) => s + (Number(it.valor) || 0), 0);
   const pendenteDia = (arr: ItemAgenda[]) => arr.filter(it => it.status !== "pago").reduce((s, it) => s + (Number(it.valor) || 0), 0);
   const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
@@ -661,7 +661,7 @@ function CalendarioPagamentos({ mes, itens, hoje, onMarcarPago, onDesmarcar }: {
       <div className="flex items-center gap-3 flex-wrap text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" />Atrasado</span>
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block" />Vence hoje</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-500 inline-block" />Pendente</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" />Pendente</span>
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block" />Pago</span>
       </div>
 
@@ -729,7 +729,7 @@ function CalendarioPagamentos({ mes, itens, hoje, onMarcarPago, onDesmarcar }: {
                   const s = st(it);
                   return (
                     <div key={it.id} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1.5">
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${s === "pago" ? "bg-emerald-500" : s === "atrasado" ? "bg-red-500" : s === "hoje" ? "bg-amber-500" : "bg-sky-500"}`} />
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${s === "pago" ? "bg-emerald-500" : s === "atrasado" ? "bg-red-500" : s === "hoje" ? "bg-amber-500" : "bg-red-500"}`} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium truncate">{it.descricao}{it.recorrente && <Badge variant="outline" className="ml-1.5 text-[9px] h-4 gap-0.5"><Repeat className="w-2.5 h-2.5" />mensal</Badge>}</div>
                         {it.beneficiario && it.beneficiario !== "—" && <div className="text-[10px] text-muted-foreground truncate">{it.beneficiario} · {it.categoria}</div>}

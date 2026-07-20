@@ -431,7 +431,7 @@ function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void
   const mesLabel = new Date(mes + "-01T12:00:00").toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 
   const formas = [
-    { lbl: "PIX", v: c.pix, cor: "text-sky-600" },
+    { lbl: "PIX", v: c.pix, cor: "text-red-600" },
     { lbl: "Crédito", v: c.credito, cor: "text-violet-600" },
     { lbl: "Débito", v: c.debito, cor: "text-amber-600" },
     { lbl: "Dinheiro", v: c.dinheiro, cor: "text-emerald-600" },
@@ -441,9 +441,9 @@ function FechamentosDiarios({ onConferir }: { onConferir: (data: string) => void
   return (
     <div className="space-y-3">
       {/* CALCULADORA DO MÊS por forma */}
-      <div className="rounded-2xl border-2 border-sky-400/50 ring-1 ring-white/10 bg-card p-4" data-testid="calculadora-mes">
+      <div className="rounded-2xl border-2 border-red-400/50 ring-1 ring-white/10 bg-card p-4" data-testid="calculadora-mes">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-[11px] uppercase tracking-[0.2em] text-sky-600 font-semibold">Recebimentos · {mesLabel}</span>
+          <span className="text-[11px] uppercase tracking-[0.2em] text-red-600 font-semibold">Recebimentos · {mesLabel}</span>
           <span className="text-[10px] text-muted-foreground">fonte: Caixa Trinks</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">

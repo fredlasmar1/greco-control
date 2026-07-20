@@ -316,7 +316,7 @@ export default function ContasMensais() {
         </Button>
       </div>
 
-      <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400">
+      <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-red-500/10 border border-red-500/20 text-red-400">
         <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
         <p className="text-xs leading-relaxed">
           Se o dia do vencimento cair em fim de semana ou feriado nacional, o

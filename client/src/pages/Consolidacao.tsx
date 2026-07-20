@@ -29,10 +29,10 @@ type TipoTransacao = "pix" | "debito" | "credito" | "antecipacao" | "tarifa" | "
 type CategoriaGasto = "sistema" | "funcionario" | "aluguel" | "agua_luz" | "produtos" | "imposto" | "transferencia_interna" | "esporadica" | "outros";
 
 const CATEGORIAS_INFO: Record<CategoriaGasto, { label: string; icon: any; color: string }> = {
-  sistema: { label: "Sistema", icon: Server, color: "text-blue-400 border-blue-500/40 bg-blue-500/10" },
+  sistema: { label: "Sistema", icon: Server, color: "text-red-400 border-red-500/40 bg-red-500/10" },
   funcionario: { label: "Funcionário", icon: UserCog, color: "text-violet-400 border-violet-500/40 bg-violet-500/10" },
   aluguel: { label: "Aluguel", icon: Home, color: "text-amber-400 border-amber-500/40 bg-amber-500/10" },
-  agua_luz: { label: "Água/Luz", icon: Droplets, color: "text-cyan-400 border-cyan-500/40 bg-cyan-500/10" },
+  agua_luz: { label: "Água/Luz", icon: Droplets, color: "text-red-400 border-red-500/40 bg-red-500/10" },
   produtos: { label: "Produtos", icon: ShoppingBag, color: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10" },
   imposto: { label: "Imposto", icon: ReceiptIcon, color: "text-red-400 border-red-500/40 bg-red-500/10" },
   transferencia_interna: { label: "Transf. Interna", icon: ArrowLeftRight, color: "text-muted-foreground border-border bg-muted/30" },

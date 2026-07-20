@@ -513,8 +513,8 @@ export default function Equipe() {
               )}
             </div>
           </div>
-          <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-3">
-            <div className="text-[10px] uppercase tracking-wide text-sky-500 font-semibold mb-2">Salário fixo (assistentes)</div>
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+            <div className="text-[10px] uppercase tracking-wide text-red-500 font-semibold mb-2">Salário fixo (assistentes)</div>
             <div className="space-y-1 text-xs">
               <Row label="Fixo do mês" valor={data.totais.totalSalarioFixo || 0} />
               <div className="text-[10px] text-muted-foreground pt-1">
@@ -582,7 +582,7 @@ export default function Equipe() {
                     <th className="py-2 px-2 text-left min-w-[110px]">% do total</th>
                     <th className="py-2 px-2 text-right bg-emerald-500/5">Comissões</th>
                     <th className="py-2 px-2 text-right bg-yellow-500/5">Bônus</th>
-                    <th className="py-2 px-2 text-right bg-sky-500/5">Fixo</th>
+                    <th className="py-2 px-2 text-right bg-red-500/5">Fixo</th>
                     <th className="py-2 px-2 text-right bg-red-500/5">Vale/Ajuste</th>
                     <th className="py-2 px-2 text-right font-semibold">A pagar</th>
                     <th className="py-2 pl-2 text-right">Ações</th>
@@ -651,8 +651,8 @@ export default function Equipe() {
                             </span>
                           </td>
                           {/* Fixo */}
-                          <td className="py-2 px-2 text-right tabular-nums bg-sky-500/5">
-                            <span className={l.percentuais.salarioFixo > 0 ? "text-sky-600 font-semibold" : "text-muted-foreground"}>
+                          <td className="py-2 px-2 text-right tabular-nums bg-red-500/5">
+                            <span className={l.percentuais.salarioFixo > 0 ? "text-red-600 font-semibold" : "text-muted-foreground"}>
                               {l.percentuais.salarioFixo > 0 ? `R$ ${fmtBRL(l.percentuais.salarioFixo)}` : "—"}
                             </span>
                           </td>
@@ -746,7 +746,7 @@ export default function Equipe() {
                               {editando && (
                                 <div className="mt-3 space-y-3" onClick={e => e.stopPropagation()}>
                                 {/* Hora extra: horas × R$10 → Ajuste */}
-                                <div className="flex items-end gap-2 flex-wrap rounded-md border border-sky-500/30 bg-sky-500/5 p-2">
+                                <div className="flex items-end gap-2 flex-wrap rounded-md border border-red-500/30 bg-red-500/5 p-2">
                                   <div>
                                     <label className="text-[10px] text-muted-foreground block mb-1">Horas extras (× R$ {VALOR_HORA},00)</label>
                                     <Input type="number" step="0.5" value={edit.horaExtra} onChange={e => setEdit({ ...edit, horaExtra: e.target.value })} className="h-8 text-xs w-28" placeholder="ex: 11.4" />
@@ -783,7 +783,7 @@ export default function Equipe() {
                     <td className="py-2 px-2 text-left text-muted-foreground text-xs">100%</td>
                     <td className="py-2 px-2 text-right tabular-nums bg-emerald-500/5 text-emerald-600">R$ {fmtBRL((data?.totais.totalComissaoServicos || 0) + (data?.totais.totalComissaoProdutos || 0) + (data?.totais.totalComissaoPlano || 0) + (data?.totais.totalComissaoClubeGreco || 0))}</td>
                     <td className="py-2 px-2 text-right tabular-nums bg-yellow-500/5 text-yellow-600">R$ {fmtBRL((data?.totais.totalBonusRanking || 0) + (data?.totais.totalBonusExcedente || 0))}</td>
-                    <td className="py-2 px-2 text-right tabular-nums bg-sky-500/5 text-sky-600">R$ {fmtBRL(data?.totais.totalSalarioFixo || 0)}</td>
+                    <td className="py-2 px-2 text-right tabular-nums bg-red-500/5 text-red-600">R$ {fmtBRL(data?.totais.totalSalarioFixo || 0)}</td>
                     <td className="py-2 px-2 text-right tabular-nums bg-red-500/5 text-red-500">−R$ {fmtBRL((data?.totais.totalVale || 0) + (data?.totais.totalConsumoInterno || 0) - (data?.totais.totalAjuste || 0))}</td>
                     <td className="py-2 px-2 text-right tabular-nums text-base">R$ {fmtBRL(totalPagar)}</td>
                     <td />
@@ -920,7 +920,7 @@ function LeadsMetasCard({ mes }: { mes: string }) {
   const labelMesCurto = (m: string) => { const [y, mm] = (m || "").split("-"); const nm = ["", "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"][Number(mm)] || m; return `${nm}/${(y || "").slice(2)}`; };
   const maxTaxa = Math.max(1, ...hist.map((h: any) => h.taxaRetorno || 0));
   const t = d.totais || {};
-  const fonteBadge = (f: string) => f === "instagram" ? "bg-pink-500/15 text-pink-500 border-pink-500/30" : f === "google" ? "bg-sky-500/15 text-sky-500 border-sky-500/30" : "bg-purple-500/15 text-purple-500 border-purple-500/30";
+  const fonteBadge = (f: string) => f === "instagram" ? "bg-pink-500/15 text-pink-500 border-pink-500/30" : f === "google" ? "bg-red-500/15 text-red-500 border-red-500/30" : "bg-purple-500/15 text-purple-500 border-purple-500/30";
   return (
     <Card className="bg-card border-card-border">
       <CardHeader className="pb-2">
@@ -936,7 +936,7 @@ function LeadsMetasCard({ mes }: { mes: string }) {
           <>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
               <KpiMini label="Leads no mês" valorTexto={String(t.leads || 0)} />
-              <KpiMini label="Compareceram" valorTexto={`${t.compareceram || 0}/${t.leads || 0}`} cor="text-sky-500" />
+              <KpiMini label="Compareceram" valorTexto={`${t.compareceram || 0}/${t.leads || 0}`} cor="text-red-500" />
               <KpiMini label="Retornaram (campanha valeu)" valorTexto={`${t.retornaram || 0}`} cor="text-emerald-500" destaque />
               <KpiMini label="Taxa de retorno" valorTexto={`${(t.taxaRetorno || 0).toFixed(0)}%`} cor="text-emerald-500" />
               <KpiMini label="Desconto dado" valor={t.descontoRS || 0} cor="text-red-500" />
@@ -990,7 +990,7 @@ function LeadsMetasCard({ mes }: { mes: string }) {
                         {l.retornou
                           ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/40 font-semibold">🎉 voltou ({l.visitas}×)</span>
                           : l.compareceu
-                            ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-500 border border-sky-500/30">veio 1×</span>
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-500 border border-red-500/30">veio 1×</span>
                             : <span className="text-[10px] text-muted-foreground">não veio</span>}
                       </td>
                     </tr>

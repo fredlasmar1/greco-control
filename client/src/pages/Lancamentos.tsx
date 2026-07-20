@@ -512,7 +512,7 @@ export default function Lancamentos() {
                 <span className="tabular-nums text-red-400 flex-shrink-0">{formatCurrency(i.valor)}</span>
                 <div className="flex gap-0.5 flex-shrink-0">
                   <button type="button" onClick={() => setTipoDespesa(i.id, i.efetivo === "fixa" ? null : "fixa")}
-                    className={`text-[10px] px-2 py-1 rounded border ${i.efetivo === "fixa" ? "border-sky-500/50 bg-sky-500/15 text-sky-400" : "border-border text-muted-foreground hover:bg-muted/30"}`}
+                    className={`text-[10px] px-2 py-1 rounded border ${i.efetivo === "fixa" ? "border-red-500/50 bg-red-500/15 text-red-400" : "border-border text-muted-foreground hover:bg-muted/30"}`}
                     data-testid={`btn-fixa-${i.id}`}>Fixa</button>
                   <button type="button" onClick={() => setTipoDespesa(i.id, i.efetivo === "variavel" ? null : "variavel")}
                     className={`text-[10px] px-2 py-1 rounded border ${i.efetivo === "variavel" ? "border-orange-500/50 bg-orange-500/15 text-orange-400" : "border-border text-muted-foreground hover:bg-muted/30"}`}
@@ -529,9 +529,9 @@ export default function Lancamentos() {
                 <Card className="bg-card border-card-border">
                   <CardContent className="p-4">
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-3" data-testid="saidas-fixas-card">
-                        <div className="text-[11px] text-sky-300 uppercase tracking-wide font-medium">● Despesas Fixas</div>
-                        <div className="text-2xl font-bold text-sky-400 tabular-nums" data-testid="saidas-fixas">{formatCurrency(saidas.totalFixas)}</div>
+                      <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3" data-testid="saidas-fixas-card">
+                        <div className="text-[11px] text-red-300 uppercase tracking-wide font-medium">● Despesas Fixas</div>
+                        <div className="text-2xl font-bold text-red-400 tabular-nums" data-testid="saidas-fixas">{formatCurrency(saidas.totalFixas)}</div>
                         <div className="text-[10px] text-muted-foreground">{saidas.itens.filter((i:any)=>i.efetivo==="fixa").length} lançamentos</div>
                       </div>
                       <div className="rounded-lg border border-orange-500/40 bg-orange-500/10 p-3" data-testid="saidas-variaveis-card">
@@ -560,7 +560,7 @@ export default function Lancamentos() {
                     <CardContent className="space-y-1"><p className="text-[11px] text-muted-foreground -mt-1 mb-1">Marque Fixa ou Variável — sem isso não entram no resultado da Viabilidade.</p>{aClass.map(linha)}</CardContent>
                   </Card>
                 )}
-                <Card><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-sky-400">Despesas Fixas · {formatCurrency(saidas.totalFixas)}</CardTitle></CardHeader><CardContent className="space-y-1">{fixas.length ? fixas.map(linha) : <p className="text-xs text-muted-foreground">Nenhuma despesa fixa marcada.</p>}</CardContent></Card>
+                <Card><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-red-400">Despesas Fixas · {formatCurrency(saidas.totalFixas)}</CardTitle></CardHeader><CardContent className="space-y-1">{fixas.length ? fixas.map(linha) : <p className="text-xs text-muted-foreground">Nenhuma despesa fixa marcada.</p>}</CardContent></Card>
                 <Card><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-orange-400">Despesas Variáveis · {formatCurrency(saidas.totalVariaveis)}</CardTitle></CardHeader><CardContent className="space-y-1">{vars.length ? vars.map(linha) : <p className="text-xs text-muted-foreground">Nenhuma despesa variável marcada.</p>}</CardContent></Card>
               </>
             );

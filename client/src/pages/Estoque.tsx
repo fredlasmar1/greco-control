@@ -1049,7 +1049,7 @@ function AjustarSaldoModal({
                         ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
                         : t === "saida"
                           ? "bg-red-500/15 border-red-500/40 text-red-400"
-                          : "bg-blue-500/15 border-blue-500/40 text-blue-400"
+                          : "bg-red-500/15 border-red-500/40 text-red-400"
                       : "border-border text-muted-foreground hover:bg-muted"
                   }`}
                   data-testid={`btn-tipo-${t}`}
@@ -1209,7 +1209,7 @@ function HistoricoMovimentacoesModal({
   const tipoIcon = (tipo: string) =>
     tipo === "entrada" ? <ArrowUpCircle className="w-4 h-4 text-emerald-400" /> :
     tipo === "saida" ? <ArrowDownCircle className="w-4 h-4 text-red-400" /> :
-    <ClipboardList className="w-4 h-4 text-blue-400" />;
+    <ClipboardList className="w-4 h-4 text-red-400" />;
 
   const tipoLabel = (tipo: string) =>
     tipo === "entrada" ? "Entrada" : tipo === "saida" ? "Saída" : "Inventário";

@@ -86,7 +86,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   variavel: "bg-orange-500/20 text-orange-400 border-orange-500/30",
   parcelamento: "bg-purple-500/20 text-purple-400 border-purple-500/30",
   receita: "bg-green-500/20 text-green-400 border-green-500/30",
-  investimento: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  investimento: "bg-red-500/20 text-red-400 border-red-500/30",
 };
 
 const CHART_COLORS = [
@@ -735,14 +735,14 @@ export default function Financeiro() {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-1">
                   <p className="text-xs text-muted-foreground">Investimentos</p>
-                  <TrendingUp className="w-3.5 h-3.5 text-blue-400" />
+                  <TrendingUp className="w-3.5 h-3.5 text-red-400" />
                 </div>
-                <p className="text-lg font-bold text-blue-400">{formatCurrency(analysis.investimentos)}</p>
+                <p className="text-lg font-bold text-red-400">{formatCurrency(analysis.investimentos)}</p>
                 {analysis.totalDespesas > 0 && (
                   <div className="mt-2">
                     <div className="w-full bg-muted/30 rounded-full h-1.5">
                       <div
-                        className="bg-blue-400 h-1.5 rounded-full transition-all"
+                        className="bg-red-400 h-1.5 rounded-full transition-all"
                         style={{ width: `${Math.min(100, (analysis.investimentos / analysis.totalDespesas) * 100)}%` }}
                       />
                     </div>

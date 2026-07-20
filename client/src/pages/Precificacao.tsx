@@ -145,10 +145,10 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
-  produto: "bg-blue-500/15 text-blue-400",
+  produto: "bg-red-500/15 text-red-400",
   descartavel: "bg-purple-500/15 text-purple-400",
   quimico: "bg-amber-500/15 text-amber-400",
-  energia: "bg-cyan-500/15 text-cyan-400",
+  energia: "bg-red-500/15 text-red-400",
   outro: "bg-slate-500/15 text-muted-foreground",
 };
 
@@ -1897,7 +1897,7 @@ function VisaoGeral({ analysis, apiBase, onEditarServico }: { analysis: any[]; a
                     <div className="truncate max-w-[260px]" title={i.nome}>{i.nome}</div>
                     {i.categoria && <div className="text-[9px] text-muted-foreground">{i.categoria}</div>}
                   </td>
-                  <td className="p-2.5"><span className={`text-[9px] px-1.5 py-0.5 rounded ${i.tipo === "serviço" ? "bg-sky-500/15 text-sky-400" : "bg-purple-500/15 text-purple-400"}`}>{i.tipo}</span></td>
+                  <td className="p-2.5"><span className={`text-[9px] px-1.5 py-0.5 rounded ${i.tipo === "serviço" ? "bg-red-500/15 text-red-400" : "bg-purple-500/15 text-purple-400"}`}>{i.tipo}</span></td>
                   <td className="p-2.5 text-right tabular-nums">{formatCurrency(i.preco)}</td>
                   <td className="p-2.5 text-right tabular-nums text-muted-foreground">{i.custo == null ? <span className="text-amber-400">s/ custo</span> : formatCurrency(i.custo)}</td>
                   <td className={`p-2.5 text-right tabular-nums font-semibold ${i.margemPct == null ? "text-muted-foreground" : semaforo(i.margemPct as number)}`}>

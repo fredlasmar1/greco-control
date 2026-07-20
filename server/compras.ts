@@ -61,6 +61,12 @@ export interface Compra {
   loja: string;         // beneficiário / estabelecimento
   categoria: string;
   natureza?: "fixo" | "variavel"; // custo fixo x variável (default: pela categoria)
+  // Classe da despesa no resultado do mês (default "operacional"):
+  //  - operacional: entra no lucro do mês (a maioria);
+  //  - investimento: obra/reforma do ponto — NÃO entra no lucro do mês (é ativo);
+  //  - perda: golpe/fraude/prejuízo — sai do caixa mas não é custo operacional.
+  // investimento e perda são EXCLUÍDOS do lucro operacional (Viabilidade).
+  classe?: "operacional" | "investimento" | "perda";
   descricao?: string;
   tipo: "pix" | "compra" | "boleto" | "outro";
   origem: "telegram" | "manual";

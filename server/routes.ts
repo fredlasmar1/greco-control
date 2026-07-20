@@ -9064,11 +9064,16 @@ Regras CRÍTICAS:
       // "Salários & Equipe" (já na folha) e "Outros" (balde incerto — costuma ter
       // PIX interno pra própria Greco/equipe). Matching por nome foi descartado
       // (colisão de sobrenome excluía o Aluguel do proprietário por engano).
-      let comprasIncluido = 0, comprasLabor = 0, comprasAClassificar = 0, comprasDup = 0;
+      let comprasIncluido = 0, comprasLabor = 0, comprasAClassificar = 0, comprasDup = 0, comprasInvestimento = 0, comprasPerda = 0;
       const comprasPorCat: Record<string, number> = {};
       for (const c of (comprasMes as any[])) {
         const v = Number(c.valor || 0);
         const cat = String(c.categoria || "Outros");
+        const classe = String(c.classe || "operacional");
+        // Investimento (obra/reforma) e perda (golpe) saem do caixa mas NÃO são
+        // custo operacional do mês → fora do lucro.
+        if (classe === "investimento") { comprasInvestimento += v; continue; }
+        if (classe === "perda") { comprasPerda += v; continue; }
         if (cat === "Salários & Equipe") { comprasLabor += v; continue; }
         if (cat === "Outros") { comprasAClassificar += v; continue; }
         if (jaNoExtrato(c)) { comprasDup += v; continue; }
@@ -9149,6 +9154,8 @@ Regras CRÍTICAS:
           excluidoLabor: r2(comprasLabor),                 // Salários & Equipe (já na folha)
           excluidoAClassificar: r2(comprasAClassificar),   // categoria "Outros" — categorizar pra contar
           excluidoDuplicadoExtrato: r2(comprasDup),        // já apareceu no extrato do Itaú
+          excluidoInvestimento: r2(comprasInvestimento),   // obra/reforma — é ativo, não custo do mês
+          excluidoPerda: r2(comprasPerda),                 // golpe/fraude — sai do caixa, não é custo operacional
           totalRegistrado: r2(comprasTotalRegistrado),
         },
         margemContribuicao: r2(margemContribuicao),
@@ -11380,6 +11387,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       // natureza (fixo=recorrente/todo mês | variavel=avulsa) vem da pergunta de
       // recorrência; se ausente, o cálculo cai no padrão da categoria.
       ...(dados.natureza === "fixo" || dados.natureza === "variavel" ? { natureza: dados.natureza } : {}),
+      ...(["operacional", "investimento", "perda"].includes(dados.classe) ? { classe: dados.classe } : {}),
       descricao: String(dados.descricao || ""),
       tipo: (["pix", "dinheiro", "compra", "boleto", "outro"].includes(dados.tipo) ? dados.tipo : "compra") as any,
       confianca: (["alta", "media", "baixa"].includes(dados.confianca) ? dados.confianca : "media") as any,

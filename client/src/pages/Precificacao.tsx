@@ -2034,6 +2034,7 @@ function EditorServicoCusto({ servico, contexto, savedCost, apiBase, onSaved }: 
   const [preco, setPreco] = useState<number>(servico.preco);
   const [salvando, setSalvando] = useState(false);
   const [salvo, setSalvo] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
 
   const num = (s: string) => Number((s || "0").replace(",", ".")) || 0;
   const taxa = contexto?.taxaCartaoPct || 0;
@@ -2060,13 +2061,24 @@ function EditorServicoCusto({ servico, contexto, savedCost, apiBase, onSaved }: 
   const rmItem = (id: string) => setItems(prev => prev.filter(it => it.id !== id));
 
   const salvar = async () => {
-    setSalvando(true); setSalvo(false);
+    setSalvando(true); setSalvo(false); setErro(null);
     try {
-      await fetch(`${apiBase}/api/service-costs/${encodeURIComponent(servico.id)}`, {
+      const r = await fetch(`${apiBase}/api/service-costs/${encodeURIComponent(servico.id)}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ serviceName: servico.nome, items, comissaoPct: comPct, comissaoAssistentePct: assPct, margemDesejadaPct: alvo, outrosCustos: outrosV }),
       });
-      setSalvo(true); onSaved();
+      let data: any = {};
+      try { data = await r.json(); } catch { /* resposta sem corpo */ }
+      // Só considera SALVO se o banco confirmou (durou !== false). Sem isso, o
+      // dado some no próximo deploy (foi o que aconteceu 20/jul). Erro → avisa.
+      if (!r.ok || data?.durou === false || data?.ok === false) {
+        setErro(data?.error || "Não gravou no banco. Tente de novo.");
+      } else {
+        setSalvo(true); onSaved();
+        setTimeout(() => setSalvo(false), 4000);
+      }
+    } catch (e: any) {
+      setErro("Falha de conexão ao salvar. Tente de novo.");
     } finally { setSalvando(false); }
   };
 
@@ -2128,7 +2140,13 @@ function EditorServicoCusto({ servico, contexto, savedCost, apiBase, onSaved }: 
         <span>% →</span>
         <span className="font-bold text-primary">Preço ideal: {precoIdeal != null ? formatCurrency(precoIdeal) : "—"}</span>
         {precoIdeal != null && preco > 0 && (precoIdeal > preco ? <span className="text-amber-400 text-[10px]">(subir de {formatCurrency(preco)})</span> : <span className="text-emerald-400 text-[10px]">(já acima ✓)</span>)}
-        <Button size="sm" className="h-7 text-xs ml-auto" disabled={salvando} onClick={salvar} data-testid="es-salvar">{salvando ? "salvando…" : salvo ? "✓ salvo" : "Salvar"}</Button>
+        <div className="ml-auto flex items-center gap-2">
+          {salvo && <span className="text-[11px] text-emerald-400 font-medium" data-testid="es-salvo-ok">✓ gravado no banco</span>}
+          {erro && <span className="text-[11px] text-red-400 font-medium" data-testid="es-salvo-erro">⚠️ {erro}</span>}
+          <Button size="sm" className="h-7 text-xs" disabled={salvando} onClick={salvar} data-testid="es-salvar">
+            {salvando ? "gravando…" : "Gravar ficha"}
+          </Button>
+        </div>
       </div>
     </div>
   );

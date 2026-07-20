@@ -866,6 +866,7 @@ export default function Precificacao() {
           <TabsTrigger value="visao-geral" data-testid="tab-visao-geral">📊 Visão Geral</TabsTrigger>
           <TabsTrigger value="calculadora" data-testid="tab-calculadora">🧮 Calculadora (1 a 1)</TabsTrigger>
           <TabsTrigger value="margem-produtos" data-testid="tab-margem-produtos">Custos de Produtos</TabsTrigger>
+          <TabsTrigger value="cadeira" data-testid="tab-cadeira">⏱️ Cadeira (R$/min)</TabsTrigger>
           <TabsTrigger value="reajuste" data-testid="tab-reajuste">Reajuste p/ Meta</TabsTrigger>
           <TabsTrigger value="catalogo" data-testid="tab-catalogo">Catálogo</TabsTrigger>
           <TabsTrigger value="ficha-servicos" data-testid="tab-ficha-servicos">Ficha de Serviços</TabsTrigger>
@@ -881,6 +882,10 @@ export default function Precificacao() {
 
         <TabsContent value="calculadora" className="mt-0">
           <CalculadoraPreco analysis={analysis} contexto={contexto} onImpostoSalvo={() => qClient.invalidateQueries({ queryKey: ["/api/precificacao/contexto"] })} apiBase={(globalThis as any).__API_BASE__ || ""} />
+        </TabsContent>
+
+        <TabsContent value="cadeira" className="mt-0">
+          <RentabilidadeCadeira analysis={analysis} contexto={contexto} />
         </TabsContent>
 
         <TabsContent value="reajuste" className="mt-0">
@@ -1498,6 +1503,113 @@ function CalculadoraPreco({ analysis, contexto, onImpostoSalvo, apiBase }: {
 // O dono define o preço; o sistema diz se cada serviço lucra ou dá prejuízo
 // (custo × preço atual) e qual o preço pra atingir a margem-alvo (default 30%).
 // Custo e preço-alvo já incluem comissão + taxa de cartão + imposto (v56).
+// v97: Rentabilidade por MINUTO DE CADEIRA — a cadeira é o recurso escasso da
+// barbearia. O que importa não é só a margem %, é quanto cada serviço rende por
+// minuto que prende a cadeira. Serviço longo (estética) precisa render por minuto
+// pra valer a pena. Referência: custo fixo/min na ocupação atual.
+function RentabilidadeCadeira({ analysis, contexto }: { analysis: any[]; contexto: any }) {
+  const cfMinRef = Number(contexto?.custoFixoPorMinutoReal) || 0;   // R$/min de estrutura (ocupação atual)
+  const ocup = Number(contexto?.ocupacaoRealEstimada) || 0;
+  const taxaPct = contexto?.taxaCartaoPct || 0;
+  const impostoPct = contexto?.impostoPct || 0;
+  const [filtro, setFiltro] = useState<"todos" | "estetica">("todos");
+  const [alvoMin, setAlvoMin] = useState<string>("");             // alvo de contribuição por minuto (opcional)
+
+  const EST = /est[eé]tica|limpeza|ozon|terapia|hidrat|barboter|sobrancelh|massagem|depila|design/i;
+  const alvo = Number((alvoMin || "").replace(",", ".")) || 0;
+
+  const linhas = useMemo(() => {
+    return analysis
+      .filter(s => (s.duration || 0) > 0 && (s.price || 0) > 0)
+      .filter(s => filtro === "todos" ? true : EST.test(`${s.category} ${s.name}`))
+      .map(s => {
+        const contrib = (s.netProfit || 0) + (s.custoFixoRateado || 0); // preço − variáveis (comissão+insumo+taxa+imposto)
+        const rmin = s.duration > 0 ? contrib / s.duration : 0;
+        // preço pra bater o alvo de R$/min de contribuição (se informado)
+        const denom = 1 - (s.comissaoTotalPct / 100) - (taxaPct / 100) - (impostoPct / 100);
+        const precoAlvoMin = alvo > 0 && denom > 0 ? (s.duration * alvo + s.totalCost) / denom : null;
+        return { ...s, contrib, rmin, precoAlvoMin };
+      })
+      .sort((a, b) => a.rmin - b.rmin); // pior primeiro (onde atacar)
+  }, [analysis, filtro, alvo, taxaPct, impostoPct]);
+
+  const abaixoFixo = linhas.filter(l => l.rmin < cfMinRef).length;
+  const cor = (rmin: number) => rmin < cfMinRef ? "text-red-400" : rmin < cfMinRef * 1.6 ? "text-amber-400" : "text-emerald-400";
+
+  return (
+    <div className="space-y-4 max-w-[900px]">
+      <Card className="bg-card border-card-border">
+        <CardContent className="p-4 text-sm space-y-2">
+          <p className="text-muted-foreground">
+            A <strong className="text-foreground">cadeira é o recurso escasso</strong>. O que decide o preço não é só a margem %, é
+            quanto o serviço rende <strong className="text-foreground">por minuto que prende a cadeira</strong>. Serviço longo (estética, 40–90min)
+            precisa render por minuto pra valer o tempo.
+          </p>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
+            <span className="text-muted-foreground">Custo fixo por minuto (referência): <strong className="text-primary tabular-nums">{formatCurrency(cfMinRef)}/min</strong></span>
+            <span className="text-muted-foreground">Ocupação atual: <strong className="text-foreground tabular-nums">{ocup}%</strong></span>
+            {abaixoFixo > 0 && <span className="text-red-400">⚠️ {abaixoFixo} serviço{abaixoFixo !== 1 ? "s" : ""} rende{abaixoFixo === 1 ? "" : "m"} menos que o custo fixo/min (não paga a estrutura na ocupação atual)</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-3 pt-1">
+            <div className="flex gap-1">
+              <Button size="sm" variant={filtro === "todos" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setFiltro("todos")} data-testid="rc-todos">Todos</Button>
+              <Button size="sm" variant={filtro === "estetica" ? "default" : "outline"} className="h-7 text-xs" onClick={() => setFiltro("estetica")} data-testid="rc-estetica">Só estética</Button>
+            </div>
+            <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+              Alvo de R$/min <Input value={alvoMin} onChange={e => setAlvoMin(e.target.value)} placeholder="ex: 1,20" className="h-7 w-20 text-xs" data-testid="rc-alvo" />
+              <span className="text-[10px]">→ mostra o preço pra bater esse ganho por minuto</span>
+            </label>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-card border-card-border">
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                <th className="text-left p-2.5 pl-4">Serviço</th>
+                <th className="text-right p-2.5">Preço</th>
+                <th className="text-right p-2.5">Dur</th>
+                <th className="text-right p-2.5">Contrib.</th>
+                <th className="text-right p-2.5">R$/min</th>
+                <th className="text-right p-2.5">Margem</th>
+                {alvo > 0 && <th className="text-right p-2.5 pr-4">Preço p/ alvo</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.map((l, i) => (
+                <tr key={l.id} className={`border-t border-border/30 ${i % 2 ? "bg-muted/5" : ""}`} data-testid={`rc-row-${l.id}`}>
+                  <td className="p-2.5 pl-4 truncate max-w-[240px]">{l.name}</td>
+                  <td className="p-2.5 text-right tabular-nums">{formatCurrency(l.price)}</td>
+                  <td className="p-2.5 text-right tabular-nums text-muted-foreground">{l.duration}min</td>
+                  <td className="p-2.5 text-right tabular-nums">{formatCurrency(l.contrib)}</td>
+                  <td className={`p-2.5 text-right tabular-nums font-bold ${cor(l.rmin)}`}>{formatCurrency(l.rmin)}</td>
+                  <td className={`p-2.5 text-right tabular-nums ${l.margin < 0 ? "text-red-400" : l.margin < 10 ? "text-amber-400" : "text-emerald-400"}`}>{l.margin.toFixed(0)}%</td>
+                  {alvo > 0 && (
+                    <td className="p-2.5 pr-4 text-right tabular-nums">
+                      {l.precoAlvoMin != null ? (
+                        <span className={l.precoAlvoMin > l.price + 0.5 ? "text-amber-400" : "text-emerald-400"}>
+                          {formatCurrency(l.precoAlvoMin)}
+                          {l.precoAlvoMin > l.price + 0.5 && <span className="text-[10px] text-muted-foreground ml-1">(+{formatCurrency(l.precoAlvoMin - l.price)})</span>}
+                        </span>
+                      ) : "—"}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+      <p className="text-[11px] text-muted-foreground px-1">
+        Contribuição = preço − comissão − insumo − taxa/imposto (sem o custo fixo). <strong>R$/min</strong> = contribuição ÷ duração — quanto o serviço gera por minuto de cadeira.
+        Verde ≥ {formatCurrency(cfMinRef * 1.6)}/min · amarelo entre o custo fixo/min e isso · <span className="text-red-400">vermelho abaixo do custo fixo/min</span> (não paga a estrutura). Insumo entra quando as fichas forem preenchidas.
+      </p>
+    </div>
+  );
+}
+
 function ReajustePrecos({ analysis, contexto, margemAlvo, setMargemAlvo }: {
   analysis: any[];
   contexto: any;

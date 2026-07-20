@@ -10031,7 +10031,27 @@ Regras CRÍTICAS:
       });
       // v74: custo fixo por atendimento = média fixas ÷ média atendimentos (meses fechados)
       const cfaMedio = await custoFixoAtendimentoMedio(mes);
-      const custoFixoPorAtendimento = cfaMedio.custoFixoPorAtendimento;
+      // v97: prefere o custo fixo REAL do mês (salário fixo + compras fixas ÷ comandas)
+      // sobre a média histórica — igual ao /contexto. E calcula a DURAÇÃO MÉDIA real
+      // do atendimento pra ponderar o rateio por duração (serviço longo carrega mais).
+      const cfReal = await custoFixoRealDoMes(mes).catch(() => null);
+      let comandas = 0, minutosAtendidos = 0;
+      try {
+        const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes });
+        comandas = Number(md?.comandas || 0);
+        const ags: any[] = Array.isArray(md?.agendamentos) ? md.agendamentos : [];
+        const finalizados = ags.filter(a => (a.status?.nome || "").toLowerCase() === "finalizado");
+        const durOf = (a: any) => Number(a.duracaoEmMinutos || a.duracao || a.servico?.duracao || 0) || 0;
+        if (finalizados.some(a => durOf(a) > 0)) minutosAtendidos = finalizados.reduce((s, a) => s + durOf(a), 0);
+        else if (comandas > 0) minutosAtendidos = comandas * 50;
+      } catch { /* sem dados → duração média cai no default 50 */ }
+      const duracaoMediaMin = comandas > 0 && minutosAtendidos > 0 ? minutosAtendidos / comandas : 50;
+      let custoFixoPorAtendimento = cfaMedio.custoFixoPorAtendimento;
+      let custoFixoFonte: "real-mes" | "media-historica" = "media-historica";
+      if (cfReal && cfReal.total > 0 && comandas > 0) {
+        custoFixoPorAtendimento = Math.round((cfReal.total / comandas) * 100) / 100;
+        custoFixoFonte = "real-mes";
+      }
 
       const result = servicos.map((s: any) => {
         const id = String(s.id || "");
@@ -10062,6 +10082,7 @@ Regras CRÍTICAS:
           fichaTecnica,
           custoFixoPorMinuto: cfm.custoFixoPorMinuto,
           custoFixoPorAtendimento,           // v70 — prioridade sobre o por-minuto
+          duracaoMediaMin,                   // v97 — pondera o rateio por duração
           outrosCustos: Number((sc as any)?.outrosCustos || 0),  // v70
           comissaoPct,
           comissaoAssistentePct,
@@ -10091,6 +10112,10 @@ Regras CRÍTICAS:
           totalFixas: totais.totalFixas,
           minutosProdutivosMes: cfm.minutosProdutivosMes,
           custoFixoPorMinuto: cfm.custoFixoPorMinuto,
+          custoFixoPorAtendimento,           // v97 — base do rateio (real-mes ou média)
+          custoFixoFonte,                    // v97 — "real-mes" | "media-historica"
+          duracaoMediaMin: Number(duracaoMediaMin.toFixed(1)), // v97 — pondera por duração
+          custoFixoPorMinutoReal: duracaoMediaMin > 0 ? Number((custoFixoPorAtendimento / duracaoMediaMin).toFixed(4)) : 0,
           operacional: {
             cadeiras: cfg.cadeiras,
             horasDia: cfg.horasDia,

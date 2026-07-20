@@ -288,6 +288,13 @@ export interface CalculoServicoInput {
   // v70: custo fixo POR ATENDIMENTO (totalFixas ÷ média de atendimentos/mês).
   // Quando informado, SUBSTITUI o rateio por minuto (decisão do dono). R$ por atendimento.
   custoFixoPorAtendimento?: number;
+  // v97: duração MÉDIA do atendimento (min). Quando informada junto do custo fixo
+  // por atendimento, o rateio passa a ser PONDERADO POR DURAÇÃO — um serviço de
+  // 90min carrega proporcionalmente mais estrutura que um de 20min, mas a média
+  // ponderada continua batendo o custo fixo/atendimento (o total do mês não muda).
+  //   custoFixoRateado = custoFixoPorAtendimento × (duracao ÷ duracaoMedia)
+  // Sem isso (default) o comportamento antigo é mantido: flat por atendimento.
+  duracaoMediaMin?: number;
   outrosCustos?: number;      // v70: outros custos do serviço, em R$ (campo livre)
 }
 
@@ -320,8 +327,16 @@ export function calcularMargemServico(input: CalculoServicoInput): CalculoServic
   const imp = Math.max(0, Math.min(100, Number(input.impostoPct) || 0));
 
   // v70: custo fixo por ATENDIMENTO (se informado) tem prioridade sobre o por-minuto.
+  // v97: se também vier a duração média, pondera o rateio pela duração do serviço
+  // (mantém a média = custoFixoPorAtendimento, mas separa curto de longo).
   const cfa = Number(input.custoFixoPorAtendimento);
-  const custoFixoRateado = isFinite(cfa) && cfa >= 0 ? cfa : dur * cfm;
+  const durMedia = Math.max(0, Number(input.duracaoMediaMin) || 0);
+  let custoFixoRateado: number;
+  if (isFinite(cfa) && cfa >= 0) {
+    custoFixoRateado = durMedia > 0 && dur > 0 ? cfa * (dur / durMedia) : cfa;
+  } else {
+    custoFixoRateado = dur * cfm;
+  }
   const outros = Math.max(0, Number(input.outrosCustos) || 0);
   const comissaoBarbeiroValor = preco * (com / 100);
   const comissaoAssistenteValor = preco * (ass / 100);

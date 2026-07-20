@@ -61,6 +61,8 @@ import {
   normalizarCategoria,
   CATEGORIAS_COMPRA,
   NATUREZA_PADRAO,
+  getMemoriaBeneficiario,
+  setMemoriaBeneficiario,
 } from "./compras";
 import {
   listarAgenda,
@@ -11375,6 +11377,9 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       valor: Math.abs(Number(dados.valor) || 0),
       loja: String(dados.loja || "").trim() || "—",
       categoria: normalizarCategoria(dados.categoria),
+      // natureza (fixo=recorrente/todo mês | variavel=avulsa) vem da pergunta de
+      // recorrência; se ausente, o cálculo cai no padrão da categoria.
+      ...(dados.natureza === "fixo" || dados.natureza === "variavel" ? { natureza: dados.natureza } : {}),
       descricao: String(dados.descricao || ""),
       tipo: (["pix", "dinheiro", "compra", "boleto", "outro"].includes(dados.tipo) ? dados.tipo : "compra") as any,
       confianca: (["alta", "media", "baixa"].includes(dados.confianca) ? dados.confianca : "media") as any,
@@ -11413,6 +11418,22 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     // Em ambos guardamos a compra e devolvemos botões; o registro sai no callback.
     if (!ctx.jaPerguntado) {
       const ehLabor = String(compra.categoria) === "Salários & Equipe";
+      // MEMÓRIA: se o beneficiário já foi classificado antes ("Aluguel, todo mês"),
+      // o bot NÃO repergunta — aplica e só confirma. É o "na 2ª vez só confirma".
+      // Não vale pra labor (pagamento a funcionário sempre pergunta de quem/mês).
+      if (!ehLabor) {
+        const mem = await getMemoriaBeneficiario(compra.loja || "").catch(() => null);
+        if (mem) {
+          const c2 = { ...compra, categoria: mem.categoria, natureza: mem.natureza };
+          const nova = await salvarCompra(c2 as any);
+          await guardarFotoCompra(nova, ctx.foto);
+          await traçoCompras(from, "salvo_memoria", { valor: c2.valor, categoria: mem.categoria });
+          await enviarMensagemCompras(
+            `✅ <b>Registrado</b> — R$ ${fmtBRLc(c2.valor)} · ${mem.categoria} (${mem.natureza === "fixo" ? "todo mês" : "avulsa"})\n<i>${compra.loja}</i> — lembrei da última vez. Se mudou, edite no app.`,
+            chatId);
+          return;
+        }
+      }
       const incerta = String(compra.categoria) === "Outros" || compra.confianca === "baixa";
       if (ehLabor || incerta) {
         await kvSet(`compras_pergunta:${chatId}`, { compra, itens, foto: ctx.foto || null, from, criadoEm: new Date().toISOString() });
@@ -11669,11 +11690,32 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         await perguntarDeQuem(chatId, { ...pend.compra, categoria: cat }, from);
         return;
       }
-      await kvSet(`compras_pergunta:${chatId}`, null);
+      // Categoria escolhida → PERGUNTA se é recorrente (todo mês) ou avulsa. Guarda
+      // no beneficiário pra na próxima só confirmar. Foi o que o dono pediu:
+      // "quando eu mandar uma conta, me pergunta sobre o que ela é".
+      await kvSet(`compras_pergunta:${chatId}`, { ...pend, compra: { ...pend.compra, categoria: cat } });
       await responderCallbackCompras(callbackId, cat);
+      await enviarMensagemCompras(
+        `🏷️ <b>${cat}</b> — R$ ${fmtBRLc(pend.compra.valor)}\n<i>${pend.compra.loja || ""}</i>\n\nEssa conta é recorrente ou avulsa?`,
+        chatId,
+        [[{ texto: "🔁 Todo mês (recorrente)", data: "r|fixo" }, { texto: "1️⃣ Só essa vez (avulsa)", data: "r|variavel" }]]);
+      await traçoCompras(from, "perguntou_recorrencia", { categoria: cat });
+      return;
+    }
+
+    // Recorrência respondida → grava com natureza e MEMORIZA o beneficiário.
+    if (tipo === "r" && (arg === "fixo" || arg === "variavel")) {
+      const cat = String(pend.compra?.categoria || "Outros");
+      const natureza = arg as "fixo" | "variavel";
+      await setMemoriaBeneficiario(pend.compra.loja || "", cat, natureza).catch(() => {});
+      await kvSet(`compras_pergunta:${chatId}`, null);
+      await responderCallbackCompras(callbackId, natureza === "fixo" ? "Todo mês" : "Avulsa");
       await finalizarCompra(
-        { ...pend.compra, ehComprovante: true, categoria: cat, itens: pend.itens || [] },
+        { ...pend.compra, ehComprovante: true, categoria: cat, natureza, itens: pend.itens || [] },
         { chatId, from, foto: pend.foto || undefined, semConfirmacao: true, jaPerguntado: true });
+      await enviarMensagemCompras(
+        `📝 Anotei: <b>${pend.compra.loja || cat}</b> = ${cat} (${natureza === "fixo" ? "todo mês" : "avulsa"}). Da próxima vez eu já sei.`,
+        chatId);
       return;
     }
     await responderCallbackCompras(callbackId, "Não entendi essa resposta.");

@@ -161,3 +161,27 @@ export function normalizarCategoria(cat: string | undefined | null): string {
   if (/produto|insumo|cosmétic|cosmetic|pomada|shampoo|condicion|óleo|oleo|tinta|navalha|lâmina|lamina|pente/.test(n)) return "Produtos & Insumos";
   return "Outros";
 }
+
+// ─── MEMÓRIA DO BENEFICIÁRIO (o dono responde 1×, o bot lembra) ──────────────
+// Quando o dono classifica uma conta ("Aluguel, todo mês"), guardamos por
+// beneficiário. Na 2ª vez que o mesmo nome cair, o bot já sabe e só CONFIRMA em
+// vez de reperguntar. natureza = fixo (recorrente/todo mês) | variavel (avulsa).
+export interface MemoriaBeneficiario { categoria: string; natureza: "fixo" | "variavel"; nome: string; atualizadoEm: string; }
+const MEM_KEY = "compras_memoria";
+const normLoja = (s: string) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+
+export async function getMemoriaBeneficiario(loja: string): Promise<MemoriaBeneficiario | null> {
+  const k = normLoja(loja);
+  if (!k) return null;
+  const all = await kvGet<Record<string, MemoriaBeneficiario>>(MEM_KEY);
+  return (all && all[k]) || null;
+}
+
+export async function setMemoriaBeneficiario(loja: string, categoria: string, natureza: "fixo" | "variavel"): Promise<void> {
+  const k = normLoja(loja);
+  if (!k) return;
+  // leitura estrita: não apaga o mapa inteiro num blip de conexão
+  const all = (await kvGetParaEscrita<Record<string, MemoriaBeneficiario>>(MEM_KEY)) || {};
+  all[k] = { categoria, natureza, nome: loja, atualizadoEm: new Date().toISOString() };
+  await kvSet(MEM_KEY, all);
+}

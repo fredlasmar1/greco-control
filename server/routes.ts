@@ -9274,8 +9274,14 @@ Regras CRÍTICAS:
       const variavelTotal = comissao + material + taxaCartao + variavelExtrato + comprasIncluido;
 
       const margemContribuicao = receita - variavelTotal;
+      // SALÁRIO FIXO REAL (Camila/Guilherme/Débora/Ellen/Larissa) — estava FALTANDO
+      // no lucro: a Viabilidade contava comissão e as compras operacionais, mas não
+      // a folha fixa. Sem isso o lucro saía otimista (~R$9,3k/mês a menos de custo).
+      // Agora bate com o custo por serviço, que já rateava o salário fixo.
+      const cfViab = await custoFixoRealDoMes(mes).catch(() => null);
+      const salarioFixoReal = Number(cfViab?.salarioFixo || 0);
       const fixo = Number(totais.totalFixas || 0);
-      const resultado = margemContribuicao - fixo;
+      const resultado = margemContribuicao - fixo - salarioFixoReal;
       const margemRealPct = receita > 0 ? (resultado / receita) * 100 : 0;
 
       // ── Guia de fixas: transações do Itaú que parecem fixas e estão sem categoria ──

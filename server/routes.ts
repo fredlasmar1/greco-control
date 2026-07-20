@@ -9129,6 +9129,7 @@ Regras CRÍTICAS:
       // minutos usados ÷ minutos disponíveis. Usa duração real da agenda quando
       // houver; senão comandas × 50min (média assumida, igual grecometas).
       let comandas = 0, ocupacaoRealEstimada = 0, baseOcupacao = "sem dados";
+      let duracaoMediaMin = 50; // v97: duração média real do atendimento (pondera o rateio)
       try {
         const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes });
         comandas = Number(md?.comandas || 0);
@@ -9147,6 +9148,7 @@ Regras CRÍTICAS:
           baseOcupacao = `estimada (${comandas} comandas × ${AVG_DUR}min)`;
         }
         ocupacaoRealEstimada = minutosDisponiveis > 0 ? Math.round((minutosUsados / minutosDisponiveis) * 1000) / 10 : 0;
+        if (comandas > 0 && minutosUsados > 0) duracaoMediaMin = minutosUsados / comandas;
       } catch { /* sem dados → mantém 0 */ }
 
       // Se temos custo fixo REAL e atendimentos do mês, usa o real (÷ atendimentos
@@ -9190,6 +9192,8 @@ Regras CRÍTICAS:
         custoFixoPorMinuto: cfm.custoFixoPorMinuto,
         custoFixoPorAtendimento,                 // v70/v74/real
         custoFixoFonte,                          // "real-mes" (salário+compras+extrato ÷ atend do mês) | "media-historica"
+        duracaoMediaMin: Number(duracaoMediaMin.toFixed(1)),                 // v97 — base da ponderação por duração
+        custoFixoPorMinutoReal: duracaoMediaMin > 0 ? Number((custoFixoPorAtendimento / duracaoMediaMin).toFixed(4)) : 0, // v97
         custoFixoReal: cfReal,                   // breakdown: fixasExtrato + salarioFixo + comprasFixas + detalhe
         mediaAtendimentos: mediaAtd.media,       // v70
         mesesMediaAtendimentos: mediaAtd.meses,  // v70

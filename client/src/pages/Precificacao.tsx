@@ -85,6 +85,9 @@ interface PrecificacaoContexto {
   minutosProdutivosMes: number;
   custoFixoPorMinuto: number;
   custoFixoPorAtendimento?: number;  // v70
+  custoFixoFonte?: "real-mes" | "media-historica"; // v97
+  duracaoMediaMin?: number;          // v97 — base da ponderação por duração
+  custoFixoPorMinutoReal?: number;   // v97
   mediaAtendimentos?: number;        // v70
   comandas?: number;
   ocupacaoRealEstimada?: number;
@@ -690,9 +693,14 @@ export default function Precificacao() {
       // Fórmulas v24 + v56 (taxa de cartão + imposto entram no custo)
       const taxaCartaoPct = contexto?.taxaCartaoPct || 0;
       const impostoPct = contexto?.impostoPct || 0;
-      // v70: custo fixo POR ATENDIMENTO (decisão do dono) tem prioridade sobre o por-minuto
+      // v70: custo fixo POR ATENDIMENTO (decisão do dono) tem prioridade sobre o por-minuto.
+      // v97: se houver a duração média do mês, PONDERA pela duração do serviço — um serviço
+      // de 90min carrega mais estrutura que um de 20min, mas a média bate o custo/atend.
       const cfa = contexto?.custoFixoPorAtendimento;
-      const custoFixoRateado = (cfa != null && cfa >= 0) ? cfa : s.duration * cfm;
+      const durMedia = Number((contexto as any)?.duracaoMediaMin) || 0;
+      const custoFixoRateado = (cfa != null && cfa >= 0)
+        ? (durMedia > 0 && s.duration > 0 ? cfa * (s.duration / durMedia) : cfa)
+        : s.duration * cfm;
       // v24 Etapa 5: em modo simulação, comissão = (preço − ficha) × % (trava custo antes da comissão)
       // No modo padrão, comissão = preço × % (sobre o preço cheio)
       const baseComissao = modoSimulacao ? Math.max(0, s.price - totalCost) : s.price;
@@ -990,6 +998,16 @@ export default function Precificacao() {
                   );
                 })()}
               </div>
+              {(contexto?.custoFixoPorAtendimento ?? 0) > 0 && (
+                <div className="mt-1 pt-1 border-t border-border/40" data-testid="cfa-duracao">
+                  Custo fixo por atendimento: <strong className="text-primary">{formatCurrency(contexto?.custoFixoPorAtendimento || 0)}</strong>
+                  {contexto?.custoFixoFonte === "real-mes" && <span className="text-emerald-400 ml-1">(real do mês)</span>}
+                  <span className="block text-[10px] text-muted-foreground mt-0.5">
+                    Ponderado por duração: cada serviço carrega a estrutura proporcional ao tempo que ocupa a cadeira
+                    {(contexto?.duracaoMediaMin ?? 0) > 0 && <> (média {Math.round(contexto!.duracaoMediaMin!)}min = {formatCurrency(contexto?.custoFixoPorMinutoReal || 0)}/min)</>}. Serviço longo custa mais; curto, menos.
+                  </span>
+                </div>
+              )}
             </div>
             <Button
               size="sm"
@@ -1827,7 +1845,11 @@ function ListaServicos({ apiBase, mes }: { apiBase: string; mes: string }) {
     if (!contexto) return null;
     const sc = custoDe(s.id);
     const ficha = (sc?.items || []).reduce((a: number, it: any) => a + (it.quantity || 0) * (it.unitCost || 0), 0);
-    const fixo = contexto.custoFixoPorAtendimento || 0;
+    // v97: custo fixo ponderado pela duração do serviço (média do mês = base)
+    const durMedia = Number(contexto.duracaoMediaMin) || 0;
+    const durServ = Number(s.duracao || s.duration || 0);
+    const cfa = contexto.custoFixoPorAtendimento || 0;
+    const fixo = durMedia > 0 && durServ > 0 ? cfa * (durServ / durMedia) : cfa;
     const com = (sc?.comissaoPct ?? comissaoPctPadrao(s.nome));
     const ass = sc?.comissaoAssistentePct ?? 0;
     const taxa = contexto.taxaCartaoPct || 0, imp = contexto.impostoPct || 0;
@@ -1904,7 +1926,11 @@ function EditorServicoCusto({ servico, contexto, savedCost, apiBase, onSaved }: 
   const num = (s: string) => Number((s || "0").replace(",", ".")) || 0;
   const taxa = contexto?.taxaCartaoPct || 0;
   const imposto = contexto?.impostoPct || 0;
-  const fixoAtend = contexto?.custoFixoPorAtendimento || 0;
+  // v97: custo fixo ponderado pela duração deste serviço (base = duração média do mês)
+  const durMediaEd = Number(contexto?.duracaoMediaMin) || 0;
+  const durServEd = Number(servico.duracao || servico.duration || 0);
+  const cfaEd = contexto?.custoFixoPorAtendimento || 0;
+  const fixoAtend = durMediaEd > 0 && durServEd > 0 ? cfaEd * (durServEd / durMediaEd) : cfaEd;
   const ficha = items.reduce((a, it) => a + (Number(it.quantity) || 0) * (Number(it.unitCost) || 0), 0);
   const comPct = num(comissao), assPct = num(assistente);
   const comV = preco * (comPct / 100), assV = preco * (assPct / 100);

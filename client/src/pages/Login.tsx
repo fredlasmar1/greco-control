@@ -55,7 +55,7 @@ export default function Login() {
         <CardContent className="p-6">
           <div className="flex flex-col items-center mb-6">
             <img src={grecoLogo} alt="Greco Sport Barber" className="w-16 h-16 mb-3 rounded-xl" />
-            <h1 className="text-lg font-bold tracking-wide">GRECO <span className="text-primary">SPORT BARBER</span></h1>
+            <h1 className="font-display text-3xl tracking-wide leading-none">GRECO <span className="text-primary">SPORT BARBER</span></h1>
             <p className="text-xs text-muted-foreground mt-1">Entre com seu usuário e senha</p>
           </div>
 

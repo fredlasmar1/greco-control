@@ -2,64 +2,90 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Greco Control — Dark-first barbershop CRM theme */
-/* Primary: Greco Vermelho #AA0101 → HSL 0 90% 37% */
-/* Accent: Red #C41E2A → HSL 6 80% 42% */
+/* ============================================================
+   GRECO CONTROL — Design System "Sport Barber Dark"
+   Inspiração: Linear · Vercel · Stripe · Raycast · Apple Pro
+   Dark-first, monocromático + vermelho institucional. Sem
+   gradientes coloridos, sem sombras exageradas. Muito espaço
+   negativo, bordas sutis, tipografia de alto contraste.
+   ------------------------------------------------------------
+   Background #0A0A0A · Card #141414 · Card 2º #1B1B1B
+   Borda #2A2A2A · Texto #FFFFFF / #A0A0A0
+   Vermelho #AF0000 · Hover #920000
+   ============================================================ */
 
 :root {
-  --button-outline: rgba(0,0,0, .10);
-  --badge-outline: rgba(0,0,0, .05);
-  --opaque-button-border-intensity: -8;
-  --elevate-1: rgba(0,0,0, .03);
-  --elevate-2: rgba(0,0,0, .08);
-  --background: 0 12% 97%;
-  --foreground: 216 28% 12%;
-  --border: 214 22% 90%;
-  --card: 0 0% 100%;
-  --card-foreground: 216 28% 12%;
-  --card-border: 214 24% 91%;
-  /* Sidebar (abas) sempre PRETA, mesmo no tema claro do conteúdo */
-  --sidebar: 0 0% 9%;
-  --sidebar-foreground: 0 0% 96%;
+  --button-outline: rgba(255,255,255, .08);
+  --badge-outline: rgba(255,255,255, .06);
+  --opaque-button-border-intensity: 6;
+  --elevate-1: rgba(255,255,255, .03);
+  --elevate-2: rgba(255,255,255, .06);
+
+  /* Superfícies */
+  --background: 0 0% 4%;          /* #0A0A0A */
+  --foreground: 0 0% 100%;        /* #FFFFFF */
+  --border: 0 0% 16%;             /* #2A2A2A */
+  --card: 0 0% 8%;                /* #141414 */
+  --card-foreground: 0 0% 100%;
+  --card-border: 0 0% 16%;
+
+  /* Menu lateral minimalista (mesmo tom do fundo, separado por hairline) */
+  --sidebar: 0 0% 4%;
+  --sidebar-foreground: 0 0% 100%;
   --sidebar-border: 0 0% 16%;
-  --sidebar-primary: 0 84% 42%;
-  --sidebar-primary-foreground: 0 0% 98%;
-  --sidebar-accent: 0 55% 22%;
-  --sidebar-accent-foreground: 0 0% 98%;
-  --sidebar-ring: 0 80% 48%;
-  --popover: 0 0% 95%;
-  --popover-foreground: 0 0% 9%;
-  --popover-border: 0 0% 91%;
-  --primary: 0 90% 37%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 0 0% 92%;
-  --secondary-foreground: 0 0% 9%;
-  --muted: 0 0% 93%;
-  --muted-foreground: 0 0% 40%;
-  --accent: 0 40% 93%;
-  --accent-foreground: 0 0% 9%;
-  --destructive: 6 80% 42%;
-  --destructive-foreground: 0 0% 98%;
-  --input: 0 0% 75%;
-  --ring: 0 90% 37%;
-  --chart-1: 0 90% 40%;
-  --chart-2: 6 80% 42%;
-  --chart-3: 142 71% 45%;
-  --chart-4: 48 96% 53%;
-  --chart-5: 262 83% 48%;
-  --font-sans: Inter, sans-serif;
+  --sidebar-primary: 0 100% 34%;  /* #AF0000 */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 11%;     /* #1B1B1B — hover/ativo do item */
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-ring: 0 100% 34%;
+
+  --popover: 0 0% 8%;
+  --popover-foreground: 0 0% 100%;
+  --popover-border: 0 0% 16%;
+
+  /* Vermelho institucional */
+  --primary: 0 100% 34%;          /* #AF0000 */
+  --primary-foreground: 0 0% 100%;
+
+  /* Botão secundário #202020 / borda #333333 */
+  --secondary: 0 0% 13%;          /* #202020 */
+  --secondary-foreground: 0 0% 100%;
+
+  --muted: 0 0% 11%;              /* #1B1B1B — card secundário */
+  --muted-foreground: 0 0% 63%;   /* #A0A0A0 — texto secundário */
+  --accent: 0 0% 11%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 90% 44%;
+  --destructive-foreground: 0 0% 100%;
+
+  --input: 0 0% 20%;              /* #333333 */
+  --ring: 0 100% 34%;
+
+  /* Gráficos modernos: vermelho + escala de cinza, verde/âmbar só p/ semântica */
+  --chart-1: 0 100% 46%;
+  --chart-2: 0 0% 62%;
+  --chart-3: 152 46% 46%;
+  --chart-4: 40 90% 56%;
+  --chart-5: 0 0% 38%;
+
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Druk Wide Cy", "Druk Condensed Super", "Bebas Neue", "Anton", "Oswald", Inter, sans-serif;
   --font-serif: Georgia, serif;
-  --font-mono: JetBrains Mono, monospace;
-  --radius: .5rem;
-  /* Sombras reais com leve tint azul-carvão da marca (profundidade premium) */
-  --shadow-2xs: 0 1px 2px 0 hsl(215 30% 12% / 0.04);
-  --shadow-xs: 0 1px 3px 0 hsl(215 30% 12% / 0.06);
-  --shadow-sm: 0 1px 2px 0 hsl(215 30% 12% / 0.05), 0 2px 6px -1px hsl(215 30% 12% / 0.08);
-  --shadow: 0 2px 4px -1px hsl(215 30% 12% / 0.06), 0 6px 16px -3px hsl(215 30% 12% / 0.10);
-  --shadow-md: 0 4px 8px -2px hsl(215 30% 12% / 0.08), 0 10px 24px -5px hsl(215 30% 12% / 0.12);
-  --shadow-lg: 0 8px 16px -4px hsl(215 30% 12% / 0.10), 0 18px 36px -8px hsl(215 30% 12% / 0.14);
-  --shadow-xl: 0 16px 32px -8px hsl(215 30% 12% / 0.14), 0 28px 56px -12px hsl(215 30% 12% / 0.18);
-  --shadow-2xl: 0 24px 60px -12px hsl(215 30% 12% / 0.24);
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius: .75rem;               /* 12px — base premium */
+
+  /* Sombras discretas (profundidade sutil, nunca pesada) */
+  --shadow-2xs: 0 1px 1px 0 hsl(0 0% 0% / 0.30);
+  --shadow-xs: 0 1px 2px 0 hsl(0 0% 0% / 0.35);
+  --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.40);
+  --shadow: 0 2px 8px -3px hsl(0 0% 0% / 0.45);
+  --shadow-md: 0 6px 18px -6px hsl(0 0% 0% / 0.50);
+  --shadow-lg: 0 12px 30px -10px hsl(0 0% 0% / 0.55);
+  --shadow-xl: 0 20px 44px -14px hsl(0 0% 0% / 0.60);
+  --shadow-2xl: 0 28px 60px -18px hsl(0 0% 0% / 0.65);
+
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
@@ -69,8 +95,8 @@
   --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
   --primary-border: hsl(var(--primary));
   --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --secondary-border: hsl(var(--secondary));
-  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border: 0 0% 20%;   /* #333333 */
+  --secondary-border: hsl(0 0% 20%);
   --muted-border: hsl(var(--muted));
   --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
   --accent-border: hsl(var(--accent));
@@ -79,122 +105,51 @@
   --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
 }
 
-/* DARK MODE — Primary theme for Greco Control */
+/* .dark é forçado no main.tsx — herda tudo do :root (já é dark-first).
+   Bloco mantido p/ compatibilidade com o toggle class do shadcn. */
 .dark {
-  --button-outline: rgba(255,255,255, .10);
-  --badge-outline: rgba(255,255,255, .05);
-  --opaque-button-border-intensity: 9;
-  --elevate-1: rgba(255,255,255, .04);
-  --elevate-2: rgba(255,255,255, .09);
-  /* ===== NOITE — escuro premium (carvão azulado + azul/vermelho da marca) ===== */
-  /* #0f1114 */
-  --background: 220 16% 7%;
-  --foreground: 220 16% 92%;
-  --border: 220 12% 18%;
-  /* card #16181d */
-  --card: 220 15% 11%;
-  --card-foreground: 220 16% 92%;
-  --card-border: 220 12% 17%;
-  /* sidebar #101216 */
-  --sidebar: 220 18% 8%;
-  --sidebar-foreground: 220 16% 95%;
-  --sidebar-border: 220 12% 16%;
-  /* Azul da marca (mais claro no escuro p/ legibilidade) */
-  --sidebar-primary: 0 82% 50%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 0 50% 22%;
-  --sidebar-accent-foreground: 0 0% 96%;
-  --sidebar-ring: 0 82% 54%;
-  --popover: 220 15% 12%;
-  --popover-foreground: 220 16% 92%;
-  --popover-border: 220 12% 20%;
-  /* Azul da marca */
-  --primary: 0 82% 50%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 220 14% 16%;
-  --secondary-foreground: 220 16% 92%;
-  --muted: 220 14% 16%;
-  --muted-foreground: 220 10% 60%;
-  --accent: 0 45% 22%;
-  --accent-foreground: 0 0% 96%;
-  /* Vermelho da marca (mais vivo no escuro) */
-  --destructive: 6 76% 54%;
-  --destructive-foreground: 0 0% 100%;
-  --input: 220 12% 22%;
-  --ring: 0 82% 54%;
-  /* Chart: azul-marca, vermelho-marca, verde, âmbar, roxo */
-  --chart-1: 0 82% 56%;
-  --chart-2: 6 78% 58%;
-  --chart-3: 152 60% 48%;
-  --chart-4: 40 92% 58%;
-  --chart-5: 262 70% 66%;
-  /* Sombras reais para o escuro (profundidade premium) */
-  --shadow-2xs: 0 1px 2px 0 hsl(0 0% 0% / 0.30);
-  --shadow-xs: 0 2px 4px 0 hsl(0 0% 0% / 0.35);
-  --shadow-sm: 0 1px 0 0 hsl(0 0% 100% / 0.03) inset, 0 4px 12px -4px hsl(0 0% 0% / 0.55);
-  --shadow: 0 1px 0 0 hsl(0 0% 100% / 0.03) inset, 0 8px 24px -8px hsl(0 0% 0% / 0.6);
-  --shadow-md: 0 1px 0 0 hsl(0 0% 100% / 0.04) inset, 0 14px 34px -10px hsl(0 0% 0% / 0.65);
-  --shadow-lg: 0 1px 0 0 hsl(0 0% 100% / 0.04) inset, 0 22px 48px -14px hsl(0 0% 0% / 0.7);
-  --shadow-xl: 0 30px 64px -18px hsl(0 0% 0% / 0.75);
-  --shadow-2xl: 0 40px 90px -24px hsl(0 0% 0% / 0.85);
-
-  --sidebar-primary-border: hsl(var(--sidebar-primary));
-  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --sidebar-accent-border: hsl(var(--sidebar-accent));
-  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --primary-border: hsl(var(--primary));
-  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --secondary-border: hsl(var(--secondary));
-  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --muted-border: hsl(var(--muted));
-  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --accent-border: hsl(var(--accent));
-  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --destructive-border: hsl(var(--destructive));
-  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --button-outline: rgba(255,255,255, .08);
+  --badge-outline: rgba(255,255,255, .06);
+  --opaque-button-border-intensity: 6;
+  --elevate-1: rgba(255,255,255, .03);
+  --elevate-2: rgba(255,255,255, .06);
 }
 
-/* Sidebar preta: itens de nav (text-muted-foreground) precisam de cinza claro,
-   não o cinza escuro do tema claro do conteúdo. Escopado só na aside. */
+/* Menu lateral minimalista — superfície chapada + hairline à direita */
 [data-testid="sidebar"] {
-  --muted-foreground: 0 0% 62%;
-  /* Gradiente carvão (cor da wordmark do logo) + hairline e sombra de profundidade */
-  background-color: hsl(0 0% 9%);
-  background-image:
-    radial-gradient(120% 60% at 0% 0%, hsl(0 84% 40% / 0.14), transparent 60%),
-    linear-gradient(180deg, hsl(0 0% 12%) 0%, hsl(0 0% 8%) 55%, hsl(0 0% 6%) 100%);
-  box-shadow: inset -1px 0 0 0 hsl(0 0% 100% / 0.05), 6px 0 28px -12px hsl(0 0% 0% / 0.55);
+  --muted-foreground: 0 0% 63%;
+  background-color: hsl(var(--sidebar));
+  border-right: 1px solid hsl(var(--sidebar-border));
 }
 
-/* ===== Acabamento PREMIUM global (tema claro) ===== */
-
-/* Fundo com profundidade: brilho azul-marca no topo + toque de vermelho no canto */
+/* Fundo chapado #0A0A0A — muito espaço negativo, sem gradiente colorido */
 body {
   background-color: hsl(var(--background));
-  background-image:
-    radial-gradient(1200px 540px at 50% -300px, hsl(0 82% 50% / 0.12), transparent 72%),
-    radial-gradient(900px 560px at 100% -60px, hsl(6 72% 46% / 0.06), transparent 70%);
-  background-attachment: fixed;
 }
 
-/* Cards: elevação real + leve véu de luz no topo (funciona claro e escuro) */
+/* Cards: superfície #141414, borda sutil, sem sombra pesada */
 .bg-card {
-  background-image: linear-gradient(180deg, hsl(0 0% 100% / 0.035), transparent 55%);
-  box-shadow: var(--shadow-sm);
   border-color: hsl(var(--card-border));
+  box-shadow: var(--shadow-sm);
 }
 .bg-card:where(.hover\:shadow-md, .transition-shadow):hover {
   box-shadow: var(--shadow-md);
 }
 
-/* Títulos com tracking premium */
+/* Tipografia — títulos display de alto contraste (Druk/Bebas → Anton/Oswald fallback) */
 h1, h2, h3 {
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
-h1 { font-weight: 700; }
-
-/* Números/monetário mais nítidos */
+h1 { font-weight: 800; }
+.font-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
 .tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* CTA vermelho escurece no hover (#AF0000 → #920000), sem depender só do elevate */
+.bg-primary:hover { background-color: hsl(0 100% 29%); }
 
 @layer base {
   * {
@@ -206,23 +161,21 @@ h1 { font-weight: 700; }
   }
 }
 
-/* Scrollbar styling for dark theme */
+/* Scrollbar fina — cor da borda */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: hsl(0 0% 25%);
-  border-radius: 3px;
+  background: hsl(0 0% 20%);
+  border-radius: 6px;
+  border: 2px solid hsl(var(--background));
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(0 0% 35%);
+  background: hsl(0 0% 30%);
 }
 
 @layer utilities {

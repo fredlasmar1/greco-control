@@ -70,7 +70,7 @@ export default function MeuPainel() {
         <header className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
             <img src={grecoLogo} alt="Greco Sport Barber" className="w-8 h-8 rounded-md" />
-            <span className="font-semibold text-sm">GRECO <span className="text-primary">SPORT BARBER</span></span>
+            <span className="font-display text-lg tracking-wide">GRECO <span className="text-primary">SPORT BARBER</span></span>
           </div>
           <Button variant="ghost" size="sm" onClick={logout}>
             <LogOut className="w-4 h-4" />

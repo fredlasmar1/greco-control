@@ -115,7 +115,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Logo */}
         <div className="flex items-center gap-2.5 px-4 h-14 border-b border-sidebar-border">
           <GrecoLogo />
-          <span className="text-[9px] font-bold tracking-[0.22em] text-muted-foreground self-end mb-2.5">CONTROL</span>
+          <span className="font-display text-[11px] tracking-[0.28em] text-muted-foreground self-end mb-2.5">CONTROL</span>
           <button
             className="ml-auto lg:hidden p-1 rounded hover:bg-sidebar-accent"
             onClick={() => setSidebarOpen(false)}
@@ -136,13 +136,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer
                     transition-colors duration-150 mb-0.5
                     ${isActive
-                      ? "bg-gradient-to-r from-[#8B0A0A]/45 via-[#8B0A0A]/15 to-transparent text-[#F3968C] shadow-[inset_2px_0_0_0_#E23B2E]"
-                      : "text-muted-foreground hover:text-sidebar-foreground hover:bg-white/[0.05]"
+                      ? "bg-[#1B1B1B] text-white shadow-[inset_2px_0_0_0_#AF0000]"
+                      : "text-muted-foreground hover:text-white hover:bg-white/[0.04]"
                     }
                   `}
                   data-testid={`nav-${path.replace("/", "") || "dashboard"}`}
                 >
-                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#E23B2E]" : ""}`} />
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#AF0000]" : ""}`} />
                   <span>{label}</span>
                   {path === "/duplicados" && duplicadosCount !== null && duplicadosCount > 0 && (
                     <span
@@ -154,7 +154,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     </span>
                   )}
                   {isActive && !(path === "/duplicados" && duplicadosCount && duplicadosCount > 0) && (
-                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#E23B2E]" />
+                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#AF0000]" />
                   )}
                 </div>
               </Link>

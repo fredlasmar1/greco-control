@@ -9206,6 +9206,100 @@ Regras CRÍTICAS:
     }
   });
 
+  // SIMULADOR DE OCUPAÇÃO × MARGEM — as duas alavancas do dono: preço e ocupação.
+  // A estrutura (R$/mês) NÃO muda com o volume; o variável (comissão+insumo+taxa)
+  // escala com os atendimentos. Então cadeira vazia arrebenta a margem (a estrutura
+  // se divide por menos gente) e encher a cadeira melhora a margem de TODOS os
+  // serviços de uma vez. Mostra a margem em cada nível de ocupação + o ponto de
+  // equilíbrio (quantos atendimentos pra sair do zero).
+  app.get("/api/simulador-ocupacao/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const cfg = await getConfigFin();
+
+      // receita + atendimentos reais do mês
+      const md: any = await getMesDataCanonical(mes, { trinksFetchAllRange, log, lerSnapshots: listSnapshotsDoMes });
+      const receita = Number(md?.faturamento || 0);
+      const atend = Number(md?.comandas || 0);
+      if (!(receita > 0) || !(atend > 0)) return res.json({ ok: false, error: "sem receita/atendimentos do mês ainda" });
+
+      // ESTRUTURA (fixa — não muda com volume)
+      const cf = await custoFixoRealDoMes(mes).catch(() => null);
+      const estrutura = Number(cf?.total || 0);
+
+      // VARIÁVEL (escala com volume): comissão + insumo + taxa cartão
+      let comissao = 0;
+      try {
+        const rk: any = await kvGet(trinksImport.kvKeyFor("ranking", mes));
+        for (const p of (rk?.periodos?.[0]?.profissionais || []))
+          comissao += comissaoServicosRanking(String(p.profissional), Number(p.totalServicos || 0)).comissao;
+      } catch {}
+      // insumo de serviço: Produtos & Insumos operacional, sem próteses (serviço futuro)
+      let insumo = 0;
+      try {
+        for (const c of (await listarCompras(mes)) as any[]) {
+          if (String(c.classe || "operacional") !== "operacional") continue;
+          if (String(c.categoria) !== "Produtos & Insumos") continue;
+          if (/prótese|protese/i.test(String(c.loja) + String(c.descricao))) continue;
+          insumo += Number(c.valor || 0);
+        }
+      } catch {}
+      const taxa = r2(receita * (Number(cfg.taxaCartaoPct || 0) / 100));
+      const variavel = r2(comissao + insumo + taxa);
+
+      // margem de contribuição por atendimento (o que sobra de cada atendimento
+      // depois do variável, pra pagar a estrutura fixa)
+      const mc = r2(receita - variavel);
+      const mcPorAtend = atend > 0 ? mc / atend : 0;
+      const ticket = atend > 0 ? receita / atend : 0;
+      const resultadoAtual = r2(mc - estrutura);
+      const margemAtualPct = receita > 0 ? r2((resultadoAtual / receita) * 100) : 0;
+      const breakEvenAtend = mcPorAtend > 0 ? Math.ceil(estrutura / mcPorAtend) : null;
+
+      // dias úteis (ter–sáb) do mês pra converter em clientes/dia
+      const diasUteis = contarDiasUteis(`${mes}-01`, ultimoDiaDoMes(mes));
+      const atendPorDia = diasUteis > 0 ? atend / diasUteis : 0;
+
+      // cenários: hoje + N clientes/dia a mais (receita e variável escalam junto)
+      const cenarios = [0, 2, 4, 6, 8].map((maisPorDia) => {
+        const nAtend = Math.round(atend + maisPorDia * diasUteis);
+        const receitaC = r2(ticket * nAtend);
+        const resultadoC = r2(mcPorAtend * nAtend - estrutura);
+        return {
+          maisClientesDia: maisPorDia,
+          atendimentos: nAtend,
+          receita: receitaC,
+          resultado: resultadoC,
+          margemPct: receitaC > 0 ? r2((resultadoC / receitaC) * 100) : 0,
+          estruturaPorServico: nAtend > 0 ? r2(estrutura / nAtend) : 0,
+        };
+      });
+
+      return res.json({
+        ok: true, mes,
+        hoje: {
+          receita: r2(receita), atendimentos: atend, ticketMedio: r2(ticket),
+          atendPorDia: r2(atendPorDia), diasUteis,
+          variavel, comissao: r2(comissao), insumo: r2(insumo), taxaCartao: taxa,
+          estrutura: r2(estrutura), margemContribuicaoPorAtend: r2(mcPorAtend),
+          resultado: resultadoAtual, margemPct: margemAtualPct,
+          estruturaPorServico: atend > 0 ? r2(estrutura / atend) : 0,
+        },
+        pontoEquilibrio: {
+          atendimentos: breakEvenAtend,
+          porDia: breakEvenAtend && diasUteis > 0 ? Math.ceil(breakEvenAtend / diasUteis) : null,
+          faltamPorDia: breakEvenAtend && diasUteis > 0 ? Math.max(0, Math.ceil(breakEvenAtend / diasUteis) - Math.round(atendPorDia)) : null,
+        },
+        cenarios,
+        nota: "Estrutura é fixa: não muda se você atende mais. Por isso cada cliente a mais melhora a margem de TODOS. As duas alavancas: subir preço (ticket) ou encher a cadeira (atendimentos).",
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // ─── GET /api/viabilidade/:mes — Motor de Viabilidade Fase A (margem real ao vivo)
   // Junta as fontes que já fluem pro sistema (NÃO duplica): receita (mesService),
   // variável (comissão v42 + taxa cartão + material das fichas + variável do extrato),

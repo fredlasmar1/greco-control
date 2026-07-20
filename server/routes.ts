@@ -896,15 +896,24 @@ try {
   log("Service costs: could not load from disk, starting fresh", "costs");
 }
 
-function saveServiceCosts() {
+async function saveServiceCosts() {
   // Postgres é a fonte durável (o arquivo é efêmero no Railway — some no deploy).
   // Sem isto, TODA ficha técnica que o dono preenche se perde no próximo deploy.
-  kvSet("service_costs", serviceCosts).catch(() => {});
+  // ⚠️ NÃO engolir o erro do banco: se o Postgres falhar e a gente fingir que
+  // salvou, o dono perde tudo no próximo deploy sem nem saber (aconteceu 20/jul —
+  // o `.catch(()=>{})` antigo mascarava a falha). Agora estoura pra quem chamou.
+  const arquivoBackup = () => {
+    try { fs.writeFileSync(SERVICE_COSTS_FILE, JSON.stringify(serviceCosts, null, 2), "utf-8"); }
+    catch { log("Service costs: could not save to disk", "costs"); }
+  };
   try {
-    fs.writeFileSync(SERVICE_COSTS_FILE, JSON.stringify(serviceCosts, null, 2), "utf-8");
-  } catch (err) {
-    log("Service costs: could not save to disk", "costs");
+    await kvSet("service_costs", serviceCosts);
+  } catch (err: any) {
+    arquivoBackup(); // pelo menos o backup local
+    log(`Service costs: FALHA ao gravar no Postgres — ${err?.message}`, "costs");
+    throw new Error("Não consegui gravar a ficha no banco (Postgres). O dado NÃO ficou durável — tente salvar de novo.");
   }
+  arquivoBackup();
 }
 
 // ─── Persistent Trinks config ─────────────────────────────
@@ -8165,7 +8174,7 @@ Regras CRÍTICAS:
         serviceCosts.push({ serviceId: id, serviceName: String(s.nome || "").trim(), items, estimado: true } as any);
         criadas++;
       }
-      if (criadas > 0) saveServiceCosts();
+      if (criadas > 0) await saveServiceCosts();
       return res.json({ ok: true, criadas, totalFichas: serviceCosts.length,
         nota: "Fichas de partida criadas (marcadas 'estimado'). Ajuste no editor de cada serviço." });
     } catch (err: any) {
@@ -8174,7 +8183,7 @@ Regras CRÍTICAS:
   });
 
   // v72: upsert de UM serviço (não mexe nos demais) — usado pelo editor por serviço.
-  app.put("/api/service-costs/:serviceId", (req: Request, res: Response) => {
+  app.put("/api/service-costs/:serviceId", async (req: Request, res: Response) => {
     const id = String(req.params.serviceId || "");
     if (!id) return res.status(400).json({ ok: false, error: "serviceId obrigatório" });
     const c = req.body || {};
@@ -8194,11 +8203,15 @@ Regras CRÍTICAS:
     if (c.outrosCustos !== undefined && c.outrosCustos !== null && c.outrosCustos !== "") { const v = Number(c.outrosCustos); if (isFinite(v) && v >= 0) entry.outrosCustos = v; }
     serviceCosts = serviceCosts.filter(x => x.serviceId !== id);
     serviceCosts.push(entry);
-    saveServiceCosts();
-    return res.json({ ok: true, serviceCost: entry });
+    try {
+      await saveServiceCosts();
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message, durou: false });
+    }
+    return res.json({ ok: true, serviceCost: entry, durou: true });
   });
 
-  app.post("/api/service-costs", (req: Request, res: Response) => {
+  app.post("/api/service-costs", async (req: Request, res: Response) => {
     const { costs } = req.body;
     if (!Array.isArray(costs)) {
       return res.status(400).json({ error: "costs must be an array" });
@@ -8234,9 +8247,13 @@ Regras CRÍTICAS:
       }
       return entry;
     });
-    saveServiceCosts();
+    try {
+      await saveServiceCosts();
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message, durou: false });
+    }
     log(`Service costs: saved ${serviceCosts.length} entries`, "costs");
-    return res.json({ ok: true, count: serviceCosts.length });
+    return res.json({ ok: true, count: serviceCosts.length, durou: true });
   });
 
   // ──────────────────────────────────────────────────────────────────

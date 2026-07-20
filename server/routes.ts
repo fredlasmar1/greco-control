@@ -880,6 +880,7 @@ interface ServiceCostEntry {
   comissaoAssistentePct?: number;  // 0..100
   margemDesejadaPct?: number;  // 0..100. Margem alvo para o preço sugerido.
   outrosCustos?: number;       // v70: outros custos do serviço em R$ (campo livre).
+  estimado?: boolean;          // ficha de partida gerada pelo acelerador (por categoria); dono deve refinar.
 }
 
 const SERVICE_COSTS_FILE = path.join(process.cwd(), ".service-costs.json");
@@ -896,6 +897,9 @@ try {
 }
 
 function saveServiceCosts() {
+  // Postgres é a fonte durável (o arquivo é efêmero no Railway — some no deploy).
+  // Sem isto, TODA ficha técnica que o dono preenche se perde no próximo deploy.
+  kvSet("service_costs", serviceCosts).catch(() => {});
   try {
     fs.writeFileSync(SERVICE_COSTS_FILE, JSON.stringify(serviceCosts, null, 2), "utf-8");
   } catch (err) {
@@ -1672,6 +1676,14 @@ export async function registerRoutes(
           kvSet("meta_diaria", { valor: metaDiaria }),
         ]);
       }
+      // Fichas técnicas (service_costs): o Postgres é a fonte durável. O load do
+      // topo lê o arquivo efêmero; aqui sobrescreve com o kv se houver (não perde
+      // ficha no deploy). Só adota se o kv tiver algo, pra não zerar o arquivo.
+      try {
+        const scDb = await kvGetParaEscrita<typeof serviceCosts>("service_costs");
+        if (Array.isArray(scDb) && scDb.length > 0) serviceCosts = scDb;
+        else if (Array.isArray(serviceCosts) && serviceCosts.length > 0) await kvSet("service_costs", serviceCosts);
+      } catch { /* mantém o do arquivo */ }
       // Carga CONFIRMADA: só a partir daqui as coleções podem sobrescrever o banco.
       dbCarregouOk = true;
       log("Dados carregados do Postgres", "db");
@@ -8085,6 +8097,80 @@ Regras CRÍTICAS:
 
   app.get("/api/service-costs", (_req: Request, res: Response) => {
     return res.json(serviceCosts);
+  });
+
+  // ACELERADOR DE FICHA TÉCNICA — o custo de insumo por serviço estava R$0 em 100%
+  // dos serviços (ninguém preenche do zero). O catálogo de produtos é quase todo
+  // REVENDA (água, amendoim), não os insumos que um serviço consome (lâmina, creme,
+  // tinta), então não dá pra puxar o custo de lá. Em vez de deixar R$0, geramos uma
+  // ESTIMATIVA por categoria (padrão de insumo típico), que o dono revisa e ajusta.
+  // É partida, não verdade — some do "R$0" e sinaliza "estimado" até o dono refinar.
+  function insumosPorTipoServico(nome: string, categoria: string): CostItem[] {
+    const n = (nome + " " + categoria).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const mk = (name: string, quantity: number, unitCost: number): CostItem =>
+      ({ id: `est-${Math.random().toString(36).slice(2, 8)}`, name, category: "produto", quantity, unitCost } as any);
+    const items: CostItem[] = [];
+    const temBarba = /barba|barbot/.test(n);
+    const temCorte = /corte|cabelo|social|degrade|maquin/.test(n);
+    const quimica = /quimic|colora|tintura|luzes|platinad|selagem|progressiv|alis|matiz|descolor|hidrata/.test(n);
+    const estetica = /limpeza de pele|estetic|conoterapia|hidrat|sobrancelha|pigment|depila/.test(n);
+    const vip = /vip/.test(n);
+    if (quimica) { items.push(mk("Coloração/química (dose)", 1, 12), mk("Oxidante/insumos", 1, 4)); }
+    if (estetica && !quimica) { items.push(mk("Produtos de estética (dose)", 1, 6)); }
+    if (temCorte) { items.push(mk("Lâmina/navalha", 1, 1.5), mk("Creme/pó/higiene", 1, 1.5)); }
+    if (temBarba) { items.push(mk("Espuma/gel + toalha", 1, 1.5), mk("Pós-barba/lâmina", 1, 1.5)); }
+    if (items.length === 0) items.push(mk("Insumo estimado", 1, 3)); // fallback
+    if (vip) items.push(mk("Premium (VIP)", 1, 2)); // VIP consome um pouco mais
+    return items;
+  }
+
+  // GET devolve a sugestão (não grava). POST ?aplicar grava só os que ainda NÃO
+  // têm ficha (não sobrescreve o que o dono já ajustou).
+  app.get("/api/service-costs/sugestao", async (_req: Request, res: Response) => {
+    try {
+      const cache: any = await kvGet("catalogo_servicos");
+      const servicos: any[] = Array.isArray(cache?.servicos) ? cache.servicos : [];
+      const comFicha = new Set(serviceCosts.map(s => String(s.serviceId)));
+      const sugestoes = servicos
+        .filter(s => Number(s.preco) > 0)
+        .map(s => {
+          const items = insumosPorTipoServico(String(s.nome || ""), String(s.categoria || ""));
+          const custoInsumo = items.reduce((t, it: any) => t + it.quantity * it.unitCost, 0);
+          return { serviceId: String(s.id), serviceName: String(s.nome || "").trim(), categoria: String(s.categoria || "").trim(),
+            preco: Number(s.preco || 0), jaTemFicha: comFicha.has(String(s.id)),
+            custoInsumoEstimado: Math.round(custoInsumo * 100) / 100, items };
+        })
+        .sort((a, b) => a.categoria.localeCompare(b.categoria, "pt-BR") || a.serviceName.localeCompare(b.serviceName, "pt-BR"));
+      return res.json({ ok: true, total: sugestoes.length, semFicha: sugestoes.filter(s => !s.jaTemFicha).length, sugestoes,
+        nota: "Estimativa de insumo por categoria — o dono revisa e ajusta. Não substitui fichas já preenchidas." });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post("/api/service-costs/sugestao/aplicar", async (req: Request, res: Response) => {
+    try {
+      const cache: any = await kvGet("catalogo_servicos");
+      const servicos: any[] = Array.isArray(cache?.servicos) ? cache.servicos : [];
+      const comFicha = new Set(serviceCosts.map(s => String(s.serviceId)));
+      // sobrescreve os já existentes? default NÃO (só preenche os vazios).
+      const sobrescrever = req.body?.sobrescrever === true;
+      let criadas = 0;
+      for (const s of servicos) {
+        if (!(Number(s.preco) > 0)) continue;
+        const id = String(s.id);
+        if (comFicha.has(id) && !sobrescrever) continue;
+        const items = insumosPorTipoServico(String(s.nome || ""), String(s.categoria || ""));
+        serviceCosts = serviceCosts.filter(x => x.serviceId !== id);
+        serviceCosts.push({ serviceId: id, serviceName: String(s.nome || "").trim(), items, estimado: true } as any);
+        criadas++;
+      }
+      if (criadas > 0) saveServiceCosts();
+      return res.json({ ok: true, criadas, totalFichas: serviceCosts.length,
+        nota: "Fichas de partida criadas (marcadas 'estimado'). Ajuste no editor de cada serviço." });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
   });
 
   // v72: upsert de UM serviço (não mexe nos demais) — usado pelo editor por serviço.

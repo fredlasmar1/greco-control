@@ -8508,10 +8508,20 @@ Regras CRÍTICAS:
   // como fixas (natureza=fixo, classe=operacional), deduplicadas contra o extrato.
   // É a base pro custo fixo POR ATENDIMENTO refletir o custo real por serviço —
   // antes o salário fixo e as compras nem entravam, e a margem saía otimista.
+  // CUSTO DE ESTRUTURA REAL DO MÊS — tudo que a barbearia gasta pra funcionar,
+  // pra ratear por atendimento (o dono quer a conta REAL: fixo + variável).
+  // ENTRA: salário fixo + fixas do extrato + TODAS as compras operacionais
+  //        (marketing, comemorações, manutenção, software, cortesia, embalagens…),
+  //        fixas E variáveis.
+  // NÃO ENTRA: (a) Produtos & Insumos → carrega por serviço via ficha, não no rateio;
+  //            (b) Equipamentos & Móveis → compra pontual/capital (dono pediu tirar);
+  //            (c) Salários & Equipe (compras) → já no salário fixo/comissão;
+  //            (d) classe investimento/perda → não é custo operacional do mês.
   async function custoFixoRealDoMes(mes: string): Promise<{
     total: number; fixasExtrato: number; salarioFixo: number; comprasFixas: number;
     detalheSalario: Array<{ nome: string; valor: number; fonte: string }>;
     comprasFixasExcluidasDup: number;
+    porCategoriaEstrutura: Record<string, number>;
   }> {
     const r2 = (n: number) => Math.round(n * 100) / 100;
     // (1) fixas já conhecidas (extrato + lançamentos)
@@ -8536,10 +8546,12 @@ Regras CRÍTICAS:
       }
     }
 
-    // (3) compras fixas do mês (natureza=fixo, classe operacional), dedup vs extrato.
-    // Dedup próprio (o jaNoExtrato da Viabilidade é local dela): mesma saída no
-    // extrato, valor ±0,5 e até 3 dias → já contada, não soma de novo.
+    // (3) compras de ESTRUTURA do mês (todo overhead operacional, fixo E variável),
+    // dedup vs extrato. Dedup próprio (o jaNoExtrato da Viabilidade é local dela):
+    // mesma saída no extrato, valor ±0,5 e até 3 dias → já contada, não soma de novo.
+    const CAT_FORA_ESTRUTURA = new Set(["Produtos & Insumos", "Equipamentos & Móveis", "Salários & Equipe"]);
     let comprasFixas = 0, comprasDup = 0;
+    const porCategoriaEstrutura: Record<string, number> = {};
     const bankOut = transacoesBanco.filter(t => t.date.startsWith(mes) && t.amount < 0 && t.incluidoNoFluxo !== false && !t.transferenciaParId);
     const diasBetween = (a: string, b: string) => Math.abs((new Date(a + "T12:00:00Z").getTime() - new Date(b + "T12:00:00Z").getTime()) / 86400000);
     const jaNoExtratoLocal = (c: any) => bankOut.some(t => Math.abs(Math.abs(t.amount) - Number(c.valor || 0)) < 0.5 && diasBetween(t.date, String(c.data || (mes + "-01"))) <= 3);
@@ -8547,18 +8559,21 @@ Regras CRÍTICAS:
       const comprasMes: any[] = await listarCompras(mes);
       for (const c of comprasMes) {
         const classe = String(c.classe || "operacional");
-        if (classe !== "operacional") continue;               // investimento/perda fora
-        if (naturezaDaCompra(c) !== "fixo") continue;          // só as fixas
-        if (String(c.categoria) === "Salários & Equipe") continue; // já contado no salário fixo
+        if (classe !== "operacional") continue;                  // investimento/perda fora
+        const cat = String(c.categoria || "Outros");
+        if (CAT_FORA_ESTRUTURA.has(cat)) continue;               // insumo (ficha), equipamento (pontual), labor (salário)
         if (jaNoExtratoLocal(c)) { comprasDup += Number(c.valor || 0); continue; } // evita 2× com o extrato
         comprasFixas += Number(c.valor || 0);
+        porCategoriaEstrutura[cat] = r2((porCategoriaEstrutura[cat] || 0) + Number(c.valor || 0));
       }
     } catch {}
+    if (salarioFixo > 0) porCategoriaEstrutura["Salário fixo (equipe)"] = r2(salarioFixo);
+    if (fixasExtrato > 0) porCategoriaEstrutura["Fixas do extrato/lançamentos"] = r2(fixasExtrato);
 
     return {
       total: r2(fixasExtrato + salarioFixo + comprasFixas),
       fixasExtrato: r2(fixasExtrato), salarioFixo: r2(salarioFixo), comprasFixas: r2(comprasFixas),
-      detalheSalario, comprasFixasExcluidasDup: r2(comprasDup),
+      detalheSalario, comprasFixasExcluidasDup: r2(comprasDup), porCategoriaEstrutura,
     };
   }
 

@@ -899,21 +899,26 @@ try {
 async function saveServiceCosts() {
   // Postgres é a fonte durável (o arquivo é efêmero no Railway — some no deploy).
   // Sem isto, TODA ficha técnica que o dono preenche se perde no próximo deploy.
-  // ⚠️ NÃO engolir o erro do banco: se o Postgres falhar e a gente fingir que
-  // salvou, o dono perde tudo no próximo deploy sem nem saber (aconteceu 20/jul —
-  // o `.catch(()=>{})` antigo mascarava a falha). Agora estoura pra quem chamou.
+  // ⚠️ kvSet NÃO estoura: ele devolve `false` quando o banco falha (ou dbReady=false).
+  // Então TEM que checar o retorno — senão a gente "confirma" (durou:true) sem gravar,
+  // e o dono perde tudo no próximo deploy (foi o sumiço das fichas do Guilherme, 20/jul).
   const arquivoBackup = () => {
     try { fs.writeFileSync(SERVICE_COSTS_FILE, JSON.stringify(serviceCosts, null, 2), "utf-8"); }
     catch { log("Service costs: could not save to disk", "costs"); }
   };
-  try {
-    await kvSet("service_costs", serviceCosts);
-  } catch (err: any) {
-    arquivoBackup(); // pelo menos o backup local
-    log(`Service costs: FALHA ao gravar no Postgres — ${err?.message}`, "costs");
-    throw new Error("Não consegui gravar a ficha no banco (Postgres). O dado NÃO ficou durável — tente salvar de novo.");
+  arquivoBackup(); // backup local sempre (mesmo se o banco cair)
+  const gravou = await kvSet("service_costs", serviceCosts);
+  if (!gravou) {
+    log(`Service costs: kvSet devolveu false (Postgres indisponível?)`, "costs");
+    throw new Error("Não consegui gravar no banco (Postgres indisponível). O dado NÃO ficou salvo — tente de novo.");
   }
-  arquivoBackup();
+  // Read-back de confirmação: relê do banco e confere que chegou (garante que
+  // 'durou:true' significa MESMO durável, não só 'não deu erro na hora').
+  const back = await kvGet<ServiceCostEntry[]>("service_costs");
+  if (!Array.isArray(back) || back.length !== serviceCosts.length) {
+    log(`Service costs: read-back falhou (esperava ${serviceCosts.length}, veio ${Array.isArray(back) ? back.length : "não-array"})`, "costs");
+    throw new Error("Gravei mas não consegui confirmar no banco. Tente de novo.");
+  }
 }
 
 // ─── Persistent Trinks config ─────────────────────────────

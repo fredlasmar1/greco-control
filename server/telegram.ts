@@ -146,7 +146,9 @@ export async function setWebhookTelegram(
       body: JSON.stringify({
         url,
         secret_token: secretToken,
-        allowed_updates: ["message"],
+        // PRECISA de callback_query, senão o Telegram descarta os toques de botão
+        // (o dono não conseguia classificar a compra — "botão inválido", 20/jul).
+        allowed_updates: ["message", "callback_query"],
         drop_pending_updates: true,
       }),
     });

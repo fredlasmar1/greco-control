@@ -12075,8 +12075,17 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       // Toque num botão (resposta a "de quem é?" / "que categoria?")
       if (cb) {
         const cbChat = String(cb.message?.chat?.id || "");
-        await tratarRespostaCompras(cbChat, String(cb.data || ""), String(cb.id || ""))
-          .catch(e => log(`[compras] callback erro: ${e.message}`, "compras"));
+        const cbData = String(cb.data || "");
+        const cbId = String(cb.id || "");
+        await tratarRespostaCompras(cbChat, cbData, cbId)
+          .catch(async (e) => {
+            // Antes o erro era engolido → o botão ficava "morto"/inválido pro dono e
+            // ninguém via a causa. Agora: grava o erro (aparece no /status) E responde
+            // um toast, pra o toque nunca ficar sem resposta.
+            log(`[compras] callback erro: ${e?.message}`, "compras");
+            await kvSet("compras_ultimo_evento", { at: new Date().toISOString(), from: "callback", etapa: "callback_erro", data: cbData, erro: String(e?.message || e) }).catch(() => {});
+            await responderCallbackCompras(cbId, "Deu um erro aqui — tenta tocar de novo 🙏").catch(() => {});
+          });
         return;
       }
       if (!msg) return;

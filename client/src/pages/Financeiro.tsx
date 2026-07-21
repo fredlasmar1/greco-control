@@ -90,7 +90,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 const CHART_COLORS = [
-  "#1E3A5F",
+  "#AF0000",
   "#ef4444",
   "#f97316",
   "#8b5cf6",
@@ -812,7 +812,7 @@ export default function Financeiro() {
                       <Area
                         type="monotone"
                         dataKey="saldo"
-                        stroke="#1E3A5F"
+                        stroke="#AF0000"
                         fill="none"
                         strokeWidth={2}
                         strokeDasharray="5 3"

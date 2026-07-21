@@ -249,9 +249,9 @@ export default function Servicos({ embedded = false }: ServicosProps = {}) {
                         key={i}
                         fill={
                           i === 0
-                            ? "#1E3A5F"
+                            ? "#AF0000"
                             : i < 3
-                              ? "#152D4A"
+                              ? "#7A0F0F"
                               : "#1a3a3c"
                         }
                       />

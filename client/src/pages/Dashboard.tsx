@@ -2003,9 +2003,9 @@ export default function Dashboard() {
                   <Line
                     type="monotone"
                     dataKey="revenue"
-                    stroke="#1E3A5F"
+                    stroke="#AF0000"
                     strokeWidth={2}
-                    dot={{ r: 3, fill: "#1E3A5F" }}
+                    dot={{ r: 3, fill: "#AF0000" }}
                     activeDot={{ r: 5, fill: "#E23B2E" }}
                   />
                 </LineChart>
@@ -2107,9 +2107,9 @@ export default function Dashboard() {
                         key={index}
                         fill={
                           index === 0
-                            ? "#1E3A5F"
+                            ? "#AF0000"
                             : index < 3
-                              ? "#152D4A"
+                              ? "#7A0F0F"
                               : "#1a3a3c"
                         }
                       />
@@ -2872,7 +2872,7 @@ function Anel({ pct, size = 76, stroke = 7 }: { pct: number; size?: number; stro
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const off = c - (Math.min(100, Math.max(0, pct)) / 100) * c;
-  const cor = pct >= 100 ? "#34d399" : pct >= 70 ? "#38bdf8" : pct >= 40 ? "#fbbf24" : "#f87171";
+  const cor = pct >= 100 ? "#34d399" : pct >= 70 ? "#a3e635" : pct >= 40 ? "#fbbf24" : "#f87171";
   return (
     <svg width={size} height={size} className="-rotate-90">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={stroke} />

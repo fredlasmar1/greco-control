@@ -10036,6 +10036,94 @@ Regras CRÍTICAS:
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // CENTRAL DE INTELIGÊNCIA DE VENDAS — Fundação (RFM + LTV + Cliente 360º)
+  // ═══════════════════════════════════════════════════════════════════════
+  // Constrói a visão 360º de cada cliente a partir do Caixa (Trinks) + Metas
+  // ao vivo — a MESMA base da retenção (comanda = clienteId+data+valor). Deriva
+  // LTV, ticket médio, frequência, recência, próxima visita prevista e o bucket
+  // RFM (VIP/RECORRENTE/OCASIONAL/EM_RISCO/PERDIDO/NOVO). É a fundação em que o
+  // recomendador e as réguas de reengajamento se apoiam.
+  app.get("/api/central/clientes", async (_req: Request, res: Response) => {
+    try {
+      const hoje = ymdHoje();
+      const r2 = (n: number) => Math.round(n * 100) / 100;
+      const diasEntre = (a: string, b: string) => (a && b) ? Math.round((Date.parse(b) - Date.parse(a)) / 86400000) : 0;
+      type Cli = { id: string; nome: string; visitas: number; valorTotal: number; primeira: string; ultima: string };
+      const porCliente = new Map<string, Cli>();
+      const add = (id: string, nome: string, data: string, valor: number) => {
+        if (!id || !data) return;
+        let c = porCliente.get(id);
+        if (!c) { c = { id, nome, visitas: 0, valorTotal: 0, primeira: "", ultima: "" }; porCliente.set(id, c); }
+        c.visitas++; c.valorTotal += valor;
+        if (!c.primeira || data < c.primeira) c.primeira = data;
+        if (data > c.ultima) c.ultima = data;
+        if (!c.nome && nome) c.nome = nome;
+      };
+      const mesCorrente = hoje.slice(0, 7);
+      // Caixa 2026 (fonte histórica)
+      for (let m = 1; m <= 12; m++) {
+        const mes = `2026-${String(m).padStart(2, "0")}`;
+        const caixa: any = await kvGet(trinksImport.kvKeyFor("caixa", mes));
+        if (!Array.isArray(caixa?.rows)) continue;
+        for (const row of caixa.rows) {
+          if (String(row.tipo || "").toLowerCase().includes("estorno")) continue;
+          add(String(row.clienteId || "").trim(), String(row.clienteNome || "").trim(), String(row.data || "").slice(0, 10), Number(row.totalGeral || 0));
+        }
+      }
+      // Mês corrente ao vivo (Metas) — só o que for MAIS RECENTE que o caixa já cobre
+      try {
+        const ags = await getMetasAgendamentos(`${mesCorrente}-01`, hoje);
+        for (const a of (Array.isArray(ags) ? ags : [])) {
+          const st: any = a.status;
+          const nomeSt = typeof st === "string" ? st : (st?.descricao || st?.nome || "");
+          if (!/finalizado|realizado|concluido|concluído/i.test(String(nomeSt))) continue;
+          const id = String(a.cliente?.id || a.clienteId || "").trim();
+          const dt = String(a.dataHoraInicio || a.dataHora || "").slice(0, 10);
+          if (!id || !dt.startsWith(mesCorrente)) continue;
+          const c = porCliente.get(id);
+          if (!c || dt > c.ultima) add(id, String(a.cliente?.nome || "").trim(), dt, Number(a.valor || a.total || 0));
+        }
+      } catch { /* HUB indisponível → segue só com o Caixa */ }
+
+      const clientes = Array.from(porCliente.values()).filter(c => c.visitas > 0);
+      const ltvsOrd = clientes.map(c => c.valorTotal).sort((a, b) => a - b);
+      const p90 = ltvsOrd.length ? ltvsOrd[Math.min(ltvsOrd.length - 1, Math.floor(ltvsOrd.length * 0.9))] : 0;
+
+      const enrich = clientes.map(c => {
+        const dias = diasEntre(c.ultima, hoje);
+        const span = diasEntre(c.primeira, c.ultima);
+        const freqDias = (c.visitas >= 2 && span > 0) ? Math.round(span / (c.visitas - 1)) : 30;
+        const ticket = c.visitas ? r2(c.valorTotal / c.visitas) : 0;
+        const proxima = c.ultima ? new Date(Date.parse(c.ultima) + freqDias * 86400000).toISOString().slice(0, 10) : "";
+        let bucket = "OCASIONAL";
+        if (dias > 90) bucket = "PERDIDO";
+        else if (c.visitas >= 2 && dias > Math.max(1.5 * freqDias, 30)) bucket = "EM_RISCO";
+        else if ((p90 > 0 && c.valorTotal >= p90) || c.visitas >= 8) bucket = "VIP";
+        else if (c.visitas === 1 && dias <= 45) bucket = "NOVO";
+        else if (c.visitas >= 4) bucket = "RECORRENTE";
+        return { id: c.id, nome: c.nome, visitas: c.visitas, ltv: r2(c.valorTotal), ticket, freqDias, diasSemVir: dias, ultima: c.ultima, proxima, bucket };
+      });
+
+      const ORDEM = ["VIP", "RECORRENTE", "OCASIONAL", "EM_RISCO", "PERDIDO", "NOVO"];
+      const resumo = ORDEM.map(b => {
+        const g = enrich.filter(c => c.bucket === b);
+        return { bucket: b, clientes: g.length, ltvTotal: r2(g.reduce((s, c) => s + c.ltv, 0)) };
+      });
+      enrich.sort((a, b) => b.ltv - a.ltv);
+      return res.json({
+        ok: true,
+        totalClientes: enrich.length,
+        ltvMedio: enrich.length ? r2(enrich.reduce((s, c) => s + c.ltv, 0) / enrich.length) : 0,
+        ticketMedio: enrich.length ? r2(enrich.reduce((s, c) => s + c.ticket, 0) / enrich.length) : 0,
+        resumo,
+        clientes: enrich,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
   // ─── POST /api/precificacao/calcular — v24
   // Recebe lista de servicos e retorna calculo expandido para cada um.
   // Body: { mes: "YYYY-MM", servicos: [{ id, nome, categoria, preco, duracao }, ...] }

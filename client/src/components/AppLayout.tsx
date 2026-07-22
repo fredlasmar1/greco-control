@@ -34,10 +34,12 @@ import {
   Scale,
   Activity,
   ShoppingCart,
+  Radar,
 } from "lucide-react";
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/central", label: "Central de Vendas", icon: Radar },
   { path: "/conselheiro", label: "Conselheiro", icon: Scale },
   { path: "/lancamentos", label: "Lançamentos", icon: Receipt },
   { path: "/caixa-dia", label: "Caixa do Dia", icon: Banknote },

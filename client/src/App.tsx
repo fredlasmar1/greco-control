@@ -34,6 +34,7 @@ import Conselheiro from "@/pages/Conselheiro";
 import Viabilidade from "@/pages/Viabilidade";
 import Evolucao from "@/pages/Evolucao";
 import TrinksAuditoria from "@/pages/TrinksAuditoria";
+import Central from "@/pages/Central";
 import Login from "@/pages/Login";
 import { CopilotDrawer } from "@/components/CopilotDrawer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -68,6 +69,7 @@ function AdminRoutes() {
       <ErrorBoundary label="route">
         <Switch>
           <Route path="/" component={Dashboard} />
+          <Route path="/central" component={Central} />
           <Route path="/lancamentos" component={Lancamentos} />
           <Route path="/caixa-dia" component={CaixaDia} />
           <Route path="/equipe" component={Equipe} />

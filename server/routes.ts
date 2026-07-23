@@ -10090,7 +10090,31 @@ Regras CRÍTICAS:
       const ltvsOrd = clientes.map(c => c.valorTotal).sort((a, b) => a - b);
       const p90 = ltvsOrd.length ? ltvsOrd[Math.min(ltvsOrd.length - 1, Math.floor(ltvsOrd.length * 0.9))] : 0;
 
+      // Contato (telefone + aniversário) pra régua assistida: o Caixa não traz
+      // telefone, então junta pela BASE de clientes (trinks_import:clientes:base)
+      // por NOME normalizado. ⚠️ join por nome é frágil (Trinks manda MAIÚSCULA +
+      // espaço no fim) → normaliza (btrim/lower/sem acento). Quem não casar fica
+      // sem wa.me e a secretária busca manual — a régua ainda gera o texto.
+      const normNome = (s: string) => String(s || "").trim().toLowerCase()
+        .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ");
+      const waFone = (raw: string): string => {
+        const d = String(raw || "").replace(/\D/g, "");
+        if (d.length < 10) return "";
+        const core = d.length > 11 ? d.slice(0, 11) : d; // 1º número (muitos vêm colados)
+        return core.startsWith("55") ? core : "55" + core;
+      };
+      const contatoPorNome = new Map<string, { telefone: string; aniversario: string }>();
+      try {
+        const base: any = await kvGet(trinksImport.CLIENTES_BASE_KEY);
+        for (const r of (Array.isArray(base?.rows) ? base.rows : [])) {
+          const k = normNome(r.nome);
+          if (!k || contatoPorNome.has(k)) continue;
+          contatoPorNome.set(k, { telefone: waFone(r.telefones), aniversario: String(r.dataNascimento || "").slice(0, 10) });
+        }
+      } catch { /* sem base → segue sem telefone */ }
+
       const enrich = clientes.map(c => {
+        const contato = contatoPorNome.get(normNome(c.nome)) || { telefone: "", aniversario: "" };
         const dias = diasEntre(c.ultima, hoje);
         const span = diasEntre(c.primeira, c.ultima);
         const freqDias = (c.visitas >= 2 && span > 0) ? Math.round(span / (c.visitas - 1)) : 30;
@@ -10102,7 +10126,7 @@ Regras CRÍTICAS:
         else if ((p90 > 0 && c.valorTotal >= p90) || c.visitas >= 8) bucket = "VIP";
         else if (c.visitas === 1 && dias <= 45) bucket = "NOVO";
         else if (c.visitas >= 4) bucket = "RECORRENTE";
-        return { id: c.id, nome: c.nome, visitas: c.visitas, ltv: r2(c.valorTotal), ticket, freqDias, diasSemVir: dias, ultima: c.ultima, proxima, bucket };
+        return { id: c.id, nome: c.nome, visitas: c.visitas, ltv: r2(c.valorTotal), ticket, freqDias, diasSemVir: dias, ultima: c.ultima, proxima, bucket, telefone: contato.telefone, aniversario: contato.aniversario };
       });
 
       const ORDEM = ["VIP", "RECORRENTE", "OCASIONAL", "EM_RISCO", "PERDIDO", "NOVO"];
@@ -10119,6 +10143,85 @@ Regras CRÍTICAS:
         resumo,
         clientes: enrich,
       });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
+  // ─── POST /api/central/mensagem — régua ASSISTIDA (PR#2)
+  // Gera 1 mensagem de reengajamento no tom Sport Barber pra secretária mandar
+  // por WhatsApp (wa.me). NÃO envia nada, NÃO grava — a pessoa decide e dispara.
+  // Começa pelos PERDIDOS (413, R$62k) e EM_RISCO (78, R$32k), a maior mina.
+  app.post("/api/central/mensagem", async (req: Request, res: Response) => {
+    try {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      const nome = String(req.body?.nome || "").trim();
+      const bucket = String(req.body?.bucket || "").toUpperCase();
+      const diasSemVir = Number(req.body?.diasSemVir || 0);
+      const ticket = Number(req.body?.ticket || 0);
+      const visitas = Number(req.body?.visitas || 0);
+      if (!nome) return res.status(400).json({ ok: false, error: "nome é obrigatório." });
+      const primeiro = nome.split(/\s+/)[0] || nome;
+      const cap = primeiro.charAt(0).toUpperCase() + primeiro.slice(1).toLowerCase();
+
+      // Ângulo por bucket — quanto mais frio o cliente, mais forte a oferta.
+      const angulo: Record<string, string> = {
+        PERDIDO: "Sumiu há muito tempo. Traz de volta com uma oferta forte (ex.: cortesia numa bebida ou % no primeiro corte de retorno). Reconhece a ausência sem cobrar, com leveza.",
+        EM_RISCO: "Está atrasando o corte além do costume. Convite caloroso pra voltar ao ritmo, oferta calibrada (um agrado, não desconto agressivo).",
+        VIP: "Cliente top da casa. Trata como VIP, oferece prioridade de horário / novidade, sem desconto — valoriza.",
+        RECORRENTE: "Cliente fiel. Lembrete gentil do horário de sempre + um upsell leve (barba, bebida).",
+        OCASIONAL: "Vem de vez em quando. Puxa pra virar hábito, mostra que tem horário fácil.",
+        NOVO: "Veio pouco. Convida pra 2ª visita, cria vínculo, mostra que lembraram dele.",
+      };
+      const contexto = [
+        `Cliente: ${cap}`,
+        `Situação: ${bucket || "—"}`,
+        diasSemVir > 0 ? `Está há ${diasSemVir} dias sem vir` : null,
+        visitas > 0 ? `Já veio ${visitas} vez(es)` : null,
+        ticket > 0 ? `Ticket médio dele ~R$${Math.round(ticket)}` : null,
+      ].filter(Boolean).join(". ");
+
+      const prompt = `Você é o dono da GRECO SPORT BARBER (barbearia masculina em Anápolis-GO). Escreva UMA mensagem curta de WhatsApp pra reativar este cliente. A SECRETÁRIA vai mandar como se fosse a barbearia.
+
+${contexto}.
+
+Estratégia pra este caso: ${angulo[bucket] || angulo.OCASIONAL}
+
+Regras:
+- Tom Sport Barber: jovem, masculino, direto e caloroso. Trata por "${cap}". Fala no "a gente".
+- Curta (2-4 linhas). Sem "prezado", sem "querido cliente", sem formalidade.
+- No máx 1 emoji, se fizer sentido. Nada de salada de emoji.
+- Chama pra AGIR (marcar horário). Pode citar barba/bebida/agrado se couber.
+- NÃO invente preço/data/nome de barbeiro específico. Sem link.
+- Responda SÓ com o texto da mensagem, nada mais.`;
+
+      // Sem chave → devolve um fallback pronto (a régua não pode ficar muda).
+      if (!apiKey) {
+        const fb = bucket === "PERDIDO"
+          ? `Fala ${cap}! Faz um tempão que você não aparece aqui na Greco. Bora resolver esse cabelo? Cola essa semana que a gente te encaixa — e a primeira cerveja é por nossa conta. 🍺`
+          : `Fala ${cap}! Notamos que já deu o tempo do seu corte. Bora marcar? A gente te encaixa rapidinho essa semana. 💈`;
+        return res.json({ ok: true, mensagem: fb, fonte: "fallback" });
+      }
+
+      const anthropic = new Anthropic({ apiKey });
+      const candidatos = [process.env.COMPRAS_IA_MODEL, "claude-sonnet-4-5", "claude-3-5-sonnet-latest", "claude-3-haiku-20240307"]
+        .filter((m, i, a) => !!m && a.indexOf(m) === i) as string[];
+      let mensagem = "";
+      for (const model of candidatos) {
+        try {
+          const resp = await anthropic.messages.create({ model, max_tokens: 400, messages: [{ role: "user", content: prompt }] });
+          mensagem = (resp.content.find((b: any) => b.type === "text") as any)?.text?.trim() || "";
+          if (mensagem) break;
+        } catch (err: any) {
+          if (err?.status === 404) continue;
+          break;
+        }
+      }
+      if (!mensagem) {
+        mensagem = `Fala ${cap}! Bora resolver esse corte? A gente te encaixa essa semana. 💈`;
+        return res.json({ ok: true, mensagem, fonte: "fallback" });
+      }
+      return res.json({ ok: true, mensagem, fonte: "ia" });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }

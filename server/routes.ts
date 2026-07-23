@@ -10113,6 +10113,39 @@ Regras CRÍTICAS:
         }
       } catch { /* sem base → segue sem telefone */ }
 
+      // ── COERÊNCIA COM O METAS (decisão do dono 23/jul): o eixo de CHURN
+      // (perdido/em risco) usa a MESMA régua do Metas, pra o número bater com a aba
+      // Reativar. Aqui: (a) overlay AUTORITATIVO dos sumidos que o Metas já lista
+      // (join por telefone), e (b) a mesma REGRA de cadência do Metas
+      // (reativacaoPainel.limiarEscapando/scoreDe) pro resto — cobre além do cap 300
+      // do hub e o "atrasado", que o hub não devolve por cliente. O eixo de VALOR
+      // (tier VIP/RFM por LTV) fica SEPARADO e é mantido (era o diferencial da Central).
+      const foneKey = (raw: string) => { const d = String(raw || "").replace(/\D/g, ""); return d.length >= 10 ? d.slice(-11) : ""; };
+      const metasSumidoFone = new Set<string>();
+      let reguaFonte: "metas" | "regra-local" = "regra-local";
+      try {
+        const rea = await getMetasReativacao(mesCorrente, 300);
+        if (rea && Array.isArray(rea.topReativar)) {
+          for (const t of rea.topReativar) {
+            const k = foneKey(t.phone || "");
+            if (k) metasSumidoFone.add(k);
+          }
+          reguaFonte = "metas";
+        }
+      } catch { /* HUB down → só a regra local (mesma lógica) */ }
+
+      // Limiar de "escapando" idêntico ao Metas: Clube/Fiel(≥6 visitas) pela cadência
+      // (semanal 10 / quinzenal 18 / mensal 34 / sem ritmo 15); Poucas/Novo = 15.
+      const limiarMetas = (visitas: number, freqDias: number): number => {
+        if (visitas >= 6) {
+          if (freqDias <= 12) return 10;
+          if (freqDias <= 20) return 18;
+          if (freqDias <= 45) return 34;
+          return 15;
+        }
+        return 15;
+      };
+
       const enrich = clientes.map(c => {
         const contato = contatoPorNome.get(normNome(c.nome)) || { telefone: "", aniversario: "" };
         const dias = diasEntre(c.ultima, hoje);
@@ -10120,13 +10153,26 @@ Regras CRÍTICAS:
         const freqDias = (c.visitas >= 2 && span > 0) ? Math.round(span / (c.visitas - 1)) : 30;
         const ticket = c.visitas ? r2(c.valorTotal / c.visitas) : 0;
         const proxima = c.ultima ? new Date(Date.parse(c.ultima) + freqDias * 86400000).toISOString().slice(0, 10) : "";
-        let bucket = "OCASIONAL";
-        if (dias > 90) bucket = "PERDIDO";
-        else if (c.visitas >= 2 && dias > Math.max(1.5 * freqDias, 30)) bucket = "EM_RISCO";
-        else if ((p90 > 0 && c.valorTotal >= p90) || c.visitas >= 8) bucket = "VIP";
-        else if (c.visitas === 1 && dias <= 45) bucket = "NOVO";
-        else if (c.visitas >= 4) bucket = "RECORRENTE";
-        return { id: c.id, nome: c.nome, visitas: c.visitas, ltv: r2(c.valorTotal), ticket, freqDias, diasSemVir: dias, ultima: c.ultima, proxima, bucket, telefone: contato.telefone, aniversario: contato.aniversario };
+
+        // Eixo CHURN (régua do Metas). sumido = dias ≥ 2×limiar; atrasado = 1×–2×.
+        const limiar = limiarMetas(c.visitas, freqDias);
+        let churn: "EM_DIA" | "EM_RISCO" | "PERDIDO" = "EM_DIA";
+        if (dias >= 2 * limiar) churn = "PERDIDO";
+        else if (dias >= limiar) churn = "EM_RISCO";
+        // overlay autoritativo: se o Metas já lista como sumido, é PERDIDO.
+        if (contato.telefone && metasSumidoFone.has(foneKey(contato.telefone))) churn = "PERDIDO";
+
+        // Eixo VALOR (RFM por LTV) — mantido como diferencial da Central.
+        let tier: "VIP" | "RECORRENTE" | "OCASIONAL" | "NOVO" = "OCASIONAL";
+        if ((p90 > 0 && c.valorTotal >= p90) || c.visitas >= 8) tier = "VIP";
+        else if (c.visitas === 1 && dias <= 45) tier = "NOVO";
+        else if (c.visitas >= 4) tier = "RECORRENTE";
+
+        // Bucket exibido: quem está escapando entra pelo CHURN (é o que casa com a
+        // aba Reativar); quem está em dia entra pelo VALOR. tier vai à parte pro
+        // "VIP perdido" (a mina de maior valor) aparecer na UI.
+        const bucket = churn === "PERDIDO" ? "PERDIDO" : churn === "EM_RISCO" ? "EM_RISCO" : tier;
+        return { id: c.id, nome: c.nome, visitas: c.visitas, ltv: r2(c.valorTotal), ticket, freqDias, diasSemVir: dias, ultima: c.ultima, proxima, bucket, tier, churn, telefone: contato.telefone, aniversario: contato.aniversario };
       });
 
       const ORDEM = ["VIP", "RECORRENTE", "OCASIONAL", "EM_RISCO", "PERDIDO", "NOVO"];
@@ -10140,6 +10186,7 @@ Regras CRÍTICAS:
         totalClientes: enrich.length,
         ltvMedio: enrich.length ? r2(enrich.reduce((s, c) => s + c.ltv, 0) / enrich.length) : 0,
         ticketMedio: enrich.length ? r2(enrich.reduce((s, c) => s + c.ticket, 0) / enrich.length) : 0,
+        reguaFonte, // "metas" (overlay + regra do Metas) | "regra-local" (HUB down)
         resumo,
         clientes: enrich,
       });
@@ -10166,6 +10213,7 @@ Regras CRÍTICAS:
 
       // Ângulo por bucket — quanto mais frio o cliente, mais forte a oferta.
       const angulo: Record<string, string> = {
+        ANIVERSARIO: "É ANIVERSÁRIO dele (essa semana). Parabeniza de verdade, com carinho, e convida pra comemorar na cadeira com um agrado de aniversário (cortesia numa bebida / mimo). Leve e festivo, sem parecer só venda.",
         PERDIDO: "Sumiu há muito tempo. Traz de volta com uma oferta forte (ex.: cortesia numa bebida ou % no primeiro corte de retorno). Reconhece a ausência sem cobrar, com leveza.",
         EM_RISCO: "Está atrasando o corte além do costume. Convite caloroso pra voltar ao ritmo, oferta calibrada (um agrado, não desconto agressivo).",
         VIP: "Cliente top da casa. Trata como VIP, oferece prioridade de horário / novidade, sem desconto — valoriza.",
@@ -10222,6 +10270,73 @@ Regras:
         return res.json({ ok: true, mensagem, fonte: "fallback" });
       }
       return res.json({ ok: true, mensagem, fonte: "ia" });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
+  // ─── POST /api/central/regua/enviada — beacon de envio da régua (PR#3)
+  // A secretária clicou "Abrir no WhatsApp" → registra o envio. É o dado que
+  // faltava pra MEDIR conversão depois (enviou → voltou?). Grava no kv_store.
+  app.post("/api/central/regua/enviada", async (req: Request, res: Response) => {
+    try {
+      const KEY = "central:regua:enviadas";
+      const atual: any = await kvGet(KEY);
+      const lista: any[] = Array.isArray(atual) ? atual : [];
+      lista.push({
+        nome: String(req.body?.nome || ""),
+        telefone: String(req.body?.telefone || ""),
+        bucket: String(req.body?.bucket || ""),
+        ocasiao: String(req.body?.ocasiao || ""),
+        em: ymdHoje(),
+      });
+      await kvSet(KEY, lista.slice(-8000)); // cap defensivo
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
+    }
+  });
+
+  // ─── GET /api/central/regua/placar — mede a conversão da régua (PR#3)
+  // Cruza os envios registrados com quem VOLTOU depois (visita com data > envio),
+  // usando a mesma base de clientes (Caixa+Metas). Placar por régua/bucket.
+  app.get("/api/central/regua/placar", async (_req: Request, res: Response) => {
+    try {
+      const enviadas: any = await kvGet("central:regua:enviadas");
+      const lista: any[] = Array.isArray(enviadas) ? enviadas : [];
+      if (!lista.length) return res.json({ ok: true, total: 0, voltaram: 0, taxa: 0, porBucket: [] });
+
+      // última visita por telefone (Caixa 2026 — mesma fonte da retenção).
+      const foneKey = (raw: string) => { const d = String(raw || "").replace(/\D/g, ""); return d.length >= 10 ? d.slice(-11) : ""; };
+      const ultimaPorFone = new Map<string, string>();
+      const base: any = await kvGet(trinksImport.CLIENTES_BASE_KEY);
+      for (const r of (Array.isArray(base?.rows) ? base.rows : [])) {
+        const k = foneKey(r.telefones);
+        const dt = String(r.ultimoAtendimento || "").slice(0, 10);
+        if (k && dt && (!ultimaPorFone.has(k) || dt > (ultimaPorFone.get(k) as string))) ultimaPorFone.set(k, dt);
+      }
+
+      let voltaram = 0;
+      const porBucketMap = new Map<string, { enviadas: number; voltaram: number }>();
+      for (const e of lista) {
+        const k = foneKey(e.telefone);
+        const ult = k ? ultimaPorFone.get(k) : "";
+        const voltou = !!(ult && e.em && ult > e.em);
+        if (voltou) voltaram++;
+        const b = String(e.ocasiao || e.bucket || "—");
+        const cur = porBucketMap.get(b) || { enviadas: 0, voltaram: 0 };
+        cur.enviadas++; if (voltou) cur.voltaram++;
+        porBucketMap.set(b, cur);
+      }
+      const porBucket = Array.from(porBucketMap.entries()).map(([bucket, v]) => ({
+        bucket, enviadas: v.enviadas, voltaram: v.voltaram,
+        taxa: v.enviadas ? Math.round((v.voltaram / v.enviadas) * 100) : 0,
+      }));
+      return res.json({
+        ok: true, total: lista.length, voltaram,
+        taxa: lista.length ? Math.round((voltaram / lista.length) * 100) : 0,
+        porBucket,
+      });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err?.message || "Erro interno." });
     }

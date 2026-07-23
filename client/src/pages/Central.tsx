@@ -34,6 +34,8 @@ interface Cliente {
   ultima: string;
   proxima: string;
   bucket: string;
+  tier: string; // eixo de VALOR (VIP/RECORRENTE/OCASIONAL/NOVO por LTV)
+  churn: string; // eixo de CHURN (EM_DIA/EM_RISCO/PERDIDO, régua do Metas)
   telefone: string;
   aniversario: string;
 }
@@ -47,6 +49,7 @@ interface CentralData {
   totalClientes: number;
   ltvMedio: number;
   ticketMedio: number;
+  reguaFonte?: string; // "metas" | "regra-local"
   resumo: Resumo[];
   clientes: Cliente[];
 }
@@ -69,6 +72,21 @@ function fmtData(iso: string): string {
   return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
 }
 
+// Aniversário (YYYY-MM-DD) cai nos próximos 7 dias? (ignora o ano)
+function aniversarioNaSemana(iso: string): boolean {
+  if (!iso || iso.length < 10) return false;
+  const md = iso.slice(5); // MM-DD
+  const hoje = new Date();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(hoje);
+    d.setDate(hoje.getDate() + i);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    if (`${mm}-${dd}` === md) return true;
+  }
+  return false;
+}
+
 export default function Central() {
   const { data, isLoading, error } = useQuery<CentralData>({
     queryKey: ["/api/central/clientes"],
@@ -84,7 +102,8 @@ export default function Central() {
     mutationFn: async (c: Cliente) => {
       const res = await apiRequest("POST", "/api/central/mensagem", {
         nome: c.nome,
-        bucket: c.bucket,
+        // no modo Aniversariantes o ângulo é festivo, não de reativação.
+        bucket: bucketSel === "ANIVERSARIO" ? "ANIVERSARIO" : c.bucket,
         diasSemVir: c.diasSemVir,
         ticket: c.ticket,
         visitas: c.visitas,
@@ -134,7 +153,13 @@ export default function Central() {
   }
 
   const resumoMap = new Map(data.resumo.map((r) => [r.bucket, r]));
-  const listaBucket = data.clientes.filter((c) => c.bucket === bucketSel);
+  const aniversariantes = data.clientes.filter((c) => aniversarioNaSemana(c.aniversario));
+  const listaBucket =
+    bucketSel === "ANIVERSARIO"
+      ? aniversariantes
+      : data.clientes.filter((c) => c.bucket === bucketSel);
+  const tituloBucket =
+    bucketSel === "ANIVERSARIO" ? "🎂 Aniversariantes da semana" : BUCKETS[bucketSel]?.label ?? bucketSel;
 
   return (
     <div className="space-y-6 p-4 md:p-6">
@@ -196,11 +221,39 @@ export default function Central() {
         })}
       </div>
 
+      {/* Aniversariantes da semana — gancho de venda festivo */}
+      {aniversariantes.length > 0 && (
+        <button
+          onClick={() => setBucketSel("ANIVERSARIO")}
+          className={[
+            "flex w-full items-center justify-between rounded-xl border p-4 text-left transition-colors",
+            bucketSel === "ANIVERSARIO"
+              ? "border-primary bg-primary/10"
+              : "border-border bg-card hover:bg-muted",
+          ].join(" ")}
+        >
+          <div>
+            <div className="text-sm font-medium">🎂 Aniversariantes da semana</div>
+            <p className="text-[11px] text-muted-foreground">
+              Manda um parabéns com agrado — gancho caloroso pra trazer pra cadeira.
+            </p>
+          </div>
+          <div className="text-2xl font-semibold tabular-nums">{aniversariantes.length}</div>
+        </button>
+      )}
+
+      {/* Nota de coerência com o Metas */}
+      <p className="text-xs text-muted-foreground">
+        {data.reguaFonte === "metas"
+          ? "Perdido e Em risco seguem a régua do Metas (cadência de cada cliente) — batem com a aba Reativar. VIP é pelo valor (LTV)."
+          : "Perdido e Em risco pela régua de cadência (Metas indisponível agora). VIP é pelo valor (LTV)."}
+      </p>
+
       {/* Lista de clientes do bucket selecionado */}
       <Card className="rounded-xl">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
-            {BUCKETS[bucketSel]?.label ?? bucketSel}{" "}
+            {tituloBucket}{" "}
             <span className="text-sm font-normal text-muted-foreground">
               ({listaBucket.length.toLocaleString("pt-BR")} clientes)
             </span>
@@ -223,7 +276,14 @@ export default function Central() {
               <TableBody>
                 {listaBucket.slice(0, 300).map((c) => (
                   <TableRow key={c.id || c.nome}>
-                    <TableCell className="font-medium">{c.nome || "—"}</TableCell>
+                    <TableCell className="font-medium">
+                      {c.nome || "—"}
+                      {c.tier === "VIP" && (
+                        <Badge variant="destructive" className="ml-2 text-[10px] align-middle">
+                          VIP
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{c.visitas}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatCurrency(c.ltv)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatCurrency(c.ticket)}</TableCell>
@@ -288,7 +348,20 @@ export default function Central() {
                 </Button>
                 {waLink ? (
                   <Button size="sm" asChild>
-                    <a href={waLink} target="_blank" rel="noreferrer">
+                    <a
+                      href={waLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => {
+                        // beacon fire-and-forget: registra o envio pra medir conversão.
+                        apiRequest("POST", "/api/central/regua/enviada", {
+                          nome: alvo?.nome,
+                          telefone: alvo?.telefone,
+                          bucket: alvo?.bucket,
+                          ocasiao: bucketSel === "ANIVERSARIO" ? "ANIVERSARIO" : alvo?.bucket,
+                        }).catch(() => {});
+                      }}
+                    >
                       <MessageSquare className="mr-1 h-3.5 w-3.5" /> Abrir no WhatsApp
                     </a>
                   </Button>

@@ -193,9 +193,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             {/* Central de Vendas — destaque FORA das abas, do outro lado do header.
                 É a frente de crescimento (winback/LTV), então ganha o vermelho da
                 marca pra puxar o olho, separada do trabalho financeiro do dia a dia.
-                Só admin: a Central expõe LTV por cliente e o /central é rota admin
-                (a recepção seria redirecionada). Liberar pra recepção = decisão do dono. */}
-            {user?.role === "admin" && (
+                Admin + recepção (liberado 23/jul pelo dono): a régua de reativação é
+                trabalho da recepção (Larissa/Camila). Guilherme já é admin. */}
+            {(user?.role === "admin" || user?.role === "recepcao") && (
               <Link href="/central">
                 <div
                   className={`

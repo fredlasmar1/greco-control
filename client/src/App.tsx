@@ -49,7 +49,9 @@ function RedirectTo({ to }: { to: string }) {
 }
 
 // Rotas que a RECEPÇÃO pode acessar (sem financeiro/folha).
-const RECEPCAO_ROTAS = ["/caixa-dia", "/estoque", "/compras", "/assinaturas"];
+// /central liberada 23/jul (decisão do dono): a régua de reativação é trabalho
+// delas (Larissa/Camila). Elas veem LTV por cliente na Central — ok pelo dono.
+const RECEPCAO_ROTAS = ["/caixa-dia", "/estoque", "/compras", "/assinaturas", "/central"];
 
 function AdminRoutes() {
   const loadSavedConfig = useTrinksStore((s) => s.loadSavedConfig);
@@ -165,6 +167,7 @@ function AppRouter() {
           <Route path="/estoque" component={Estoque} />
           <Route path="/compras" component={Compras} />
           <Route path="/assinaturas" component={Assinaturas} />
+          <Route path="/central" component={Central} />
           <Route component={CaixaDia} />
         </Switch>
       </AppLayout>

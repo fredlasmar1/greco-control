@@ -39,7 +39,6 @@ import {
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/central", label: "Central de Vendas", icon: Radar },
   { path: "/conselheiro", label: "Conselheiro", icon: Scale },
   { path: "/lancamentos", label: "Lançamentos", icon: Receipt },
   { path: "/caixa-dia", label: "Caixa do Dia", icon: Banknote },
@@ -69,6 +68,8 @@ function GrecoLogo({ className = "h-6 w-auto" }: { className?: string }) {
 }
 
 function getPageTitle(path: string): string {
+  // Central mora fora das abas (botão destacado no header), mas ainda dá título.
+  if (path.startsWith("/central")) return "Central de Vendas";
   const item = navItems.find(n => n.path === path);
   return item?.label || "Dashboard";
 }
@@ -189,6 +190,29 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             </h1>
           </div>
           <div className="flex items-center gap-3">
+            {/* Central de Vendas — destaque FORA das abas, do outro lado do header.
+                É a frente de crescimento (winback/LTV), então ganha o vermelho da
+                marca pra puxar o olho, separada do trabalho financeiro do dia a dia.
+                Só admin: a Central expõe LTV por cliente e o /central é rota admin
+                (a recepção seria redirecionada). Liberar pra recepção = decisão do dono. */}
+            {user?.role === "admin" && (
+              <Link href="/central">
+                <div
+                  className={`
+                    flex items-center gap-2 pl-2.5 pr-3 py-1.5 rounded-lg text-sm font-medium cursor-pointer
+                    transition-colors duration-150 border
+                    ${location.startsWith("/central")
+                      ? "bg-[#AF0000] text-white border-[#AF0000] shadow-[0_0_0_3px_rgba(175,0,0,0.15)]"
+                      : "bg-[#AF0000]/10 text-white border-[#AF0000]/40 hover:bg-[#AF0000]/20"
+                    }
+                  `}
+                  data-testid="nav-central-destaque"
+                >
+                  <Radar className={`w-4 h-4 flex-shrink-0 ${location.startsWith("/central") ? "text-white" : "text-[#AF0000]"}`} />
+                  <span className="hidden sm:block">Central de Vendas</span>
+                </div>
+              </Link>
+            )}
             <button className="p-1.5 rounded-md hover:bg-muted relative" data-testid="notifications">
               <Bell className="w-4 h-4 text-muted-foreground" />
               <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-primary rounded-full" />

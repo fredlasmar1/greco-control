@@ -30,12 +30,12 @@ import {
   RefreshCw,
   Banknote,
   UserPlus,
-  Wallet,
+  Package,
 } from "lucide-react";
 
 // ─── Tipos espelhando o backend (server/trinksImport.ts) ─────────────────────
 
-type TipoImport = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos";
+type TipoImport = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos" | "rankingProdutos";
 
 interface ImportItem {
   chave: string;
@@ -73,6 +73,7 @@ const TIPO_LABELS: Record<TipoImport, string> = {
   caixa: "Caixa (Pagamentos por Comanda)",
   clientes: "Ranking de Clientes",
   produtos: "Catálogo de Produtos",
+  rankingProdutos: "Ranking de Produtos",
 };
 
 const TIPO_ICONS: Record<TipoImport, any> = {
@@ -82,7 +83,13 @@ const TIPO_ICONS: Record<TipoImport, any> = {
   caixa: Banknote,
   clientes: UserPlus,
   produtos: Wallet,
+  rankingProdutos: Package,
 };
+
+// Fallbacks defensivos: um tipo novo do backend que ainda não esteja mapeado
+// NUNCA deve derrubar a tela (era o bug do `rankingProdutos` → <undefined/>).
+const iconeDe = (tipo: string) => TIPO_ICONS[tipo as TipoImport] || FileText;
+const labelDe = (tipo: string) => TIPO_LABELS[tipo as TipoImport] || tipo;
 
 function mesLabel(mes: string): string {
   if (!/^\d{4}-\d{2}$/.test(mes)) return mes;
@@ -441,7 +448,7 @@ export default function ImportarTrinks() {
           ) : (
             <div className="space-y-2">
               {items.map((item) => {
-                const Icon = TIPO_ICONS[item.tipo];
+                const Icon = iconeDe(item.tipo);
                 return (
                   <div
                     key={item.chave}
@@ -452,7 +459,7 @@ export default function ImportarTrinks() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant="secondary" className="text-[10px] uppercase">
-                          {TIPO_LABELS[item.tipo]}
+                          {labelDe(item.tipo)}
                         </Badge>
                         <span className="text-sm font-medium">{mesLabel(item.mes)}</span>
                         <span className="text-xs text-muted-foreground">·</span>
@@ -510,7 +517,7 @@ export default function ImportarTrinks() {
             <AlertDialogDescription>
               {removerChave && (
                 <>
-                  Os dados de <strong>{TIPO_LABELS[removerChave.tipo]}</strong> de
+                  Os dados de <strong>{labelDe(removerChave.tipo)}</strong> de
                   {" "}<strong>{mesLabel(removerChave.mes)}</strong> serão apagados.
                   Esta ação não pode ser desfeita (mas você pode reimportar o CSV depois).
                 </>
@@ -549,7 +556,7 @@ function PreviewBlock({
   sobrescreveAlguma: boolean;
 }) {
   const tipo = preview.preview.tipo as TipoImport;
-  const Icon = TIPO_ICONS[tipo];
+  const Icon = iconeDe(tipo);
 
   return (
     <div className="space-y-4">
@@ -558,7 +565,7 @@ function PreviewBlock({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <Icon className="w-4 h-4 text-primary" />
-            <span className="text-sm font-medium">{TIPO_LABELS[tipo]}</span>
+            <span className="text-sm font-medium">{labelDe(tipo)}</span>
             <Badge variant="outline" className="text-[10px]">{preview.arquivo}</Badge>
             <span className="text-xs text-muted-foreground">{fmtBytes(preview.tamanhoBytes)}</span>
           </div>
@@ -579,7 +586,7 @@ function PreviewBlock({
             <ul className="text-xs text-muted-foreground mt-1 space-y-0.5">
               {preview.chaves.filter(c => c.sobrescreve).map(c => (
                 <li key={c.chave}>
-                  · <strong>{TIPO_LABELS[c.tipo]} {mesLabel(c.mes)}</strong>: substituirá importação
+                  · <strong>{labelDe(c.tipo)} {mesLabel(c.mes)}</strong>: substituirá importação
                   de {new Date(c.sobrescreve!.importadoEm).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })}
                 </li>
               ))}
@@ -602,7 +609,7 @@ function PreviewBlock({
           {preview.chaves.map(c => (
             <div key={c.chave} className="text-xs flex items-center gap-2">
               <CheckCircle2 className="w-3 h-3 text-primary" />
-              <span><strong>{TIPO_LABELS[c.tipo]}</strong> {mesLabel(c.mes)} · {c.descricao}</span>
+              <span><strong>{labelDe(c.tipo)}</strong> {mesLabel(c.mes)} · {c.descricao}</span>
             </div>
           ))}
         </div>

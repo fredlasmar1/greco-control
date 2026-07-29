@@ -12083,20 +12083,40 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       }
       const incerta = String(compra.categoria) === "Outros" || compra.confianca === "baixa";
       if (ehLabor || incerta) {
-        await kvSet(`compras_pergunta:${chatId}`, { compra, itens, foto: ctx.foto || null, from, criadoEm: new Date().toISOString() });
+        // REGISTRA PRIMEIRO, PERGUNTA DEPOIS. Antes a compra ficava só na
+        // pendência até alguém tocar no botão — e a pendência era UMA chave por
+        // grupo (`compras_pergunta:<chatId>`): dois comprovantes seguidos sem
+        // resposta e o primeiro sumia, sem erro e sem aviso. Era por isso que o
+        // gasto real não batia com o que se mandava no grupo.
+        // Agora o dinheiro entra na soma na hora; o botão só REFINA a categoria.
+        // Guarda como "Outros" mesmo quando parece pessoal: se o dono confirmar
+        // que é pagamento a funcionário, esta compra é apagada e vira vale/folha
+        // no callback — assim nunca fica contado dos dois lados nem some.
+        const provisoria = await salvarCompra({
+          ...compra,
+          categoria: "Outros",
+          descricao: `${compra.descricao || ""}${compra.descricao ? " · " : ""}aguardando classificação`.trim(),
+        } as any);
+        await guardarFotoCompra(provisoria, ctx.foto);
+        // Pendência com chave POR COMPRA — nunca mais uma sobrescreve a outra.
+        await kvSet(`compras_pergunta:${chatId}:${provisoria.id}`, {
+          compra: provisoria, itens, foto: ctx.foto || null, from,
+          criadoEm: new Date().toISOString(),
+        });
+        const jaContado = `\n\n<i>Já entrou no gasto do mês</i> — o botão só ajusta a categoria.`;
         if (ehLabor) {
-          await perguntarDeQuem(chatId, compra, from);
+          await perguntarDeQuem(chatId, provisoria, from, jaContado);
           return;
         }
         const cats = CATEGORIAS_COMPRA.filter(c => c !== "Outros");
         const linhas: any[][] = [];
         for (let i = 0; i < cats.length; i += 2) {
-          linhas.push(cats.slice(i, i + 2).map(c => ({ texto: c.slice(0, 24), data: `c|${CATEGORIAS_COMPRA.indexOf(c)}` })));
+          linhas.push(cats.slice(i, i + 2).map(c => ({ texto: c.slice(0, 24), data: `c|${CATEGORIAS_COMPRA.indexOf(c)}|${provisoria.id}` })));
         }
         await enviarMensagemCompras(
-          `🏷️ <b>R$ ${fmtBRLc(compra.valor)}</b> — que tipo de gasto é?\n<i>${compra.loja || compra.descricao || ""}</i>\n\nSó registro depois que você disser, pra não cair em "Outros" e ficar fora do lucro.`,
+          `🏷️ <b>R$ ${fmtBRLc(compra.valor)}</b> — que tipo de gasto é?\n<i>${compra.loja || compra.descricao || ""}</i>${jaContado}`,
           chatId, linhas);
-        await traçoCompras(from, "perguntou_categoria", { valor: compra.valor });
+        await traçoCompras(from, "perguntou_categoria", { valor: compra.valor, id: provisoria.id });
         return;
       }
     }
@@ -12220,21 +12240,22 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   }
 
   /** Botões com a equipe: "esse pagamento é de quem?" — a resposta vira vale na folha. */
-  async function perguntarDeQuem(chatId: string, compra: any, from: string): Promise<void> {
+  async function perguntarDeQuem(chatId: string, compra: any, from: string, rodape = ""): Promise<void> {
     const metas = await getAllMetas();
     const pessoas = Object.values(metas as Record<string, any>)
       .filter(m => m?.profissionalId && m?.nome)
       .map(m => ({ id: String(m.profissionalId), nome: String(m.nome).split("-").pop()!.trim() }))
       .sort((a, b) => a.nome.localeCompare(b.nome));
+    const id = String(compra?.id || "");
     const linhas: any[][] = [];
     for (let i = 0; i < pessoas.length; i += 2) {
-      linhas.push(pessoas.slice(i, i + 2).map(p => ({ texto: p.nome.slice(0, 18), data: `q|${p.id}` })));
+      linhas.push(pessoas.slice(i, i + 2).map(p => ({ texto: p.nome.slice(0, 18), data: `q|${p.id}|${id}` })));
     }
-    linhas.push([{ texto: "↩︎ Não é pagamento a funcionário", data: "q|nao" }]);
+    linhas.push([{ texto: "↩︎ Não é pagamento a funcionário", data: `q|nao|${id}` }]);
     await enviarMensagemCompras(
-      `👤 <b>R$ ${fmtBRLc(compra.valor)}</b> — pagamento pra quem?\n<i>${compra.loja || compra.descricao || ""}</i>\n\nVou abater da folha da pessoa.`,
+      `👤 <b>R$ ${fmtBRLc(compra.valor)}</b> — pagamento pra quem?\n<i>${compra.loja || compra.descricao || ""}</i>\n\nVou abater da folha da pessoa.${rodape}`,
       chatId, linhas);
-    await traçoCompras(from, "perguntou_quem", { valor: compra.valor });
+    await traçoCompras(from, "perguntou_quem", { valor: compra.valor, id });
   }
 
   /**
@@ -12246,13 +12267,34 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
    *  c|<idx>     → categoria escolhida; registra normal.
    */
   async function tratarRespostaCompras(chatId: string, data: string, callbackId: string): Promise<void> {
-    const pend: any = await kvGet(`compras_pergunta:${chatId}`);
+    // O último campo do callback_data é o ID da compra provisória (já salva).
+    // Botões antigos, enviados antes desta mudança, não têm ID: caem na chave
+    // sem sufixo para continuarem respondíveis.
+    const partes = String(data).split("|");
+    const tipo = partes[0];
+    const arg = partes[1];
+    // O ID é sempre o último campo E sempre começa com "compra_" — reconhecer
+    // pelo prefixo (em vez da posição) mantém `q|<profId>|<id>` e `qv|<id>`
+    // funcionando com a mesma regra.
+    const ultimo = partes[partes.length - 1] || "";
+    const compraId = ultimo.startsWith("compra_") ? ultimo : "";
+    const chavePend = compraId
+      ? `compras_pergunta:${chatId}:${compraId}`
+      : `compras_pergunta:${chatId}`;
+    const pend: any = await kvGet(chavePend);
     if (!pend?.compra) {
       await responderCallbackCompras(callbackId, "Essa pergunta já foi respondida.");
       return;
     }
     const from = String(pend.from || "alguém");
-    const [tipo, arg] = String(data).split("|");
+    const idReal = String(pend.compra?.id || compraId || "");
+    const mesDaCompra = String(pend.compra?.mes || "");
+    /** Atualiza a compra provisória já salva (nunca cria outra — dobraria). */
+    const aplicarNaCompra = async (patch: Record<string, any>) => {
+      if (!idReal || !mesDaCompra) return;
+      await atualizarCompra(mesDaCompra, idReal, patch as any).catch(() => null);
+    };
+    const limparPendencia = () => kvSet(chavePend, null);
 
     // Escolheu a pessoa → guarda o profId e PERGUNTA o mês-referência. Não
     // adivinhamos por data (dia 5 escorrega pro 6 no fim de semana): quem sabe se
@@ -12261,15 +12303,15 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const metas = await getAllMetas();
       const meta: any = (metas as any)[arg];
       const nome = String(meta?.nome || arg).split("-").pop()!.trim();
-      await kvSet(`compras_pergunta:${chatId}`, { ...pend, profId: arg, nomeFunc: nome });
+      await kvSet(chavePend, { ...pend, profId: arg, nomeFunc: nome });
       const mesRef = String(pend.compra.mes);
       const mesAnt = mesAnterior(mesRef);
       await responderCallbackCompras(callbackId, nome);
       await enviarMensagemCompras(
         `👤 <b>R$ ${fmtBRLc(Number(pend.compra.valor) || 0)}</b> → <b>${nome}</b>\n\nEsse pagamento é o quê?`,
         chatId,
-        [[{ texto: `Vale/adiantamento de ${mesLabelBR(mesRef)}`, data: "qv" }],
-         [{ texto: `Fechamento de ${mesLabelBR(mesAnt)} (comissão/salário)`, data: "qf" }]]);
+        [[{ texto: `Vale/adiantamento de ${mesLabelBR(mesRef)}`, data: `qv|${idReal}` }],
+         [{ texto: `Fechamento de ${mesLabelBR(mesAnt)} (comissão/salário)`, data: `qf|${idReal}` }]]);
       await traçoCompras(from, "perguntou_mesref", { profId: arg, valor: pend.compra.valor });
       return;
     }
@@ -12284,9 +12326,12 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const nota = [String(atual?.valeNota || "").trim(),
         `${pend.compra.data.split("-").reverse().join("/")} R$ ${fmtBRLc(valor)} (Telegram)`].filter(Boolean).join(" · ");
       await upsertPagamentoMes(mes, arg2, { vale: valeNovo, valeNota: nota } as any);
-      await salvarCompra({ ...pend.compra, categoria: "Salários & Equipe",
-        descricao: `Vale ${mesLabelBR(mes)} — ${nome}`.slice(0, 180) } as any);
-      await kvSet(`compras_pergunta:${chatId}`, null);
+      // A compra provisória já existe: ATUALIZA (criar outra dobraria o gasto).
+      // Fica como "Salários & Equipe" — registro histórico do PIX; o cálculo de
+      // caixa ignora essa categoria justamente porque o valor já está no vale.
+      await aplicarNaCompra({ categoria: "Salários & Equipe",
+        descricao: `Vale ${mesLabelBR(mes)} — ${nome}`.slice(0, 180) });
+      await limparPendencia();
       await responderCallbackCompras(callbackId, `Vale de ${nome}`);
       await traçoCompras(from, "vale_lancado", { profId: arg2, valor, mes });
       await enviarMensagemCompras(
@@ -12303,9 +12348,9 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const mesAnt = mesAnterior(mesRef);
       const valor = Number(pend.compra.valor) || 0;
       await registrarPagamentoFolha(mesAnt, { profissionalId: arg2, nome, valor, data: pend.compra.data, origem: "telegram" });
-      await salvarCompra({ ...pend.compra, categoria: "Salários & Equipe",
-        descricao: `Fechamento ${mesLabelBR(mesAnt)} — ${nome}`.slice(0, 180) } as any);
-      await kvSet(`compras_pergunta:${chatId}`, null);
+      await aplicarNaCompra({ categoria: "Salários & Equipe",
+        descricao: `Fechamento ${mesLabelBR(mesAnt)} — ${nome}`.slice(0, 180) });
+      await limparPendencia();
       await responderCallbackCompras(callbackId, `Fechamento de ${nome}`);
       await traçoCompras(from, "folha_paga", { profId: arg2, valor, mesRef: mesAnt });
       const jaPago = (await getPagamentosFolha(mesAnt)).filter(p => p.profissionalId === arg2).reduce((s, p) => s + p.valor, 0);
@@ -12321,7 +12366,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         const cats = CATEGORIAS_COMPRA.filter(c => c !== "Outros");
         const linhas: any[][] = [];
         for (let i = 0; i < cats.length; i += 2) {
-          linhas.push(cats.slice(i, i + 2).map(c => ({ texto: c.slice(0, 24), data: `c|${CATEGORIAS_COMPRA.indexOf(c)}` })));
+          linhas.push(cats.slice(i, i + 2).map(c => ({ texto: c.slice(0, 24), data: `c|${CATEGORIAS_COMPRA.indexOf(c)}|${idReal}` })));
         }
         await responderCallbackCompras(callbackId, "Ok — então que tipo é?");
         await enviarMensagemCompras(`🏷️ <b>R$ ${fmtBRLc(pend.compra.valor)}</b> — que tipo de gasto é?`, chatId, linhas);
@@ -12332,20 +12377,24 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       // senão cai no mesmo buraco: fora do lucro (excluidoLabor) e sem abater da
       // folha. Volta pra pergunta de quem, em vez de registrar.
       if (cat === "Salários & Equipe") {
-        await kvSet(`compras_pergunta:${chatId}`, { ...pend, compra: { ...pend.compra, categoria: cat } });
+        await kvSet(chavePend, { ...pend, compra: { ...pend.compra, categoria: cat } });
         await responderCallbackCompras(callbackId, "É pagamento a funcionário — de quem?");
-        await perguntarDeQuem(chatId, { ...pend.compra, categoria: cat }, from);
+        await perguntarDeQuem(chatId, { ...pend.compra, categoria: cat, id: idReal }, from);
         return;
       }
       // Categoria escolhida → PERGUNTA se é recorrente (todo mês) ou avulsa. Guarda
       // no beneficiário pra na próxima só confirmar. Foi o que o dono pediu:
       // "quando eu mandar uma conta, me pergunta sobre o que ela é".
-      await kvSet(`compras_pergunta:${chatId}`, { ...pend, compra: { ...pend.compra, categoria: cat } });
+      // Já aplica a categoria na compra salva: se ninguém responder a próxima
+      // pergunta (recorrente/avulsa), o gasto fica com a categoria certa em vez
+      // de encalhar em "Outros".
+      await aplicarNaCompra({ categoria: cat });
+      await kvSet(chavePend, { ...pend, compra: { ...pend.compra, categoria: cat } });
       await responderCallbackCompras(callbackId, cat);
       await enviarMensagemCompras(
         `🏷️ <b>${cat}</b> — R$ ${fmtBRLc(pend.compra.valor)}\n<i>${pend.compra.loja || ""}</i>\n\nEssa conta é recorrente ou avulsa?`,
         chatId,
-        [[{ texto: "🔁 Todo mês (recorrente)", data: "r|fixo" }, { texto: "1️⃣ Só essa vez (avulsa)", data: "r|variavel" }]]);
+        [[{ texto: "🔁 Todo mês (recorrente)", data: `r|fixo|${idReal}` }, { texto: "1️⃣ Só essa vez (avulsa)", data: `r|variavel|${idReal}` }]]);
       await traçoCompras(from, "perguntou_recorrencia", { categoria: cat });
       return;
     }
@@ -12355,13 +12404,23 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const cat = String(pend.compra?.categoria || "Outros");
       const natureza = arg as "fixo" | "variavel";
       await setMemoriaBeneficiario(pend.compra.loja || "", cat, natureza).catch(() => {});
-      await kvSet(`compras_pergunta:${chatId}`, null);
+      await limparPendencia();
       await responderCallbackCompras(callbackId, natureza === "fixo" ? "Todo mês" : "Avulsa");
-      await finalizarCompra(
-        { ...pend.compra, ehComprovante: true, categoria: cat, natureza, itens: pend.itens || [] },
-        { chatId, from, foto: pend.foto || undefined, semConfirmacao: true, jaPerguntado: true });
+      // A compra já está salva desde a 1ª pergunta — aqui só fecha a classificação.
+      // (Antes chamava finalizarCompra, que gravava OUTRA compra: com o registro
+      // agora feito na entrada, isso dobraria o gasto.)
+      const descLimpa = String(pend.compra?.descricao || "").replace(/\s*·?\s*aguardando classificação$/i, "").trim();
+      await aplicarNaCompra({ categoria: cat, natureza, descricao: descLimpa });
+      // Nota fiscal com itens: aplica os custos que ficaram pendurados na pergunta.
+      let custosMsg = "";
+      if (Array.isArray(pend.itens) && pend.itens.length > 0) {
+        try {
+          const { atualizados } = await atualizarCustosDeItens(pend.itens);
+          if (atualizados.length) custosMsg = `\n📈 ${atualizados.length} custo(s) de produto atualizado(s).`;
+        } catch { /* a compra já está salva; custo é enriquecimento */ }
+      }
       await enviarMensagemCompras(
-        `📝 Anotei: <b>${pend.compra.loja || cat}</b> = ${cat} (${natureza === "fixo" ? "todo mês" : "avulsa"}). Da próxima vez eu já sei.`,
+        `📝 Anotei: <b>${pend.compra.loja || cat}</b> = ${cat} (${natureza === "fixo" ? "todo mês" : "avulsa"}). Da próxima vez eu já sei.${custosMsg}`,
         chatId);
       return;
     }
@@ -13054,6 +13113,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   async function montarAcumuladoSemanaMes(): Promise<{
     semana: { dias: number; total: number; inicio: string; fim: string };
     mes:    { dias: number; total: number; inicio: string; fim: string };
+    fonteMes: "oficial-trinks" | "snapshots";
   }> {
     // Feriados nacionais (data fixa) — mesma lógica do contasMensais
     const feriadosBR = (ano: number): Set<string> => new Set([
@@ -13113,13 +13173,35 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const inicioMes = `${ano}-${mes}-01`;
     const mesAtual = `${ano}-${mes}`;
 
-    // Se existe "mes-oficial" (acumulado Trinks via e-mail), usa como BASE
-    // e soma somente os dias APÓS dataReferencia até ontem.
-    const mesOficial = await kvGet<{ dataReferencia: string; totalAcumulado: number }>(`trinks_mes_oficial:${mesAtual}`).catch(() => null);
+    // ── FATURAMENTO DO MÊS: a AUTORIDADE é `trinks_total_mes` ──────────────────
+    // O "Total do Mês" do e-mail Trinks (gravado pelo cron das 7h) é o número
+    // oficial: inclui Clube Greco e venda de produtos. A soma dos snapshots
+    // diários NÃO — ela vem da agenda do dia e subconta tudo que não é
+    // atendimento agendado. Em julho/2026 a diferença era R$ 7.812,45 (oficial
+    // 87.327,95 × snapshots 79.515,50), e era esse número menor que chegava no
+    // Telegram todo dia.
+    //
+    // Antes lia-se `trinks_mes_oficial`, que parou de ser gravada em junho/2026 —
+    // chave órfã: o `if` nunca entrava e todo mês caía na soma de snapshots.
+    // `trinks_total_mes` é a mesma fonte que o mesService já trata como autoridade.
+    const totalOficial = Number(
+      (await kvGet<{ total: number; atualizadoEm: string }>(`trinks_total_mes:${mesAtual}`).catch(() => null))?.total || 0,
+    );
+    const mesOficial = totalOficial > 0
+      ? null // autoridade resolvida abaixo; não precisa da base incremental
+      : await kvGet<{ dataReferencia: string; totalAcumulado: number }>(`trinks_mes_oficial:${mesAtual}`).catch(() => null);
 
     let totalMes = 0; let diasMes = 0;
     let inicioContagemDiaria = inicioMes;
-    if (mesOficial && mesOficial.dataReferencia && Number.isFinite(mesOficial.totalAcumulado)) {
+    if (totalOficial > 0) {
+      // Oficial já cobre o mês inteiro até a última leitura do e-mail: não soma
+      // snapshot nenhum por cima (dobraria). Os "dias" viram só a contagem de
+      // dias úteis decorridos, para o texto da mensagem.
+      totalMes = totalOficial;
+      let c = inicioMes;
+      while (c <= ontemYMD) { if (ehDiaUtilGreco(c)) diasMes++; c = ymdAddDays(c, 1); }
+      inicioContagemDiaria = ymdAddDays(ontemYMD, 1); // laço abaixo não roda
+    } else if (mesOficial && mesOficial.dataReferencia && Number.isFinite(mesOficial.totalAcumulado)) {
       totalMes = mesOficial.totalAcumulado;
       // Conta os dias úteis de 01 até dataReferencia como "já incluídos"
       let c = inicioMes;
@@ -13146,6 +13228,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     return {
       semana: { dias: diasSemana, total: totalSemana, inicio: inicioSemana, fim: ontemYMD },
       mes:    { dias: diasMes,    total: totalMes,    inicio: inicioMes,    fim: ontemYMD },
+      fonteMes: totalOficial > 0 ? "oficial-trinks" : "snapshots",
     };
   }
 

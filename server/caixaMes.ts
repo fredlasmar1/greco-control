@@ -61,6 +61,72 @@ export interface SaidasCaixaMes {
 
 const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
+export interface ResultadoMes {
+  mes: string;
+  entrou: number;                  // faturamento OFICIAL (inclui Clube e produtos)
+  entrouFonte: "oficial-trinks" | "snapshots";
+  entrouAtualizadoEm: string | null;
+  saiu: number;                    // saídas de caixa (as três gavetas)
+  sobrou: number;                  // entrou − saiu
+  margemPct: number;
+  saidas: SaidasCaixaMes;
+  /** Motivos para NÃO confiar no "sobrou". Vazio = número pode ser anunciado. */
+  avisos: string[];
+  confiavel: boolean;
+}
+
+/**
+ * Entrou × saiu × sobrou do mês — o único lugar que responde "deu lucro?".
+ *
+ * O faturamento vem de `trinks_total_mes:<mes>` (o "Total do Mês" do e-mail
+ * Trinks, gravado pelo cron das 7h): é a AUTORIDADE porque inclui Clube Greco e
+ * venda de produtos. Somar snapshot diário NÃO serve — o snapshot vem da agenda
+ * e ignora tudo que não é atendimento agendado. Em julho/2026 a soma dos
+ * snapshots dava R$ 79.515,50 contra R$ 87.327,95 oficiais: R$ 7.812,45 de
+ * faturamento invisível, e era o número menor que ia para o Telegram.
+ *
+ * Só cai na soma de snapshots quando o oficial ainda não existe (mês novo, antes
+ * do primeiro e-mail) — e nesse caso `entrouFonte` avisa que é estimativa.
+ */
+export async function calcularResultadoMes(
+  mes: string,
+  somarSnapshots?: (mes: string) => Promise<number>,
+): Promise<ResultadoMes> {
+  const oficial = await kvGet<{ total: number; atualizadoEm: string }>(`trinks_total_mes:${mes}`);
+  let entrou = num(oficial?.total);
+  let entrouFonte: ResultadoMes["entrouFonte"] = "oficial-trinks";
+  if (!(entrou > 0)) {
+    entrou = somarSnapshots ? num(await somarSnapshots(mes).catch(() => 0)) : 0;
+    entrouFonte = "snapshots";
+  }
+  const saidas = await calcularSaidasCaixa(mes);
+  const sobrou = entrou - saidas.total;
+
+  // "Sobrou" só vale quando os dois lados existem. Junho/2026 é o caso didático:
+  // o grupo de comprovantes só nasceu em 03/07, então junho tem faturamento e
+  // zero gasto — a conta crua diz "margem de 100%", que é mentira perigosa.
+  const avisos: string[] = [];
+  if (entrou <= 0) avisos.push("sem faturamento registrado neste mês");
+  if (saidas.total <= 0) avisos.push("nenhum gasto registrado neste mês — a sobra não é real");
+  else if (saidas.blocos.find(b => b.chave === "folha")!.total <= 0)
+    avisos.push("nenhuma folha paga registrada — falta a maior despesa da casa");
+  if (entrouFonte === "snapshots")
+    avisos.push("faturamento estimado pela agenda (sem o total oficial da Trinks) — subconta Clube e produtos");
+
+  return {
+    mes,
+    entrou,
+    entrouFonte,
+    entrouAtualizadoEm: oficial?.atualizadoEm || null,
+    saiu: saidas.total,
+    sobrou,
+    margemPct: entrou > 0 ? (sobrou / entrou) * 100 : 0,
+    saidas,
+    avisos,
+    confiavel: avisos.length === 0,
+  };
+}
+
 /**
  * Soma tudo que saiu do caixa no mês, por REGIME DE CAIXA.
  * `mes` no formato YYYY-MM.

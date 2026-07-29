@@ -65,6 +65,7 @@ import {
   setMemoriaBeneficiario,
   naturezaDaCompra,
 } from "./compras";
+import { calcularSaidasCaixa } from "./caixaMes";
 import {
   listarAgenda,
   salvarAgendaItem,
@@ -12478,6 +12479,18 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     const ultimo = await kvGet<any>("compras_ultimo_evento");
     const iaErro = await kvGet<any>("compras_ia_erro");
     return res.json({ configured: isComprasBotConfigured(), botUsername: me?.username || null, webhookAtivo: !!secret, grupoConectado: !!chatId, iaConfigurada: !!process.env.ANTHROPIC_API_KEY, ultimoEvento: ultimo || null, iaErro: iaErro || null });
+  });
+
+  // GET /api/caixa/:mes — SAIU DO CAIXA no mês (fonte única do gasto real).
+  // Soma compras + folha paga no mês + vales, em regime de CAIXA, com as travas
+  // anti-dobra. É o número que o dono precisa ver: a aba Compras sozinha mostrava
+  // 54% do gasto de julho/2026 e a conta de "quanto sobrou" errava R$ 29 mil.
+  app.get("/api/caixa/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(req.params.mes) ? req.params.mes : mesHojeSP();
+      const saidas = await calcularSaidasCaixa(mes);
+      return res.json({ ok: true, ...saidas });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
   // ─── CRUD de Compras (aba "Compras do Mês") ───

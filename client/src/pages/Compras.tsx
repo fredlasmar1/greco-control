@@ -27,6 +27,14 @@ type Resp = {
   resumo: { total: number; count: number; fixo: number; variavel: number; categorias: { nome: string; total: number; count: number }[] };
   categorias: string[]; naturezaPadrao: Record<string, Natureza>;
 };
+// Saiu do caixa no mês: compras + folha paga no mês + vales (GET /api/caixa/:mes).
+// Esta tela mostrava só o primeiro bloco — em julho/2026, 54% do gasto real.
+type CaixaResp = {
+  ok: boolean; mes: string; total: number;
+  blocos: { chave: "compras" | "folha" | "vales"; titulo: string; total: number; count: number }[];
+  excluidos: { motivo: string; valor: number; descricao: string }[];
+  totalExcluido: number;
+};
 
 const fmtBRL = (n: number) => (Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const dataBR = (iso: string) => (iso || "").split("-").reverse().join("/");
@@ -48,6 +56,7 @@ export default function Compras() {
   const [novo, setNovo] = useState({ valor: "", loja: "", categoria: "Produtos & Insumos", natureza: "" as "" | Natureza, descricao: "", data: "" });
   const [tg, setTg] = useState<{ configured: boolean; botUsername: string | null; webhookAtivo: boolean; grupoConectado: boolean } | null>(null);
   const [ativando, setAtivando] = useState(false);
+  const [caixa, setCaixa] = useState<CaixaResp | null>(null);
 
   const naturezaPadrao = data?.naturezaPadrao || {};
   const natDe = (c: { natureza?: Natureza; categoria: string }): Natureza =>
@@ -64,7 +73,14 @@ export default function Compras() {
   const carregarTg = async () => {
     try { const r = await authFetch(`/api/telegram/compras/status`); setTg(await r.json()); } catch { /* */ }
   };
-  useEffect(() => { carregar(); /* eslint-disable-next-line */ }, [mes]);
+  const carregarCaixa = async () => {
+    try {
+      const r = await authFetch(`/api/caixa/${mes}`);
+      const j: CaixaResp = await r.json();
+      setCaixa(j.ok ? j : null);
+    } catch { setCaixa(null); }
+  };
+  useEffect(() => { carregar(); carregarCaixa(); /* eslint-disable-next-line */ }, [mes]);
   useEffect(() => { carregarTg(); }, []);
 
   const ativarGrupo = async () => {
@@ -215,13 +231,59 @@ export default function Compras() {
             </Card>
           )}
 
+          {/* SAIU DO CAIXA — a soma das três gavetas. Vem primeiro de propósito:
+              o "Total do mês" logo abaixo é só a fatia de compras, e por anos foi
+              o único número visível (em julho/2026, 54% do gasto real). */}
+          {caixa && caixa.total > 0 && (
+            <Card className="bg-card border-primary/50">
+              <CardContent className="p-4">
+                <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+                  <div className="lg:w-64 flex-shrink-0">
+                    <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <Wallet className="w-3.5 h-3.5 text-primary" /> Saiu do caixa em {monthLabel}
+                    </p>
+                    <p className="text-3xl font-bold text-primary leading-tight">R$ {fmtBRL(caixa.total)}</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">tudo que a barbearia pagou no mês</p>
+                  </div>
+                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {caixa.blocos.map(b => (
+                      <div key={b.chave} className="rounded-md border bg-muted/20 px-3 py-2">
+                        <p className="text-[11px] text-muted-foreground truncate">{b.titulo}</p>
+                        <p className="text-lg font-semibold">R$ {fmtBRL(b.total)}</p>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-[10px] text-muted-foreground">{b.count} lanç.</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {caixa.total > 0 ? Math.round((b.total / caixa.total) * 100) : 0}%
+                          </span>
+                        </div>
+                        <Progress value={caixa.total > 0 ? (b.total / caixa.total) * 100 : 0} className="h-1 mt-1" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-3 pt-3 border-t">
+                  A folha entra pela data em que o PIX <strong>saiu</strong> (regime de caixa), não pelo mês da comissão —
+                  senão o mês sempre parece mais barato do que foi.
+                  {caixa.totalExcluido > 0 && (
+                    <> Fora disso, <strong>R$ {fmtBRL(caixa.totalExcluido)}</strong> foram ignorados para não contar duas vezes
+                    ({caixa.excluidos.length} lanç.: {caixa.excluidos.map(e => e.descricao).join("; ")}).</>
+                  )}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Resumo: total + FIXO x VARIÁVEL */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Card className="bg-card border-card-border border-primary/40">
               <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">Total do mês</p>
+                {/* Renomeado de "Total do mês": é só a fatia de compras do caixa. */}
+                <p className="text-xs text-muted-foreground">Só compras e contas</p>
                 <p className="text-2xl font-bold text-primary">R$ {fmtBRL(total)}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">{data?.resumo.count || 0} compra{(data?.resumo.count || 0) !== 1 ? "s" : ""}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {data?.resumo.count || 0} compra{(data?.resumo.count || 0) !== 1 ? "s" : ""}
+                  {caixa && caixa.total > 0 && <> · {Math.round((total / caixa.total) * 100)}% do caixa</>}
+                </p>
               </CardContent>
             </Card>
             <Card className="bg-card border-card-border border-red-500/40">

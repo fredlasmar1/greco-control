@@ -64,6 +64,23 @@ export async function kvGetParaEscrita<T = any>(key: string): Promise<T | null> 
   return r.rows[0]?.value ?? null;
 }
 
+/**
+ * Lista as chaves que começam com `prefixo` (só as chaves, nunca os valores —
+ * varrer valores de kv inteiro estoura memória: só as fotos de comprovante já
+ * são 24 MB). Usada por quem precisa varrer uma família de chaves sem saber os
+ * sufixos de antemão, ex.: `folha_pagamentos:` (uma por mês-referência).
+ */
+export async function kvKeysComPrefixo(prefixo: string): Promise<string[]> {
+  if (!pool || !dbReady) return [];
+  try {
+    const r = await pool.query("SELECT key FROM kv_store WHERE key LIKE $1 ORDER BY key", [`${prefixo}%`]);
+    return r.rows.map((x: any) => String(x.key));
+  } catch (err: any) {
+    log(`kvKeysComPrefixo(${prefixo}) error: ${err.message}`, "db");
+    return [];
+  }
+}
+
 export async function kvSet(key: string, value: any): Promise<boolean> {
   if (!pool || !dbReady) return false;
   try {

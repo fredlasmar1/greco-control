@@ -67,6 +67,20 @@ import {
 } from "./compras";
 import { calcularSaidasCaixa } from "./caixaMes";
 import {
+  listarFaturas,
+  getFatura,
+  salvarFatura,
+  atualizarFatura,
+  removerFatura,
+  conferirFatura,
+  casarLinhasComCompras,
+  calcularAbatimentos,
+  promptFatura,
+  mesesDeBusca,
+  type FaturaCartao,
+  type LinhaFatura,
+} from "./faturaCartao";
+import {
   listarAgenda,
   salvarAgendaItem,
   atualizarAgendaItem,
@@ -11945,7 +11959,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   }
 
   // Loop de modelos candidatos (vision). Pula 404, cacheia o que funcionar.
-  async function chamarIACompras(content: any[]): Promise<any | null> {
+  async function chamarIACompras(content: any[], maxTokens = 1200): Promise<any | null> {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return null;
     const anthropic = new Anthropic({ apiKey });
@@ -11964,7 +11978,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     let ultimoErro: any = null;
     for (const model of candidatos) {
       try {
-        const resp = await anthropic.messages.create({ model, max_tokens: 1200, messages: [{ role: "user", content }] });
+        const resp = await anthropic.messages.create({ model, max_tokens: maxTokens, messages: [{ role: "user", content }] });
         kvSet("compras_ia_model_ok", model).catch(() => {});
         kvSet("compras_ia_erro", null).catch(() => {});
         const txt = resp.content.find((b: any) => b.type === "text")?.text || "";
@@ -12614,6 +12628,14 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       if (b.descricao != null) patch.descricao = String(b.descricao);
       if (b.data != null && /^\d{4}-\d{2}-\d{2}$/.test(String(b.data))) patch.data = String(b.data);
       if (b.tipo != null) patch.tipo = b.tipo;
+      // "No crédito": tira do caixa do mês e deixa a compra esperando a fatura.
+      // Só vale enquanto nenhuma fatura tiver liberado o gasto — senão o dono
+      // esconderia do caixa um dinheiro que já saiu.
+      if (b.aguardandoFatura != null) {
+        const atual = (await listarCompras(String(req.params.mes))).find(c => c.id === String(req.params.id));
+        if (atual?.dataPagamentoFatura) return res.status(409).json({ ok: false, error: "esta compra já foi paga pela fatura de " + atual.dataPagamentoFatura });
+        patch.aguardandoFatura = !!b.aguardandoFatura;
+      }
       const upd = await atualizarCompra(req.params.mes, req.params.id, patch);
       if (!upd) return res.status(404).json({ ok: false, error: "não encontrada" });
       return res.json({ ok: true, compra: upd });
@@ -12638,6 +12660,277 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       res.setHeader("Cache-Control", "private, max-age=3600");
       return res.send(buf);
     } catch { return res.status(500).send("erro"); }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FATURA DE CARTÃO — o cartão conta pela fatura, não pela compra avulsa.
+  // Sobe o PDF (Santander/Itaú) → IA lê as linhas → o dono confere linha a linha
+  // → confirma → cada linha entra no caixa NA DATA DO PAGAMENTO da fatura.
+  // Ver server/faturaCartao.ts para o desenho e as duas validações.
+  // ════════════════════════════════════════════════════════════════════════
+
+  // Loop de modelos para ler a fatura. Igual ao das compras, com duas diferenças:
+  // teto de tokens alto (fatura tem dezenas de linhas) e segue tentando no 400 —
+  // os modelos 3.x NÃO aceitam bloco `document` e devolvem 400, não 404; parar no
+  // primeiro erro era o que fazia todo PDF morrer com "não consegui ler".
+  async function chamarIAFatura(content: any[]): Promise<any | null> {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY não configurada no servidor.");
+    const anthropic = new Anthropic({ apiKey });
+    const candidatos = [process.env.FATURA_IA_MODEL, "claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-5"]
+      .filter((m, i, a) => !!m && a.indexOf(m) === i) as string[];
+    let ultimoErro: any = null;
+    for (const model of candidatos) {
+      try {
+        const resp = await anthropic.messages.create({ model, max_tokens: 16000, messages: [{ role: "user", content }] });
+        const txt = String((resp.content.find((b: any) => b.type === "text") as any)?.text || "");
+        const ini = txt.indexOf("{"), fim = txt.lastIndexOf("}");
+        if (ini < 0 || fim < 0) return null;
+        try { return JSON.parse(txt.slice(ini, fim + 1)); }
+        catch { throw new Error("a IA devolveu a fatura pela metade (JSON incompleto) — tente de novo ou divida o PDF"); }
+      } catch (err: any) {
+        ultimoErro = err;
+        if (err?.status === 404 || err?.status === 400) continue;
+        break;
+      }
+    }
+    throw new Error(String(ultimoErro?.message || "IA indisponível para ler a fatura"));
+  }
+
+  /** Normaliza uma linha crua da IA em LinhaFatura (categoria pela memória do beneficiário). */
+  async function normalizarLinhaFatura(raw: any, i: number, anoRef: string): Promise<LinhaFatura> {
+    const estabelecimento = String(raw?.estabelecimento || raw?.descricao || "—").trim() || "—";
+    const tipo = String(raw?.tipo || "compra").toLowerCase();
+    let valor = Number(raw?.valor);
+    if (!Number.isFinite(valor)) valor = 0;
+    if (tipo === "pagamento" && valor > 0) valor = -valor; // pagamento da anterior é crédito
+    let data = String(raw?.data || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) data = anoRef;
+    // A memória do beneficiário vale mais que o palpite da IA: ali o dono já ensinou.
+    const mem = await getMemoriaBeneficiario(estabelecimento).catch(() => null);
+    const categoria = mem?.categoria || normalizarCategoria(raw?.categoria);
+    return {
+      id: `lf_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+      data,
+      estabelecimento,
+      valor: Math.round(valor * 100) / 100,
+      categoria,
+      natureza: mem?.natureza || NATUREZA_PADRAO[categoria] || "variavel",
+      parcela: raw?.parcela ? String(raw.parcela) : undefined,
+      ignorar: tipo === "pagamento",
+    };
+  }
+
+  /** Anexa a conferência e as compras candidatas ao anti-dobra. */
+  const comConferencia = (f: FaturaCartao) => ({ ...f, conferencia: conferirFatura(f) });
+
+  // POST /api/fatura-cartao/importar — sobe o PDF e devolve o RASCUNHO conferível.
+  app.post("/api/fatura-cartao/importar", upload.single("file"), async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      if (!req.file) return res.status(400).json({ ok: false, error: "Envie o PDF da fatura." });
+      const nome = String(req.file.originalname || "").toLowerCase();
+      if (!nome.endsWith(".pdf")) return res.status(400).json({ ok: false, error: "Por enquanto só PDF da fatura." });
+
+      const b = req.body || {};
+      const dataPagamento = /^\d{4}-\d{2}-\d{2}$/.test(String(b.dataPagamento || "")) ? String(b.dataPagamento) : dataHojeSP();
+      const vencimento = /^\d{4}-\d{2}-\d{2}$/.test(String(b.vencimento || "")) ? String(b.vencimento) : dataPagamento;
+      const mesCaixa = dataPagamento.slice(0, 7);
+
+      const lido = await chamarIAFatura([
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: req.file.buffer.toString("base64") } },
+        { type: "text", text: promptFatura(vencimento) },
+      ]);
+      const linhasRaw = Array.isArray(lido?.linhas) ? lido.linhas : [];
+      if (!linhasRaw.length) return res.status(422).json({ ok: false, error: "Não achei lançamentos nesse PDF. Se a fatura tiver senha, salve uma cópia sem senha e tente de novo." });
+
+      const anoRef = `${vencimento.slice(0, 4)}-${vencimento.slice(5, 7)}-01`;
+      let linhas: LinhaFatura[] = [];
+      for (let i = 0; i < linhasRaw.length; i++) linhas.push(await normalizarLinhaFatura(linhasRaw[i], i, anoRef));
+
+      // ANTI-DOBRA: casa com as compras que ficaram "no crédito, aguardando fatura".
+      const candidatas: any[] = [];
+      for (const m of mesesDeBusca(mesCaixa)) candidatas.push(...(await listarCompras(m).catch(() => [])));
+      linhas = casarLinhasComCompras(linhas, candidatas);
+
+      const fatura = await salvarFatura({
+        mesCaixa,
+        cartao: String(b.cartao || lido?.cartao || "Cartão").trim() + (lido?.final ? ` ·${String(lido.final).slice(-4)}` : ""),
+        vencimento,
+        dataPagamento,
+        valorPago: Math.abs(Number(String(b.valorPago || "").replace(/\./g, "").replace(",", ".")) || 0) || Math.abs(Number(lido?.totalFatura) || 0),
+        totalFatura: Math.abs(Number(lido?.totalFatura) || 0),
+        linhas,
+        status: "rascunho",
+        arquivoNome: String(req.file.originalname || ""),
+      });
+      log(`[fatura] ${fatura.cartao} venc ${vencimento}: ${linhas.length} linhas, ${linhas.filter(l => l.compraExistenteId).length} já registradas`, "compras");
+      return res.json({ ok: true, fatura: comConferencia(fatura) });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // GET /api/fatura-cartao/:mes — faturas cujo PAGAMENTO caiu no mês.
+  app.get("/api/fatura-cartao/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = /^\d{4}-\d{2}$/.test(String(req.params.mes)) ? String(req.params.mes) : mesHojeSP();
+      const faturas = (await listarFaturas(mes)).map(comConferencia);
+      // Compras esperando fatura (qualquer mês recente) — é o que o dono precisa
+      // ver pra saber que tem gasto no crédito parado fora do caixa.
+      const aguardando: any[] = [];
+      for (const m of mesesDeBusca(mes)) {
+        for (const c of await listarCompras(m).catch(() => [])) {
+          if (c.aguardandoFatura === true && !c.dataPagamentoFatura) {
+            aguardando.push({ id: c.id, mes: c.mes, data: c.data, valor: c.valor, loja: c.loja, categoria: c.categoria });
+          }
+        }
+      }
+      return res.json({ ok: true, mes, faturas, aguardando, categorias: CATEGORIAS_COMPRA, naturezaPadrao: NATUREZA_PADRAO });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  // PUT /api/fatura-cartao/:mes/:id — conferência do dono (cabeçalho e/ou linhas).
+  app.put("/api/fatura-cartao/:mes/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const mes = String(req.params.mes), id = String(req.params.id);
+      const atual = await getFatura(mes, id);
+      if (!atual) return res.status(404).json({ ok: false, error: "fatura não encontrada" });
+      if (atual.status === "confirmada") return res.status(409).json({ ok: false, error: "fatura já confirmada — reverta antes de editar" });
+      const b = req.body || {};
+      const patch: Partial<FaturaCartao> = {};
+      if (b.cartao != null) patch.cartao = String(b.cartao);
+      if (b.valorPago != null) patch.valorPago = Math.abs(Number(b.valorPago) || 0);
+      if (b.observacao != null) patch.observacao = String(b.observacao);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(b.vencimento || ""))) patch.vencimento = String(b.vencimento);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(b.dataPagamento || ""))) patch.dataPagamento = String(b.dataPagamento);
+      if (Array.isArray(b.linhas)) {
+        patch.linhas = b.linhas.map((l: any, i: number): LinhaFatura => {
+          const antiga = atual.linhas.find(x => x.id === l?.id);
+          const categoria = normalizarCategoria(l?.categoria ?? antiga?.categoria);
+          return {
+            ...(antiga || {} as LinhaFatura),
+            id: String(l?.id || antiga?.id || `lf_${Date.now()}_${i}`),
+            data: /^\d{4}-\d{2}-\d{2}$/.test(String(l?.data || "")) ? String(l.data) : (antiga?.data || atual.dataPagamento),
+            estabelecimento: String(l?.estabelecimento ?? antiga?.estabelecimento ?? "—"),
+            valor: Number(l?.valor ?? antiga?.valor ?? 0) || 0,
+            categoria,
+            natureza: l?.natureza === "fixo" || l?.natureza === "variavel" ? l.natureza : (antiga?.natureza || NATUREZA_PADRAO[categoria] || "variavel"),
+            classe: l?.classe === "investimento" || l?.classe === "perda" ? l.classe : (l?.classe === "operacional" ? "operacional" : antiga?.classe),
+            pessoal: l?.pessoal === undefined ? antiga?.pessoal : !!l.pessoal,
+            ignorar: l?.ignorar === undefined ? antiga?.ignorar : !!l.ignorar,
+            // O vínculo anti-dobra é do sistema: o dono pode DESFAZER, nunca inventar.
+            compraExistenteId: l?.compraExistenteId === null ? undefined : antiga?.compraExistenteId,
+            compraExistenteMes: l?.compraExistenteId === null ? undefined : antiga?.compraExistenteMes,
+          };
+        });
+      }
+      const upd = await atualizarFatura(mes, id, patch);
+      return res.json({ ok: true, fatura: comConferencia(upd!) });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  // POST /api/fatura-cartao/:mes/:id/confirmar — lança no caixa.
+  // Linha casada LIBERA a compra que já existe (preserva foto/itens); linha nova
+  // vira Compra com `dataPagamentoFatura` = data em que a fatura foi paga.
+  app.post("/api/fatura-cartao/:mes/:id/confirmar", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const f = await getFatura(String(req.params.mes), String(req.params.id));
+      if (!f) return res.status(404).json({ ok: false, error: "fatura não encontrada" });
+      if (f.status === "confirmada") return res.status(409).json({ ok: false, error: "esta fatura já foi lançada no caixa" });
+
+      const conf = conferirFatura(f);
+      if (!conf.fecha && !req.body?.confirmarMesmoAssim) {
+        return res.status(422).json({ ok: false, error: "a soma das linhas não bate com o valor pago", conferencia: conf, precisaConfirmar: true });
+      }
+
+      // Estorno abate a linha do mesmo estabelecimento (ver calcularAbatimentos).
+      const { abatimento, semPar } = calcularAbatimentos(f.linhas);
+      const estornosSemPar = semPar.map(e => `${e.estabelecimento} R$ ${fmtBRLc(e.valor)}`);
+
+      const linhas: LinhaFatura[] = [];
+      let criadas = 0, liberadas = 0;
+      for (const l of f.linhas) {
+        if (l.ignorar || l.pessoal || Number(l.valor) <= 0) { linhas.push(l); continue; }
+        const abatida = abatimento[l.id] || 0;
+        const valorLiquido = Math.round((Math.abs(Number(l.valor) || 0) - abatida) * 100) / 100;
+        if (valorLiquido <= 0) { linhas.push(l); continue; } // estornada por inteiro
+        const descricao = `Fatura ${f.cartao} · venc ${l.parcela ? `${f.vencimento} (parcela ${l.parcela})` : f.vencimento}`
+          + (abatida > 0 ? ` · líquido de estorno de R$ ${fmtBRLc(abatida)}` : "");
+        if (l.compraExistenteId && l.compraExistenteMes) {
+          // Já existe (veio do grupo do Telegram, com foto): só libera pro caixa.
+          const upd = await atualizarCompra(l.compraExistenteMes, l.compraExistenteId, {
+            aguardandoFatura: false,
+            dataPagamentoFatura: f.dataPagamento,
+            faturaId: f.id,
+            cartao: f.cartao,
+            categoria: l.categoria,
+            natureza: l.natureza,
+            ...(abatida > 0 ? { valor: valorLiquido, descricao } : {}),
+          });
+          if (upd) {
+            liberadas++;
+            linhas.push({ ...l, compraGeradaId: upd.id, compraGeradaMes: upd.mes });
+            continue;
+          }
+        }
+        const nova = await salvarCompra({
+          mes: l.data.slice(0, 7), data: l.data, valor: valorLiquido,
+          loja: l.estabelecimento, categoria: l.categoria, natureza: l.natureza, classe: l.classe,
+          descricao, tipo: "compra", origem: "fatura",
+          dataPagamentoFatura: f.dataPagamento, faturaId: f.id, cartao: f.cartao,
+        });
+        criadas++;
+        linhas.push({ ...l, compraGeradaId: nova.id, compraGeradaMes: nova.mes });
+      }
+
+      const upd = await atualizarFatura(f.mesCaixa, f.id, { linhas, status: "confirmada", confirmadaEm: new Date().toISOString() });
+      log(`[fatura] ${f.cartao} confirmada: ${criadas} compras criadas, ${liberadas} liberadas, caixa de ${f.dataPagamento}`, "compras");
+      return res.json({ ok: true, fatura: comConferencia(upd!), criadas, liberadas, estornosSemPar });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  // POST /api/fatura-cartao/:mes/:id/reverter — desfaz o lançamento.
+  // Apaga o que a fatura criou e devolve as compras liberadas para "aguardando".
+  app.post("/api/fatura-cartao/:mes/:id/reverter", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const f = await getFatura(String(req.params.mes), String(req.params.id));
+      if (!f) return res.status(404).json({ ok: false, error: "fatura não encontrada" });
+      if (f.status !== "confirmada") return res.status(409).json({ ok: false, error: "esta fatura não está lançada" });
+
+      let removidas = 0, devolvidas = 0;
+      const linhas: LinhaFatura[] = [];
+      for (const l of f.linhas) {
+        if (!l.compraGeradaId || !l.compraGeradaMes) { linhas.push(l); continue; }
+        if (l.compraExistenteId === l.compraGeradaId) {
+          await atualizarCompra(l.compraGeradaMes, l.compraGeradaId, {
+            aguardandoFatura: true, dataPagamentoFatura: undefined, faturaId: undefined,
+            // se um estorno tinha abatido o valor na confirmação, volta o original
+            valor: Math.abs(Number(l.valor) || 0),
+          });
+          devolvidas++;
+        } else {
+          await removerCompra(l.compraGeradaMes, l.compraGeradaId);
+          removidas++;
+        }
+        linhas.push({ ...l, compraGeradaId: undefined, compraGeradaMes: undefined });
+      }
+      const upd = await atualizarFatura(f.mesCaixa, f.id, { linhas, status: "rascunho", confirmadaEm: undefined });
+      return res.json({ ok: true, fatura: comConferencia(upd!), removidas, devolvidas });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  app.delete("/api/fatura-cartao/:mes/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const mes = String(req.params.mes), id = String(req.params.id);
+      const f = await getFatura(mes, id);
+      if (f?.status === "confirmada") return res.status(409).json({ ok: false, error: "reverta a fatura antes de apagar" });
+      return res.json({ ok: await removerFatura(mes, id) });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
   // ── Agenda de Pagamentos (dentro da aba Compras do Mês) ───────────────────

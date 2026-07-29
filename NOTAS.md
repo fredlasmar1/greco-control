@@ -9,6 +9,23 @@
 - **URL**: https://grecocontrol.com.br/
 - **Healthcheck**: `GET /api/version`
 
+### Importador de fatura de cartão (29/07/2026) [concluído — falta validar com fatura real]
+
+**Pedido do dono (29/jul):** o cartão conta pela FATURA, e a fatura vai **no sistema**, não no bot — é documento de dezenas de linhas e evento mensal.
+
+**Feito:** aba **"Fatura de cartão"** em Compras (`client/src/components/FaturaCartaoPanel.tsx`) + `server/faturaCartao.ts`:
+1. upload do PDF → `POST /api/fatura-cartao/importar` (IA lê: data, estabelecimento, valor, parcela, categoria sugerida — `promptFatura`, modelos novos primeiro porque os 3.x não aceitam bloco `document`);
+2. conferência linha a linha na tela (categoria, `pessoal`, `fora da fatura`) → `PUT /api/fatura-cartao/:mes/:id`;
+3. **soma × valor pago** com aviso antes de confirmar; **anti-dobra** casa as compras `aguardandoFatura` por valor+nome+data (selo "já registrada": a compra existente é LIBERADA, com a foto, em vez de duplicada);
+4. `POST .../confirmar` lança no caixa **na data do pagamento** (`Compra.dataPagamentoFatura`) e `POST .../reverter` desfaz;
+5. estorno abate a linha do mesmo estabelecimento (`calcularAbatimentos`); estorno órfão é reportado, não sumido.
+
+**Caixa ganhou a 4ª gaveta** (`caixaMes.ts`): "Fatura de cartão paga no mês" — varre `compras:*` por `dataPagamentoFatura` no mês, igual à folha. Compra `aguardandoFatura` segue fora do caixa; compra já paga por fatura não conta duas vezes.
+
+Na aba Compras cada linha tem botão 💳 pra marcar/desmarcar **"no crédito"** (`PUT /api/compras/:mes/:id` aceita `aguardandoFatura`; recusa se a fatura já pagou).
+
+Validado: 20 checagens das regras puras + leitura de um PDF sintético de 18 lançamentos (soma fecha exata, parcela 3/10 lida, pagamento anterior fora da soma, Ecoville R$288,50 casada no anti-dobra). **Pendente: rodar com a fatura real do Santander/Itaú** (layout de banco é o único risco que o teste sintético não cobre) e o botão PIX/Crédito no bot do Telegram.
+
 ### v89 — Buscador premium no Dashboard (30/06/2026) [concluído]
 
 Refino de UX do v88: toggle dia/semana, setas pra navegar, atalhos de teclado e card de resultado do fechamento buscado. Mesmos endpoints do v88 (`/api/dashboard/consultar?dia=|?semanaFim=`).

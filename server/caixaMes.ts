@@ -7,6 +7,8 @@
  *   1. compras:YYYY-MM ............ fornecedor, boleto, insumo (aba Compras)
  *   2. folha_pagamentos:YYYY-MM ... comissão do mês fechado, PAGA no mês seguinte
  *   3. pagamentos[YYYY-MM].vale ... vale do dia 15
+ *   4. fatura de cartão ........... compras com `dataPagamentoFatura` no mês —
+ *      o gasto no crédito só sai do caixa quando a fatura é paga (faturaCartao.ts)
  *
  * Em julho/2026 isso significava ver R$ 34.747 quando tinham saído R$ 63.934 —
  * 54% do real. A conta de "quanto sobrou" errava por R$ 29 mil.
@@ -42,7 +44,7 @@ export interface ItemCaixa {
 }
 
 export interface BlocoCaixa {
-  chave: "compras" | "folha" | "vales";
+  chave: "compras" | "folha" | "vales" | "cartao";
   titulo: string;
   total: number;
   count: number;
@@ -147,7 +149,7 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
     // Compra no CRÉDITO ainda não saiu do caixa: sai quando a fatura é paga, e a
     // fatura entra pela tela de importação (linha a linha, conferida). Contar as
     // duas pontas dobraria — foi o risco que apareceu com a Ecoville de 29/07.
-    if ((c as any).aguardandoFatura === true) {
+    if (c.aguardandoFatura === true) {
       excluidos.push({
         motivo: "no crédito — entra quando a fatura for importada",
         valor,
@@ -155,6 +157,9 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
       });
       continue;
     }
+    // Já tem fatura paga: o dinheiro saiu na data DELA (pode ser outro mês), então
+    // esta compra é contada no bloco "Fatura de cartão", nunca aqui.
+    if (c.dataPagamentoFatura) continue;
     if (String(c.categoria) === CATEGORIA_PESSOAL) {
       // Trava (a): já está na folha ou no vale.
       excluidos.push({
@@ -221,6 +226,38 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
     });
   }
 
+  // ── 4) FATURA DE CARTÃO (regime de caixa) ───────────────────────────────────
+  // A compra no crédito de julho só vira dinheiro que saiu quando a fatura de
+  // agosto é paga. Cada compra ligada a uma fatura carrega `dataPagamentoFatura`
+  // — é por ela que a linha entra no mês, venha do bucket que vier (parcela
+  // antiga inclusive). Mesmo padrão da folha: varre as chaves, filtra pela data
+  // em que o dinheiro saiu.
+  const itensCartao: ItemCaixa[] = [];
+  const chavesCompras = await kvKeysComPrefixo("compras:");
+  for (const chave of chavesCompras) {
+    const lista = (await kvGet<Compra[]>(chave)) || [];
+    if (!Array.isArray(lista)) continue;
+    for (const c of lista) {
+      const pago = String(c?.dataPagamentoFatura || "");
+      const valor = num(c?.valor);
+      if (!pago.startsWith(mes) || valor <= 0) continue;
+      if (String(c.categoria) === CATEGORIA_PESSOAL) {
+        excluidos.push({
+          motivo: "pagamento a pessoal — já contado na folha/vale",
+          valor,
+          descricao: `${c.data} ${c.loja || c.descricao || ""}`.trim(),
+        });
+        continue;
+      }
+      itensCartao.push({
+        data: pago,
+        valor,
+        descricao: `${c.loja || c.descricao || "—"}${c.cartao ? ` — ${c.cartao}` : ""} (compra ${c.data})`,
+        categoria: String(c.categoria || "Outros"),
+      });
+    }
+  }
+
   const bloco = (chave: BlocoCaixa["chave"], titulo: string, itens: ItemCaixa[]): BlocoCaixa => ({
     chave,
     titulo,
@@ -233,6 +270,7 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
     bloco("compras", "Compras e contas", itensCompras),
     bloco("folha", "Folha paga no mês", itensFolha),
     bloco("vales", "Vales do dia 15", itensVales),
+    bloco("cartao", "Fatura de cartão paga no mês", itensCartao),
   ];
 
   return {

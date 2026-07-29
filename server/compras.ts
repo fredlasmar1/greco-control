@@ -69,7 +69,16 @@ export interface Compra {
   classe?: "operacional" | "investimento" | "perda";
   descricao?: string;
   tipo: "pix" | "compra" | "boleto" | "outro";
-  origem: "telegram" | "manual";
+  origem: "telegram" | "manual" | "fatura";
+  // ── CARTÃO DE CRÉDITO: o gasto conta pela FATURA, não pela compra avulsa ──
+  /** Comprada no crédito e ainda sem fatura importada: fica FORA do caixa. */
+  aguardandoFatura?: boolean;
+  /** Data em que a fatura foi paga — é ela que manda no regime de caixa. */
+  dataPagamentoFatura?: string; // YYYY-MM-DD
+  /** Fatura que liberou (ou criou) esta compra. */
+  faturaId?: string;
+  /** Cartão do gasto ("Santander", "Itaú"). */
+  cartao?: string;
   telegramFileId?: string;
   telegramFrom?: string; // quem mandou no grupo
   confianca?: "alta" | "media" | "baixa";

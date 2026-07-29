@@ -8,10 +8,11 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Loader2, ShoppingCart, Trash2, Pencil, Save, X as XIcon, Plus,
   Send, MessageCircle, CheckCircle2, Bot, CalendarClock, AlertTriangle,
-  RefreshCw, Repeat, Wallet, CalendarDays, List as ListIcon,
+  RefreshCw, Repeat, Wallet, CalendarDays, List as ListIcon, CreditCard,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/authStore";
+import FaturaCartaoPanel from "@/components/FaturaCartaoPanel";
 import { MonthSelector } from "@/components/MonthSelector";
 import { mesAtualSP, labelMesPtBR } from "@/lib/mesUtils";
 
@@ -20,6 +21,8 @@ type Compra = {
   id: string; mes: string; data: string; valor: number; loja: string;
   categoria: string; natureza?: Natureza; descricao?: string; tipo: string; origem: string;
   telegramFrom?: string; confianca?: string; temFoto?: boolean;
+  // Cartão de crédito: conta pela fatura (ver aba "Fatura de cartão").
+  aguardandoFatura?: boolean; dataPagamentoFatura?: string; cartao?: string;
 };
 const API_BASE = (globalThis as any).__API_BASE__ || "";
 type Resp = {
@@ -123,6 +126,24 @@ export default function Compras() {
       await carregar();
     } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
   };
+  // "No crédito": tira a compra do caixa deste mês e deixa ela esperando a fatura.
+  // O gasto volta a contar na data em que a fatura for paga (aba Fatura de cartão).
+  const toggleCredito = async (c: Compra) => {
+    const marcar = !c.aguardandoFatura;
+    try {
+      const r = await authFetch(`/api/compras/${mes}/${c.id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ aguardandoFatura: marcar }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error);
+      toast({
+        title: marcar ? "Marcada como crédito" : "Voltou a contar no caixa",
+        description: marcar ? "Fica fora do caixa até a fatura ser importada." : "O gasto conta no mês da compra de novo.",
+      });
+      await carregar(); await carregarCaixa();
+    } catch (e: any) { toast({ title: "Erro", description: e.message, variant: "destructive" }); }
+  };
   const remover = async (c: Compra) => {
     if (!confirm(`Remover a compra de R$ ${fmtBRL(c.valor)} (${c.loja})?`)) return;
     try { await authFetch(`/api/compras/${mes}/${c.id}`, { method: "DELETE" }); await carregar(); }
@@ -172,6 +193,7 @@ export default function Compras() {
       <Tabs defaultValue="compras" className="space-y-6">
         <TabsList>
           <TabsTrigger value="compras"><ShoppingCart className="w-3.5 h-3.5 mr-1.5" />Compras</TabsTrigger>
+          <TabsTrigger value="fatura"><CreditCard className="w-3.5 h-3.5 mr-1.5" />Fatura de cartão</TabsTrigger>
           <TabsTrigger value="agenda"><CalendarClock className="w-3.5 h-3.5 mr-1.5" />Agenda de Pagamentos</TabsTrigger>
         </TabsList>
 
@@ -245,8 +267,8 @@ export default function Compras() {
                     <p className="text-3xl font-bold text-primary leading-tight">R$ {fmtBRL(caixa.total)}</p>
                     <p className="text-[11px] text-muted-foreground mt-0.5">tudo que a barbearia pagou no mês</p>
                   </div>
-                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    {caixa.blocos.map(b => (
+                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+                    {caixa.blocos.filter(b => b.count > 0).map(b => (
                       <div key={b.chave} className="rounded-md border bg-muted/20 px-3 py-2">
                         <p className="text-[11px] text-muted-foreground truncate">{b.titulo}</p>
                         <p className="text-lg font-semibold">R$ {fmtBRL(b.total)}</p>
@@ -360,6 +382,10 @@ export default function Compras() {
                                     {c.tipo === "pix" && <Badge variant="outline" className="text-[9px] h-4">PIX</Badge>}
                                     {c.confianca === "baixa" && <Badge variant="outline" className="text-[9px] h-4 border-amber-500/40 text-amber-500">confira</Badge>}
                                     {c.temFoto && <a href={`${API_BASE}/api/compras/${mes}/${c.id}/foto`} target="_blank" rel="noreferrer" className="text-[9px] h-4 px-1 rounded border border-primary/40 text-primary hover:bg-primary/10 inline-flex items-center gap-0.5">📷 nota</a>}
+                                    {/* Cartão: o gasto conta pela fatura. Enquanto ela não chega,
+                                        a compra fica fora do caixa (aba "Fatura de cartão"). */}
+                                    {c.aguardandoFatura && <Badge variant="outline" className="text-[9px] h-4 border-amber-500/50 text-amber-600 bg-amber-500/10 gap-0.5"><CreditCard className="w-2.5 h-2.5" />no crédito · aguarda fatura</Badge>}
+                                    {c.dataPagamentoFatura && <Badge variant="outline" className="text-[9px] h-4 border-emerald-500/50 text-emerald-600 bg-emerald-500/10 gap-0.5"><CreditCard className="w-2.5 h-2.5" />pago na fatura de {dataBR(c.dataPagamentoFatura)}</Badge>}
                                   </div>
                                 </div>
                               )}
@@ -391,6 +417,14 @@ export default function Compras() {
                                   </>
                                 ) : (
                                   <>
+                                    {!c.dataPagamentoFatura && (
+                                      <Button
+                                        size="sm" variant="ghost"
+                                        className={`h-7 px-2 ${c.aguardandoFatura ? "text-amber-600" : "text-muted-foreground"}`}
+                                        title={c.aguardandoFatura ? "Está no crédito: fora do caixa até a fatura entrar. Clique para voltar a contar agora." : "Marcar como compra no CRÉDITO: sai do caixa só quando a fatura for importada"}
+                                        onClick={() => toggleCredito(c)}
+                                      ><CreditCard className="w-3 h-3" /></Button>
+                                    )}
                                     <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => iniciarEdit(c)}><Pencil className="w-3 h-3" /></Button>
                                     <Button size="sm" variant="ghost" className="h-7 px-2 text-red-500" onClick={() => remover(c)}><Trash2 className="w-3 h-3" /></Button>
                                   </>
@@ -411,6 +445,11 @@ export default function Compras() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ────────────────────────── FATURA DE CARTÃO ────────────────────────── */}
+        <TabsContent value="fatura" className="space-y-6 mt-0">
+          <FaturaCartaoPanel mes={mes} monthLabel={monthLabel} onMudou={() => { carregar(); carregarCaixa(); }} />
         </TabsContent>
 
         {/* ──────────────────────── AGENDA DE PAGAMENTOS ──────────────────────── */}

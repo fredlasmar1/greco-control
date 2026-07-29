@@ -144,6 +144,17 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
   for (const c of compras) {
     const valor = num(c.valor);
     if (valor <= 0) continue;
+    // Compra no CRÉDITO ainda não saiu do caixa: sai quando a fatura é paga, e a
+    // fatura entra pela tela de importação (linha a linha, conferida). Contar as
+    // duas pontas dobraria — foi o risco que apareceu com a Ecoville de 29/07.
+    if ((c as any).aguardandoFatura === true) {
+      excluidos.push({
+        motivo: "no crédito — entra quando a fatura for importada",
+        valor,
+        descricao: `${c.data} ${c.loja || c.descricao || ""}`.trim(),
+      });
+      continue;
+    }
     if (String(c.categoria) === CATEGORIA_PESSOAL) {
       // Trava (a): já está na folha ou no vale.
       excluidos.push({

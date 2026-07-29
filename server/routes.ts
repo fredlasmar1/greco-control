@@ -8,7 +8,7 @@ import * as crypto from "crypto";
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
-import { kvGet, kvGetParaEscrita, kvSet, waitForDb, isDbReady } from "./db";
+import { kvGet, kvGetParaEscrita, kvSet, kvKeysComPrefixo, waitForDb, isDbReady } from "./db";
 import { buildSnapshot, buildSystemPrompt, buildMessages, type ConselheiroDataSources } from "./conselheiro";
 import * as trinksImport from "./trinksImport";
 import * as XLSX from "xlsx";
@@ -11950,7 +11950,13 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     if (!apiKey) return null;
     const anthropic = new Anthropic({ apiKey });
     const jaOk = await kvGet<string>("compras_ia_model_ok");
+    // Modelos atuais PRIMEIRO. A lista só tinha modelos antigos, e os de 3.x não
+    // aceitam bloco `document` — por isso todo comprovante em PDF (os do Sicoob)
+    // morria com "Não consegui ler (IA indisponível)": nenhum candidato dava conta.
+    // `jaOk` é o último que funcionou (cacheado); se ele for um modelo velho e
+    // falhar num PDF, o loop segue para os novos abaixo.
     const candidatos = [jaOk, process.env.COMPRAS_IA_MODEL,
+      "claude-opus-5", "claude-sonnet-5",
       "claude-sonnet-4-5-20250929", "claude-sonnet-4-5",
       "claude-3-5-sonnet-20241022", "claude-3-5-sonnet-latest",
       "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307",
@@ -12121,13 +12127,21 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       }
     }
     if (itens.length > 0 && !ctx.semConfirmacao) {
-      await kvSet(`compras_pending:${chatId}`, { compra, itens, foto: ctx.foto || null, criadoEm: new Date().toISOString() });
-      let msg = `📦 <b>Nota de compra lida</b> — confira antes de eu salvar os custos:\n💰 Total: <b>R$ ${fmtBRLc(compra.valor)}</b> · 🏪 ${compra.loja}\n\n<b>Itens (custo unitário):</b>\n`;
+      // A COMPRA ENTRA AGORA; o SIM decide só os CUSTOS dos produtos.
+      // Antes nada era gravado até vir um "SIM", e o "NÃO" respondia "Nada foi
+      // salvo" — foi assim que 10 compras avulsas de julho/2026 (R$ 1.905,61,
+      // quase todas em dinheiro) morreram: o bot dizia "Confirmado e salvo" em
+      // umas, o dono respondia "Não" em outras, e o gasto sumia dos dois jeitos.
+      // Custo de produto é enriquecimento de margem; gasto é dinheiro que saiu.
+      const nova = await salvarCompra(compra as any);
+      await guardarFotoCompra(nova, ctx.foto);
+      await kvSet(`compras_pending:${chatId}:${nova.id}`, { compra: nova, itens, criadoEm: new Date().toISOString() });
+      let msg = `✅ <b>Compra registrada</b> — R$ ${fmtBRLc(compra.valor)} · 🏪 ${compra.loja}\n<i>Já entrou no gasto do mês.</i>\n\n📦 <b>A nota tem itens</b> — confira antes de eu atualizar os custos:\n`;
       for (const it of itens.slice(0, 20)) msg += `· ${String(it.produto)} — ${Number(it.quantidade || 1)}× R$ ${fmtBRLc(Number(it.custoUnitario))}\n`;
       if (itens.length > 20) msg += `· <i>+${itens.length - 20} itens…</i>\n`;
-      msg += `\n✅ Responda <b>SIM</b> pra eu salvar os custos (a margem preenche) e registrar a compra. Ou <b>NÃO</b> pra cancelar.`;
+      msg += `\n✅ Responda <b>SIM</b> pra eu salvar esses custos (a margem preenche). <b>NÃO</b> só ignora os custos — a compra fica registrada de qualquer jeito.`;
       await enviarMensagemCompras(msg, chatId);
-      await traçoCompras(from, "pendente_confirmacao", { itens: itens.length, valor: compra.valor });
+      await traçoCompras(from, "salvo_pendente_custos", { itens: itens.length, valor: compra.valor, id: nova.id });
       return;
     }
     const nova = await salvarCompra(compra as any);
@@ -12223,16 +12237,26 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     await finalizarCompra(dados, { chatId, from, semConfirmacao: true });
   }
 
-  // Confirmação (SIM): atualiza custos (casa por nome) + registra a compra.
+  // Confirmação (SIM): a compra JÁ está registrada — aqui só entram os custos.
+  // Procura a pendência mais recente do grupo (chave por compra desde jul/2026;
+  // a chave antiga sem sufixo continua aceita pra notas mandadas antes disso).
   async function aplicarPendenteCompras(chatId: string, from: string): Promise<void> {
-    const pend: any = await kvGet(`compras_pending:${chatId}`);
+    let chave = `compras_pending:${chatId}`;
+    let pend: any = await kvGet(chave);
+    if (!pend?.compra) {
+      const chaves = (await kvKeysComPrefixo(`compras_pending:${chatId}:`)).sort();
+      for (const k of chaves.reverse()) {
+        const p: any = await kvGet(k);
+        if (p?.compra) { pend = p; chave = k; break; }
+      }
+    }
     if (!pend?.compra) { await enviarMensagemCompras("Não há nota pendente pra confirmar. Manda a foto/nota de novo.", chatId); return; }
-    await kvSet(`compras_pending:${chatId}`, null);
+    await kvSet(chave, null);
     const { atualizados, naoAchados } = await atualizarCustosDeItens(pend.itens || []);
-    const novaP = await salvarCompra(pend.compra as any);
-    await guardarFotoCompra(novaP, pend.foto);
-    await traçoCompras(from, "confirmado_salvo", { valor: pend.compra.valor, custos: atualizados.length });
-    let msg = `✅ <b>Confirmado e salvo!</b>\n💰 Compra R$ ${fmtBRLc(pend.compra.valor)} · 🏪 ${pend.compra.loja} registrada.\n`;
+    // NÃO salva a compra de novo: ela entrou quando a nota foi lida (salvá-la
+    // aqui dobraria o gasto). `pend.compra` já é o registro gravado.
+    await traçoCompras(from, "custos_aplicados", { valor: pend.compra.valor, custos: atualizados.length });
+    let msg = `✅ <b>Custos salvos!</b>\n💰 Compra R$ ${fmtBRLc(pend.compra.valor)} · 🏪 ${pend.compra.loja} (já estava registrada).\n`;
     if (atualizados.length) msg += `\n📈 <b>${atualizados.length} custo(s) atualizado(s)</b> (margem preenchida):\n${atualizados.slice(0, 20).map((s: string) => `· ${s}`).join("\n")}\n`;
     if (naoAchados.length) msg += `\n⚠️ <b>${naoAchados.length} não achei no catálogo</b> — cadastre na aba <i>Margem de Produtos</i>:\n${naoAchados.slice(0, 20).map((s: string) => `· ${s}`).join("\n")}\n`;
     if (!atualizados.length && !naoAchados.length) msg += `\n<i>(Sem itens de custo pra atualizar.)</i>`;
@@ -12466,16 +12490,20 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         return;
       }
 
-      // 1) Confirmação de uma nota de produtos pendente
-      const pend = await kvGet(`compras_pending:${chatId}`);
+      // 1) Confirmação de uma nota de produtos pendente. A compra em si já está
+      // registrada desde que a nota foi lida — SIM/NÃO decide só os CUSTOS.
+      const chavesPend = await kvKeysComPrefixo(`compras_pending:${chatId}`);
+      const pend = chavesPend.length ? await kvGet(chavesPend.sort().reverse()[0]) : null;
       if (pend && txtRaw) {
         if (/^(sim|s|confirmo|confirmar|confirma|isso|ok|correto|pode|positivo|👍|✅)$/.test(txt)) {
           await aplicarPendenteCompras(chatId, from).catch(erroTrace);
           return;
         }
         if (/^(n[aã]o|nao|cancela|cancelar|errado|negativo|❌)$/.test(txt)) {
-          await kvSet(`compras_pending:${chatId}`, null);
-          await enviarMensagemCompras("❌ Ok, cancelei. Nada foi salvo.", chatId);
+          // "Nada foi salvo" era mentira e custou dinheiro: o NÃO agora descarta
+          // apenas os custos dos itens, nunca o gasto.
+          for (const k of chavesPend) await kvSet(k, null);
+          await enviarMensagemCompras("❌ Ok, ignorei os custos dos itens. <b>A compra continua registrada</b> no gasto do mês — se ela não devia existir, apague no app.", chatId);
           return;
         }
         // outra coisa → segue (foto/nova compra substitui o pendente lá dentro)

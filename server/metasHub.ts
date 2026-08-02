@@ -197,6 +197,47 @@ export async function getMetasDescontos(mes: string): Promise<MetasDescontos | n
   } catch { return hit?.data || null; }
 }
 
+// ESCRITA no Metas: replica o que o Control apurou (consumo do relatório "Vendas
+// de Produto" da Trinks + vales) na tela /descontos, que é onde a equipe vê. O
+// Metas só tinha lançamento manual da recepção — em jul/2026, R$ 749 de consumo
+// contra R$ 2.348,50 reais, e nenhum vale.
+//
+// Idempotente por origem (created_by) e respeita os DIAS FECHADOS da tela: dia
+// conferido e travado pela recepção não é tocado.
+export interface MetasSyncItem {
+  trinksId?: string | null;
+  nome?: string | null;
+  tipo: "vale" | "consumo" | "multa" | "compra" | "outro";
+  valor: number;
+  motivo?: string;
+  data?: string; // YYYY-MM-DD — vira o created_at (a tela agrupa consumo por dia)
+}
+export interface MetasSyncResultado {
+  ok: boolean;
+  mes: string;
+  inseridos: number;
+  total: number;
+  removidos: number;
+  removidosDetalhe: any[];
+  naoCasaram: any[];
+  diasFechados: string[];
+  puladosDiaFechado: any[];
+}
+export async function syncMetasDescontos(
+  mes: string, itens: MetasSyncItem[], substituirTipos: string[] = [],
+): Promise<MetasSyncResultado> {
+  if (!KEY) throw new Error("HUB_API_KEY não configurada — não dá pra escrever no Metas.");
+  const r = await fetch(`${BASE}/api/hub/descontos/sync`, {
+    method: "POST",
+    headers: { "x-hub-key": KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ mes, itens, substituirTipos, origem: "greco-control" }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const j = (await r.json()) as any;
+  if (!r.ok || !j?.ok) throw new Error(j?.error || `Metas respondeu ${r.status}`);
+  return j as MetasSyncResultado;
+}
+
 // REATIVAR/COBRAR do Metas (motor de reativação: base rec_clients deduplicada +
 // rec_reactivations). Alimenta a Retenção do Control com a lista AUTORITATIVA de
 // quem reativar (com telefone/quem-atende), a saúde da carteira e o placar do mês.

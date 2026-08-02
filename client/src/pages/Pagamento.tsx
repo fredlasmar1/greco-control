@@ -328,6 +328,35 @@ export default function Pagamento() {
     }
   };
 
+  // Replica no Greco Metas o consumo (do CSV da Trinks) e os vales apurados aqui.
+  const [replicando, setReplicando] = useState(false);
+  const replicarNoMetas = async () => {
+    const temCsv = data?.consumoFonte?.fonte === "csv-trinks";
+    const aviso = temCsv
+      ? "Vai lançar o consumo do relatório da Trinks e os vales em grecopro.com.br/descontos, substituindo os lançamentos manuais de consumo do mês (dias já fechados por lá ficam intactos). Continuar?"
+      : "Este mês ainda não tem o CSV 'Vendas de Produto'. Só os vales serão replicados. Continuar?";
+    if (!confirm(aviso)) return;
+    setReplicando(true);
+    try {
+      const r = await authFetch(`/api/folha/replicar-metas/${mes}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ incluirConsumo: temCsv, incluirVales: true }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Erro ao replicar");
+      const partes = [`${j.inseridos} lançamentos (R$ ${fmtBRL(j.total)})`];
+      if (j.removidos) partes.push(`${j.removidos} substituídos`);
+      if (j.puladosDiaFechado?.length) partes.push(`${j.puladosDiaFechado.length} pulados (dia fechado)`);
+      if (j.naoCasaram?.length) partes.push(`${j.naoCasaram.length} sem profissional no Metas`);
+      toast({ title: "Replicado no Greco Metas", description: partes.join(" · ") });
+    } catch (err: any) {
+      toast({ title: "Erro", description: err.message, variant: "destructive" });
+    } finally {
+      setReplicando(false);
+    }
+  };
+
   const abrirRecibo = (l: Linha) => {
     const url = `/api/pagamento/${mes}/recibo/${l.profissionalId}`;
     window.open(url, "_blank");
@@ -644,6 +673,17 @@ export default function Pagamento() {
                       </div>
                     </>
                   )}
+                  {/* Replica no Metas: é lá que a equipe vê o que foi abatido */}
+                  <div className="mt-2 pt-2 border-t border-border/40 flex flex-wrap items-center gap-2">
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={replicarNoMetas} disabled={replicando}>
+                      {replicando ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                      Replicar consumo e vales no Greco Metas
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground">
+                      Lança em <strong>grecopro.com.br/descontos</strong>, item a item e na data certa. Dia já
+                      fechado por lá não é tocado.
+                    </span>
+                  </div>
                   {(data.consumoSemDono && data.consumoSemDono.length > 0) && (
                     <div className="mt-2 pt-2 border-t border-border/40">
                       <div className="text-muted-foreground mb-1">Consumo sem dono na folha (não descontou de ninguém):</div>

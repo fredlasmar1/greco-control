@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos, getMetasReativacao, getMetasBancoHoras } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos, getMetasReativacao, getMetasBancoHoras, syncMetasDescontos } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { montarFormula, type EntradaFormula } from "./folhaFormula";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
@@ -15345,6 +15345,65 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const out = await calcularFolhaMes(mes, { force: req.query.force === "true" });
       if (out?._status) return res.status(out._status).json(out);
       return res.json(out);
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/folha/replicar-metas/:mes — manda pro Greco Metas o que o Control
+  // apurou: o CONSUMO de cada um (relatório "Vendas de Produto" da Trinks) e os
+  // VALES. A tela /descontos do Metas é onde a equipe vê o que foi abatido; até
+  // agora ela só tinha o que a recepção lembrava de anotar (jul/2026: R$ 749 de
+  // consumo contra R$ 2.348,50 reais, e vale nenhum).
+  //
+  // Guarda backup do que o Metas apagou ANTES de confiar no resultado.
+  app.post("/api/folha/replicar-metas/:mes", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      const incluirVales = req.body?.incluirVales !== false;
+      const incluirConsumo = req.body?.incluirConsumo !== false;
+
+      const folha = await calcularFolhaMes(mes);
+      if (!folha?.linhas?.length) return res.status(400).json({ ok: false, error: `Folha de ${mes} vazia — nada a replicar.` });
+
+      const itens: any[] = [];
+      for (const l of folha.linhas) {
+        const nomeCompleto = String(l.nome || "").split(" - ").pop() || l.nome;
+        const f = l.formula;
+        if (!f) continue;
+        if (incluirConsumo) {
+          // Item a item, com a data da venda — a tela do Metas agrupa consumo por dia.
+          for (const it of f.descontos.itens.filter((x: any) => x.grupo === "consumo" && x.origem === "trinks")) {
+            itens.push({
+              trinksId: l.profissionalId, nome: nomeCompleto, tipo: "consumo",
+              valor: it.valor, data: it.data, motivo: it.descricao,
+            });
+          }
+        }
+        if (incluirVales && f.descontos.vales > 0) {
+          itens.push({
+            trinksId: l.profissionalId, nome: nomeCompleto, tipo: "vale",
+            valor: f.descontos.vales,
+            motivo: `Vale de ${mes} (apurado no Greco Control)`,
+          });
+        }
+      }
+      if (!itens.length) return res.status(400).json({ ok: false, error: "Nada a replicar (sem consumo do CSV nem vales no mês)." });
+
+      // Substitui o consumo manual SÓ quando temos o CSV — aí o manual é a mesma
+      // coisa anotada à mão e somar cobraria em dobro do barbeiro.
+      const temCsv = folha.consumoFonte?.fonte === "csv-trinks";
+      const substituirTipos = [ ...(temCsv && incluirConsumo ? ["consumo"] : []), ...(incluirVales ? ["vale"] : []) ];
+
+      const out = await syncMetasDescontos(mes, itens, substituirTipos);
+      // Backup do que foi removido lá — pra dar pra desfazer se der ruim.
+      if (out.removidosDetalhe?.length) {
+        await kvSet(`metas_descontos_backup:${mes}:${Date.now()}`, out.removidosDetalhe);
+      }
+      log(`[folha] replicado no Metas ${mes}: ${out.inseridos} lançamentos (R$ ${out.total}), ${out.removidos} removidos`, "pagamento");
+      return res.json({ ...out, ok: true, mes, enviados: itens.length });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }

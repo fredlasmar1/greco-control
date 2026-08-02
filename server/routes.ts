@@ -20,6 +20,7 @@ import type {
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
 import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos, getMetasReativacao, getMetasBancoHoras } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
+import { montarFormula, type EntradaFormula } from "./folhaFormula";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
 import {
   listarContas as listarContasMensais,
@@ -14519,6 +14520,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       },
       // Detalhe Clube Greco (assinaturas vendidas via aba Assinaturas)
       clubeGreco: clubeGreco || { assinantes: 0, valorVendasRS: 0, comissaoRS: 0, pctEfetivo: 0 },
+      // Resultado da fórmula canônica (folhaFormula.ts). Preenchido por
+      // calcularFolhaMes depois dos bônus e dos descontos do Metas — é ELE que
+      // manda no que se paga; os campos soltos abaixo são o detalhe.
+      formula: null as null | import("./folhaFormula").ResultadoFormula,
       // Estado mensal
       pagamento: {
         vale,
@@ -14680,10 +14685,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     }
   });
 
-  app.get("/api/pagamento/:mes", async (req: Request, res: Response) => {
-    try {
-      const mes = String(req.params.mes || "");
-      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+  // FONTE ÚNICA DA FOLHA. Antes o corpo disto vivia dentro do handler HTTP e o
+  // recibo remontava a conta por fora — em jul/2026 os 13 holerites divergiam da
+  // tela em R$ 4.698,84. Agora tela, aba Equipe e recibo leem esta função.
+  async function calcularFolhaMes(mes: string, opts: { force?: boolean } = {}): Promise<any> {
       const [y, m] = mes.split("-").map(Number);
       const dataInicio = `${mes}-01`;
       const ultimoDia = new Date(Date.UTC(y, m, 0, 12)).getUTCDate();
@@ -14694,7 +14699,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
 
       // Force refresh: faz backup do cache, invalida e re-coleta.
       // Se o refetch vier zerado (rate limit Trinks), restaura backup e retorna 503.
-      const force = req.query.force === "true";
+      const force = !!opts.force;
       const transFim = ymdAddDays(dataFim, 1);
       const cacheKeysParaForce = [
         `equipe-periodo:${dataInicio}:${dataFim}`,
@@ -14729,7 +14734,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         // inteiro). Folha vazia + flag semRanking pra a UI pedir o Ranking (0 token).
         // Força só com ?force=true (botão "Atualizar Trinks").
         const _tm: any = await kvGet(`trinks_total_mes:${mes}`);
-        return res.json({
+        return ({
           ok: true, mes, dataInicio, dataFim, semRanking: true, linhas: [], clubeOrfaos: [],
           totais: { totalBruto: 0, totalComissaoServicos: 0, totalComissaoProdutos: 0, totalComissaoPlano: 0,
             totalComissaoClubeGreco: 0, totalBonusExcedente: 0, totalBonusRanking: 0, totalBonusMetaCategoria: 0, totalSalarioFixo: 0,
@@ -14757,7 +14762,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
             setCache(k, v, ttl);
           }
           log(`[pagamento/${mes}] force=true falhou (rate limit?). Cache restaurado: ${periodoTotalOld} > ${periodoTotalNovo}`, "pagamento");
-          return res.status(503).json({
+          return ({
+            _status: 503,
             ok: false,
             error: "Atualização falhou — Trinks indisponível ou rate limited. Cache anterior preservado, tente novamente em 1 minuto.",
             rateLimited: true,
@@ -14841,6 +14847,83 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       // zeradas. Mantém qualquer profissional com meta (mesmo R$0) ou com valor real.
       linhas = linhas.filter(l => !!metas[l.profissionalId] || l.calculos.totalBruto > 0.005);
 
+      // ── BASE CANÔNICA DOS SERVIÇOS (Gmail + API + CSV) ────────────────
+      // Decisão do dono (01/08/2026): a comissão sai do faturamento canônico, não
+      // do CSV do ranking sozinho. O ranking é import MANUAL — em jul/2026 parou
+      // no dia 19 e a folha ficou calculando sobre R$ 56.089 de serviço quando o
+      // oficial do Gmail apontava R$ 98.065 no mês (57% de cobertura; em junho a
+      // mesma conta dava 91,5%). Quem esqueceu de subir o CSV pagava a menos.
+      //
+      // Serviço canônico = oficial (Gmail) − produtos (ranking) − planos vendidos
+      // (Assinaturas). O ranking continua mandando na PARTILHA entre as pessoas
+      // (é a única fonte por barbeiro); o canônico manda no TOTAL. Cada linha sobe
+      // proporcionalmente e o fator fica à vista na tela e no recibo.
+      //
+      // Travas: só ajusta PRA CIMA (nunca reduz comissão já apurada), só entre 30%
+      // e 97% de cobertura (abaixo disso o CSV está quebrado demais pra ratear,
+      // acima já está bom) e pode ser desligado em settings.folhaAjusteCanonico.
+      const ajusteCanonicoLigado = storeData.settings?.folhaAjusteCanonico !== false;
+      let planoVendidoParaCanonico = 0;
+      for (const b of Array.from(clubeBySeller.values())) planoVendidoParaCanonico += b.valorVendasRS;
+      const _tmCanon: any = await kvGet(`trinks_total_mes:${mes}`);
+      const oficialCanonico = Number(_tmCanon?.total || 0);
+      const produtosDoMes = Number(periodo.totais?.produtosBruto || 0);
+      const servicosCanonicos = Math.max(0, oficialCanonico - produtosDoMes - planoVendidoParaCanonico);
+      const servicosNaFolha = linhas.reduce((s, l) => s + (l.bases.servicosLiquido || 0), 0);
+      const coberturaServicos = servicosCanonicos > 0 ? servicosNaFolha / servicosCanonicos : null;
+      let ajusteCanonico: any = {
+        aplicado: false, fator: 1, oficialGmail: oficialCanonico, produtos: produtosDoMes,
+        planoVendido: planoVendidoParaCanonico, servicosCanonicos, servicosNaFolha,
+        coberturaPct: coberturaServicos != null ? Math.round(coberturaServicos * 1000) / 10 : null,
+        diferencaServicos: 0, diferencaComissao: 0, motivo: "",
+      };
+      if (!ajusteCanonicoLigado) {
+        ajusteCanonico.motivo = "Desligado em Configurações (folhaAjusteCanonico=false).";
+      } else if (!oficialCanonico) {
+        ajusteCanonico.motivo = "Sem total oficial do Gmail para o mês — nada a comparar.";
+      } else if (coberturaServicos == null || servicosNaFolha <= 0) {
+        ajusteCanonico.motivo = "Folha sem produção de serviços — nada a ratear.";
+      } else if (coberturaServicos >= 0.97) {
+        ajusteCanonico.motivo = "Ranking já cobre o oficial (≥97%) — sem ajuste.";
+      } else if (coberturaServicos < 0.30) {
+        ajusteCanonico.motivo = "Ranking cobre menos de 30% do oficial — CSV incompleto demais pra ratear. Suba o Ranking do mês.";
+      } else {
+        const fator = servicosCanonicos / servicosNaFolha;
+        let difServ = 0, difCom = 0;
+        for (const l of linhas) {
+          const servAntes = l.bases.servicosLiquido || 0;
+          if (servAntes <= 0) continue;
+          const comAntes = l.calculos.comissaoServicos || 0;
+          const servDepois = Math.round(servAntes * fator * 100) / 100;
+          const comDepois = Math.round(comAntes * fator * 100) / 100;
+          difServ += servDepois - servAntes;
+          difCom += comDepois - comAntes;
+          l.bases.servicosLiquido = servDepois;
+          l.bases.baseComissaoServicos = Math.round((l.bases.baseComissaoServicos || 0) * fator * 100) / 100;
+          l.calculos.servicosBruto = Math.round((l.calculos.servicosBruto || 0) * fator * 100) / 100;
+          l.calculos.comissaoServicos = comDepois;
+          l.calculos.totalBruto = Math.round((l.calculos.totalBruto + (comDepois - comAntes)) * 100) / 100;
+          (l.calculos as any).comissaoServicosAntesCanonico = comAntes;
+          (l.calculos as any).servicosAntesCanonico = servAntes;
+          // O bônus de meta da categoria é reavaliado com a produção corrigida.
+          const bateuAgora = (l.calculos as any).metaBrutaCategoria > 0 && l.calculos.servicosBruto >= (l.calculos as any).metaBrutaCategoria;
+          if (bateuAgora !== l.calculos.bateuMetaCategoria) {
+            const bonusJantar = Number(storeData.settings?.bonusJantarReais ?? 300);
+            const delta = (bateuAgora ? bonusJantar : 0) - (l.calculos.bonusMetaCategoria || 0);
+            l.calculos.bateuMetaCategoria = bateuAgora;
+            l.calculos.bonusMetaCategoria = bateuAgora ? bonusJantar : 0;
+            l.calculos.totalBruto = Math.round((l.calculos.totalBruto + delta) * 100) / 100;
+          }
+        }
+        ajusteCanonico = {
+          ...ajusteCanonico, aplicado: true, fator: Math.round(fator * 10000) / 10000,
+          diferencaServicos: Math.round(difServ * 100) / 100,
+          diferencaComissao: Math.round(difCom * 100) / 100,
+          motivo: `Ranking cobria ${Math.round(coberturaServicos * 1000) / 10}% do serviço oficial — produção e comissão rateadas até fechar com o Gmail.`,
+        };
+        log(`[pagamento/${mes}] ajuste canônico: fator ${fator.toFixed(4)} (+R$ ${difCom.toFixed(2)} de comissão)`, "pagamento");
+      }
+
       // v32: classifica cada linha em barbeiro vs assistente, calcula ranking e
       // aplica bônus pro top 1 de cada categoria.
       const normNome = (s: string) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
@@ -14914,6 +14997,69 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         console.warn("[folha] descontos do Metas indisponíveis:", (e as any)?.message || e);
       }
 
+      // ── FÓRMULA CANÔNICA (01/08/2026) ────────────────────────────────
+      // SERVIÇOS + PLANOS + PRODUTOS − VALES − PRODUTOS CONSUMIDOS − DESCONTOS
+      // = COMISSÃO DO MÊS; (+) fixo (+) bônus = TOTAL A PAGAR.
+      // Os vales são conferidos contra a aba COMPRAS do mês: o bot do Telegram
+      // grava o mesmo PIX nos dois lugares (compra + campo `vale`), então a
+      // fórmula usa max(folha, compras) — somar dobraria o desconto. O que está
+      // em Compras e não na folha entra; o que está na folha sem comprovante
+      // fica marcado pra conferência (em jul/2026: R$ 8.000 de R$ 8.350).
+      const comprasDoMes: any[] = await listarCompras(mes).catch(() => []);
+      const valesEmComprasPorNome = new Map<string, Array<{ id: string; valor: number; data: string; descricao?: string }>>();
+      const comprasEquipeNaoClassificadas: any[] = [];
+      for (const c of comprasDoMes) {
+        if (c?.categoria !== "Salários & Equipe") continue;
+        const desc = String(c.descricao || "");
+        const ehVale = /^vale\b/i.test(desc);
+        const ehFechamento = /^fechamento\b/i.test(desc);
+        if (!ehVale && !ehFechamento) { comprasEquipeNaoClassificadas.push(c); continue; }
+        if (!ehVale) continue; // fechamento quita o mês anterior — não abate aqui
+        // A descrição do bot é "Vale <mês>/<ano> — NOME COMPLETO"
+        const nome = desc.split("—").slice(1).join("—").trim() || String(c.loja || "");
+        const k = normNome(nome);
+        if (!valesEmComprasPorNome.has(k)) valesEmComprasPorNome.set(k, []);
+        valesEmComprasPorNome.get(k)!.push({ id: String(c.id), valor: Number(c.valor) || 0, data: String(c.data || ""), descricao: desc });
+      }
+      const valesDeCompraUsados = new Set<string>();
+      for (const l of linhas) {
+        const nl = normNome(String(l.nome || "").split(" - ").pop() || l.nome);
+        let achado: Array<{ id: string; valor: number; data: string; descricao?: string }> = [];
+        for (const [k, v] of Array.from(valesEmComprasPorNome.entries())) {
+          if (valesDeCompraUsados.has(k)) continue;
+          if (k === nl || k.includes(nl) || nl.includes(k) || k.split(" ")[0] === nl.split(" ")[0]) {
+            achado = v; valesDeCompraUsados.add(k); break;
+          }
+        }
+        const entrada: EntradaFormula = {
+          comissaoServicos: l.calculos.comissaoServicos,
+          comissaoProdutos: l.calculos.comissaoProdutos,
+          comissaoPlano: l.calculos.comissaoPlano,
+          comissaoClubeGreco: l.calculos.comissaoClubeGreco,
+          vale: l.pagamento.vale,
+          valeNota: l.pagamento.valeNota,
+          consumoInterno: l.pagamento.consumoInterno,
+          consumoInternoNota: l.pagamento.consumoInternoNota,
+          multa: l.pagamento.multa || 0,
+          multaNota: l.pagamento.multaNota,
+          comprasCartao: l.pagamento.comprasCartao || 0,
+          comprasCartaoNota: l.pagamento.comprasCartaoNota,
+          ajuste: l.pagamento.ajuste,
+          ajusteNota: l.pagamento.ajusteNota,
+          metasPorTipo: l.pagamento.descontoMetasPorTipo,
+          metasItens: l.pagamento.descontoMetasItens,
+          valesEmCompras: achado,
+          salarioFixo: l.calculos.salarioFixo,
+          bonusExcedente: l.calculos.bonusExcedente,
+          bonusRanking: l.calculos.bonusRanking,
+          bonusMetaCategoria: l.calculos.bonusMetaCategoria || 0,
+        };
+        l.formula = montarFormula(entrada);
+        // O saldo passa a SER o resultado da fórmula (antes era uma soma paralela
+        // que não incluía o vale vindo só da aba Compras).
+        l.pagamento.saldoAReceber = l.formula.totalAPagar;
+      }
+
       // Ordena por nome
       linhas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
@@ -14943,11 +15089,24 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         totalDescontoMetas: acc.totalDescontoMetas + (l.pagamento.descontoMetas || 0),
         totalTaxaCartao: acc.totalTaxaCartao + l.bases.taxaCartaoEstimada,
         totalSaldo: acc.totalSaldo + l.pagamento.saldoAReceber,
+        // Fórmula canônica — os 6 números que o dono lê, somados.
+        totalFormulaServicos: acc.totalFormulaServicos + (l.formula?.comissao.servicos || 0),
+        totalFormulaPlanos: acc.totalFormulaPlanos + (l.formula?.comissao.planos || 0),
+        totalFormulaProdutos: acc.totalFormulaProdutos + (l.formula?.comissao.produtos || 0),
+        totalFormulaVales: acc.totalFormulaVales + (l.formula?.descontos.vales || 0),
+        totalFormulaConsumidos: acc.totalFormulaConsumidos + (l.formula?.descontos.produtosConsumidos || 0),
+        totalFormulaDescontos: acc.totalFormulaDescontos + (l.formula?.descontos.outros || 0),
+        totalComissaoDoMes: acc.totalComissaoDoMes + (l.formula?.comissaoDoMes || 0),
+        totalBonus: acc.totalBonus + (l.formula?.adicionais.bonus || 0),
+        totalValeSemComprovante: acc.totalValeSemComprovante + (l.formula?.descontos.valeSemComprovante || 0),
       }), {
         totalBruto: 0, totalComissaoServicos: 0, totalComissaoProdutos: 0,
         totalComissaoPlano: 0, totalComissaoClubeGreco: 0,
         totalBonusExcedente: 0, totalBonusRanking: 0, totalBonusMetaCategoria: 0, totalSalarioFixo: 0,
         totalVale: 0, totalAjuste: 0, totalConsumoInterno: 0, totalMulta: 0, totalComprasCartao: 0, totalDescontoMetas: 0, totalTaxaCartao: 0, totalSaldo: 0,
+        totalFormulaServicos: 0, totalFormulaPlanos: 0, totalFormulaProdutos: 0,
+        totalFormulaVales: 0, totalFormulaConsumidos: 0, totalFormulaDescontos: 0,
+        totalComissaoDoMes: 0, totalBonus: 0, totalValeSemComprovante: 0,
       });
 
       // Conferência de fechamento (0 tokens): o total OFICIAL do mês vem do e-mail
@@ -14973,7 +15132,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         planoMensalMes += Number(c.planValue || 0) / dm;
       }
 
-      return res.json({
+      return ({
         ok: true,
         mes,
         dataInicio,
@@ -14981,7 +15140,14 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         linhas,
         totais,
         clubeOrfaos, // sellers do Clube Greco sem match em profissional ativo
+        // Rateio até o faturamento canônico (Gmail) — fator, quanto entrou e por quê.
+        ajusteCanonico,
         descontosMetasOrfaos, // descontos do Metas que não casaram com ninguém da folha
+        // Pagamentos em "Salários & Equipe" que o dono nunca respondeu se eram
+        // vale ou fechamento: dinheiro que saiu do caixa e não abateu ninguém.
+        comprasEquipeNaoClassificadas: comprasEquipeNaoClassificadas.map((c) => ({
+          id: c.id, data: c.data, valor: c.valor, loja: c.loja, descricao: c.descricao || "",
+        })),
         // Conferência: intercala as 3 fontes (email / CSV ranking / API) + composição
         conferencia: {
           oficialTrinks: oficialTrinksMes,               // FONTE 1: receita oficial (email diário)
@@ -15019,6 +15185,15 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         aguardandoRanking: !!aguardandoRanking,
         fetchedAt: new Date().toISOString(),
       });
+  }
+
+  app.get("/api/pagamento/:mes", async (req: Request, res: Response) => {
+    try {
+      const mes = String(req.params.mes || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mes deve ser YYYY-MM" });
+      const out = await calcularFolhaMes(mes, { force: req.query.force === "true" });
+      if (out?._status) return res.status(out._status).json(out);
+      return res.json(out);
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }
@@ -15202,16 +15377,17 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const hoje = ymdHoje();
       // Mesma janela do GET /api/pagamento — não calcula plano de dias futuros.
       const dataFim = hoje < dataFimReal ? hoje : dataFimReal;
-      const [metas, meta, pagto] = await Promise.all([
-        getAllMetas(),
-        getMeta(profId),
-        getPagamentoMes(mes, profId),
-      ]);
-      // Mesma fonte da folha (ranking-first, produto exato): bases, bônus e saldo do
-      // holerite batem com a tabela de Pagamentos.
-      const { periodo } = await construirPeriodoFolha(mes, metas, dataInicio, dataFim, hoje, false);
-      const profMes = (periodo?.porProfissional || {})[profId];
-      const linha = await calcularLinhaPagamento(mes, profId, profMes, meta, pagto);
+      const pagto = await getPagamentoMes(mes, profId);
+      // O holerite é a MESMA linha da tela de Pagamento — não recalcula nada por
+      // fora. Até 01/08/2026 ele remontava a conta sozinho (sem Clube, sem banco
+      // de horas, sem os descontos do Metas e sem o bônus de top-1) e os 13
+      // recibos de julho divergiam da tela em R$ 4.698,84.
+      const folha = await calcularFolhaMes(mes);
+      const linha = (folha?.linhas || []).find((l: any) => String(l.profissionalId) === profId);
+      if (!linha) {
+        return res.status(404).json({ ok: false, error: `Sem linha de folha para ${profId} em ${mes}.` });
+      }
+      const f = linha.formula;
 
       // Se há snapshot fechado, prefere os valores travados (histórico fiel).
       const snap = pagto?.snapshot;
@@ -15239,19 +15415,22 @@ ${pagto?.fechado ? `<div style="font-size:11px;color:#666">Mês fechado em ${new
 <tr><td>Plano/assinatura</td><td class="r">${valor(usarSnap ? snap!.planoReais : linha.bases.planoReais)}</td></tr>
 ${(() => { const tx = usarSnap ? (snap as any).taxaCartaoEstimada || 0 : linha.bases.taxaCartaoEstimada; return tx > 0 ? `<tr style="color:#666"><td>(info) Taxa cartão já abatida</td><td class="r">− ${valor(tx)}</td></tr>` : ""; })()}
 </table>
-<h2>Componentes</h2><table>
-<tr><td>Comissão serviços (${linha.percentuais.pctServico}%)</td><td class="r">${valor(usarSnap ? snap!.comissaoServicos : linha.calculos.comissaoServicos)}</td></tr>
-<tr><td>Comissão produtos (${linha.percentuais.pctProduto}%)</td><td class="r">${valor(usarSnap ? snap!.comissaoProdutos : linha.calculos.comissaoProdutos)}</td></tr>
-<tr><td>Comissão plano (${linha.percentuais.pctPlano}%)</td><td class="r">${valor(usarSnap ? snap!.comissaoPlano : linha.calculos.comissaoPlano)}</td></tr>
-<tr><td>Bônus por exceder meta (${linha.percentuais.pctBonusExcedente}%)</td><td class="r">${valor(usarSnap ? snap!.bonusExcedente : linha.calculos.bonusExcedente)}</td></tr>
-${linha.percentuais.salarioFixo > 0 ? `<tr><td>Salário fixo</td><td class="r">${valor(linha.percentuais.salarioFixo)}</td></tr>` : ""}
-<tr class="tot"><td>Total bruto</td><td class="r">${valor(usarSnap ? snap!.totalBruto : linha.calculos.totalBruto)}</td></tr>
+<h2>Comissão do mês</h2><table>
+<tr><td>Serviços (${linha.percentuais.pctServico}%)</td><td class="r">${valor(f.comissao.servicos)}</td></tr>
+<tr><td>Planos e Clube Greco</td><td class="r">${valor(f.comissao.planos)}</td></tr>
+<tr><td>Produtos (${linha.percentuais.pctProduto}%)</td><td class="r">${valor(f.comissao.produtos)}</td></tr>
+<tr><td>(−) Vales</td><td class="r">${valor(f.descontos.vales)}</td></tr>
+<tr><td>(−) Produtos consumidos</td><td class="r">${valor(f.descontos.produtosConsumidos)}</td></tr>
+<tr><td>(−) Descontos</td><td class="r">${valor(f.descontos.outros)}</td></tr>
+<tr class="tot"><td>COMISSÃO DO MÊS</td><td class="r">${valor(f.comissaoDoMes)}</td></tr>
 </table>
-<h2>Pagamentos do mês</h2><table>
-<tr><td>(−) Vale do dia 15${linha.pagamento.valeNota ? " — " + linha.pagamento.valeNota : ""}</td><td class="r">${valor(linha.pagamento.vale)}</td></tr>
-${linha.pagamento.consumoInterno > 0 ? `<tr><td>(−) Consumo interno${linha.pagamento.consumoInternoNota ? " — " + linha.pagamento.consumoInternoNota : ""}</td><td class="r">${valor(linha.pagamento.consumoInterno)}</td></tr>` : ""}
-${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" : "−"}) Ajuste${linha.pagamento.ajusteNota ? " — " + linha.pagamento.ajusteNota : ""}</td><td class="r">${valor(Math.abs(linha.pagamento.ajuste))}</td></tr>` : ""}
-<tr class="tot"><td>Saldo a receber</td><td class="r">${valor(usarSnap ? snap!.saldoAReceber : linha.pagamento.saldoAReceber)}</td></tr>
+${f.descontos.itens.length ? `<h2>Detalhe dos descontos</h2><table>${f.descontos.itens.map((it: any) =>
+  `<tr><td>${it.data ? it.data.split("-").reverse().join("/") + " · " : ""}${it.descricao}</td><td class="r">${valor(it.valor)}</td></tr>`).join("")}</table>` : ""}
+<h2>Total a pagar</h2><table>
+<tr><td>Comissão do mês</td><td class="r">${valor(f.comissaoDoMes)}</td></tr>
+${f.adicionais.salarioFixo > 0 ? `<tr><td>(+) Salário fixo${linha.calculos.fixoFonte === "horas" ? ` (${linha.calculos.fixoHoras}h de ponto)` : ""}</td><td class="r">${valor(f.adicionais.salarioFixo)}</td></tr>` : ""}
+${f.adicionais.bonus > 0 ? `<tr><td>(+) Bônus${f.adicionais.bonusRanking > 0 ? " top-1 do ranking" : ""}${f.adicionais.bonusMetaCategoria > 0 ? " · meta da categoria" : ""}</td><td class="r">${valor(f.adicionais.bonus)}</td></tr>` : ""}
+<tr class="tot"><td>TOTAL A PAGAR</td><td class="r">${valor(usarSnap ? snap!.saldoAReceber : f.totalAPagar)}</td></tr>
 </table>
 <div class="assin">Recebi a importância acima descrita</div>
 <div class="foot">Greco Barbearia · Anápolis-GO · Emitido em ${new Date().toLocaleString("pt-BR")}</div>
@@ -15297,30 +15476,45 @@ ${linha.pagamento.ajuste !== 0 ? `<tr><td>(${linha.pagamento.ajuste >= 0 ? "+" :
       }
       doc.moveDown(0.4);
 
-      doc.fontSize(12).font("Helvetica-Bold").text("Componentes");
+      doc.fontSize(12).font("Helvetica-Bold").text("Comissão do mês");
       doc.moveDown(0.2);
-      linhaTab(`Comissão serviços (${linha.percentuais.pctServico}%)`, valor(usarSnap ? snap!.comissaoServicos : linha.calculos.comissaoServicos));
-      linhaTab(`Comissão produtos (${linha.percentuais.pctProduto}%)`, valor(usarSnap ? snap!.comissaoProdutos : linha.calculos.comissaoProdutos));
-      linhaTab(`Comissão plano (${linha.percentuais.pctPlano}%)`, valor(usarSnap ? snap!.comissaoPlano : linha.calculos.comissaoPlano));
-      linhaTab(`Bônus exceder meta (${linha.percentuais.pctBonusExcedente}%)`, valor(usarSnap ? snap!.bonusExcedente : linha.calculos.bonusExcedente));
-      if (linha.percentuais.salarioFixo > 0) linhaTab("Salário fixo", valor(linha.percentuais.salarioFixo));
-      linhaTab("Total bruto", valor(usarSnap ? snap!.totalBruto : linha.calculos.totalBruto), { bold: true });
+      linhaTab(`Serviços (${linha.percentuais.pctServico}%)`, valor(f.comissao.servicos));
+      linhaTab("Planos e Clube Greco", valor(f.comissao.planos));
+      linhaTab(`Produtos (${linha.percentuais.pctProduto}%)`, valor(f.comissao.produtos));
+      linhaTab("(−) Vales", valor(f.descontos.vales));
+      linhaTab("(−) Produtos consumidos", valor(f.descontos.produtosConsumidos));
+      linhaTab("(−) Descontos", valor(f.descontos.outros));
+      linhaTab("COMISSÃO DO MÊS", valor(f.comissaoDoMes), { bold: true });
       doc.moveDown(0.4);
 
-      doc.fontSize(12).font("Helvetica-Bold").text("Pagamentos do mês");
+      if (f.descontos.itens.length) {
+        doc.fontSize(12).font("Helvetica-Bold").text("Detalhe dos descontos");
+        doc.moveDown(0.2);
+        doc.fillColor("#444");
+        for (const it of f.descontos.itens) {
+          const quando = it.data ? `${it.data.split("-").reverse().join("/")} · ` : "";
+          linhaTab(`${quando}${it.descricao}`, valor(it.valor));
+        }
+        doc.fillColor("#000");
+        doc.moveDown(0.4);
+      }
+
+      doc.fontSize(12).font("Helvetica-Bold").text("Total a pagar");
       doc.moveDown(0.2);
-      const labelVale = linha.pagamento.valeNota ? `(−) Vale do dia 15 — ${linha.pagamento.valeNota}` : "(−) Vale do dia 15";
-      linhaTab(labelVale, valor(linha.pagamento.vale));
-      if (linha.pagamento.consumoInterno > 0) {
-        const labelCons = linha.pagamento.consumoInternoNota ? `(−) Consumo interno — ${linha.pagamento.consumoInternoNota}` : "(−) Consumo interno";
-        linhaTab(labelCons, valor(linha.pagamento.consumoInterno));
+      linhaTab("Comissão do mês", valor(f.comissaoDoMes));
+      if (f.adicionais.salarioFixo > 0) {
+        const detalheFixo = linha.calculos.fixoFonte === "horas" ? ` (${linha.calculos.fixoHoras}h de ponto)` : "";
+        linhaTab(`(+) Salário fixo${detalheFixo}`, valor(f.adicionais.salarioFixo));
       }
-      if (linha.pagamento.ajuste !== 0) {
-        const sinal = linha.pagamento.ajuste >= 0 ? "+" : "−";
-        const labelAj = linha.pagamento.ajusteNota ? `(${sinal}) Ajuste — ${linha.pagamento.ajusteNota}` : `(${sinal}) Ajuste`;
-        linhaTab(labelAj, valor(Math.abs(linha.pagamento.ajuste)));
+      if (f.adicionais.bonus > 0) {
+        const detalheBonus = [
+          f.adicionais.bonusRanking > 0 ? "top-1 do ranking" : "",
+          f.adicionais.bonusMetaCategoria > 0 ? "meta da categoria" : "",
+          f.adicionais.bonusExcedente > 0 ? "excedente de meta" : "",
+        ].filter(Boolean).join(" · ");
+        linhaTab(`(+) Bônus${detalheBonus ? ` — ${detalheBonus}` : ""}`, valor(f.adicionais.bonus));
       }
-      linhaTab("Saldo a receber", valor(usarSnap ? snap!.saldoAReceber : linha.pagamento.saldoAReceber), { bold: true });
+      linhaTab("TOTAL A PAGAR", valor(usarSnap ? snap!.saldoAReceber : f.totalAPagar), { bold: true });
 
       doc.moveDown(2.4);
       const yAss = doc.y;

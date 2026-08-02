@@ -35,7 +35,7 @@ import {
 
 // ─── Tipos espelhando o backend (server/trinksImport.ts) ─────────────────────
 
-type TipoImport = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos" | "rankingProdutos";
+type TipoImport = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos" | "rankingProdutos" | "vendasProduto";
 
 interface ImportItem {
   chave: string;
@@ -74,6 +74,9 @@ const TIPO_LABELS: Record<TipoImport, string> = {
   clientes: "Ranking de Clientes",
   produtos: "Catálogo de Produtos",
   rankingProdutos: "Ranking de Produtos",
+  // O único relatório que diz QUEM levou o produto — alimenta o desconto de
+  // consumo na folha (a coluna "Total Pago a Descontar Profissional").
+  vendasProduto: "Vendas de Produto (consumo da equipe)",
 };
 
 const TIPO_ICONS: Record<TipoImport, any> = {
@@ -84,6 +87,7 @@ const TIPO_ICONS: Record<TipoImport, any> = {
   clientes: UserPlus,
   produtos: Wallet,
   rankingProdutos: Package,
+  vendasProduto: Package,
 };
 
 // Fallbacks defensivos: um tipo novo do backend que ainda não esteja mapeado

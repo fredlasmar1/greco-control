@@ -15094,6 +15094,19 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       // fórmula usa max(folha, compras) — somar dobraria o desconto. O que está
       // em Compras e não na folha entra; o que está na folha sem comprovante
       // fica marcado pra conferência (em jul/2026: R$ 8.000 de R$ 8.350).
+      // CONSUMO DA EQUIPE — CSV "Vendas de Produto" da Trinks (0 token). É a fonte
+      // completa: a Trinks marca o que o funcionário levou sem pagar na coluna
+      // "Total Pago a Descontar Profissional". O lançamento manual do Metas pegava
+      // 29% disso em jul/2026 (R$ 663 de R$ 2.280,50) — o resto saía do bolso do dono.
+      const vendasProd: any = await kvGet(`trinks_import:vendasProduto:${mes}`).catch(() => null);
+      const consumoPorNome = new Map<string, { total: number; itens: number; detalhe: any[] }>();
+      for (const c of (vendasProd?.consumoPorProfissional || [])) {
+        consumoPorNome.set(normNome(String(c.nome || "")), {
+          total: Number(c.total || 0), itens: Number(c.itens || 0), detalhe: c.detalhe || [],
+        });
+      }
+      const consumoUsado = new Set<string>();
+
       const comprasDoMes: any[] = await listarCompras(mes).catch(() => []);
       const valesEmComprasPorNome = new Map<string, Array<{ id: string; valor: number; data: string; descricao?: string }>>();
       const comprasEquipeNaoClassificadas: any[] = [];
@@ -15138,6 +15151,21 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           metasPorTipo: l.pagamento.descontoMetasPorTipo,
           metasItens: l.pagamento.descontoMetasItens,
           valesEmCompras: achado,
+          consumoCsvTrinks: (() => {
+            // Casa pelo nome completo do CSV ("JOSÉ ARMANDO SILVA BISPO") com o da
+            // folha ("ARMANDINHO - JOSÉ ARMANDO SILVA BISPO").
+            const alvo = normNome(String(l.nome || "").split(" - ").pop() || l.nome);
+            for (const [k, v] of Array.from(consumoPorNome.entries())) {
+              if (consumoUsado.has(k)) continue;
+              const toks = k.split(" ").filter((t) => t.length >= 4);
+              if (k === alvo || alvo.includes(k) || k.includes(alvo) ||
+                  (toks.length >= 2 && toks[0] && toks[1] && alvo.includes(toks[0]) && alvo.includes(toks[1]))) {
+                consumoUsado.add(k);
+                return v;
+              }
+            }
+            return undefined;
+          })(),
           salarioFixo: l.calculos.salarioFixo,
           bonusExcedente: l.calculos.bonusExcedente,
           bonusRanking: l.calculos.bonusRanking,
@@ -15256,6 +15284,16 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         // Rateio até o faturamento canônico (Gmail) — fator, quanto entrou e por quê.
         ajusteCanonico,
         descontosMetasOrfaos, // descontos do Metas que não casaram com ninguém da folha
+        // Consumo do CSV da Trinks que não casou com ninguém da folha (ex.: o
+        // próprio dono, ou gente sem cadastro) — some do desconto se ficar aqui.
+        consumoSemDono: (vendasProd?.consumoPorProfissional || [])
+          .filter((c: any) => !consumoUsado.has(normNome(String(c.nome || ""))))
+          .map((c: any) => ({ nome: c.nome, total: c.total, itens: c.itens })),
+        consumoFonte: vendasProd ? {
+          fonte: "csv-trinks", geradoEm: vendasProd.geradoEm || null,
+          totalNoCsv: vendasProd.totalConsumoEquipe || 0,
+          periodo: `${vendasProd.periodoInicio || "?"} a ${vendasProd.periodoFim || "?"}`,
+        } : { fonte: "metas", geradoEm: null, totalNoCsv: 0, periodo: "" },
         // Pagamentos em "Salários & Equipe" que o dono nunca respondeu se eram
         // vale ou fechamento: dinheiro que saiu do caixa e não abateu ninguém.
         comprasEquipeNaoClassificadas: comprasEquipeNaoClassificadas.map((c) => ({

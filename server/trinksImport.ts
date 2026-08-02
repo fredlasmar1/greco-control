@@ -12,7 +12,7 @@
 
 // ─── Tipos públicos ───────────────────────────────────────────────────────────
 
-export type TrinksImportType = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos" | "rankingProdutos";
+export type TrinksImportType = "financeiro" | "dre" | "ranking" | "caixa" | "clientes" | "produtos" | "rankingProdutos" | "vendasProduto";
 
 export interface FinanceiroRow {
   data: string;                  // YYYY-MM-DD (Data Atendimento/Venda)
@@ -216,7 +216,40 @@ export interface RankingProdutosPayload {
   produtos: RankingProdutoItem[];
 }
 
-export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload | CaixaPayload | ClientesPayload | ProdutosPayload | RankingProdutosPayload;
+// Vendas de Produto (relatório "vendasProduto" da Trinks) — linha a linha, com o
+// COMPRADOR. É a única fonte que sabe o que a EQUIPE consumiu: quando quem leva é
+// funcionário, a Trinks fecha a comanda com Total R$ 0,00 e joga o valor na coluna
+// "Total Pago a Descontar Profissional". Em jul/2026 isso deu R$ 2.348,50, contra
+// R$ 663 lançados à mão no Metas — a folha descontava 29% do consumo real.
+export interface VendaProdutoItem {
+  data: string;              // YYYY-MM-DD
+  categoria: string;
+  produto: string;
+  profissionalRemunerado: string;  // quem VENDEU (ganha comissão), "-" quando é consumo
+  compradorNome: string;           // "Venda para" sem o sufixo "(Profissional)"
+  compradorEhProfissional: boolean;
+  quantidade: number;
+  totalPago: number;         // o que entrou no caixa
+  aDescontarProfissional: number;  // o que sai do salário de quem levou
+}
+export interface VendasProdutoPayload {
+  tipo: "vendasProduto";
+  mes: string;
+  periodoInicio: string;
+  periodoFim: string;
+  geradoEm: string;
+  totalVendido: number;          // Σ Total pago (venda de verdade)
+  totalConsumoEquipe: number;    // Σ a descontar de profissional
+  itens: VendaProdutoItem[];
+  /** Agregado por quem consumiu — é o que a folha usa. */
+  consumoPorProfissional: Array<{
+    nome: string; total: number; itens: number;
+    porCategoria: Record<string, number>;
+    detalhe: Array<{ data: string; produto: string; categoria: string; quantidade: number; valor: number }>;
+  }>;
+}
+
+export type TrinksImportPayload = FinanceiroPayload | DREPayload | RankingPayload | CaixaPayload | ClientesPayload | ProdutosPayload | RankingProdutosPayload | VendasProdutoPayload;
 
 // ─── Utilidades ──────────────────────────────────────────────────────────────
 
@@ -343,6 +376,13 @@ export function detectTrinksType(text: string): TrinksImportType | null {
   if (head.includes("posição") && head.includes("nome cliente") &&
       head.includes("visitas com pagamento")) {
     return "clientes";
+  }
+
+  // Vendas de Produto: "Data da Venda;Categoria;Produto;...;Venda para;...;
+  // Total Pago a Descontar Profissional (R$)". "venda para" é exclusivo deste
+  // relatório — é ele que identifica QUEM levou o produto.
+  if (head.includes("venda para") && head.includes("data da venda")) {
+    return "vendasProduto";
   }
 
   // Ranking de Produtos: "Posição;Produto;Categoria;Quantidade vendida;Valor Total".
@@ -989,6 +1029,7 @@ export function parseTrinksCsv(buf: Buffer): TrinksImportPayload {
   if (tipo === "clientes") return parseClientes(text);
   if (tipo === "produtos") return parseProdutos(text);
   if (tipo === "rankingProdutos") return parseRankingProdutos(text);
+  if (tipo === "vendasProduto") return parseVendasProduto(text);
   return parseRanking(text);
 }
 
@@ -1043,6 +1084,93 @@ export function parseRankingProdutos(text: string): RankingProdutosPayload {
     totalValor: Math.round(totalValor * 100) / 100,
     totalUnidades,
     produtos,
+  };
+}
+
+/**
+ * Vendas de Produto. O que importa aqui é a coluna "Total Pago a Descontar
+ * Profissional (R$)": quando um funcionário leva um produto, a venda fecha com
+ * Total R$ 0,00 e o valor cai nessa coluna, pra ser abatido do salário dele.
+ *
+ * ⚠️ O relatório traz uma LINHA DE TOTAL no meio dos dados, sem comprador e com a
+ * soma de tudo. Somar sem filtrar dobra o consumo do mês (dava R$ 4.697 em vez de
+ * R$ 2.348,50) — por isso linha sem comprador é descartada.
+ */
+function parseVendasProduto(text: string): VendasProdutoPayload {
+  const lines = text.split(/\r?\n/);
+  let periodoInicio = "", periodoFim = "", geradoEm = "", headerIdx = -1;
+  for (let i = 0; i < Math.min(lines.length, 20); i++) {
+    const l = lines[i];
+    const ini = l.match(/Data In[ií]cio:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    const fim = l.match(/Data Fim:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if (ini) periodoInicio = parseDateBR(ini[1]);
+    if (fim) periodoFim = parseDateBR(fim[1]);
+    const g = l.match(/Relat[oó]rio gerado em\s*(.+)/i);
+    if (g) geradoEm = g[1].replace(/"/g, "").trim();
+    if (l.toLowerCase().includes("venda para") && l.toLowerCase().includes("data da venda")) {
+      headerIdx = i; break;
+    }
+  }
+  if (headerIdx === -1) throw new Error("Cabeçalho de Vendas de Produto não encontrado.");
+  const header = parseCsvLine(lines[headerIdx]).map(c => c.trim().toLowerCase());
+  const col = (name: string) => header.findIndex(h => h.includes(name));
+  const iData = col("data da venda"), iCat = col("categoria"), iProd = col("produto"),
+        iProfRem = col("profissional remunerado"), iComprador = col("venda para"),
+        iQtd = col("qtde"), iTotal = header.findIndex(h => h.startsWith("total (r$)")),
+        iDesc = col("descontar profissional");
+  if (iComprador === -1 || iDesc === -1) {
+    throw new Error("Vendas de Produto sem as colunas 'Venda para' / 'Total Pago a Descontar Profissional'.");
+  }
+
+  const itens: VendaProdutoItem[] = [];
+  let totalVendido = 0, totalConsumoEquipe = 0;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cells = parseCsvLine(lines[i]);
+    if (cells.length < 5) continue;
+    const compradorBruto = (cells[iComprador] || "").trim();
+    // linha de TOTAL do relatório: sem comprador. Descartar (senão dobra tudo).
+    if (!compradorBruto) continue;
+    const produto = (cells[iProd] || "").trim();
+    if (!produto || /^total/i.test(produto)) continue;
+    const ehProf = /\(profissional\)/i.test(compradorBruto);
+    const desc = parseBR(cells[iDesc] || "0");
+    const pago = iTotal >= 0 ? parseBR(cells[iTotal] || "0") : 0;
+    itens.push({
+      data: parseDateBR((cells[iData] || "").trim()) || "",
+      categoria: (cells[iCat] || "").trim(),
+      produto,
+      profissionalRemunerado: (cells[iProfRem] || "").trim(),
+      compradorNome: compradorBruto.replace(/\(profissional\)/i, "").trim(),
+      compradorEhProfissional: ehProf,
+      quantidade: parseBR(cells[iQtd] || "1") || 1,
+      totalPago: pago,
+      aDescontarProfissional: desc,
+    });
+    totalVendido += pago;
+    totalConsumoEquipe += desc;
+  }
+
+  const porNome = new Map<string, VendasProdutoPayload["consumoPorProfissional"][number]>();
+  for (const it of itens) {
+    if (it.aDescontarProfissional <= 0) continue;
+    const k = it.compradorNome;
+    const b = porNome.get(k) || { nome: k, total: 0, itens: 0, porCategoria: {}, detalhe: [] };
+    b.total = Math.round((b.total + it.aDescontarProfissional) * 100) / 100;
+    b.itens += 1;
+    b.porCategoria[it.categoria || "Outros"] =
+      Math.round(((b.porCategoria[it.categoria || "Outros"] || 0) + it.aDescontarProfissional) * 100) / 100;
+    b.detalhe.push({ data: it.data, produto: it.produto, categoria: it.categoria, quantidade: it.quantidade, valor: it.aDescontarProfissional });
+    porNome.set(k, b);
+  }
+
+  return {
+    tipo: "vendasProduto",
+    mes: (periodoInicio || "").slice(0, 7),
+    periodoInicio, periodoFim, geradoEm,
+    totalVendido: Math.round(totalVendido * 100) / 100,
+    totalConsumoEquipe: Math.round(totalConsumoEquipe * 100) / 100,
+    itens,
+    consumoPorProfissional: Array.from(porNome.values()).sort((a, b) => b.total - a.total),
   };
 }
 
@@ -1265,6 +1393,18 @@ export function summarize(payload: TrinksImportPayload, importadoEm: string, mes
       geradoEm: payload.geradoEm,
       importadoEm,
       descricao: `Produtos · ${payload.totalProdutos} no catálogo · ${payload.comCusto} com custo cadastrado`,
+    };
+  }
+  if (payload.tipo === "vendasProduto") {
+    const n = payload.consumoPorProfissional.length;
+    return {
+      tipo: "vendasProduto",
+      mes: payload.mes,
+      totalValor: payload.totalVendido,
+      totalLinhas: payload.itens.length,
+      geradoEm: payload.geradoEm,
+      importadoEm,
+      descricao: `Vendas de Produto · ${payload.itens.length} vendas · consumo da equipe R$ ${payload.totalConsumoEquipe.toFixed(2).replace(".", ",")} (${n} pessoas)`,
     };
   }
   if (payload.tipo === "rankingProdutos") {

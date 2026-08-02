@@ -14,7 +14,7 @@
  * As três origens de desconto e a trava anti-dobra estão em `montarDescontos`.
  */
 
-export type OrigemDesconto = "folha" | "compras" | "metas";
+export type OrigemDesconto = "folha" | "compras" | "metas" | "trinks";
 export type GrupoDesconto = "vale" | "consumo" | "desconto";
 
 export interface ItemDesconto {
@@ -54,6 +54,19 @@ export interface EntradaFormula {
   /** Vales encontrados na aba Compras do mês pra esta pessoa (comprovante do PIX). */
   valesEmCompras?: Array<{ id: string; valor: number; data: string; descricao?: string }>;
 
+  /**
+   * Consumo desta pessoa no CSV "Vendas de Produto" da Trinks — a fonte COMPLETA
+   * (a Trinks marca o que o funcionário levou sem pagar). Quando existe, MANDA na
+   * linha "produtos consumidos": o lançamento manual do Metas é o mesmo consumo
+   * anotado à mão pela recepção, só que incompleto (jul/2026: R$ 663 no Metas
+   * contra R$ 2.280,50 no CSV). Somar os dois cobraria duas vezes do barbeiro.
+   */
+  consumoCsvTrinks?: {
+    total: number;
+    itens: number;
+    detalhe?: Array<{ data: string; produto: string; categoria: string; quantidade: number; valor: number }>;
+  };
+
   /** Somam DEPOIS da comissão. */
   salarioFixo: number;
   bonusExcedente: number;
@@ -74,6 +87,10 @@ export interface ResultadoFormula {
     outros: number;
     subtotal: number;
     itens: ItemDesconto[];
+    /** Fonte do consumo: "csv-trinks" (completa) ou "metas" (anotação manual). */
+    fonteConsumo: "csv-trinks" | "metas" | "nenhuma";
+    /** Quanto o Metas tinha lançado — pra tela mostrar o que a anotação perdia. */
+    consumoMetasLancado: number;
     /** Vale que está na aba Compras e NÃO estava na folha (entrou por aqui). */
     valeSomenteEmCompras: number;
     /** Vale lançado na folha sem comprovante correspondente na aba Compras. */
@@ -146,21 +163,39 @@ export function montarDescontos(e: EntradaFormula): ResultadoFormula["descontos"
   }
 
   // ── PRODUTOS CONSUMIDOS ────────────────────────────────────────────────
+  // Ordem de autoridade: CSV "Vendas de Produto" da Trinks > lançamento manual do
+  // Metas. Os dois descrevem o MESMO consumo (o Metas é a anotação da recepção),
+  // então nunca somam — o CSV, quando existe, substitui.
   let consumoMetas = 0;
   for (const [tipo, v] of Object.entries(porTipo)) {
     if (TIPOS_CONSUMO.has(String(tipo).toLowerCase())) consumoMetas += Number(v) || 0;
   }
   consumoMetas = r2(consumoMetas);
   const consumoManual = r2(e.consumoInterno);
-  const produtosConsumidos = r2(consumoManual + consumoMetas);
+  const csv = e.consumoCsvTrinks;
+  const temCsv = !!csv && csv.total > 0;
+  const consumoDeProdutos = temCsv ? r2(csv!.total) : consumoMetas;
+  const produtosConsumidos = r2(consumoManual + consumoDeProdutos);
 
-  for (const it of e.metasItens || []) {
-    if (!TIPOS_CONSUMO.has(String(it.tipo || "").toLowerCase())) continue;
-    itens.push({
-      grupo: "consumo", origem: "metas", valor: r2(it.valor || 0), ref: it.id != null ? String(it.id) : undefined,
-      data: String(it.createdAt || "").slice(0, 10) || undefined,
-      descricao: it.motivo ? String(it.motivo) : "Consumo lançado no Metas",
-    });
+  if (temCsv) {
+    for (const it of csv!.detalhe || []) {
+      itens.push({
+        grupo: "consumo", origem: "trinks", valor: r2(it.valor), data: it.data || undefined,
+        descricao: `${it.produto}${it.quantidade > 1 ? ` (${it.quantidade}x)` : ""}`,
+      });
+    }
+    if (!(csv!.detalhe || []).length) {
+      itens.push({ grupo: "consumo", origem: "trinks", valor: r2(csv!.total), descricao: `Consumo de produtos (${csv!.itens} itens, Trinks)` });
+    }
+  } else {
+    for (const it of e.metasItens || []) {
+      if (!TIPOS_CONSUMO.has(String(it.tipo || "").toLowerCase())) continue;
+      itens.push({
+        grupo: "consumo", origem: "metas", valor: r2(it.valor || 0), ref: it.id != null ? String(it.id) : undefined,
+        data: String(it.createdAt || "").slice(0, 10) || undefined,
+        descricao: it.motivo ? String(it.motivo) : "Consumo lançado no Metas",
+      });
+    }
   }
   if (consumoManual > 0) {
     itens.push({
@@ -209,6 +244,8 @@ export function montarDescontos(e: EntradaFormula): ResultadoFormula["descontos"
     outros,
     subtotal: r2(vales + produtosConsumidos + outros),
     itens,
+    fonteConsumo: temCsv ? "csv-trinks" : (consumoMetas > 0 ? "metas" : "nenhuma"),
+    consumoMetasLancado: consumoMetas,
     valeSomenteEmCompras: r2(Math.max(0, valeCompras - valeFolha)),
     valeSemComprovante,
   };

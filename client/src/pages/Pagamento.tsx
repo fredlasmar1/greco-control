@@ -100,7 +100,9 @@ type Formula = {
   comissao: { servicos: number; planos: number; produtos: number; subtotal: number };
   descontos: {
     vales: number; produtosConsumidos: number; outros: number; subtotal: number;
-    itens: Array<{ grupo: "vale" | "consumo" | "desconto"; origem: "folha" | "compras" | "metas"; valor: number; descricao: string; data?: string; ref?: string }>;
+    itens: Array<{ grupo: "vale" | "consumo" | "desconto"; origem: "folha" | "compras" | "metas" | "trinks"; valor: number; descricao: string; data?: string; ref?: string }>;
+    fonteConsumo?: "csv-trinks" | "metas" | "nenhuma";
+    consumoMetasLancado?: number;
     valeSomenteEmCompras: number;
     valeSemComprovante: number;
   };
@@ -150,6 +152,9 @@ type RespApi = {
   };
   // PIX de "Salários & Equipe" que ninguém disse se era vale ou fechamento.
   comprasEquipeNaoClassificadas?: Array<{ id: string; data: string; valor: number; loja: string; descricao: string }>;
+  // De onde veio o consumo de produtos: CSV da Trinks (completo) ou Metas (manual).
+  consumoFonte?: { fonte: "csv-trinks" | "metas"; geradoEm: string | null; totalNoCsv: number; periodo: string };
+  consumoSemDono?: Array<{ nome: string; total: number; itens: number }>;
   clubeOrfaos?: Array<{ seller: string; assinantes: number; valorVendasRS: number; comissaoRS: number }>;
   faturamento?: {
     totalReais: number;
@@ -611,6 +616,50 @@ export default function Pagamento() {
                 </div>
               )}
 
+              {/* De onde vem o consumo de produtos */}
+              {data.consumoFonte && (
+                <div className={`mt-3 p-3 rounded border text-xs ${data.consumoFonte.fonte === "csv-trinks" ? "border-blue-500/40 bg-blue-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
+                  {data.consumoFonte.fonte === "csv-trinks" ? (
+                    <>
+                      <div className="flex items-center gap-2 mb-1 font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                        Consumo da equipe pelo relatório da Trinks — R$ {fmtBRL(data.consumoFonte.totalNoCsv)}
+                      </div>
+                      <div className="text-muted-foreground">
+                        "Vendas de Produto" ({data.consumoFonte.periodo}), gerado em {data.consumoFonte.geradoEm || "—"}.
+                        A Trinks marca o que cada um levou sem pagar; os lançamentos manuais do Metas ficam de fora
+                        pra não descontar duas vezes.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 mb-1 text-amber-400 font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        Consumo vindo só dos lançamentos manuais do Metas
+                      </div>
+                      <div className="text-muted-foreground">
+                        É o que a recepção lembrou de anotar — costuma ser uma fração do real (em julho pegava 29%).
+                        Suba o relatório <strong>Vendas de Produto</strong> deste mês em Importar Trinks pra descontar
+                        o consumo de verdade.
+                      </div>
+                    </>
+                  )}
+                  {(data.consumoSemDono && data.consumoSemDono.length > 0) && (
+                    <div className="mt-2 pt-2 border-t border-border/40">
+                      <div className="text-muted-foreground mb-1">Consumo sem dono na folha (não descontou de ninguém):</div>
+                      <ul className="space-y-0.5">
+                        {data.consumoSemDono.map(c => (
+                          <li key={c.nome} className="flex items-baseline justify-between">
+                            <span>{c.nome} ({c.itens} itens)</span>
+                            <span className="tabular-nums">R$ {fmtBRL(c.total)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Vale lançado sem comprovante na aba Compras */}
               {(data.totais.totalValeSemComprovante || 0) > 0 && (
                 <div className="mt-3 p-3 rounded border border-amber-500/30 bg-amber-500/5 text-xs">
@@ -971,7 +1020,7 @@ export default function Pagamento() {
                                         <span>
                                           {it.data ? `${it.data.split("-").reverse().join("/")} · ` : ""}{it.descricao}
                                           <span className="ml-1 text-[9px] text-muted-foreground uppercase">
-                                            {it.origem === "compras" ? "· comprovante" : it.origem === "metas" ? "· Metas" : "· folha"}
+                                            {it.origem === "compras" ? "· comprovante" : it.origem === "trinks" ? "· Trinks" : it.origem === "metas" ? "· Metas" : "· folha"}
                                           </span>
                                         </span>
                                       }

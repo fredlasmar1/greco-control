@@ -14620,6 +14620,11 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         multaNota: pagto?.multaNota || "",
         comprasCartao,
         comprasCartaoNota: pagto?.comprasCartaoNota || "",
+        // Fechamento deste mês que JÁ foi pago (pode ter sido adiantado, como os
+        // R$ 12.000 do André em 30/07). Preenchido por calcularFolhaMes.
+        jaPagoFechamento: 0,
+        pagamentosFechamento: [] as any[],
+        aindaAPagar: 0,
         // Descontos lançados no Greco Metas (vale/multa/consumo/voucher/compra).
         // Preenchidos pelo handler /api/pagamento/:mes (via HUB) e já abatidos do saldo.
         descontoMetas: 0,
@@ -15144,6 +15149,27 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         l.pagamento.saldoAReceber = l.formula.totalAPagar;
       }
 
+      // ── JÁ QUITADO DESTE MÊS ──────────────────────────────────────────────
+      // O fechamento pode ser pago ADIANTADO: o André recebeu os R$ 12.000 de
+      // julho em 30/07, antes do mês fechar. Sem isto a tela seguiria dizendo
+      // "a pagar R$ 11.996,73" e ele receberia duas vezes — o vale aparecia na
+      // folha, mas o fechamento pago não aparecia em lugar nenhum.
+      const pagosDoMes = await getPagamentosFolha(mes).catch(() => []);
+      const pagoPorProf = new Map<string, { total: number; itens: any[] }>();
+      for (const p of pagosDoMes) {
+        const k = String(p.profissionalId);
+        const b = pagoPorProf.get(k) || { total: 0, itens: [] };
+        b.total = Math.round((b.total + Number(p.valor || 0)) * 100) / 100;
+        b.itens.push({ valor: p.valor, data: p.data, origem: p.origem });
+        pagoPorProf.set(k, b);
+      }
+      for (const l of linhas) {
+        const b = pagoPorProf.get(String(l.profissionalId));
+        l.pagamento.jaPagoFechamento = b?.total || 0;
+        l.pagamento.pagamentosFechamento = b?.itens || [];
+        l.pagamento.aindaAPagar = Math.round(((l.formula?.totalAPagar || 0) - (b?.total || 0)) * 100) / 100;
+      }
+
       // Ordena por nome
       linhas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
@@ -15183,6 +15209,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         totalComissaoDoMes: acc.totalComissaoDoMes + (l.formula?.comissaoDoMes || 0),
         totalBonus: acc.totalBonus + (l.formula?.adicionais.bonus || 0),
         totalValeSemComprovante: acc.totalValeSemComprovante + (l.formula?.descontos.valeSemComprovante || 0),
+        totalJaPagoFechamento: acc.totalJaPagoFechamento + (l.pagamento.jaPagoFechamento || 0),
+        totalAindaAPagar: acc.totalAindaAPagar + (l.pagamento.aindaAPagar || 0),
       }), {
         totalBruto: 0, totalComissaoServicos: 0, totalComissaoProdutos: 0,
         totalComissaoPlano: 0, totalComissaoClubeGreco: 0,
@@ -15191,6 +15219,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         totalFormulaServicos: 0, totalFormulaPlanos: 0, totalFormulaProdutos: 0,
         totalFormulaVales: 0, totalFormulaConsumidos: 0, totalFormulaDescontos: 0,
         totalComissaoDoMes: 0, totalBonus: 0, totalValeSemComprovante: 0,
+        totalJaPagoFechamento: 0, totalAindaAPagar: 0,
       });
 
       // Conferência de fechamento (0 tokens): o total OFICIAL do mês vem do e-mail

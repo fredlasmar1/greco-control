@@ -81,6 +81,10 @@ type Linha = {
     comprasCartao?: number;
     comprasCartaoNota?: string;
     descontoMetas?: number;
+    /** Fechamento deste mês que já foi pago (pode ter sido adiantado). */
+    jaPagoFechamento?: number;
+    pagamentosFechamento?: Array<{ valor: number; data: string; origem?: string }>;
+    aindaAPagar?: number;
     saldoAReceber: number;
     fechado: boolean;
     fechadoEm: string | null;
@@ -135,6 +139,8 @@ type RespApi = {
     totalComissaoDoMes?: number;
     totalBonus?: number;
     totalValeSemComprovante?: number;
+    totalJaPagoFechamento?: number;
+    totalAindaAPagar?: number;
   };
   // Rateio da produção até o faturamento canônico (Gmail − produtos − planos).
   ajusteCanonico?: {
@@ -564,6 +570,15 @@ export default function Pagamento() {
                       <span>TOTAL A PAGAR</span>
                       <span className="tabular-nums">R$ {fmtBRL(data.totais.totalSaldo)}</span>
                     </div>
+                    {(data.totais.totalJaPagoFechamento || 0) > 0 && (
+                      <>
+                        <Row label="(−) Já pago deste mês" valor={-(data.totais.totalJaPagoFechamento || 0)} />
+                        <div className="flex items-baseline justify-between font-semibold">
+                          <span>Ainda falta pagar</span>
+                          <span className="tabular-nums">R$ {fmtBRL(data.totais.totalAindaAPagar || 0)}</span>
+                        </div>
+                      </>
+                    )}
                     <div className="text-[11px] text-muted-foreground pt-2">
                       Vales conferidos contra a aba <strong>Compras do mês</strong>; produtos consumidos e demais
                       descontos vêm dos lançamentos do Greco Metas. Cada linha abre o detalhe item a item.
@@ -837,9 +852,22 @@ export default function Pagamento() {
                             )}
                           </td>
 
-                          {/* TOTAL A PAGAR */}
+                          {/* TOTAL A PAGAR — se o fechamento deste mês já foi pago
+                              (o André recebeu julho adiantado em 30/07), mostra o
+                              que AINDA falta, não o valor cheio. */}
                           <td className="py-2 px-2 text-right tabular-nums font-bold text-base">
-                            R$ {fmtBRL(l.pagamento.saldoAReceber)}
+                            {(l.pagamento.jaPagoFechamento || 0) > 0 ? (
+                              <>
+                                <div className={Math.abs(l.pagamento.aindaAPagar || 0) < 0.01 ? "text-emerald-400" : ""}>
+                                  R$ {fmtBRL(l.pagamento.aindaAPagar || 0)}
+                                </div>
+                                <div className="text-[10px] font-normal text-muted-foreground">
+                                  de R$ {fmtBRL(l.pagamento.saldoAReceber)} · já pago R$ {fmtBRL(l.pagamento.jaPagoFechamento || 0)}
+                                </div>
+                              </>
+                            ) : (
+                              <>R$ {fmtBRL(l.pagamento.saldoAReceber)}</>
+                            )}
                           </td>
 
                           {/* Ações */}

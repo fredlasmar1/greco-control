@@ -61,6 +61,8 @@ import {
   resumoCompras,
   normalizarCategoria,
   CATEGORIAS_COMPRA,
+  CATEGORIA_TRANSFERENCIA,
+  pessoaPorChaveDeContaPropria,
   NATUREZA_PADRAO,
   getMemoriaBeneficiario,
   setMemoriaBeneficiario,
@@ -188,6 +190,7 @@ import {
   getPagamentoMes,
   getPagamentosFolha,
   registrarPagamentoFolha,
+  removerPagamentoFolha,
   getPagamentosDoMes,
   upsertPagamentoMes,
   fecharMes as fecharPagMes,
@@ -8587,7 +8590,7 @@ Regras CRÍTICAS:
     // (3) compras de ESTRUTURA do mês (todo overhead operacional, fixo E variável),
     // dedup vs extrato. Dedup próprio (o jaNoExtrato da Viabilidade é local dela):
     // mesma saída no extrato, valor ±0,5 e até 3 dias → já contada, não soma de novo.
-    const CAT_FORA_ESTRUTURA = new Set(["Produtos & Insumos", "Equipamentos & Móveis", "Salários & Equipe"]);
+    const CAT_FORA_ESTRUTURA = new Set(["Produtos & Insumos", "Equipamentos & Móveis", "Salários & Equipe", "Transferência entre contas"]);
     let comprasFixas = 0, comprasDup = 0;
     const porCategoriaEstrutura: Record<string, number> = {};
     const bankOut = transacoesBanco.filter(t => t.date.startsWith(mes) && t.amount < 0 && t.incluidoNoFluxo !== false && !t.transferenciaParId);
@@ -9381,7 +9384,7 @@ Regras CRÍTICAS:
       // "Salários & Equipe" (já na folha) e "Outros" (balde incerto — costuma ter
       // PIX interno pra própria Greco/equipe). Matching por nome foi descartado
       // (colisão de sobrenome excluía o Aluguel do proprietário por engano).
-      let comprasIncluido = 0, comprasLabor = 0, comprasAClassificar = 0, comprasDup = 0, comprasInvestimento = 0, comprasPerda = 0;
+      let comprasIncluido = 0, comprasLabor = 0, comprasAClassificar = 0, comprasDup = 0, comprasInvestimento = 0, comprasPerda = 0, comprasTransfProprias = 0;
       const comprasPorCat: Record<string, number> = {};
       for (const c of (comprasMes as any[])) {
         const v = Number(c.valor || 0);
@@ -9392,6 +9395,9 @@ Regras CRÍTICAS:
         if (classe === "investimento") { comprasInvestimento += v; continue; }
         if (classe === "perda") { comprasPerda += v; continue; }
         if (cat === "Salários & Equipe") { comprasLabor += v; continue; }
+        // Dinheiro que trocou de banco dentro da empresa não é custo (PIX com o
+        // mesmo CNPJ nas duas pontas). Ver CATEGORIA_TRANSFERENCIA em compras.ts.
+        if (cat === "Transferência entre contas") { comprasTransfProprias += v; continue; }
         if (cat === "Outros") { comprasAClassificar += v; continue; }
         if (jaNoExtrato(c)) { comprasDup += v; continue; }
         comprasIncluido += v;
@@ -9475,6 +9481,7 @@ Regras CRÍTICAS:
           incluidoNoResultado: r2(comprasIncluido),
           porCategoria: Object.entries(comprasPorCat).map(([nome, total]) => ({ nome, total: r2(total) })).sort((a, b) => b.total - a.total),
           excluidoLabor: r2(comprasLabor),                 // Salários & Equipe (já na folha)
+          excluidoTransfProprias: r2(comprasTransfProprias), // trocou de banco, não saiu da empresa
           excluidoAClassificar: r2(comprasAClassificar),   // categoria "Outros" — categorizar pra contar
           excluidoDuplicadoExtrato: r2(comprasDup),        // já apareceu no extrato do Itaú
           excluidoInvestimento: r2(comprasInvestimento),   // obra/reforma — é ativo, não custo do mês
@@ -11951,8 +11958,9 @@ Responda de forma clara e objetiva. Se os dados estiverem vazios, informe que n�
       if (uniq.length) equipeHint = `\nEQUIPE (se o beneficiário do PIX/pagamento for uma destas pessoas, a categoria É "Salários & Equipe"): ${uniq.join(", ")}.`;
     } catch { /* segue sem hint */ }
     return `Você lê comprovantes de PIX, notas de compra e mensagens de compra de uma BARBEARIA. Responda APENAS JSON (sem markdown):
-{"ehComprovante": true, "tipoDoc": "pagamento|nota_produtos|texto_compra", "valor": 84.00, "data": "YYYY-MM-DD", "loja": "beneficiário/estabelecimento/fornecedor", "tipo": "pix|dinheiro|compra|boleto|outro", "categoria": "<uma de: ${cats}>", "descricao": "resumo curto", "confianca": "alta|media|baixa", "itens": [{"produto": "nome", "quantidade": 1, "custoUnitario": 15.00}]}
+{"ehComprovante": true, "tipoDoc": "pagamento|nota_produtos|texto_compra", "valor": 84.00, "data": "YYYY-MM-DD", "loja": "beneficiário/estabelecimento/fornecedor", "tipo": "pix|dinheiro|compra|boleto|outro", "categoria": "<uma de: ${cats}>", "descricao": "resumo curto", "confianca": "alta|media|baixa", "transferenciaPropria": false, "docRecebedor": "CNPJ/CPF do recebedor como aparece", "docPagador": "CNPJ/CPF do pagador como aparece", "chaveRecebedor": "chave PIX do recebedor como aparece, com máscara", "itens": [{"produto": "nome", "quantidade": 1, "custoUnitario": 15.00}]}
 Regras: valor SEMPRE positivo, ponto decimal ("1.234,56"=1234.56).
+TRANSFERÊNCIA ENTRE CONTAS PRÓPRIAS — CHECAR ANTES DE TUDO: se o CNPJ/CPF do RECEBEDOR for o MESMO do PAGADOR (mesmo mascarado, ex.: recebedor "23.***.***/****-36" e pagador "23.***.***/****-36"), a barbearia mandou dinheiro para a conta dela mesma — trocou de banco, NÃO gastou. Responda "transferenciaPropria": true e categoria "Transferência entre contas". NUNCA classifique isso como pagamento a pessoa nem como despesa. Caso real (30/07/2026): PIX de R$ 4.000 Santander → Nubank, ambos CNPJ 23.***.***/****-36, entrou como salário do André e inflou o gasto do mês. Copie os documentos em docRecebedor/docPagador mesmo mascarados.
 PIX — MUITO IMPORTANTE: o campo "loja" é SEMPRE o DESTINATÁRIO (quem RECEBEU o dinheiro). NUNCA use o PAGADOR (a conta/origem que ENVIOU) — num comprovante de PIX enviado pela barbearia, o pagador é a própria GRECO ("Greco Barbearia", "Greco Barbearia Anápolis", "GRECO BARBEARIA LTDA", o CNPJ dela, "Frederico"/dono) e ISSO NÃO É o beneficiário. Procure o bloco "destino"/"para"/"quem recebeu"/"favorecido"/"recebedor" e use ESSE nome. Se o destinatário for um COLABORADOR da EQUIPE (lista abaixo), use o nome dele e categoria "Salários & Equipe". Se por engano só houver o nome da Greco como recebedor, ponha confianca "baixa".
 Se NÃO for comprovante/nota/compra, responda {"ehComprovante": false}.${equipeHint}
 ITENS: preencha SÓ quando for NOTA DE COMPRA DE PRODUTOS (fornecedor, com itens e preços) OU texto de compra de produtos. custoUnitario = preço de CUSTO unitário pago (não o de venda). Para PIX/pagamento/comprovante simples, itens=[]. tipoDoc="nota_produtos" se tem itens de produto; "texto_compra" se veio de mensagem escrita; senão "pagamento".
@@ -12051,6 +12059,12 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       descricao: String(dados.descricao || ""),
       tipo: (["pix", "dinheiro", "compra", "boleto", "outro"].includes(dados.tipo) ? dados.tipo : "compra") as any,
       confianca: (["alta", "media", "baixa"].includes(dados.confianca) ? dados.confianca : "media") as any,
+      // Documentos das duas pontas do PIX — se forem iguais, é dinheiro trocando de
+      // banco dentro da própria empresa (ver a trava em registrarCompraDoTelegram).
+      ...(dados.transferenciaPropria === true ? { transferenciaPropria: true } : {}),
+      ...(dados.docRecebedor ? { docRecebedor: String(dados.docRecebedor).slice(0, 40) } : {}),
+      ...(dados.docPagador ? { docPagador: String(dados.docPagador).slice(0, 40) } : {}),
+      ...(dados.chaveRecebedor ? { chaveRecebedor: String(dados.chaveRecebedor).slice(0, 60) } : {}),
       telegramFileId: ctx.fileId, telegramFrom: ctx.from, origem: "telegram" as const,
     };
   }
@@ -12085,6 +12099,60 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     // (b) categoria incerta → antes caía em "Outros", que fica FORA do lucro.
     // Em ambos guardamos a compra e devolvemos botões; o registro sai no callback.
     if (!ctx.jaPerguntado) {
+      // TRANSFERÊNCIA ENTRE CONTAS PRÓPRIAS — registra e encerra, sem perguntar de
+      // quem é. O CNPJ do recebedor é o mesmo do pagador: a empresa mandou dinheiro
+      // pra ela mesma. Em 30/07/2026 um PIX assim (R$ 4.000 Santander→Nubank) foi
+      // respondido como "fechamento do André" e entrou na folha dele E no caixa.
+      const docsIguais = (() => {
+        const so = (v: any) => String(v || "").replace(/[^\d*]/g, "");
+        const r = so((compra as any).docRecebedor), p = so((compra as any).docPagador);
+        return !!r && r.length >= 6 && r === p;
+      })();
+      // EXCEÇÃO ANTES DA TRAVA: há conta da empresa que é, na prática, o bolso de uma
+      // pessoa — a Nubank no nome da Greco, chave (62) 99938-84448, é a 2ª parte do
+      // pagamento do André. Tem CNPJ igual ao da Greco e cairia como transferência,
+      // sumindo com o salário dele. Se a chave casa, o pagamento segue pro fluxo de
+      // folha já sabendo de quem é (nem precisa perguntar).
+      const contaDePessoa = pessoaPorChaveDeContaPropria(String((compra as any).chaveRecebedor || ""));
+      if (contaDePessoa && (docsIguais || (compra as any).transferenciaPropria === true)) {
+        const provisoria = await salvarCompra({
+          ...compra,
+          categoria: "Salários & Equipe",
+          descricao: `Pagamento a ${contaDePessoa.nome} (conta ${"Nubank"} da Greco)`.slice(0, 180),
+        } as any);
+        await guardarFotoCompra(provisoria, ctx.foto);
+        await kvSet(`compras_pergunta:${chatId}:${provisoria.id}`, {
+          compra: provisoria, from, profId: contaDePessoa.profissionalId, nomeFunc: contaDePessoa.nome,
+        });
+        const mesRefC = String(provisoria.mes);
+        const mesAntC = mesAnterior(mesRefC);
+        const diaC = Number(String(provisoria.data || "").slice(8, 10)) || 0;
+        const inicioC = diaC > 0 && diaC <= 5;
+        const bVale = { texto: `${inicioC ? "" : "✅ "}Vale/adiantamento de ${mesLabelBR(mesRefC)}`, data: `qv|${provisoria.id}` };
+        const bFech = { texto: `${inicioC ? "✅ " : ""}Fechamento de ${mesLabelBR(mesAntC)} (comissão/salário)`, data: `qf|${provisoria.id}` };
+        await traçoCompras(from, "conta_propria_de_pessoa", { valor: compra.valor, profId: contaDePessoa.profissionalId });
+        await enviarMensagemCompras(
+          `👤 <b>R$ ${fmtBRLc(compra.valor)}</b> → <b>${contaDePessoa.nome}</b>\n` +
+          `<i>Conta da Greco no Nubank — é a 2ª parte do pagamento dele, não é transferência interna.</i>\n\n` +
+          `Esse pagamento é o quê?`,
+          chatId, inicioC ? [[bFech], [bVale]] : [[bVale], [bFech]]);
+        return;
+      }
+      if ((compra as any).transferenciaPropria === true || docsIguais) {
+        const nova = await salvarCompra({
+          ...compra,
+          categoria: CATEGORIA_TRANSFERENCIA,
+          descricao: `Transferência entre contas da Greco${compra.descricao ? ` · ${compra.descricao}` : ""}`.slice(0, 180),
+        } as any);
+        await guardarFotoCompra(nova, ctx.foto);
+        await traçoCompras(from, "transferencia_propria", { valor: compra.valor });
+        await enviarMensagemCompras(
+          `🔁 <b>Transferência entre contas</b> — R$ ${fmtBRLc(compra.valor)}\n` +
+          `<i>Mesmo CNPJ nas duas pontas: o dinheiro trocou de banco, não saiu da empresa.</i>\n` +
+          `Não entra no gasto do mês nem na folha de ninguém.`,
+          chatId);
+        return;
+      }
       const ehLabor = String(compra.categoria) === "Salários & Equipe";
       // MEMÓRIA: se o beneficiário já foi classificado antes ("Aluguel, todo mês"),
       // o bot NÃO repergunta — aplica e só confirma. É o "na 2ª vez só confirma".
@@ -12346,11 +12414,24 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const mesRef = String(pend.compra.mes);
       const mesAnt = mesAnterior(mesRef);
       await responderCallbackCompras(callbackId, nome);
+      // O CALENDÁRIO DA CASA DECIDE O DEFAULT (regra do dono, 01/08/2026): até o dia
+      // 5 o PIX quita o mês anterior; do dia 6 em diante é adiantamento do mês
+      // corrente — não dá pra "fechar" um mês que ainda está correndo. Os dois
+      // botões continuam lá, mas o provável vem marcado com ✅ e em primeiro lugar.
+      // Sem isso, os R$ 8.000 pagos ao André em 30/07 entraram como fechamento de
+      // junho: junho pareceu quitado a mais e julho não abateu nada.
+      const diaPgto = Number(String(pend.compra.data || "").slice(8, 10)) || 0;
+      const ehInicioDoMes = diaPgto > 0 && diaPgto <= 5;
+      const btnVale = { texto: `${ehInicioDoMes ? "" : "✅ "}Vale/adiantamento de ${mesLabelBR(mesRef)}`, data: `qv|${idReal}` };
+      const btnFech = { texto: `${ehInicioDoMes ? "✅ " : ""}Fechamento de ${mesLabelBR(mesAnt)} (comissão/salário)`, data: `qf|${idReal}` };
       await enviarMensagemCompras(
-        `👤 <b>R$ ${fmtBRLc(Number(pend.compra.valor) || 0)}</b> → <b>${nome}</b>\n\nEsse pagamento é o quê?`,
+        `👤 <b>R$ ${fmtBRLc(Number(pend.compra.valor) || 0)}</b> → <b>${nome}</b>\n\n` +
+        `Esse pagamento é o quê?\n` +
+        `<i>Dia ${String(diaPgto).padStart(2, "0")} — ${ehInicioDoMes
+          ? `começo do mês, normalmente quita ${mesLabelBR(mesAnt)}.`
+          : `mês corrente ainda correndo, normalmente é adiantamento de ${mesLabelBR(mesRef)}.`}</i>`,
         chatId,
-        [[{ texto: `Vale/adiantamento de ${mesLabelBR(mesRef)}`, data: `qv|${idReal}` }],
-         [{ texto: `Fechamento de ${mesLabelBR(mesAnt)} (comissão/salário)`, data: `qf|${idReal}` }]]);
+        ehInicioDoMes ? [[btnFech], [btnVale]] : [[btnVale], [btnFech]]);
       await traçoCompras(from, "perguntou_mesref", { profId: arg, valor: pend.compra.valor });
       return;
     }
@@ -14443,8 +14524,10 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     // profissional bate a META BRUTA de serviços da sua categoria no mês.
     // VIP 30k · Clássico 15k · Express 10k · Estética 8k (tudo configurável em
     // settings). SOMA ao bônus de excedente (dono escolheu "somar os dois"). Base =
-    // produção de serviços do ranking (Total Serviços = bruto). O sócio (André=VIP)
-    // TAMBÉM concorre a este bônus — só o top-1 e o excedente é que o excluem.
+    // produção de serviços do ranking (Total Serviços = bruto).
+    // 01/08/2026 — o SÓCIO NÃO CONCORRE: "trato o André como meu sócio, ele não
+    // recebe nenhuma premiação como barbeiro". Antes só o top-1 e o excedente o
+    // excluíam, e o jantar passava.
     const bonusJantarReais = Number(storeData.settings?.bonusJantarReais ?? 300);
     const _listaEstetica = ((storeData.settings?.profissionaisEstetica as string[] | undefined) || []).map(_normSocio).filter(Boolean);
     const _ehEstetica = _listaEstetica.some((s) => _nomeSocio === s || _nomeSocio.includes(s) || s.includes(_nomeSocio));
@@ -14457,7 +14540,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     };
     const metaBrutaCategoria = _metasBrutas[categoriaMeta] || 0;
     const servicosBruto = profMes?.servicos?.bruto ?? servicosLiquido; // ranking: bruto = Total Serviços
-    const bateuMetaCategoria = metaBrutaCategoria > 0 && servicosBruto >= metaBrutaCategoria;
+    const bateuMetaCategoria = !isSocio && metaBrutaCategoria > 0 && servicosBruto >= metaBrutaCategoria;
     const bonusMetaCategoria = bateuMetaCategoria ? bonusJantarReais : 0;
 
     const totalBruto = comissaoServicos + comissaoProdutos + comissaoPlano + comissaoClubeGreco + bonusExcedente + bonusMetaCategoria + salarioFixo;
@@ -14906,7 +14989,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           (l.calculos as any).comissaoServicosAntesCanonico = comAntes;
           (l.calculos as any).servicosAntesCanonico = servAntes;
           // O bônus de meta da categoria é reavaliado com a produção corrigida.
-          const bateuAgora = (l.calculos as any).metaBrutaCategoria > 0 && l.calculos.servicosBruto >= (l.calculos as any).metaBrutaCategoria;
+          // O sócio não concorre a prêmio nenhum — nem depois do rateio.
+          const bateuAgora = !l.socio && (l.calculos as any).metaBrutaCategoria > 0 && l.calculos.servicosBruto >= (l.calculos as any).metaBrutaCategoria;
           if (bateuAgora !== l.calculos.bateuMetaCategoria) {
             const bonusJantar = Number(storeData.settings?.bonusJantarReais ?? 300);
             const delta = (bateuAgora ? bonusJantar : 0) - (l.calculos.bonusMetaCategoria || 0);
@@ -15194,6 +15278,74 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const out = await calcularFolhaMes(mes, { force: req.query.force === "true" });
       if (out?._status) return res.status(out._status).json(out);
       return res.json(out);
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/folha/reclassificar — conserta um pagamento lançado no balde errado.
+  // Body: { profissionalId, valor, data, de: "fechamento:<mesRef>"|"vale:<mes>",
+  //         para: "fechamento:<mesRef>"|"vale:<mes>"|"transferencia", nota? }
+  //
+  // Até aqui, responder o botão errado no Telegram era definitivo. Caso que motivou
+  // (30/07/2026): R$ 8.000 pagos ao André eram ADIANTAMENTO DE JULHO e entraram como
+  // "fechamento de junho" — junho ficou parecendo quitado a mais e julho não abateu
+  // nada; e R$ 4.000 do mesmo dia nem pagamento eram (PIX entre contas da própria
+  // Greco, mesmo CNPJ nas duas pontas).
+  app.post("/api/folha/reclassificar", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const { profissionalId, valor, data, de, para, nota } = req.body || {};
+      const pid = String(profissionalId || "");
+      const vlr = Number(valor);
+      const dt = String(data || "");
+      if (!pid || !(vlr > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(dt)) {
+        return res.status(400).json({ ok: false, error: "profissionalId, valor (>0) e data (YYYY-MM-DD) são obrigatórios." });
+      }
+      const parse = (s: string) => {
+        const [tipo, arg] = String(s || "").split(":");
+        return { tipo, mes: arg || "" };
+      };
+      const origem = parse(de), destino = parse(para);
+      const passos: string[] = [];
+
+      // 1) TIRA da origem
+      if (origem.tipo === "fechamento") {
+        if (!/^\d{4}-\d{2}$/.test(origem.mes)) return res.status(400).json({ ok: false, error: "de=fechamento:YYYY-MM" });
+        const { removido } = await removerPagamentoFolha(origem.mes, pid, vlr, dt);
+        if (!removido) return res.status(404).json({ ok: false, error: `Não achei R$ ${vlr} em ${dt} no fechamento de ${origem.mes} para ${pid}.` });
+        passos.push(`removido do fechamento de ${origem.mes}`);
+      } else if (origem.tipo === "vale") {
+        if (!/^\d{4}-\d{2}$/.test(origem.mes)) return res.status(400).json({ ok: false, error: "de=vale:YYYY-MM" });
+        const atual: any = await getPagamentoMes(origem.mes, pid);
+        const novoVale = Math.round(((Number(atual?.vale) || 0) - vlr) * 100) / 100;
+        if (novoVale < -0.005) return res.status(400).json({ ok: false, error: `Vale de ${origem.mes} é R$ ${Number(atual?.vale) || 0}, menor que R$ ${vlr}.` });
+        await upsertPagamentoMes(origem.mes, pid, { vale: Math.max(0, novoVale) } as any);
+        passos.push(`abatido do vale de ${origem.mes}`);
+      }
+
+      // 2) PÕE no destino
+      if (destino.tipo === "fechamento") {
+        if (!/^\d{4}-\d{2}$/.test(destino.mes)) return res.status(400).json({ ok: false, error: "para=fechamento:YYYY-MM" });
+        const metas = await getAllMetas();
+        const nome = String((metas as any)[pid]?.nome || pid).split("-").pop()!.trim();
+        await registrarPagamentoFolha(destino.mes, { profissionalId: pid, nome, valor: vlr, data: dt, origem: "manual" });
+        passos.push(`lançado como fechamento de ${destino.mes}`);
+      } else if (destino.tipo === "vale") {
+        if (!/^\d{4}-\d{2}$/.test(destino.mes)) return res.status(400).json({ ok: false, error: "para=vale:YYYY-MM" });
+        const atual: any = await getPagamentoMes(destino.mes, pid);
+        const novoVale = Math.round(((Number(atual?.vale) || 0) + vlr) * 100) / 100;
+        const notaNova = [String(atual?.valeNota || "").trim(),
+          `${dt.split("-").reverse().join("/")} R$ ${fmtBRLc(vlr)}${nota ? ` (${nota})` : " (reclassificado)"}`]
+          .filter(Boolean).join(" · ");
+        await upsertPagamentoMes(destino.mes, pid, { vale: novoVale, valeNota: notaNova } as any);
+        passos.push(`lançado como adiantamento de ${destino.mes} (vale acumulado R$ ${fmtBRLc(novoVale)})`);
+      } else if (destino.tipo === "transferencia") {
+        passos.push("marcado como transferência entre contas próprias — não abate ninguém");
+      }
+
+      log(`[folha] reclassificado ${pid} R$ ${vlr} ${dt}: ${passos.join(" → ")}`, "pagamento");
+      return res.json({ ok: true, profissionalId: pid, valor: vlr, data: dt, de, para, passos });
     } catch (err: any) {
       return res.status(500).json({ ok: false, error: err.message });
     }

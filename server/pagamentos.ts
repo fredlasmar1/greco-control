@@ -185,6 +185,32 @@ export async function getPagamentosFolha(mesRef: string): Promise<PagamentoFolha
 // Registra um pagamento que QUITA a folha de `mesRef`. Leitura estrita: se o
 // banco falhar, ESTOURA em vez de gravar por cima de lista vazia (mesma trava
 // das compras — perder o mês seria catastrófico).
+/**
+ * Remove um pagamento do ledger de fechamento de `mesRef`. Existe porque um clique
+ * errado no botão do Telegram era IRREVERSÍVEL: em 30/07/2026 R$ 8.000 pagos ao
+ * André (adiantamento de julho) e R$ 4.000 de transferência entre contas próprias
+ * entraram como "fechamento de junho" e não havia como desfazer — junho parecia
+ * quitado a mais e julho não abatia nada.
+ *
+ * Casa por valor + data + profissional (não por índice, que muda). Devolve o item
+ * removido, ou null se não achou — o chamador decide se isso é erro.
+ */
+export async function removerPagamentoFolha(
+  mesRef: string, profissionalId: string, valor: number, data: string,
+): Promise<{ removido: PagamentoFolhaItem | null; restante: PagamentoFolhaItem[] }> {
+  const d = await kvGetParaEscrita<PagamentoFolhaItem[]>(folhaPagKey(mesRef));
+  if (d !== null && !Array.isArray(d)) throw new Error(`folha_pagamentos:${mesRef} corrompida (esperava array)`);
+  const lista = Array.isArray(d) ? d.slice() : [];
+  const i = lista.findIndex(p =>
+    String(p.profissionalId) === String(profissionalId) &&
+    Math.abs(Number(p.valor) - Number(valor)) < 0.005 &&
+    String(p.data) === String(data));
+  if (i < 0) return { removido: null, restante: lista };
+  const [removido] = lista.splice(i, 1);
+  await kvSet(folhaPagKey(mesRef), lista);
+  return { removido, restante: lista };
+}
+
 export async function registrarPagamentoFolha(mesRef: string, item: Omit<PagamentoFolhaItem, "registradoEm">): Promise<PagamentoFolhaItem[]> {
   const d = await kvGetParaEscrita<PagamentoFolhaItem[]>(folhaPagKey(mesRef));
   if (d !== null && !Array.isArray(d)) throw new Error(`folha_pagamentos:${mesRef} corrompida (esperava array)`);

@@ -30,7 +30,7 @@
  */
 
 import { kvGet, kvKeysComPrefixo } from "./db";
-import { listarCompras, type Compra } from "./compras";
+import { listarCompras, CATEGORIA_TRANSFERENCIA, type Compra } from "./compras";
 import { type PagamentoFolhaItem, type PagamentoMes } from "./pagamentos";
 
 /** Categoria de compra que representa pagamento a pessoal (vive na folha). */
@@ -169,6 +169,15 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
       });
       continue;
     }
+    if (String(c.categoria) === CATEGORIA_TRANSFERENCIA) {
+      // Trava (c): o dinheiro trocou de banco dentro da empresa. Não saiu.
+      excluidos.push({
+        motivo: "transferência entre contas próprias — o dinheiro não saiu da empresa",
+        valor,
+        descricao: `${c.data} ${c.loja || c.descricao || ""}`.trim(),
+      });
+      continue;
+    }
     itensCompras.push({
       data: String(c.data || ""),
       valor,
@@ -244,6 +253,14 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
       if (String(c.categoria) === CATEGORIA_PESSOAL) {
         excluidos.push({
           motivo: "pagamento a pessoal — já contado na folha/vale",
+          valor,
+          descricao: `${c.data} ${c.loja || c.descricao || ""}`.trim(),
+        });
+        continue;
+      }
+      if (String(c.categoria) === CATEGORIA_TRANSFERENCIA) {
+        excluidos.push({
+          motivo: "transferência entre contas próprias — o dinheiro não saiu da empresa",
           valor,
           descricao: `${c.data} ${c.loja || c.descricao || ""}`.trim(),
         });

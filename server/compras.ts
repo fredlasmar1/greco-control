@@ -22,8 +22,76 @@ export const CATEGORIAS_COMPRA = [
   "Software & Sistemas",     // Trinks, sistemas, apps, assinaturas de software
   "Marketing & Publicidade", // anúncio, tráfego, gráfica, panfleto, brinde
   "Alimentação",             // comida/lanche da equipe
+  // Dinheiro que trocou de banco dentro da própria empresa (PIX em que o CNPJ do
+  // recebedor é o mesmo do pagador). NÃO é gasto e NÃO é folha — fica fora do
+  // caixa e do lucro. Antes disso, o PIX de R$ 4.000 Santander→Nubank de 30/07/2026
+  // virou "salário do André" e ainda contou como saída de caixa.
+  "Transferência entre contas",
   "Outros",
 ] as const;
+
+/** Categoria que representa dinheiro movido entre contas da própria empresa. */
+export const CATEGORIA_TRANSFERENCIA = "Transferência entre contas";
+
+/**
+ * CONTAS DA EMPRESA QUE SÃO, NA VERDADE, PAGAMENTO A UMA PESSOA.
+ *
+ * O André recebe partido em duas contas por um arranjo pessoal: R$ 8.000 fixos no
+ * CPF dele (C6) e o restante numa conta Nubank que está NO NOME DA GRECO — chave
+ * (62) 99938-84448. No comprovante esse PIX sai como recebedor "GRECO BARBEARIA"
+ * com o MESMO CNPJ do pagador, ou seja, tem exatamente a cara de transferência
+ * entre contas próprias. Não é: é salário. Sem esta exceção, a trava de CNPJ igual
+ * jogaria o pagamento dele fora da folha (e o André já sumiu da conta uma vez).
+ */
+export interface ContaPropriaDePessoa {
+  chavePix: string;        // só dígitos
+  profissionalId: string;
+  nome: string;
+  motivo: string;
+}
+export const CONTAS_PROPRIAS_DE_PESSOA: ContaPropriaDePessoa[] = [
+  {
+    // Como o dono passou: (62) 9993884448. O comprovante vem mascarado
+    // ("(62) * ****-*448"), então o casamento é por DDD + últimos dígitos visíveis
+    // (casaChavePixMascarada) — não depende de o cadastro estar formatado igual.
+    chavePix: "629993884448",
+    profissionalId: "825249",
+    nome: "CARLOS ANDRÉ",
+    motivo: "Conta Nubank no nome da Greco usada para a 2ª parte do pagamento do André (sócio).",
+  },
+];
+
+/**
+ * Casa a chave do comprovante (quase sempre MASCARADA, ex.: "(62) * ****-*448")
+ * com uma chave cadastrada. Compara os dígitos VISÍVEIS: prefixo antes da máscara
+ * e sufixo depois dela. Exige pelo menos 3 dígitos de sufixo para não casar por
+ * acidente.
+ */
+export function casaChavePixMascarada(doComprovante: string, cadastrada: string): boolean {
+  const alvo = String(cadastrada || "").replace(/\D/g, "");
+  const bruta = String(doComprovante || "");
+  if (!alvo || !bruta) return false;
+  const soDigitosEMascara = bruta.replace(/[^\d*]/g, "");
+  if (!soDigitosEMascara.includes("*")) {
+    const d = soDigitosEMascara.replace(/\D/g, "");
+    return !!d && (d === alvo || alvo.endsWith(d) || d.endsWith(alvo));
+  }
+  const partes = soDigitosEMascara.split(/\*+/).filter(Boolean);
+  if (!partes.length) return false;
+  const prefixo = partes[0];
+  const sufixo = partes[partes.length - 1];
+  if (sufixo.length < 3) return false;
+  const prefixoOk = partes.length === 1 || alvo.startsWith(prefixo);
+  return prefixoOk && alvo.endsWith(sufixo);
+}
+
+/** Se o PIX for para uma conta da empresa que na verdade paga uma pessoa, quem é. */
+export function pessoaPorChaveDeContaPropria(chaveDoComprovante: string): ContaPropriaDePessoa | null {
+  for (const c of CONTAS_PROPRIAS_DE_PESSOA) {
+    if (casaChavePixMascarada(chaveDoComprovante, c.chavePix)) return c;
+  }
+  return null;
+}
 
 /**
  * Natureza padrão de cada categoria: custo FIXO (todo mês, previsível — aluguel,
@@ -44,6 +112,7 @@ export const NATUREZA_PADRAO: Record<string, "fixo" | "variavel"> = {
   "Equipamentos & Móveis": "variavel",
   "Marketing & Publicidade": "variavel",
   "Alimentação": "variavel",
+  "Transferência entre contas": "variavel", // não entra no custo — ver CATEGORIA_TRANSFERENCIA
   "Outros": "variavel",
 };
 
@@ -79,6 +148,12 @@ export interface Compra {
   faturaId?: string;
   /** Cartão do gasto ("Santander", "Itaú"). */
   cartao?: string;
+  /** PIX em que o CNPJ/CPF do recebedor é o mesmo do pagador (conta própria). */
+  transferenciaPropria?: boolean;
+  docRecebedor?: string;
+  docPagador?: string;
+  /** Chave PIX do recebedor como veio no comprovante (pode estar mascarada). */
+  chaveRecebedor?: string;
   telegramFileId?: string;
   telegramFrom?: string; // quem mandou no grupo
   confianca?: "alta" | "media" | "baixa";

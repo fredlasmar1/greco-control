@@ -16,7 +16,6 @@ import {
   Scissors,
   DollarSign,
   CalendarCheck,
-  Target,
   Settings,
   Menu,
   X,
@@ -24,7 +23,6 @@ import {
   TrendingUp,
   Calculator,
   LineChart,
-  UserX,
   Banknote,
   Crown,
   Package,
@@ -52,8 +50,6 @@ const navItems = [
   { path: "/compras", label: "Compras do Mês", icon: ShoppingCart },
   { path: "/assinaturas", label: "Assinaturas", icon: Crown },
   { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
-  { path: "/metas", label: "Metas", icon: Target },
-  { path: "/duplicados", label: "Duplicados", icon: UserX },
   { path: "/importar-trinks", label: "Importar Trinks", icon: FileUp },
   { path: "/trinks-auditoria", label: "Auditoria Trinks", icon: Activity },
   { path: "/contas-mensais", label: "Contas Mensais", icon: Wallet },
@@ -81,17 +77,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const itensVisiveis = user?.role === "recepcao"
     ? navItems.filter((n) => RECEPCAO_ROTAS.includes(n.path))
     : navItems;
-
-  // Badge global de duplicados pendentes (alerta na sidebar)
-  const [duplicadosCount, setDuplicadosCount] = useState<number | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${API_BASE}/api/clientes/duplicados`)
-      .then(r => r.json())
-      .then(d => { if (!cancelled) setDuplicadosCount(d.totalGruposDuplicados ?? null); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -147,16 +132,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 >
                   <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-[#AF0000]" : ""}`} />
                   <span>{label}</span>
-                  {path === "/duplicados" && duplicadosCount !== null && duplicadosCount > 0 && (
-                    <span
-                      className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 tabular-nums"
-                      title={`${duplicadosCount} grupo${duplicadosCount !== 1 ? "s" : ""} de clientes duplicados`}
-                      data-testid="badge-duplicados"
-                    >
-                      {duplicadosCount}
-                    </span>
-                  )}
-                  {isActive && !(path === "/duplicados" && duplicadosCount && duplicadosCount > 0) && (
+                  {isActive && (
                     <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#AF0000]" />
                   )}
                 </div>

@@ -18,7 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
-import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos, getMetasReativacao, getMetasBancoHoras, syncMetasDescontos } from "./metasHub";
+import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos, getMetasReativacao, getMetasBancoHoras, syncMetasDescontos, getMetaCasa } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { montarFormula, type EntradaFormula } from "./folhaFormula";
 import { getMesData as getMesDataCanonical, invalidarMesCache as invalidarMesCacheCanonical } from "./mesService";
@@ -323,6 +323,35 @@ let metasBarbeiros: Record<string, Record<string, number>> = {};
 // ─── Meta Diária (manual) ────────────────────────────────
 // Valor único salvo no disco/DB — default R$ 5.000/dia
 let metaDiaria: number = 5000;
+
+// ─── META DA CASA: quem manda é o Greco Metas ────────────
+// A meta deixou de ser cadastrada aqui. Ela mora em `shared/metaCasa.ts` no
+// Greco Metas e chega pelo hub — a tela /metas do Control (que tinha as metas
+// por barbeiro TODAS zeradas) foi removida em 02/08/2026. Antes disso o
+// Conselheiro aconselhava contra R$ 100.000 enquanto a equipe corria atrás de
+// R$ 105.000. Se o hub não responder, mantém-se o último valor conhecido — não
+// se inventa alvo.
+async function aplicarMetaDaCasa(): Promise<void> {
+  const m = await getMetaCasa();
+  if (!m) return;
+  const mesSP = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit" })
+    .format(new Date()).slice(0, 7);
+  const alvo = mesSP.endsWith("-12") ? m.dezembro : m.mes;
+  if (m.dia > 0 && m.dia !== metaDiaria) {
+    metaDiaria = m.dia;
+    log(`Meta diária: R$${metaDiaria} (fonte: Greco Metas)`, "metas");
+  }
+  const atual = metasHistorico.find((x) => x.month === mesSP);
+  if (atual) {
+    if (atual.target !== alvo) {
+      log(`Meta do mês ${mesSP}: R$${atual.target} → R$${alvo} (fonte: Greco Metas)`, "metas");
+      atual.target = alvo;
+    }
+  } else {
+    metasHistorico.push({ month: mesSP, target: alvo, achieved: 0 });
+    log(`Meta do mês ${mesSP}: R$${alvo} (fonte: Greco Metas)`, "metas");
+  }
+}
 
 // ─── Consolidação: Contas e Transações ───────────────────
 type MeioRecebimento = 'pix' | 'debito' | 'credito' | 'dinheiro';
@@ -1688,6 +1717,9 @@ export async function registerRoutes(
         metaDiaria = dbMetaDiaria.valor;
         log(`Meta diária: R$${metaDiaria} carregada do Postgres`, "metas");
       }
+      // …e por último a meta da casa vem do Greco Metas, que é quem manda nela.
+      await aplicarMetaDaCasa().catch(() => { /* sem hub, fica o que veio do DB */ });
+      setInterval(() => { void aplicarMetaDaCasa().catch(() => {}); }, 30 * 60 * 1000).unref?.();
 
       // Se este é o primeiro boot com DB, migra os dados que estão em memória para ele
       const anyData = [dbUsuarios, dbFinanceiro, dbMetas, dbMetasBarb, dbChecklist, dbContas, dbTransacoes, dbRegras, dbDuplicados, dbStore].some(v => v !== null);

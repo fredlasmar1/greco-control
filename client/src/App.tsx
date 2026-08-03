@@ -18,11 +18,9 @@ import Servicos from "@/pages/Servicos";
 import Precificacao from "@/pages/Precificacao";
 import Financeiro from "@/pages/Financeiro";
 import Fechamento from "@/pages/Fechamento";
-import Metas from "@/pages/Metas";
 import Configuracoes from "@/pages/Configuracoes";
 import ContasMensais from "@/pages/ContasMensais";
 import Compras from "@/pages/Compras";
-import ClientesDuplicados from "@/pages/ClientesDuplicados";
 import VendasProdutos from "@/pages/VendasProdutos";
 import Consolidacao from "@/pages/Consolidacao";
 import Conciliacao from "@/pages/Conciliacao";
@@ -89,8 +87,6 @@ function AdminRoutes() {
           <Route path="/compras" component={Compras} />
           <Route path="/assinaturas" component={Assinaturas} />
           <Route path="/fechamento" component={Fechamento} />
-          <Route path="/metas" component={Metas} />
-          <Route path="/duplicados" component={ClientesDuplicados} />
           <Route path="/configuracoes" component={Configuracoes} />
           <Route path="/contas-mensais" component={ContasMensais} />
           <Route path="/vendas-produtos" component={VendasProdutos} />

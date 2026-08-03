@@ -74,6 +74,30 @@ export async function getMetasResumoMes(mes: string): Promise<MetasResumoMes | n
   } catch { return null; }
 }
 
+// META DA CASA — quem define a meta é a barbearia, no Greco Metas
+// (`shared/metaCasa.ts`). O Control tinha a própria: em 02/08/2026 o Conselheiro
+// aconselhava contra R$ 100.000 enquanto a equipe corria atrás de R$ 105.000.
+// Aqui não existe default de meta de propósito — sem hub, o chamador mantém o
+// que já tinha em vez de inventar um alvo.
+export interface MetaCasa { mes: number; semana: number; dia: number; dezembro: number; }
+let metaCasaCache: { at: number; data: MetaCasa } | null = null;
+export async function getMetaCasa(): Promise<MetaCasa | null> {
+  if (!KEY) return null;
+  if (metaCasaCache && Date.now() - metaCasaCache.at < 10 * 60 * 1000) return metaCasaCache.data;
+  try {
+    const r = await fetch(`${BASE}/api/hub/meta-casa`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return metaCasaCache?.data || null;
+    const j = (await r.json()) as any;
+    if (!j?.ok || !(Number(j.mes) > 0)) return metaCasaCache?.data || null;
+    const data: MetaCasa = {
+      mes: Number(j.mes), semana: Number(j.semana) || 0,
+      dia: Number(j.dia) || 0, dezembro: Number(j.dezembro) || Number(j.mes),
+    };
+    metaCasaCache = { at: Date.now(), data };
+    return data;
+  } catch { return metaCasaCache?.data || null; }
+}
+
 // PASSO 3 — quota do Metas (consumo Trinks dele + teto do plano da conta).
 export interface MetasQuota { usados: number; plano: number; cotaConta: number; erro429: number; }
 let mqCache: { at: number; data: MetasQuota } | null = null;

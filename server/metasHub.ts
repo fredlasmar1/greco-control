@@ -183,7 +183,11 @@ export async function getMetasDescontos(mes: string): Promise<MetasDescontos | n
   const hit = descontosCache.get(mes);
   if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.data;
   try {
-    const r = await fetch(`${BASE}/api/hub/descontos/${encodeURIComponent(mes)}`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(10000) });
+    // excluirOrigem: o que ESTE sistema replicou lá não pode voltar como desconto
+    // novo — seria descontar duas vezes do barbeiro (aconteceu no 1º sync de
+    // jul/2026: vales foram de R$ 8.350 pra R$ 17.600). Só o que a recepção
+    // lançou no Metas interessa aqui.
+    const r = await fetch(`${BASE}/api/hub/descontos/${encodeURIComponent(mes)}?excluirOrigem=greco-control`, { headers: { "x-hub-key": KEY }, signal: AbortSignal.timeout(10000) });
     if (!r.ok) return hit?.data || null;
     const j = (await r.json()) as any;
     if (!j?.ok) return hit?.data || null;

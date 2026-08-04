@@ -18103,13 +18103,18 @@ ${f.adicionais.bonus > 0 ? `<tr><td>(+) Bônus${f.adicionais.bonusRanking > 0 ? 
       try { res.json({ ok: true, ...(await mesa.getMesa()) }); } catch (e) { falha(res, e); }
     });
 
-    app.get("/api/mesa/mes/:mes?", async (req: Request, res: Response) => {
+    // Duas rotas em vez de `:mes?`: o Express 5 removeu o parâmetro opcional, e
+    // o erro só aparece ao REGISTRAR a rota — build verde, healthcheck vermelho.
+    const doMes = async (req: Request, res: Response) => {
       const m = String(req.params.mes || "") || mesa.mesDeReferencia();
+      if (!/^\d{4}-\d{2}$/.test(m)) return res.status(400).json({ ok: false, error: "mês deve ser AAAA-MM" });
       try {
         const [f, r] = await Promise.all([mesa.getFechamento(m), mesa.getRegua(m)]);
         res.json({ ok: true, mes: m, ...f, ...r });
       } catch (e) { falha(res, e); }
-    });
+    };
+    app.get("/api/mesa/mes", doMes);
+    app.get("/api/mesa/mes/:mes", doMes);
 
     app.post("/api/mesa/conselho", async (req: Request, res: Response) => {
       const pergunta = String(req.body?.pergunta || "").trim();

@@ -18,6 +18,7 @@ import type {
   ImportSummary,
 } from "./trinksImport";
 import { registrarSyncTrinks, getSyncMeta } from "./trinksSyncMeta";
+import * as mesaHub from "./mesaHub";
 import { getMetasVisitas, getMetasAgendamentos, getMetasTrinks, getMetasQuota, getMetasResumoMes, getMetasLeads, getMetasLeadsHistorico, getMetasDescontos, getMetasReativacao, getMetasBancoHoras, syncMetasDescontos, getMetaCasa } from "./metasHub";
 import { resolverFonte, carregarTrinksDataDoCsv, getModoFonte, temCsvDoMes } from "./fonteResolver";
 import { montarFormula, type EntradaFormula } from "./folhaFormula";
@@ -18094,7 +18095,7 @@ ${f.adicionais.bonus > 0 ? `<tr><td>(+) Bônus${f.adicionais.bonusRanking > 0 ? 
   // mostrando R$ 0,00 porque a ponte caiu leva a decisão errada com cara de
   // número apurado.
   {
-    const mesa = await import("./mesaHub.js");
+    const mesa = mesaHub;
     const falha = (res: Response, err: any) =>
       res.status(502).json({ ok: false, error: err?.message || "o Greco Metas não respondeu" });
 

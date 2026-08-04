@@ -1,3 +1,22 @@
+/**
+ * GRECO CONTROL — o conselho do dono.
+ *
+ * Este app tinha 24 telas e 22.238 linhas. A auditoria de 03/08/2026 achou 9
+ * duplicadas (o Greco Metas já fazia, com dado vivo) e 14 mortas — máquinas de
+ * digitar que o dado já responde sozinho. A `Precificacao.tsx`, com 2.153 linhas
+ * de ficha técnica e margem, é o retrato: era a tela CERTA, alimentada à mão, e
+ * no dia em que o dono perguntou "meus preços estão defasados?" ninguém abriu
+ * ela — a resposta saiu do banco.
+ *
+ * Sobraram três telas, e uma regra: **o Control não calcula nada**. Não tem
+ * banco de operação, não tem campo de digitar. Ele lê o Metas pela ponte e
+ * opina. Se um número está errado aqui, conserta-se lá.
+ *
+ * QUEM ENTRA: só o dono. A operação inteira — caixa, estoque, compras, Clube,
+ * comissão — mora no Greco Metas, onde a equipe já tem login. Recepção e
+ * barbeiro que caírem aqui são mandados pra lá, em vez de encontrarem tela
+ * quebrada numa terça de manhã.
+ */
 import { useEffect, useRef } from "react";
 import { Switch, Route, Router, useLocation } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
@@ -6,93 +25,49 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
-import { useTrinksStore } from "@/lib/trinksStore";
 import { useAuth } from "@/lib/authStore";
-import { useStore } from "@/lib/store";
-import { Loader2 } from "lucide-react";
-import Dashboard from "@/pages/Dashboard";
-import Lancamentos from "@/pages/Lancamentos";
-import CaixaDia from "@/pages/CaixaDia";
-import Equipe from "@/pages/Equipe";
-import Servicos from "@/pages/Servicos";
-import Precificacao from "@/pages/Precificacao";
-import Financeiro from "@/pages/Financeiro";
-import Fechamento from "@/pages/Fechamento";
-import Configuracoes from "@/pages/Configuracoes";
-import ContasMensais from "@/pages/ContasMensais";
-import Compras from "@/pages/Compras";
-import VendasProdutos from "@/pages/VendasProdutos";
-import Consolidacao from "@/pages/Consolidacao";
-import Conciliacao from "@/pages/Conciliacao";
-import Pagamento from "@/pages/Pagamento";
-import Assinaturas from "@/pages/Assinaturas";
-import Estoque from "@/pages/Estoque";
-import ImportarTrinks from "@/pages/ImportarTrinks";
-import Conselheiro from "@/pages/Conselheiro";
-import Viabilidade from "@/pages/Viabilidade";
-import Evolucao from "@/pages/Evolucao";
-import TrinksAuditoria from "@/pages/TrinksAuditoria";
-import Central from "@/pages/Central";
+import { Loader2, ArrowUpRight } from "lucide-react";
+import AMesa from "@/pages/AMesa";
+import OMes from "@/pages/OMes";
+import OConselho from "@/pages/OConselho";
 import Login from "@/pages/Login";
-import { CopilotDrawer } from "@/components/CopilotDrawer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import MeuPainel from "@/pages/MeuPainel";
 import NotFound from "@/pages/not-found";
 
-// Redirect helper para rotas antigas (ex: /consolidacao → /lancamentos)
-function RedirectTo({ to }: { to: string }) {
-  const [, setLocation] = useLocation();
-  useEffect(() => { setLocation(to); }, [to, setLocation]);
-  return null;
+const METAS = "https://www.grecopro.com.br";
+
+/**
+ * A equipe não usa mais o Control. Em vez de esconder o menu e deixar a pessoa
+ * girando numa tela vazia, diz onde o trabalho dela passou a morar.
+ */
+function MudouDeCasa() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background p-6">
+      <div className="max-w-md space-y-4 text-center">
+        <h1 className="text-2xl font-bold">O trabalho do dia mudou de lugar</h1>
+        <p className="text-muted-foreground">
+          Caixa, estoque, compras, Clube e comissão agora ficam no <strong>Greco Metas</strong>, com o seu
+          mesmo login. Este painel virou o conselho do dono.
+        </p>
+        <a
+          href={METAS}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 font-medium text-primary-foreground"
+        >
+          Ir para o Greco Metas <ArrowUpRight className="h-4 w-4" />
+        </a>
+      </div>
+    </div>
+  );
 }
 
-// Rotas que a RECEPÇÃO pode acessar (sem financeiro/folha).
-// /central liberada 23/jul (decisão do dono): a régua de reativação é trabalho
-// delas (Larissa/Camila). Elas veem LTV por cliente na Central — ok pelo dono.
-const RECEPCAO_ROTAS = ["/caixa-dia", "/estoque", "/compras", "/assinaturas", "/central"];
-
-function AdminRoutes() {
-  const loadSavedConfig = useTrinksStore((s) => s.loadSavedConfig);
-  const loadStoreFromServer = useStore((s) => s.loadFromServer);
-  const hasLoaded = useRef(false);
-
-  useEffect(() => {
-    if (!hasLoaded.current) {
-      hasLoaded.current = true;
-      loadSavedConfig();
-      loadStoreFromServer();
-    }
-  }, [loadSavedConfig, loadStoreFromServer]);
-
+function Conselho() {
   return (
     <AppLayout>
       <ErrorBoundary label="route">
         <Switch>
-          <Route path="/" component={Dashboard} />
-          <Route path="/central" component={Central} />
-          <Route path="/lancamentos" component={Lancamentos} />
-          <Route path="/caixa-dia" component={CaixaDia} />
-          <Route path="/equipe" component={Equipe} />
-          {/* /servicos foi unificada em /precificacao (aba interna 'Catálogo') */}
-          <Route path="/servicos">{() => <RedirectTo to="/precificacao" />}</Route>
-          <Route path="/precificacao" component={Precificacao} />
-          <Route path="/viabilidade" component={Viabilidade} />
-          <Route path="/evolucao" component={Evolucao} />
-          <Route path="/financeiro" component={Financeiro} />
-          <Route path="/estoque" component={Estoque} />
-          {/* /consolidacao e /conciliacao unificadas em /lancamentos (abas internas) */}
-          <Route path="/consolidacao">{() => <RedirectTo to="/lancamentos" />}</Route>
-          <Route path="/conciliacao">{() => <RedirectTo to="/lancamentos" />}</Route>
-          <Route path="/pagamento" component={Pagamento} />
-          <Route path="/compras" component={Compras} />
-          <Route path="/assinaturas" component={Assinaturas} />
-          <Route path="/fechamento" component={Fechamento} />
-          <Route path="/configuracoes" component={Configuracoes} />
-          <Route path="/contas-mensais" component={ContasMensais} />
-          <Route path="/vendas-produtos" component={VendasProdutos} />
-          <Route path="/importar-trinks" component={ImportarTrinks} />
-          <Route path="/conselheiro" component={Conselheiro} />
-          <Route path="/trinks-auditoria" component={TrinksAuditoria} />
+          <Route path="/" component={AMesa} />
+          <Route path="/mes" component={OMes} />
+          <Route path="/conselho" component={OConselho} />
           <Route component={NotFound} />
         </Switch>
       </ErrorBoundary>
@@ -112,18 +87,10 @@ function AppRouter() {
     }
   }, [restoreSession]);
 
-  // Redireciona quando o estado de auth muda
   useEffect(() => {
     if (loading) return;
-    if (!user && location !== "/login") {
-      setLocation("/login");
-    } else if (user?.role === "barbeiro" && location !== "/meu-painel" && location !== "/login") {
-      setLocation("/meu-painel");
-    } else if (user?.role === "recepcao" && !RECEPCAO_ROTAS.includes(location) && location !== "/login") {
-      setLocation("/caixa-dia");
-    } else if ((user?.role === "admin" || user?.role === "recepcao") && location === "/login") {
-      setLocation(user?.role === "recepcao" ? "/caixa-dia" : "/");
-    }
+    if (!user && location !== "/login") setLocation("/login");
+    else if (user?.role === "admin" && location === "/login") setLocation("/");
   }, [user, loading, location, setLocation]);
 
   if (loading) {
@@ -134,7 +101,6 @@ function AppRouter() {
     );
   }
 
-  // Sem login: só mostra a tela de login
   if (!user) {
     return (
       <Switch>
@@ -144,34 +110,9 @@ function AppRouter() {
     );
   }
 
-  // Barbeiro: vê só o próprio painel
-  if (user.role === "barbeiro") {
-    return (
-      <Switch>
-        <Route path="/meu-painel" component={MeuPainel} />
-        <Route component={MeuPainel} />
-      </Switch>
-    );
-  }
+  if (user.role !== "admin") return <MudouDeCasa />;
 
-  // Recepção: caixa, estoque, compras e assinaturas (sem financeiro/folha)
-  if (user.role === "recepcao") {
-    return (
-      <AppLayout>
-        <Switch>
-          <Route path="/caixa-dia" component={CaixaDia} />
-          <Route path="/estoque" component={Estoque} />
-          <Route path="/compras" component={Compras} />
-          <Route path="/assinaturas" component={Assinaturas} />
-          <Route path="/central" component={Central} />
-          <Route component={CaixaDia} />
-        </Switch>
-      </AppLayout>
-    );
-  }
-
-  // Admin: acesso completo
-  return <AdminRoutes />;
+  return <Conselho />;
 }
 
 function App() {
@@ -182,7 +123,6 @@ function App() {
         <Router hook={useHashLocation}>
           <AppRouter />
         </Router>
-        <CopilotDrawer />
       </TooltipProvider>
     </QueryClientProvider>
   );

@@ -18084,6 +18084,42 @@ ${f.adicionais.bonus > 0 ? `<tr><td>(+) Bônus${f.adicionais.bonusRanking > 0 ? 
     };
   }
 
+  // ─── O CONTROL NOVO: a mesa do dono ──────────────────────────────────────
+  //
+  // Estas quatro rotas são PROXY. Nenhuma delas calcula: o Control lê o Greco
+  // Metas e mostra. Se um número estiver errado aqui, o conserto é lá — foi a
+  // regra escrita nos dois lados que matou 23 das 24 telas antigas.
+  //
+  // Erro do hub vira 502 com a mensagem, nunca zero: uma tela de conselho
+  // mostrando R$ 0,00 porque a ponte caiu leva a decisão errada com cara de
+  // número apurado.
+  {
+    const mesa = await import("./mesaHub.js");
+    const falha = (res: Response, err: any) =>
+      res.status(502).json({ ok: false, error: err?.message || "o Greco Metas não respondeu" });
+
+    app.get("/api/mesa", async (_req: Request, res: Response) => {
+      try { res.json({ ok: true, ...(await mesa.getMesa()) }); } catch (e) { falha(res, e); }
+    });
+
+    app.get("/api/mesa/mes/:mes?", async (req: Request, res: Response) => {
+      const m = String(req.params.mes || "") || mesa.mesDeReferencia();
+      try {
+        const [f, r] = await Promise.all([mesa.getFechamento(m), mesa.getRegua(m)]);
+        res.json({ ok: true, mes: m, ...f, ...r });
+      } catch (e) { falha(res, e); }
+    });
+
+    app.post("/api/mesa/conselho", async (req: Request, res: Response) => {
+      const pergunta = String(req.body?.pergunta || "").trim();
+      if (pergunta.length < 10) {
+        return res.status(400).json({ ok: false, error: "faça uma pergunta (pelo menos 10 caracteres)" });
+      }
+      try { res.json({ ok: true, ...(await mesa.reunirConselho(pergunta, req.body?.mes)) }); }
+      catch (e) { falha(res, e); }
+    });
+  }
+
   app.get("/api/conselheiro/dados", async (req: Request, res: Response) => {
     try {
       // ?force=true só invalida o cache do mês CORRENTE (mais barato e seguro).

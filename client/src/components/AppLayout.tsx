@@ -35,25 +35,13 @@ import {
   Radar,
 } from "lucide-react";
 
+// TRÊS TELAS. Eram 19 no menu, de 24 construídas — 9 duplicavam o Greco Metas e
+// 14 eram máquinas de digitar que o dado já responde. O Control não opera nada:
+// ele lê o Metas e opina.
 const navItems = [
-  { path: "/", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/conselheiro", label: "Conselheiro", icon: Scale },
-  { path: "/lancamentos", label: "Lançamentos", icon: Receipt },
-  { path: "/caixa-dia", label: "Caixa do Dia", icon: Banknote },
-  { path: "/equipe", label: "Pagamento da Equipe", icon: Users },
-  { path: "/vendas-produtos", label: "Vendas Produtos", icon: TrendingUp },
-  { path: "/precificacao", label: "Serviços & Precificação", icon: Scissors },
-  { path: "/viabilidade", label: "Viabilidade", icon: Calculator },
-  { path: "/evolucao", label: "Evolução", icon: LineChart },
-  { path: "/financeiro", label: "Financeiro", icon: DollarSign },
-  { path: "/estoque", label: "Estoque", icon: Package },
-  { path: "/compras", label: "Compras do Mês", icon: ShoppingCart },
-  { path: "/assinaturas", label: "Assinaturas", icon: Crown },
-  { path: "/fechamento", label: "Fechamento", icon: CalendarCheck },
-  { path: "/importar-trinks", label: "Importar Trinks", icon: FileUp },
-  { path: "/trinks-auditoria", label: "Auditoria Trinks", icon: Activity },
-  { path: "/contas-mensais", label: "Contas Mensais", icon: Wallet },
-  { path: "/configuracoes", label: "Configurações", icon: Settings },
+  { path: "/", label: "A mesa", icon: Scale },
+  { path: "/mes", label: "O mês", icon: Calculator },
+  { path: "/conselho", label: "O conselho", icon: Users },
 ];
 
 function GrecoLogo({ className = "h-6 w-auto" }: { className?: string }) {
@@ -65,9 +53,8 @@ function GrecoLogo({ className = "h-6 w-auto" }: { className?: string }) {
 
 function getPageTitle(path: string): string {
   // Central mora fora das abas (botão destacado no header), mas ainda dá título.
-  if (path.startsWith("/central")) return "Central de Vendas";
   const item = navItems.find(n => n.path === path);
-  return item?.label || "Dashboard";
+  return item?.label || "A mesa";
 }
 
 export function AppLayout({ children }: { children: React.ReactNode }) {

@@ -12249,7 +12249,21 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       // quase todas em dinheiro) morreram: o bot dizia "Confirmado e salvo" em
       // umas, o dono respondia "Não" em outras, e o gasto sumia dos dois jeitos.
       // Custo de produto é enriquecimento de margem; gasto é dinheiro que saiu.
-      const nova = await salvarCompra(compra as any);
+      // OS ITENS FICAM NA COMPRA, não só no pendente. A chave
+      // `compras_pending:<chat>:<id>` é apagada assim que o dono responde SIM ou
+      // NÃO — e com ela sumiam os itens que a IA leu da nota. Resultado: 45
+      // compras de telegram em julho/2026 e ZERO com item guardado, obrigando a
+      // lançar a entrada de estoque à mão todo dia com a nota na frente.
+      // Aqui eles passam a viver junto do gasto, que é permanente.
+      const nova = await salvarCompra({
+        ...(compra as any),
+        itensLidos: itens.map((it: any) => ({
+          produto: String(it?.produto ?? "").trim(),
+          quantidade: Number(it?.quantidade) || 1,
+          custoUnitario: Number(it?.custoUnitario) || 0,
+        })).filter((it: any) => it.produto),
+        itensLidosEm: new Date().toISOString(),
+      } as any);
       await guardarFotoCompra(nova, ctx.foto);
       await kvSet(`compras_pending:${chatId}:${nova.id}`, { compra: nova, itens, criadoEm: new Date().toISOString() });
       let msg = `✅ <b>Compra registrada</b> — R$ ${fmtBRLc(compra.valor)} · 🏪 ${compra.loja}\n<i>Já entrou no gasto do mês.</i>\n\n📦 <b>A nota tem itens</b> — confira antes de eu atualizar os custos:\n`;

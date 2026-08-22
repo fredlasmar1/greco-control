@@ -53,6 +53,20 @@ export const getFechamento = (mes: string) => hub<{ fechamento: any }>(`/fechame
 /** Custo fixo por hora de cadeira, o que cada serviço deixa, ocupação, tolerância a churn. */
 export const getRegua = (mes: string) => hub<{ regua: any }>(`/regua-precos/${mes}`);
 
+/**
+ * O PREÇO: régua de R$/hora + simulação do reajuste.
+ *
+ * ⛔ Manda os preços que o dono digitou e recebe a conta PRONTA. O Control não
+ * multiplica, não divide e não sabe o que é margem do Clube — se soubesse,
+ * saberia diferente do Metas em algum mês, e ninguém compararia os dois.
+ *
+ * ⚠️ Corpo `{}` devolve o estado base. É POST mesmo assim, de propósito: dois
+ * endpoints seriam dois lugares de onde a mesma tela tira número.
+ */
+export const getPrecos = (novos: Record<string, number> = {}) =>
+  hub<{ janela: any; casa: any; servicos: any; catalogoLidoEm: string | null; simulacao: any; recusados: string[] }>(
+    "/precos", { method: "POST", body: JSON.stringify({ novos }) });
+
 /** Reúne o conselho. Demora: são quatro conselheiros consultando o banco em paralelo. */
 export const reunirConselho = (pergunta: string, mes?: string) =>
   hub<{ sessao: any }>("/conselho", { method: "POST", body: JSON.stringify({ pergunta, mes }) });

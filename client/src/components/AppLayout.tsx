@@ -33,6 +33,7 @@ import {
   Activity,
   ShoppingCart,
   Radar,
+  Tag,
 } from "lucide-react";
 
 // TRÊS TELAS. Eram 19 no menu, de 24 construídas — 9 duplicavam o Greco Metas e
@@ -41,6 +42,7 @@ import {
 const navItems = [
   { path: "/", label: "A mesa", icon: Scale },
   { path: "/mes", label: "O mês", icon: Calculator },
+  { path: "/preco", label: "O preço", icon: Tag },
   { path: "/conselho", label: "O conselho", icon: Users },
 ];
 

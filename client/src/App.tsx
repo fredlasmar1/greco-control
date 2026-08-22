@@ -29,6 +29,7 @@ import { useAuth } from "@/lib/authStore";
 import { Loader2, ArrowUpRight } from "lucide-react";
 import AMesa from "@/pages/AMesa";
 import OMes from "@/pages/OMes";
+import OPreco from "@/pages/OPreco";
 import OConselho from "@/pages/OConselho";
 import Login from "@/pages/Login";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -67,6 +68,7 @@ function Conselho() {
         <Switch>
           <Route path="/" component={AMesa} />
           <Route path="/mes" component={OMes} />
+          <Route path="/preco" component={OPreco} />
           <Route path="/conselho" component={OConselho} />
           <Route component={NotFound} />
         </Switch>

@@ -18130,6 +18130,13 @@ ${f.adicionais.bonus > 0 ? `<tr><td>(+) Bônus${f.adicionais.bonusRanking > 0 ? 
     app.get("/api/mesa/mes", doMes);
     app.get("/api/mesa/mes/:mes", doMes);
 
+    // O PREÇO — proxy puro, como as outras. O corpo passa adiante e a conta
+    // volta pronta do Metas. ⛔ Nenhuma aritmética de preço mora neste arquivo.
+    app.post("/api/mesa/precos", async (req: Request, res: Response) => {
+      try { res.json({ ok: true, ...(await mesa.getPrecos(req.body?.novos || {})) }); }
+      catch (e) { falha(res, e); }
+    });
+
     app.post("/api/mesa/conselho", async (req: Request, res: Response) => {
       const pergunta = String(req.body?.pergunta || "").trim();
       if (pergunta.length < 10) {

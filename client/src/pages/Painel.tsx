@@ -40,6 +40,29 @@ import { AlertTriangle, Loader2, TrendingUp, TrendingDown, Minus } from "lucide-
 const API = (globalThis as any).__API_BASE__ || "";
 
 /** Marca da casa. ⛔ Vermelho é a cor do DADO PRINCIPAL, não de erro. */
+/**
+ * ⛔ ANIMAÇÃO DE ENTRADA DESLIGADA EM TODOS OS GRÁFICOS — e por medição, ⛔ não
+ * por gosto.
+ *
+ * `[23/08/2026]` o donut d'A Mesa e as barras ao lado subiram VAZIOS. Eu tentei
+ * três consertos de layout — porcentagem em flex, invólucro de tamanho fixo,
+ * bloco de largura total — e no caminho QUEBREI o donut do Painel, que
+ * funcionava. Todos os três atacaram a causa errada.
+ *
+ * A medição do DOM encerrou o chute: o container tinha **440×190**, o `<svg>`
+ * existia com as dimensões certas, as camadas `recharts-pie-sector` e
+ * `recharts-bar-rectangle` estavam lá — e **sem um único `<path>` dentro**. Esse
+ * é o estado INICIAL da animação: recharts cria o grupo e desenha o traçado ao
+ * longo dela. A animação ⛔ não completava.
+ *
+ * ⚠️ E o mesmo defeito já tinha aparecido no Painel sem eu entender: duas
+ * capturas com 4 s de intervalo mostraram as barras vazias e depois cheias. Eu
+ * li aquilo como "demora" em vez de "às vezes ⛔ não termina".
+ *
+ * ⛔ Num painel que existe para ser lido, gráfico que às vezes ⛔ não pinta é pior
+ * que gráfico sem animação. O ganho estético ⛔ não paga o risco de o dono abrir
+ * a tela e ver vazio — foi exatamente o que aconteceu.
+ */
 const VERMELHO = "#A50101";
 const VERMELHO_CLARO = "#E23B2E";
 const CINZA = "#6B7280";
@@ -242,11 +265,11 @@ export default function Painel() {
               tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
             <Tooltip {...tooltip} formatter={(v: any) => brl(Number(v))} />
             <Legend wrapperStyle={{ fontSize: 12, color: CINZA }} />
-            <Line type="monotone" dataKey="fechado" name="faturamento oficial" stroke={VERMELHO}
+            <Line isAnimationActive={false} type="monotone" dataKey="fechado" name="faturamento oficial" stroke={VERMELHO}
               strokeWidth={2.5} dot={{ r: 3, fill: VERMELHO }} connectNulls />
-            <Line type="monotone" dataKey="agenda" name="o que a agenda viu" stroke={CINZA}
+            <Line isAnimationActive={false} type="monotone" dataKey="agenda" name="o que a agenda viu" stroke={CINZA}
               strokeWidth={1.5} dot={false} connectNulls />
-            <Line type="monotone" dataKey="curso" name="em curso (parcial)" stroke={VERMELHO_CLARO}
+            <Line isAnimationActive={false} type="monotone" dataKey="curso" name="em curso (parcial)" stroke={VERMELHO_CLARO}
               strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: VERMELHO_CLARO }} />
           </LineChart>
         </ResponsiveContainer>
@@ -267,8 +290,8 @@ export default function Painel() {
               <YAxis tick={{ fill: CINZA, fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip {...tooltip} />
               <Legend wrapperStyle={{ fontSize: 12, color: CINZA }} />
-              <Bar dataKey="recorrentes" name="voltaram" stackId="a" fill={VERMELHO} radius={[0, 0, 0, 0]} />
-              <Bar dataKey="novos" name="primeira vez" stackId="a" fill="#F87171" radius={[4, 4, 0, 0]} />
+              <Bar isAnimationActive={false} dataKey="recorrentes" name="voltaram" stackId="a" fill={VERMELHO} radius={[0, 0, 0, 0]} />
+              <Bar isAnimationActive={false} dataKey="novos" name="primeira vez" stackId="a" fill="#F87171" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </Bloco>
@@ -435,7 +458,7 @@ function Kpi({ rotulo: r, valor, atual, anterior, serie, campo, extrair, nota, d
           <div className="h-7 w-20">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={pontos}>
-                <Line type="monotone" dataKey="v" stroke={VERMELHO_CLARO} strokeWidth={1.5} dot={false} />
+                <Line isAnimationActive={false} type="monotone" dataKey="v" stroke={VERMELHO_CLARO} strokeWidth={1.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>

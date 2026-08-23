@@ -26,6 +26,29 @@ import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, 
  * ler quatro parágrafos. As decisões viravam parede de texto, e parede de texto
  * é como um placar deixa de ser lido.
  */
+/**
+ * ⛔ ANIMAÇÃO DE ENTRADA DESLIGADA EM TODOS OS GRÁFICOS — e por medição, ⛔ não
+ * por gosto.
+ *
+ * `[23/08/2026]` o donut d'A Mesa e as barras ao lado subiram VAZIOS. Eu tentei
+ * três consertos de layout — porcentagem em flex, invólucro de tamanho fixo,
+ * bloco de largura total — e no caminho QUEBREI o donut do Painel, que
+ * funcionava. Todos os três atacaram a causa errada.
+ *
+ * A medição do DOM encerrou o chute: o container tinha **440×190**, o `<svg>`
+ * existia com as dimensões certas, as camadas `recharts-pie-sector` e
+ * `recharts-bar-rectangle` estavam lá — e **sem um único `<path>` dentro**. Esse
+ * é o estado INICIAL da animação: recharts cria o grupo e desenha o traçado ao
+ * longo dela. A animação ⛔ não completava.
+ *
+ * ⚠️ E o mesmo defeito já tinha aparecido no Painel sem eu entender: duas
+ * capturas com 4 s de intervalo mostraram as barras vazias e depois cheias. Eu
+ * li aquilo como "demora" em vez de "às vezes ⛔ não termina".
+ *
+ * ⛔ Num painel que existe para ser lido, gráfico que às vezes ⛔ não pinta é pior
+ * que gráfico sem animação. O ganho estético ⛔ não paga o risco de o dono abrir
+ * a tela e ver vazio — foi exatamente o que aconteceu.
+ */
 const VERMELHO = "#A50101";
 const AZUL = "#3B82F6";
 const CINZA = "#6B7280";
@@ -191,7 +214,7 @@ export default function AMesa() {
             */}
             <ResponsiveContainer width="100%" height={190}>
               <PieChart>
-                <Pie data={porSituacao} dataKey="n" nameKey="rotulo" innerRadius={48} outerRadius={78} paddingAngle={3}>
+                <Pie isAnimationActive={false} data={porSituacao} dataKey="n" nameKey="rotulo" innerRadius={48} outerRadius={78} paddingAngle={3}>
                   {porSituacao.map((f, i) => <Cell key={i} fill={f.cor} stroke="#0E0000" />)}
                 </Pie>
                 <Tooltip {...tooltip} />
@@ -224,7 +247,7 @@ export default function AMesa() {
                 <YAxis type="category" dataKey="curto" width={92} tick={{ fill: CINZA, fontSize: 11 }}
                   axisLine={false} tickLine={false} />
                 <Tooltip {...tooltip} formatter={(v: any) => brl(Number(v))} />
-                <Bar dataKey="esperado" fill={VERMELHO} radius={[0, 4, 4, 0]} />
+                <Bar isAnimationActive={false} dataKey="esperado" fill={VERMELHO} radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>

@@ -8,7 +8,7 @@ import * as crypto from "crypto";
 import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
-import { kvGet, kvGetParaEscrita, kvSet, kvKeysComPrefixo, waitForDb, isDbReady } from "./db";
+import { kvGet, kvGetParaEscrita, kvSet, kvKeysComPrefixo, waitForDb, isDbReady, sessaoGravar, sessaoApagar, sessaoBuscar, sessoesVivas} from "./db";
 import { buildSnapshot, buildSystemPrompt, buildMessages, type ConselheiroDataSources } from "./conselheiro";
 import * as trinksImport from "./trinksImport";
 import * as XLSX from "xlsx";
@@ -603,6 +603,7 @@ function getUserFromToken(token: string | undefined): Usuario | null {
   if (!session) return null;
   if (session.expiresAt < Date.now()) {
     sessoesAtivas.delete(token);
+    sessaoApagar(token).catch(() => {});
     return null;
   }
   return usuarios.find(u => u.id === session.userId && u.ativo) || null;
@@ -1720,7 +1721,7 @@ export async function registerRoutes(
     /^\/telegram\/webhook\//,
   ];
 
-  app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+  app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
     // Dentro de app.use("/api", ...) o Express já tirou o prefixo: aqui
     // `/api/auth/login` chega como `/auth/login`.
     if (ROTAS_ABERTAS.some((r) => r.test(req.path))) return next();
@@ -1729,12 +1730,46 @@ export async function registerRoutes(
     const recebida = String(req.headers["x-hub-key"] || req.query.key || "");
     if (esperada && recebida === esperada) return next();
 
-    if (getUserFromToken(extractToken(req))) return next();
+    const token = extractToken(req);
+    if (getUserFromToken(token)) return next();
+
+    /**
+     * ⛔ O CACHE ⛔ NÃO É A VERDADE — a tabela `sessoes` é.
+     *
+     * Sem esta queda, persistir sessão ⛔ não resolveria nada: depois de um
+     * deploy o Map nasce vazio e o token do dono, que continua válido no banco,
+     * seria recusado exatamente igual. É aqui que o lastro vira efeito.
+     *
+     * ⚠️ Só chega neste ponto quem ⛔ não estava em memória — token de antes do
+     * último restart. Uma consulta, e o Map passa a servi-lo.
+     */
+    if (token) {
+      const gravada = await sessaoBuscar(token);
+      if (gravada) {
+        sessoesAtivas.set(token, { userId: gravada.userId, expiresAt: gravada.expiresAt });
+        if (getUserFromToken(token)) return next();
+      }
+    }
 
     // ⛔ 401 seco, sem payload e sem dizer qual credencial faltou: mensagem
     //    detalhada é mapa para quem está tentando entrar.
     return res.status(401).json({ ok: false, error: "não autenticado" });
   });
+
+  /**
+   * Aquece o cache com o que já estava gravado, e limpa o vencido de uma vez.
+   *
+   * ⛔ ⛔ NÃO é o que faz o dono continuar logado — quem faz isso é a queda para o
+   * banco, ali em cima. Isto só evita que a PRIMEIRA chamada de cada sessão
+   * pague uma consulta. Confundir os dois faria alguém remover a queda achando
+   * que o boot resolve, e o defeito voltaria calado.
+   */
+  sessoesVivas()
+    .then((vivas) => {
+      for (const v of vivas) sessoesAtivas.set(v.token, { userId: v.userId, expiresAt: v.expiresAt });
+      if (vivas.length) log(`${vivas.length} sessão(ões) recuperada(s) do banco`, "auth");
+    })
+    .catch(() => {});
 
   // ─── Aguarda DB conectar e puxa dados do DB (sobrescreve dos arquivos) ──
   try {
@@ -1841,7 +1876,12 @@ export async function registerRoutes(
       return res.status(401).json({ error: "Usuário ou senha incorretos." });
     }
     const token = generateToken();
-    sessoesAtivas.set(token, { userId: user.id, expiresAt: Date.now() + SESSION_DURATION_MS });
+    const expiresAt = Date.now() + SESSION_DURATION_MS;
+    sessoesAtivas.set(token, { userId: user.id, expiresAt });
+    // ⛔ Best-effort: se o banco estiver fora, a sessão vale nesta instância e o
+    //    dono entra. Recusar o login porque o LASTRO falhou seria trocar um
+    //    incômodo (deslogar no deploy) por uma tranca.
+    sessaoGravar({ token, userId: user.id, expiresAt }).catch(() => {});
     const { passwordHash, ...userSafe } = user;
     return res.json({ token, user: userSafe });
   });
@@ -1849,7 +1889,12 @@ export async function registerRoutes(
   // POST /api/auth/logout
   app.post("/api/auth/logout", (req: Request, res: Response) => {
     const token = extractToken(req);
-    if (token) sessoesAtivas.delete(token);
+    if (token) {
+      sessoesAtivas.delete(token);
+      // ⛔ Sair tem que sair do BANCO também — senão o token ressuscita no
+      //    próximo boot, e "logout" vira uma palavra na tela.
+      sessaoApagar(token).catch(() => {});
+    }
     return res.json({ ok: true });
   });
 

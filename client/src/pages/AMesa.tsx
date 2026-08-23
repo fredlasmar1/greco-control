@@ -9,13 +9,37 @@
  * com o Greco Metas cai, ela diz que caiu. Um placar mostrando R$ 0,00 porque a
  * leitura falhou parece resultado ruim e leva a decisão errada.
  */
+import { Fragment, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { AlertTriangle, CheckCircle2, Clock, HelpCircle, Loader2, Target } from "lucide-react";
+import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
+
+/**
+ * ⛔ PADRÃO VISUAL DO CONTROL — decidido pelo dono em 23/08/2026: escuro com a
+ * marca Greco, mas com a DENSIDADE e os gráficos das referências executivas que
+ * ele mandou. Ele abriu A Mesa depois do Painel e disse: *"acho que você não
+ * entrou o padrão que eu te pedi nessas abas"*. Estava certo — eu tinha aplicado
+ * só no Painel.
+ *
+ * ⚠️ E o padrão ⛔ NÃO é "mais bonito": é ler em três segundos o que antes exigia
+ * ler quatro parágrafos. As decisões viravam parede de texto, e parede de texto
+ * é como um placar deixa de ser lido.
+ */
+const VERMELHO = "#A50101";
+const AZUL = "#3B82F6";
+const CINZA = "#6B7280";
+const VERDE = "#10B981";
 
 const API = (globalThis as any).__API_BASE__ || "";
 const brl = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
+
+const tooltip = {
+  contentStyle: { background: "#141416", border: "1px solid #ffffff1f", borderRadius: 12, color: "#E5E7EB", fontSize: 12 },
+  labelStyle: { color: "#9CA3AF" },
+  cursor: { fill: "#ffffff08" },
+} as const;
 
 const SITUACAO: Record<string, { rotulo: string; cor: string; icone: any }> = {
   rascunho: { rotulo: "incompleta", cor: "text-amber-500", icone: AlertTriangle },
@@ -26,6 +50,18 @@ const SITUACAO: Record<string, { rotulo: string; cor: string; icone: any }> = {
 };
 
 export default function AMesa() {
+  /**
+   * ⛔ HOOK NO TOPO, ANTES DE QUALQUER `return`.
+   *
+   * ⚠️ Na primeira versão desta tela eu declarei este `useState` junto do lugar
+   * onde ele é usado — depois dos `return` de carregando e de erro. React exige
+   * a MESMA quantidade de hooks em toda renderização: no primeiro carregamento
+   * a tela retorna cedo, roda 1 hook; quando o dado chega, roda 2, e o React
+   * derruba com "Rendered more hooks than during the previous render".
+   *
+   * ⛔ O typecheck ⛔ NÃO pega isso. Só quebraria na cara do dono.
+   */
+  const [expandida, setExpandida] = useState<number | null>(null);
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["mesa"],
     queryFn: async () => {
@@ -72,6 +108,30 @@ export default function AMesa() {
     .filter((l) => l.diasAteValer >= 0)
     .sort((a, b) => a.diasAteValer - b.diasAteValer)[0];
 
+  /**
+   * ⛔ AGRUPAR ⛔ NÃO É CALCULAR. Contar quantas decisões estão em cada situação é
+   * leitura do que o servidor já classificou — a tela ⛔ não decide situação
+   * nenhuma, só soma o que veio rotulado.
+   */
+  const porSituacao = [
+    { rotulo: "valendo", n: linhas.filter((l) => l.situacao === "valendo").length, cor: AZUL },
+    { rotulo: "ainda não vale", n: linhas.filter((l) => l.situacao === "aguardando").length, cor: CINZA },
+    { rotulo: "encerrada", n: linhas.filter((l) => l.situacao === "encerrada").length, cor: VERDE },
+  ].filter((f) => f.n > 0);
+
+  /**
+   * ⛔ SÓ AS QUE APOSTAM EM DINHEIRO. Pôr "+14 assinantes" numa barra ao lado de
+   * "R$ 6.205" seria somar unidades diferentes num gráfico — o jeito mais rápido
+   * de inventar uma comparação que ⛔ não existe.
+   */
+  const porValor = linhas
+    .filter((l) => l.decisao.metrica !== "assinantes_clube")
+    .map((l) => ({
+      curto: String(l.decisao.titulo).length > 22 ? String(l.decisao.titulo).slice(0, 21) + "…" : l.decisao.titulo,
+      esperado: Number(l.decisao.esperado) || 0,
+    }))
+    .sort((a, b) => b.esperado - a.esperado);
+
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-6">
       <header className="space-y-1">
@@ -85,11 +145,11 @@ export default function AMesa() {
         </p>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 lg:grid-cols-3">
         <Card>
           <CardContent className="space-y-1 p-4">
             <p className="text-xs uppercase tracking-wider text-muted-foreground">Prometido por mês</p>
-            <p className="text-2xl font-bold tabular-nums">{brl(mesa.prometidoPorMes || 0)}</p>
+            <p className="text-2xl font-bold tabular-nums text-[#E23B2E]">{brl(mesa.prometidoPorMes || 0)}</p>
             <p className="text-xs text-muted-foreground">somando as decisões abertas</p>
           </CardContent>
         </Card>
@@ -113,6 +173,58 @@ export default function AMesa() {
         </Card>
       </div>
 
+      <div className="grid gap-3 lg:grid-cols-2">
+        {/* ── O donut de situação ─────────────────────────────────────────── */}
+        <Card>
+          <CardContent className="p-5">
+            <h2 className="text-sm font-semibold">Em que pé estão</h2>
+            <p className="mb-2 text-xs text-muted-foreground">
+              ⛔ nenhuma foi julgada ainda — todas esperam a data de conferência
+            </p>
+            <div className="flex items-center gap-4">
+              <ResponsiveContainer width="45%" height={170}>
+                <PieChart>
+                  <Pie data={porSituacao} dataKey="n" nameKey="rotulo" innerRadius={44} outerRadius={72} paddingAngle={3}>
+                    {porSituacao.map((f, i) => <Cell key={i} fill={f.cor} stroke="#0E0000" />)}
+                  </Pie>
+                  <Tooltip {...tooltip} />
+                </PieChart>
+              </ResponsiveContainer>
+              <ul className="flex-1 space-y-2 text-sm">
+                {porSituacao.map((f) => (
+                  <li key={f.rotulo} className="flex items-baseline gap-2">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: f.cor }} />
+                    <span className="flex-1 text-muted-foreground">{f.rotulo}</span>
+                    <span className="font-semibold tabular-nums">{f.n}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ── Quanto cada decisão promete ─────────────────────────────────── */}
+        <Card>
+          <CardContent className="p-5">
+            <h2 className="text-sm font-semibold">Quanto cada uma promete</h2>
+            <p className="mb-2 text-xs text-muted-foreground">
+              ⚠️ só as que apostam em dinheiro — o Clube aposta em assinantes e ⛔ não entra aqui
+            </p>
+            <ResponsiveContainer width="100%" height={170}>
+              <BarChart data={porValor} layout="vertical" margin={{ left: 4, right: 12, top: 4, bottom: 0 }}>
+                <CartesianGrid stroke="#ffffff10" horizontal={false} />
+                <XAxis type="number" tick={{ fill: CINZA, fontSize: 11 }} axisLine={false} tickLine={false}
+                  tickFormatter={(v) => `${Math.round(Number(v) / 1000)}k`} />
+                <YAxis type="category" dataKey="curto" width={92} tick={{ fill: CINZA, fontSize: 11 }}
+                  axisLine={false} tickLine={false} />
+                <Tooltip {...tooltip} formatter={(v: any) => brl(Number(v))} />
+                <Bar dataKey="esperado" fill={VERMELHO} radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+
       {pendencias.length > 0 && (
         <Card className="border-amber-500/40">
           <CardContent className="space-y-3 p-5">
@@ -131,65 +243,104 @@ export default function AMesa() {
         </Card>
       )}
 
-      <div className="space-y-3">
-        {linhas.map((l, i) => {
-          const s = SITUACAO[l.situacao] ?? SITUACAO.aguardando;
-          const Icone = s.icone;
-          const v = l.veredito;
-          return (
-            <Card key={i}>
-              <CardContent className="space-y-3 p-5">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <h2 className="font-semibold">{l.decisao.titulo}</h2>
-                  <span className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider ${s.cor}`}>
-                    <Icone className="h-3.5 w-3.5" /> {s.rotulo}
-                  </span>
-                </div>
+      {/*
+        ⛔ AS DECISÕES VIRARAM LINHA, ⛔ NÃO PARÁGRAFO.
 
-                <p className="text-sm text-muted-foreground">{l.decisao.porque}</p>
+        Cada uma ocupava quatro linhas de prosa antes de mostrar o número. Numa
+        tela que existe para COBRAR, texto longo é como o placar deixa de ser
+        lido — e o dono disse exatamente isso ao comparar com as referências.
 
-                <div className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-                  <div>
-                    <span className="text-muted-foreground">Aposta: </span>
-                    <span className="font-medium tabular-nums">
-                      {l.decisao.metrica === "assinantes_clube"
-                        ? `+${l.decisao.esperado} ${l.metricaRotulo}`
-                        : `${brl(l.decisao.esperado)} — ${l.metricaRotulo}`}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">
-                      {l.diasAteValer > 0 ? "Passa a valer em: " : "Confere em: "}
-                    </span>
-                    <span className="font-medium tabular-nums">
-                      {l.diasAteValer > 0
-                        ? `${l.diasAteValer} dias (${l.decisao.valeEm.split("-").reverse().join("/")})`
-                        : `${l.diasAteConferir} dias (${l.decisao.conferirEm.split("-").reverse().join("/")})`}
-                    </span>
-                  </div>
-                </div>
+        ⚠️ Mas o "porquê" ⛔ NÃO foi apagado: ele fica atrás de um clique. É o
+        registro do raciocínio no dia da decisão, e é o que impede o histórico de
+        virar uma lista de números sem memória.
+      */}
+      <Card>
+        <CardContent className="p-5">
+          <h2 className="text-sm font-semibold">As decisões</h2>
+          <p className="mb-3 text-xs text-muted-foreground">
+            clique numa linha para ver por que ela foi tomada
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] text-sm">
+              <thead className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                <tr className="border-b">
+                  <th className="py-2 text-left font-medium">Decisão</th>
+                  <th className="py-2 text-left font-medium">Situação</th>
+                  <th className="py-2 text-right font-medium">Aposta</th>
+                  <th className="py-2 text-right font-medium">Prazo</th>
+                  <th className="py-2 pl-4 text-left font-medium">Veredito</th>
+                </tr>
+              </thead>
+              <tbody>
+                {linhas.map((l, i) => {
+                  const s = SITUACAO[l.situacao] ?? SITUACAO.aguardando;
+                  const Icone = s.icone;
+                  const v = l.veredito;
+                  const aberto = expandida === i;
+                  return (
+                    <Fragment key={i}>
+                      <tr
+                        className="cursor-pointer border-b last:border-0 hover:bg-muted/30"
+                        onClick={() => setExpandida(aberto ? null : i)}
+                      >
+                        <td className="py-2.5 pr-3 font-medium">{l.decisao.titulo}</td>
+                        <td className="py-2.5">
+                          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${s.cor}`}>
+                            <Icone className="h-3 w-3" /> {s.rotulo}
+                          </span>
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums">
+                          {l.decisao.metrica === "assinantes_clube"
+                            ? `+${l.decisao.esperado}`
+                            : brl(l.decisao.esperado)}
+                          <span className="ml-1 text-[11px] text-muted-foreground">{l.metricaRotulo}</span>
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums">
+                          {l.diasAteValer > 0 ? (
+                            <span className="text-muted-foreground">vale em {l.diasAteValer}d</span>
+                          ) : (
+                            <span>confere em <b>{l.diasAteConferir}d</b></span>
+                          )}
+                        </td>
+                        <td className="py-2.5 pl-4">
+                          {/* ⛔ "sem base pra julgar" ⛔ NÃO é falha: é a data ainda
+                              não ter chegado. Pintar de vermelho ensinaria o dono
+                              a ver defeito onde há espera. */}
+                          <span className={
+                            v.atingiu === true ? "text-emerald-500"
+                            : v.atingiu === false ? "text-rose-500"
+                            : "text-muted-foreground"
+                          }>
+                            {v.atingiu === null ? "aguardando a data" : v.resumo}
+                          </span>
+                        </td>
+                      </tr>
+                      {aberto && (
+                        <tr className="border-b last:border-0">
+                          <td colSpan={5} className="bg-muted/20 px-3 py-3">
+                            <p className="text-sm text-muted-foreground">{l.decisao.porque}</p>
+                            {l.decisao.limiteTexto && (
+                              <p className="mt-2 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-300">
+                                <b>Risco aceito: </b>{l.decisao.limiteTexto}
+                              </p>
+                            )}
+                            <p className="mt-2 text-[11px] text-muted-foreground">
+                              decidida em {l.decisao.decididoEm.split("-").reverse().join("/")} ·
+                              vale em {l.decisao.valeEm.split("-").reverse().join("/")} ·
+                              confere em {l.decisao.conferirEm.split("-").reverse().join("/")}
+                            </p>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
 
-                {l.decisao.limiteTexto && (
-                  <p className="rounded-md bg-muted/50 px-3 py-2 text-xs">
-                    <span className="font-semibold">Risco aceito: </span>
-                    {l.decisao.limiteTexto}
-                  </p>
-                )}
-
-                {/* O veredito só aparece quando existe base. "sem base pra julgar"
-                    é uma resposta melhor que um percentual inventado. */}
-                <p
-                  className={`text-xs ${
-                    v.atingiu === true ? "text-emerald-500" : v.atingiu === false ? "text-rose-500" : "text-muted-foreground"
-                  }`}
-                >
-                  {v.resumo}
-                </p>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
     </div>
   );
 }

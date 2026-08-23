@@ -30,6 +30,21 @@ const POSICAO: Record<string, { rotulo: string; cor: string; icone: any }> = {
   depende: { rotulo: "depende", cor: "text-amber-500", icone: MinusCircle },
 };
 
+/**
+ * ⛔ CÓPIA DECLARADA de `server/lib/conselho.ts` — nome, lente e o que cada um
+ * ⛔ NÃO faz. São quatro linhas de TEXTO DE APRESENTAÇÃO, sem uma decisão de
+ * negócio dentro: o parecer, a posição e a base continuam vindo do servidor.
+ *
+ * ⚠️ Se um conselheiro mudar lá e ⛔ não mudar aqui, a apresentação envelhece — e
+ * é por isso que isto está declarado como cópia em vez de fingir ser fonte.
+ */
+const MESA = [
+  { nome: "O Contador", lente: "os números fecham?", naoFaz: "não diz se a ideia é boa", veNumeros: true },
+  { nome: "O Sócio Cético", lente: "qual a premissa escondida, e quando ela quebra?", naoFaz: "não concorda sem tentar derrubar", veNumeros: true },
+  { nome: "O Barbeiro da Esquina", lente: "o cliente de Anápolis aceita isso?", naoFaz: "não usa dado interno da casa", veNumeros: false },
+  { nome: "O Cliente da Cadeira", lente: "como isso soa pra quem paga?", naoFaz: "não fala de margem nem de custo", veNumeros: false },
+];
+
 const SUGESTOES = [
   "Devo liberar o corte Express para todos os barbeiros, a R$ 45, com a comissão caindo de 50% para 42%?",
   "Vale contratar mais barbeiros agora, ou o gargalo é outro?",
@@ -123,6 +138,36 @@ export default function OConselho() {
           )}
         </CardContent>
       </Card>
+
+      {/*
+        ⛔ QUEM SENTA NA MESA — visível ANTES de perguntar.
+        `[23/08/2026]` esta tela era uma caixa de texto num vazio. O dono
+        comparou com as referências executivas e disse que o padrão ⛔ não tinha
+        chegado aqui. Estava certo: sem a sessão, ⛔ não havia nada para ler.
+        ⚠️ E há informação de verdade nisto: DOIS conselheiros veem os números da
+        casa e DOIS ⛔ NÃO veem. Essa assimetria é o produto — se todos vissem os
+        mesmos dados, seriam quatro contadores e a discordância sumiria.
+      */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {MESA.map((c) => (
+          <Card key={c.nome} className={c.veNumeros ? "border-[#A50101]/30" : ""}>
+            <CardContent className="space-y-1.5 p-4">
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="text-sm font-semibold">{c.nome}</h3>
+                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                  c.veNumeros
+                    ? "border-[#A50101]/40 bg-[#A50101]/10 text-[#E23B2E]"
+                    : "border-white/15 text-muted-foreground"
+                }`}>
+                  {c.veNumeros ? "vê os números" : "não vê"}
+                </span>
+              </div>
+              <p className="text-xs italic text-muted-foreground">"{c.lente}"</p>
+              <p className="text-[11px] text-muted-foreground">⛔ {c.naoFaz}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
       {reunir.isError && (
         <Card className="border-amber-500/40">

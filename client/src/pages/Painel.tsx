@@ -126,10 +126,77 @@ export default function Painel() {
           </span>
         </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          <Kpi rotulo="Faturamento" valor={brl(atual.caixa)}
-            atual={atual.caixa} anterior={anterior?.caixa}
-            serie={meses} campo="caixa" />
+        {/*
+          ⛔ A IDADE DO DADO, NO TOPO — e o motivo dela existir.
+
+          `[23/08/2026]` o dono abriu este painel num DOMINGO e disse: *"o sistema
+          está travado a tempos em questão de números"*. Nada estava travado: o
+          sync roda terça a sábado, o último foi sábado 23:00, e havia 276
+          agendamentos futuros. ⛔ Mas nenhuma tela dizia isso.
+
+          ⚠️ Foi a SEGUNDA vez. A primeira, em 17/08, custou uma tarde dele.
+
+          ⛔ E o vermelho só aparece quando passou do PRÓXIMO DISPARO ESPERADO —
+          nunca por "faz X horas". Vermelho em dia fechado ensina a ignorar o
+          aviso, e aí ninguém vê o dia em que parar de verdade.
+        */}
+        {data.idade && (
+          <div
+            className={`mt-3 flex flex-wrap items-center gap-2 rounded-xl border px-4 py-2.5 text-[12px] ${
+              data.idade.atrasado
+                ? "border-red-500/40 bg-red-500/[0.08] text-red-300"
+                : "border-white/10 bg-white/[0.03] text-slate-400"
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${data.idade.atrasado ? "bg-red-400" : "bg-emerald-400"}`} />
+            <span>Agenda {data.idade.frase}</span>
+          </div>
+        )}
+
+        {/*
+          ⛔ O MÊS EM CURSO VEM PRIMEIRO, E GRANDE.
+
+          Ele estava num rodapé cinza, e o título dizia "último mês fechado:
+          jul". No dia 23 do mês, isso passa a sensação de sistema parado em
+          julho — quando agosto é a informação que o dono mais precisa.
+
+          ⚠️ Mas ele CONTINUA fora de toda comparação: o cartão diz "parcial" e
+          ⛔ não tem variação percentual. Agosto com 23 dias contra julho com 31
+          é uma queda que ⛔ não existe.
+        */}
+        {emCurso && (
+          <div className="mt-4 rounded-2xl border border-white/15 bg-white/[0.04] p-5">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                  {rotulo(emCurso.mes)} · mês em curso —{" "}
+                  <span className="text-amber-300/90">parcial, ⛔ fora de comparação</span>
+                </p>
+                <p className="mt-1 font-display text-4xl font-black text-white">
+                  {brl(emCurso.oficial?.total)}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-500">faturamento oficial até agora</p>
+              </div>
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-400">
+                <span><b className="text-slate-200">{num(emCurso.clientes)}</b> clientes</span>
+                <span><b className="text-slate-200">{num(emCurso.atendimentos)}</b> atendimentos</span>
+                <span>ticket <b className="text-slate-200">{brlExato(emCurso.ticket)}</b></span>
+                <span>R$/h <b className="text-slate-200">{brlExato(emCurso.rsHora)}</b></span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <p className="mt-5 text-[11px] uppercase tracking-wide text-slate-500">
+          O último mês FECHADO — {rotulo(atual.mes)}
+        </p>
+        <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {/* ⛔ O DINHEIRO é o faturamento OFICIAL (Gmail + API + CSV), ⛔ nunca a
+              agenda — que [medido 23/08] subconta de 13% a 32% conforme o mês. */}
+          <Kpi rotulo="Faturamento oficial" valor={brl(atual.oficial?.total)}
+            atual={atual.oficial?.total ?? null} anterior={anterior?.oficial?.total ?? null}
+            serie={meses} extrair={(m) => m.oficial?.total ?? null}
+            nota="Gmail + API + CSV" destaque />
           <Kpi rotulo="Clientes atendidos" valor={num(atual.clientes)}
             atual={atual.clientes} anterior={anterior?.clientes}
             serie={meses} campo="clientes" />
@@ -145,42 +212,42 @@ export default function Painel() {
             nota={atual.rsHora == null ? "sem duração medida neste mês" : undefined} />
         </div>
 
-        {/* ⛔ O mês em curso tem CARTÃO PRÓPRIO, fora da comparação. Misturá-lo
-            com os fechados é o jeito mais fácil de inventar uma queda. */}
-        {emCurso && (
-          <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.02] px-5 py-4">
-            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-              <span className="text-[11px] uppercase tracking-wide text-slate-500">
-                {rotulo(emCurso.mes)} · mês em curso — ⛔ fora de toda comparação
-              </span>
-              <span className="text-slate-300">
-                <b className="text-white">{brl(emCurso.caixa)}</b> até agora
-              </span>
-              <span className="text-slate-400">{num(emCurso.clientes)} clientes</span>
-              <span className="text-slate-400">{num(emCurso.atendimentos)} atendimentos</span>
-              <span className="text-slate-400">R$/h {brlExato(emCurso.rsHora)}</span>
-            </div>
-          </div>
-        )}
       </section>
 
       {/* ── Faturamento mês a mês ──────────────────────────────────────────── */}
-      <Bloco titulo="Faturamento mês a mês" sub="o mês em curso sai tracejado — ele ainda não terminou">
+      {/*
+        ⛔ DUAS LINHAS, E A DIFERENÇA ENTRE ELAS É INFORMAÇÃO.
+
+        A vermelha é o faturamento OFICIAL; a cinza é o que a AGENDA registrou.
+        `[medido 23/08]` a agenda subconta de **13% a 32%** conforme o mês — em
+        junho, quase um terço da receita ⛔ não virou linha de agendamento.
+
+        ⚠️ Mostrar só a agenda faria o dono ver menos do que ele fatura. Mostrar
+        só o oficial esconderia que a agenda ⛔ não é confiável para dinheiro.
+      */}
+      <Bloco
+        titulo="O dinheiro, mês a mês"
+        sub="vermelho = faturamento oficial · cinza = o que a agenda viu · tracejado = mês em curso"
+      >
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={meses.map((m) => ({
             mes: rotulo(m.mes),
-            fechado: m.emCurso ? null : m.caixa,
-            curso: m.emCurso ? m.caixa : null,
+            fechado: m.emCurso ? null : (m.oficial?.total ?? null),
+            curso: m.emCurso ? (m.oficial?.total ?? null) : null,
+            agenda: m.emCurso ? null : m.caixa,
           }))} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
             <CartesianGrid stroke="#ffffff12" vertical={false} />
             <XAxis dataKey="mes" tick={{ fill: CINZA, fontSize: 12 }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fill: CINZA, fontSize: 11 }} axisLine={false} tickLine={false}
               tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
             <Tooltip {...tooltip} formatter={(v: any) => brl(Number(v))} />
-            <Line type="monotone" dataKey="fechado" name="mês fechado" stroke={VERMELHO}
+            <Legend wrapperStyle={{ fontSize: 12, color: CINZA }} />
+            <Line type="monotone" dataKey="fechado" name="faturamento oficial" stroke={VERMELHO}
               strokeWidth={2.5} dot={{ r: 3, fill: VERMELHO }} connectNulls />
-            <Line type="monotone" dataKey="curso" name="em curso (parcial)" stroke={CINZA}
-              strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: CINZA }} />
+            <Line type="monotone" dataKey="agenda" name="o que a agenda viu" stroke={CINZA}
+              strokeWidth={1.5} dot={false} connectNulls />
+            <Line type="monotone" dataKey="curso" name="em curso (parcial)" stroke={VERMELHO_CLARO}
+              strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: VERMELHO_CLARO }} />
           </LineChart>
         </ResponsiveContainer>
       </Bloco>
@@ -324,10 +391,13 @@ function Bloco({ titulo, sub, children }: { titulo: string; sub?: string; childr
  * diz "sem base", ⛔ nunca 0%. Zero por cento é uma afirmação: significa "ficou
  * igual", e ficar igual é diferente de não saber.
  */
-function Kpi({ rotulo: r, valor, atual, anterior, serie, campo, nota }: {
+function Kpi({ rotulo: r, valor, atual, anterior, serie, campo, extrair, nota, destaque }: {
   rotulo: string; valor: string;
   atual: number | null; anterior: number | null | undefined;
-  serie: any[]; campo: string; nota?: string;
+  serie: any[]; campo?: string;
+  /** Para números que moram aninhados, como `oficial.total`. */
+  extrair?: (m: any) => number | null;
+  nota?: string; destaque?: boolean;
 }) {
   const varia =
     atual == null || anterior == null || anterior === 0
@@ -336,17 +406,18 @@ function Kpi({ rotulo: r, valor, atual, anterior, serie, campo, nota }: {
 
   // ⛔ A sparkline só usa mês FECHADO e só ponto MEDIDO. Interpolar o buraco de
   //    R$/hora de jan–mai desenharia uma linha que nunca existiu.
+  const ler = extrair ?? ((m: any) => (campo ? m[campo] : null));
   const pontos = serie
-    .filter((m) => !m.emCurso && m[campo] != null)
-    .map((m) => ({ v: m[campo] }));
+    .filter((m) => !m.emCurso && ler(m) != null)
+    .map((m) => ({ v: ler(m) }));
 
   const Icone = varia == null ? Minus : varia >= 0 ? TrendingUp : TrendingDown;
   const cor = varia == null ? "text-slate-500" : varia >= 0 ? "text-emerald-400" : "text-red-400";
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+    <div className={`rounded-2xl border p-4 ${destaque ? "border-[#A50101]/40 bg-[#A50101]/[0.07]" : "border-white/10 bg-white/[0.03]"}`}>
       <p className="text-[11px] uppercase tracking-wide text-slate-500">{r}</p>
-      <p className="mt-1 font-display text-2xl font-black text-white">{valor}</p>
+      <p className={`mt-1 font-display text-2xl font-black ${destaque ? "text-[#E23B2E]" : "text-white"}`}>{valor}</p>
 
       <div className="mt-1 flex items-center justify-between gap-2">
         <span className={`flex items-center gap-1 text-xs ${cor}`}>

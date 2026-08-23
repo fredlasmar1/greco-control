@@ -279,7 +279,16 @@ export default function Painel() {
           sub={data.mix?.outros ? `a cauda está agrupada, com a contagem à vista` : "todos os serviços cabem no gráfico"}
         >
           <div className="flex items-center gap-4">
-            <ResponsiveContainer width="55%" height={240}>
+            {/*
+              ⚠️ TAMANHO FIXO, ⛔ não porcentagem. Este donut funcionava com
+              `width="55%"` — mas por SORTE, porque o card é largo. O mesmo
+              padrão n'A Mesa, num card menor, colapsou e desenhou dois
+              tracinhos. Porcentagem dentro de item flex mede 0 quando o pai
+              ⛔ não tem largura resolvida; "está funcionando" ⛔ não é o mesmo que
+              "está certo".
+            */}
+            <div className="h-[240px] w-[240px] shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={[...(data.mix?.fatias ?? []), ...(data.mix?.outros ? [data.mix.outros] : [])]}
@@ -291,6 +300,7 @@ export default function Painel() {
                 <Tooltip {...tooltip} formatter={(v: any) => brl(Number(v))} />
               </PieChart>
             </ResponsiveContainer>
+            </div>
             <ul className="flex-1 space-y-1.5 text-sm">
               {[...(data.mix?.fatias ?? []), ...(data.mix?.outros ? [data.mix.outros] : [])]
                 .map((f: any, i: number) => (

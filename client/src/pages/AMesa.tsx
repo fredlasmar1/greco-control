@@ -182,7 +182,15 @@ export default function AMesa() {
               ⛔ nenhuma foi julgada ainda — todas esperam a data de conferência
             </p>
             <div className="flex items-center gap-4">
-              <ResponsiveContainer width="45%" height={170}>
+              {/*
+                ⚠️ INVÓLUCRO COM TAMANHO FIXO, ⛔ não `width="45%"`.
+                A primeira versão usava porcentagem dentro de um flex e o
+                ResponsiveContainer colapsou: o donut virou dois tracinhos na
+                tela. Porcentagem só funciona quando o pai tem largura resolvida,
+                e num item flex ela ⛔ não está — o container mede 0 e desenha 0.
+              */}
+              <div className="h-[170px] w-[170px] shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie data={porSituacao} dataKey="n" nameKey="rotulo" innerRadius={44} outerRadius={72} paddingAngle={3}>
                     {porSituacao.map((f, i) => <Cell key={i} fill={f.cor} stroke="#0E0000" />)}
@@ -190,6 +198,7 @@ export default function AMesa() {
                   <Tooltip {...tooltip} />
                 </PieChart>
               </ResponsiveContainer>
+              </div>
               <ul className="flex-1 space-y-2 text-sm">
                 {porSituacao.map((f) => (
                   <li key={f.rotulo} className="flex items-baseline gap-2">

@@ -1,7 +1,13 @@
 import { create } from "zustand";
 
 const API_BASE = () => (globalThis as any).__API_BASE__ || "";
-const TOKEN_KEY = "greco_auth_token";
+/**
+ * ⛔ A chave do token mora AQUI e é exportada. Em 23/08 eu a reescrevi à mão em
+ * `tokenNoFetch.ts` e errei o nome — o interceptador leria `null` para sempre e
+ * TODA chamada voltaria 401, sem erro nenhum apontando a causa. Chave copiada é
+ * chave que diverge calada.
+ */
+export const TOKEN_KEY = "greco_auth_token";
 
 export interface AuthUser {
   id: string;

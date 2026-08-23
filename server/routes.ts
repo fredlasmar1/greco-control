@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { log } from "./index";
@@ -1674,6 +1674,67 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // ════════════════════════════════════════════════════════════════════════
+  // ⛔ PORTÃO ÚNICO DE /api — a autenticação de verdade
+  //
+  // ⚠️ ACHADO EM 23/08/2026, SEVERIDADE MÁXIMA: até esta linha existir, as 284
+  //    rotas /api do Control respondiam a QUALQUER UM na internet. Verificado
+  //    de fora, sem cookie, sem token e sem header:
+  //
+  //      GET /api/mesa              → 200 · 5.375 bytes  (as decisões do dono)
+  //      GET /api/mesa/mes/2026-07  → 200 · 16.834 bytes (o DRE INTEIRO)
+  //      POST /api/mesa/precos      → 200 · 13.000 bytes (régua de preço e Clube)
+  //
+  //    A tela de login existia e funcionava — e protegia o FRONT-END e mais
+  //    nada. ⛔ Autenticação de tela sem autenticação de rota é teatro: quem sabe
+  //    o endereço não passa pela tela.
+  //
+  // ⛔ POR QUE UM PORTÃO E NÃO 284 VERIFICAÇÕES: porta fechada em 284 lugares
+  //    reabre na 285ª. A rota /api/mesa/precos, subida em 22/08, nasceu aberta
+  //    porque herdou o padrão das vizinhas — ninguém percebeu, nem quem a
+  //    escreveu. Guarda espalhada é guarda que envelhece mal.
+  //
+  // ⛔ QUEM PASSA — três credenciais, e a lista de exceção é CURTA e EXPLÍCITA:
+  //    1. sessão válida       → o dono no navegador
+  //    2. HUB_API_KEY         → o Greco Metas (`controlHub.ts` chama /api/hub/*
+  //                             e /api/assinaturas/clientes)
+  //    3. lista de abertas    → só o que NÃO pode exigir sessão, abaixo
+  //
+  // ⚠️ INVENTÁRIO DE CHAMADORES, feito ANTES da guarda (23/08):
+  //    · /api/auth/login          — é a porta; exigir sessão para entrar tranca todo mundo
+  //    · /api/trinks/status       — healthcheckPath do railway.toml. ⛔ Fechar aqui
+  //                                 faz o Railway reiniciar o serviço em laço até
+  //                                 desistir, e o Control sai do ar sozinho.
+  //    · /api/telegram/webhook/*  — a Telegram chama de fora, e o segredo já está
+  //                                 no próprio caminho (:secret).
+  //
+  // 📌 DÍVIDA: `/api/trinks/status` continua legível por qualquer um. Ela expõe
+  //    a cota da Trinks, ⛔ não dado financeiro. Some no dia em que o healthcheck
+  //    mudar para uma rota fora de /api — trocar agora arriscaria o deploy exato
+  //    em que o portão sobe.
+  // ════════════════════════════════════════════════════════════════════════
+  const ROTAS_ABERTAS: RegExp[] = [
+    /^\/auth\/login\/?$/,
+    /^\/trinks\/status\/?$/,
+    /^\/telegram\/webhook\//,
+  ];
+
+  app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+    // Dentro de app.use("/api", ...) o Express já tirou o prefixo: aqui
+    // `/api/auth/login` chega como `/auth/login`.
+    if (ROTAS_ABERTAS.some((r) => r.test(req.path))) return next();
+
+    const esperada = process.env.HUB_API_KEY || "";
+    const recebida = String(req.headers["x-hub-key"] || req.query.key || "");
+    if (esperada && recebida === esperada) return next();
+
+    if (getUserFromToken(extractToken(req))) return next();
+
+    // ⛔ 401 seco, sem payload e sem dizer qual credencial faltou: mensagem
+    //    detalhada é mapa para quem está tentando entrar.
+    return res.status(401).json({ ok: false, error: "não autenticado" });
+  });
 
   // ─── Aguarda DB conectar e puxa dados do DB (sobrescreve dos arquivos) ──
   try {

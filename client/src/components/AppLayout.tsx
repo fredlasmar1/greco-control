@@ -34,6 +34,7 @@ import {
   ShoppingCart,
   Radar,
   Tag,
+  LogOut,
 } from "lucide-react";
 
 // TRÊS TELAS. Eram 19 no menu, de 24 construídas — 9 duplicavam o Greco Metas e
@@ -60,10 +61,20 @@ function getPageTitle(path: string): string {
   return item?.label || "O painel";
 }
 
+/** Duas letras a partir do nome. ⛔ Sem nome, ⛔ não se inventa sigla: "?" é honesto. */
+function iniciais(nome?: string | null): string {
+  const partes = String(nome || "").trim().split(/\s+/).filter(Boolean);
+  if (!partes.length) return "?";
+  const primeira = partes[0][0] || "";
+  const ultima = partes.length > 1 ? partes[partes.length - 1][0] || "" : "";
+  return (primeira + ultima).toUpperCase();
+}
+
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { sidebarOpen, setSidebarOpen } = useStore();
   const user = useAuth((s) => s.user);
+  const logout = useAuth((s) => s.logout);
   const itensVisiveis = user?.role === "recepcao"
     ? navItems.filter((n) => RECEPCAO_ROTAS.includes(n.path))
     : navItems;
@@ -183,11 +194,34 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               <Bell className="w-4 h-4 text-muted-foreground" />
               <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-primary rounded-full" />
             </button>
+            {/*
+              ⛔ QUEM ESTÁ LOGADO SAI DA SESSÃO, NÃO DO CÓDIGO.
+
+              Até 23/08/2026 este bloco escrevia "FL / Fred Lasmar" CHUMBADO.
+              Guilherme, Larissa e Camila logavam e viam o nome do DONO no canto
+              — e não havia como saber quem estava usando olhando a tela. Num
+              sistema que mostra DRE, folha e carteira, isso é pior que feio.
+
+              ⛔ E NÃO HAVIA COMO SAIR. Nenhum logout, em lugar nenhum: tela de
+              login, sessão de 30 dias agora persistida em banco, e nenhuma porta
+              de saída. Só se descobriu porque o dono foi testar o login do
+              Google e não conseguiu deslogar para provar que funcionava.
+            */}
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-white" data-testid="user-avatar">
-                FL
+                {iniciais(user?.nome || user?.username)}
               </div>
-              <span className="text-sm font-medium hidden sm:block" data-testid="user-name">Fred Lasmar</span>
+              <span className="text-sm font-medium hidden sm:block" data-testid="user-name">
+                {user?.nome || user?.username || "—"}
+              </span>
+              <button
+                onClick={() => { void logout(); }}
+                title="Sair do sistema"
+                className="ml-1 p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                data-testid="logout"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </header>

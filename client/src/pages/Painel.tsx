@@ -280,15 +280,13 @@ export default function Painel() {
         >
           <div className="flex items-center gap-4">
             {/*
-              ⚠️ TAMANHO FIXO, ⛔ não porcentagem. Este donut funcionava com
-              `width="55%"` — mas por SORTE, porque o card é largo. O mesmo
-              padrão n'A Mesa, num card menor, colapsou e desenhou dois
-              tracinhos. Porcentagem dentro de item flex mede 0 quando o pai
-              ⛔ não tem largura resolvida; "está funcionando" ⛔ não é o mesmo que
-              "está certo".
+              ⚠️ `width="55%"` VOLTOU, e a razão está registrada: em 23/08 eu
+              troquei por um invólucro de tamanho fixo achando que estava
+              consertando — e QUEBREI este donut, que funcionava. O defeito real
+              estava n'A Mesa, num card mais estreito, e eu "corrigi" os dois.
+              ⛔ Conserto sem reproduzir o defeito no lugar certo é palpite.
             */}
-            <div className="h-[240px] w-[240px] shrink-0">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="55%" height={240}>
               <PieChart>
                 <Pie
                   data={[...(data.mix?.fatias ?? []), ...(data.mix?.outros ? [data.mix.outros] : [])]}
@@ -300,7 +298,6 @@ export default function Painel() {
                 <Tooltip {...tooltip} formatter={(v: any) => brl(Number(v))} />
               </PieChart>
             </ResponsiveContainer>
-            </div>
             <ul className="flex-1 space-y-1.5 text-sm">
               {[...(data.mix?.fatias ?? []), ...(data.mix?.outros ? [data.mix.outros] : [])]
                 .map((f: any, i: number) => (

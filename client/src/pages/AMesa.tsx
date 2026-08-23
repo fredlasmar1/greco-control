@@ -181,34 +181,31 @@ export default function AMesa() {
             <p className="mb-2 text-xs text-muted-foreground">
               ⛔ nenhuma foi julgada ainda — todas esperam a data de conferência
             </p>
-            <div className="flex items-center gap-4">
-              {/*
-                ⚠️ INVÓLUCRO COM TAMANHO FIXO, ⛔ não `width="45%"`.
-                A primeira versão usava porcentagem dentro de um flex e o
-                ResponsiveContainer colapsou: o donut virou dois tracinhos na
-                tela. Porcentagem só funciona quando o pai tem largura resolvida,
-                e num item flex ela ⛔ não está — o container mede 0 e desenha 0.
-              */}
-              <div className="h-[170px] w-[170px] shrink-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={porSituacao} dataKey="n" nameKey="rotulo" innerRadius={44} outerRadius={72} paddingAngle={3}>
-                    {porSituacao.map((f, i) => <Cell key={i} fill={f.cor} stroke="#0E0000" />)}
-                  </Pie>
-                  <Tooltip {...tooltip} />
-                </PieChart>
-              </ResponsiveContainer>
-              </div>
-              <ul className="flex-1 space-y-2 text-sm">
-                {porSituacao.map((f) => (
-                  <li key={f.rotulo} className="flex items-baseline gap-2">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: f.cor }} />
-                    <span className="flex-1 text-muted-foreground">{f.rotulo}</span>
-                    <span className="font-semibold tabular-nums">{f.n}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            {/*
+              ⚠️ DONUT EM BLOCO PRÓPRIO, com a legenda EMBAIXO — ⛔ não lado a
+              lado. Duas tentativas falharam antes desta: `width="45%"` dentro de
+              um flex colapsou (o donut virou dois tracinhos), e o invólucro de
+              tamanho fixo ⛔ não desenhou. `width="100%"` num bloco de largura
+              resolvida é o único formato que este código comprovadamente
+              renderiza — é o que os outros gráficos usam.
+            */}
+            <ResponsiveContainer width="100%" height={190}>
+              <PieChart>
+                <Pie data={porSituacao} dataKey="n" nameKey="rotulo" innerRadius={48} outerRadius={78} paddingAngle={3}>
+                  {porSituacao.map((f, i) => <Cell key={i} fill={f.cor} stroke="#0E0000" />)}
+                </Pie>
+                <Tooltip {...tooltip} />
+              </PieChart>
+            </ResponsiveContainer>
+            <ul className="mt-2 flex flex-wrap justify-center gap-x-5 gap-y-1 text-sm">
+              {porSituacao.map((f) => (
+                <li key={f.rotulo} className="flex items-baseline gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: f.cor }} />
+                  <span className="text-muted-foreground">{f.rotulo}</span>
+                  <span className="font-semibold tabular-nums">{f.n}</span>
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
 

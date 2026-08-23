@@ -35,7 +35,10 @@ import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from "recharts";
-import { AlertTriangle, Loader2, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Loader2, Wallet, Users, Scissors, Receipt, Clock3, CalendarClock, Download } from "lucide-react";
+import {
+  CardNumero, CardGrafico, BotaoFerramenta, Avisos, NaoAbriu, CORES, SERIE, TOOLTIP,
+} from "@/components/painel";
 
 const API = (globalThis as any).__API_BASE__ || "";
 
@@ -63,10 +66,12 @@ const API = (globalThis as any).__API_BASE__ || "";
  * que gráfico sem animação. O ganho estético ⛔ não paga o risco de o dono abrir
  * a tela e ver vazio — foi exatamente o que aconteceu.
  */
-const VERMELHO = "#A50101";
-const VERMELHO_CLARO = "#E23B2E";
-const CINZA = "#6B7280";
-const PALETA = [VERMELHO, "#E23B2E", "#F87171", "#FCA5A5", "#9CA3AF", "#6B7280", "#374151"];
+const VERMELHO = CORES.marca;
+const VERMELHO_CLARO = CORES.marcaClara;
+const CINZA = CORES.cinza;
+/** ⛔ A paleta do donut vem do sistema — multicor, para SEPARAR as fatias.
+ *  Antes eram sete tons do mesmo vermelho, e o olho ⛔ não distinguia serviço. */
+const PALETA = SERIE;
 
 const brl = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
@@ -74,6 +79,15 @@ const brlExato = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
 const num = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+
+/**
+ * ⛔ A VARIAÇÃO, EM UM LUGAR SÓ. Devolve `null` quando falta qualquer um dos dois
+ * lados ou quando a base é zero — e a peça escreve "sem base p/ comparar".
+ * ⛔ Nunca 0%: zero afirma "ficou igual", e ficar igual ⛔ não é o mesmo que não
+ * saber. Antes esta conta estava repetida dentro do card, e repetida diverge.
+ */
+const pct = (a?: number | null, b?: number | null): number | null =>
+  a == null || b == null || b === 0 ? null : Math.round(((a - b) / b) * 1000) / 10;
 
 const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 const rotulo = (mes: string) => {
@@ -109,6 +123,30 @@ export default function Painel() {
 
   const emCurso = meses.find((m) => m.emCurso) ?? null;
 
+  /**
+   * ⛔ EXPORTA O QUE ESTÁ NA TELA, e nada além. Sem consulta nova, sem recorte
+   * diferente — o CSV tem que bater com o gráfico que o dono está olhando, senão
+   * ele confere um contra o outro e encontra divergência que ⛔ não existe.
+   *
+   * ⚠️ O mês em curso vai marcado como parcial na própria linha: planilha perde
+   * a cor e o tracejado, e um agosto pela metade solto numa coluna vira queda.
+   */
+  const exportar = () => {
+    const linhas = [
+      ["mes", "faturamento_oficial", "caixa_agenda", "clientes", "atendimentos", "ticket", "rs_hora", "parcial"],
+      ...meses.map((m: any) => [
+        m.mes, m.oficial?.total ?? "", m.caixa ?? "", m.clientes ?? "",
+        m.atendimentos ?? "", m.ticket ?? "", m.rsHora ?? "", m.emCurso ? "SIM" : "",
+      ]),
+    ];
+    const csv = linhas.map((l) => l.join(";")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = `greco-painel-${meses[0]?.mes ?? ""}-a-${meses[meses.length - 1]?.mes ?? ""}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 text-slate-400">
@@ -117,23 +155,7 @@ export default function Painel() {
     );
   }
   if (error || !atual) {
-    return (
-      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/[0.06] p-6">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-400" />
-          <div>
-            <p className="font-semibold text-white">O Painel não abriu</p>
-            <p className="mt-1 text-sm text-slate-400">
-              {(error as any)?.message || "o Greco Metas não respondeu"}
-            </p>
-            <p className="mt-2 text-xs text-slate-500">
-              ⛔ Nada foi estimado. Painel mostrando zero porque a ponte caiu leva à decisão errada
-              com cara de número apurado.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
+    return <NaoAbriu titulo="O Painel" motivo={(error as any)?.message} />;
   }
 
   return (
@@ -216,25 +238,42 @@ export default function Painel() {
         <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {/* ⛔ O DINHEIRO é o faturamento OFICIAL (Gmail + API + CSV), ⛔ nunca a
               agenda — que [medido 23/08] subconta de 13% a 32% conforme o mês. */}
-          <Kpi rotulo="Faturamento oficial" valor={brl(atual.oficial?.total)}
-            atual={atual.oficial?.total ?? null} anterior={anterior?.oficial?.total ?? null}
-            serie={meses} extrair={(m) => m.oficial?.total ?? null}
-            nota="Gmail + API + CSV" destaque />
-          <Kpi rotulo="Clientes atendidos" valor={num(atual.clientes)}
-            atual={atual.clientes} anterior={anterior?.clientes}
-            serie={meses} campo="clientes" />
-          <Kpi rotulo="Atendimentos" valor={num(atual.atendimentos)}
-            atual={atual.atendimentos} anterior={anterior?.atendimentos}
-            serie={meses} campo="atendimentos" />
-          <Kpi rotulo="Ticket médio" valor={brlExato(atual.ticket)}
-            atual={atual.ticket} anterior={anterior?.ticket}
-            serie={meses} campo="ticket" />
-          <Kpi rotulo="R$ por hora de cadeira" valor={brlExato(atual.rsHora)}
-            atual={atual.rsHora} anterior={anterior?.rsHora}
-            serie={meses} campo="rsHora"
-            nota={atual.rsHora == null ? "sem duração medida neste mês" : undefined} />
+          <CardNumero
+            rotulo="Faturamento oficial" icone={Wallet} cor={CORES.marca} destaque
+            valor={brl(atual.oficial?.total)}
+            variacao={pct(atual.oficial?.total, anterior?.oficial?.total)}
+            serie={meses.filter((m) => !m.emCurso).map((m) => m.oficial?.total ?? null)}
+            nota="Gmail + API + CSV"
+          />
+          <CardNumero
+            rotulo="Clientes atendidos" icone={Users} cor={CORES.azul}
+            valor={num(atual.clientes)}
+            variacao={pct(atual.clientes, anterior?.clientes)}
+            serie={meses.filter((m) => !m.emCurso).map((m) => m.clientes ?? null)}
+            nota="da agenda"
+          />
+          <CardNumero
+            rotulo="Atendimentos" icone={Scissors} cor={CORES.roxo}
+            valor={num(atual.atendimentos)}
+            variacao={pct(atual.atendimentos, anterior?.atendimentos)}
+            serie={meses.filter((m) => !m.emCurso).map((m) => m.atendimentos ?? null)}
+            nota="da agenda"
+          />
+          <CardNumero
+            rotulo="Ticket médio" icone={Receipt} cor={CORES.ambar}
+            valor={brlExato(atual.ticket)}
+            variacao={pct(atual.ticket, anterior?.ticket)}
+            serie={meses.filter((m) => !m.emCurso).map((m) => m.ticket ?? null)}
+            nota="caixa da agenda ÷ atendimentos da agenda"
+          />
+          <CardNumero
+            rotulo="R$ por hora de cadeira" icone={Clock3} cor={CORES.verde}
+            valor={brlExato(atual.rsHora)}
+            variacao={pct(atual.rsHora, anterior?.rsHora)}
+            serie={meses.filter((m) => !m.emCurso).map((m) => m.rsHora ?? null)}
+            nota={atual.rsHora == null ? "sem duração medida" : "só desde junho"}
+          />
         </div>
-
       </section>
 
       {/* ── Faturamento mês a mês ──────────────────────────────────────────── */}
@@ -248,9 +287,19 @@ export default function Painel() {
         ⚠️ Mostrar só a agenda faria o dono ver menos do que ele fatura. Mostrar
         só o oficial esconderia que a agenda ⛔ não é confiável para dinheiro.
       */}
-      <Bloco
+      <CardGrafico
         titulo="O dinheiro, mês a mês"
-        sub="vermelho = faturamento oficial · cinza = o que a agenda viu · tracejado = mês em curso"
+        subtitulo="vermelho = faturamento oficial · cinza = o que a agenda viu · tracejado = mês em curso"
+        ferramentas={
+          <>
+            <BotaoFerramenta ativo>mês a mês</BotaoFerramenta>
+            {/* ⚠️ Exporta o que ESTÁ na tela, com a janela no nome do arquivo —
+                CSV sem período vira um arquivo que ninguém sabe de quando é. */}
+            <BotaoFerramenta aoClicar={exportar}>
+              <Download className="h-3.5 w-3.5" /> exportar
+            </BotaoFerramenta>
+          </>
+        }
       >
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={meses.map((m) => ({
@@ -263,7 +312,7 @@ export default function Painel() {
             <XAxis dataKey="mes" tick={{ fill: CINZA, fontSize: 12 }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fill: CINZA, fontSize: 11 }} axisLine={false} tickLine={false}
               tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-            <Tooltip {...tooltip} formatter={(v: any) => brl(Number(v))} />
+            <Tooltip {...TOOLTIP} formatter={(v: any) => brl(Number(v))} />
             <Legend wrapperStyle={{ fontSize: 12, color: CINZA }} />
             <Line isAnimationActive={false} type="monotone" dataKey="fechado" name="faturamento oficial" stroke={VERMELHO}
               strokeWidth={2.5} dot={{ r: 3, fill: VERMELHO }} connectNulls />
@@ -273,13 +322,13 @@ export default function Painel() {
               strokeWidth={2} strokeDasharray="5 4" dot={{ r: 3, fill: VERMELHO_CLARO }} />
           </LineChart>
         </ResponsiveContainer>
-      </Bloco>
+      </CardGrafico>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ── Cliente novo × recorrente ────────────────────────────────────── */}
-        <Bloco
+        <CardGrafico
           titulo="Quem veio: novo × recorrente"
-          sub={`${rotulo(meses[0]?.mes ?? "")} fica de fora — é o primeiro mês da base, e ali todo mundo é "novo"`}
+          subtitulo={`${rotulo(meses[0]?.mes ?? "")} fica de fora — é o primeiro mês da base, e ali todo mundo é "novo"`}
         >
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={meses.filter((m) => !m.novoInflado).map((m) => ({
@@ -288,18 +337,18 @@ export default function Painel() {
               <CartesianGrid stroke="#ffffff12" vertical={false} />
               <XAxis dataKey="mes" tick={{ fill: CINZA, fontSize: 12 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: CINZA, fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip {...tooltip} />
+              <Tooltip {...TOOLTIP} />
               <Legend wrapperStyle={{ fontSize: 12, color: CINZA }} />
               <Bar isAnimationActive={false} dataKey="recorrentes" name="voltaram" stackId="a" fill={VERMELHO} radius={[0, 0, 0, 0]} />
               <Bar isAnimationActive={false} dataKey="novos" name="primeira vez" stackId="a" fill="#F87171" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
-        </Bloco>
+        </CardGrafico>
 
         {/* ── Mix de serviço ───────────────────────────────────────────────── */}
-        <Bloco
+        <CardGrafico
           titulo={`O que a casa vende — ${rotulo(data.mix?.mes ?? "")}`}
-          sub={data.mix?.outros ? `a cauda está agrupada, com a contagem à vista` : "todos os serviços cabem no gráfico"}
+          subtitulo={data.mix?.outros ? `a cauda está agrupada, com a contagem à vista` : "todos os serviços cabem no gráfico"}
         >
           <div className="flex items-center gap-4">
             {/*
@@ -318,7 +367,7 @@ export default function Painel() {
                   {[...(data.mix?.fatias ?? []), ...(data.mix?.outros ? [data.mix.outros] : [])]
                     .map((_: any, i: number) => <Cell key={i} fill={PALETA[i % PALETA.length]} stroke="#0E0000" />)}
                 </Pie>
-                <Tooltip {...tooltip} formatter={(v: any) => brl(Number(v))} />
+                <Tooltip {...TOOLTIP} formatter={(v: any) => brl(Number(v))} />
               </PieChart>
             </ResponsiveContainer>
             <ul className="flex-1 space-y-1.5 text-sm">
@@ -334,13 +383,13 @@ export default function Painel() {
                 ))}
             </ul>
           </div>
-        </Bloco>
+        </CardGrafico>
       </div>
 
       {/* ── Ocupação por profissional ──────────────────────────────────────── */}
-      <Bloco
+      <CardGrafico
         titulo={`A hora de cadeira, por profissional — ${rotulo(data.ocupacao?.mes ?? "")}`}
-        sub="quem trabalhou menos de 10h no mês fica fora: R$/hora de duas horas não descreve nada"
+        subtitulo="quem trabalhou menos de 10h no mês fica fora: R$/hora de duas horas não descreve nada"
       >
         <div className="overflow-x-auto">
           <table className="w-full min-w-[520px] text-sm">
@@ -376,95 +425,26 @@ export default function Painel() {
             </tbody>
           </table>
         </div>
-      </Bloco>
+      </CardGrafico>
 
       {/* ── ⛔ OS AVISOS. TODOS. SEM "VER MAIS". ────────────────────────────── */}
-      {(data.avisos ?? []).length > 0 && (
-        <section className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.05] p-5">
-          <p className="text-[11px] uppercase tracking-wide text-amber-300/80">
-            O que estes números ⛔ não dizem
-          </p>
-          <ul className="mt-2 space-y-1.5 text-sm text-amber-100/80">
-            {(data.avisos ?? []).map((a: string, i: number) => (
-              <li key={i} className="flex gap-2"><span className="text-amber-400">·</span>{a}</li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {/* ⛔ TODOS os avisos, sem "ver mais". A peça garante isso. */}
+      <Avisos itens={data.avisos ?? []} />
     </div>
   );
 }
 
-const tooltip = {
-  contentStyle: {
-    background: "#141416", border: "1px solid #ffffff1f", borderRadius: 12,
-    color: "#E5E7EB", fontSize: 12,
-  },
-  labelStyle: { color: "#9CA3AF" },
-  cursor: { fill: "#ffffff08" },
-} as const;
-
-function Bloco({ titulo, sub, children }: { titulo: string; sub?: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-      <h2 className="font-display text-lg font-black uppercase tracking-tight text-white">{titulo}</h2>
-      {sub && <p className="mb-3 mt-0.5 text-xs text-slate-500">{sub}</p>}
-      {children}
-    </section>
-  );
-}
-
-/**
- * Cartão de número com variação e sparkline.
- *
- * ⛔ A variação é `null` quando falta qualquer um dos dois lados — e aí a tela
- * diz "sem base", ⛔ nunca 0%. Zero por cento é uma afirmação: significa "ficou
- * igual", e ficar igual é diferente de não saber.
+/*
+ * ⛔ O `Bloco` LOCAL MORREU AQUI. Virou `CardGrafico`, que já traz a barra de
+ * ferramentas — o item das referências que faltava em todas as minhas telas.
  */
-function Kpi({ rotulo: r, valor, atual, anterior, serie, campo, extrair, nota, destaque }: {
-  rotulo: string; valor: string;
-  atual: number | null; anterior: number | null | undefined;
-  serie: any[]; campo?: string;
-  /** Para números que moram aninhados, como `oficial.total`. */
-  extrair?: (m: any) => number | null;
-  nota?: string; destaque?: boolean;
-}) {
-  const varia =
-    atual == null || anterior == null || anterior === 0
-      ? null
-      : Math.round(((atual - anterior) / anterior) * 1000) / 10;
 
-  // ⛔ A sparkline só usa mês FECHADO e só ponto MEDIDO. Interpolar o buraco de
-  //    R$/hora de jan–mai desenharia uma linha que nunca existiu.
-  const ler = extrair ?? ((m: any) => (campo ? m[campo] : null));
-  const pontos = serie
-    .filter((m) => !m.emCurso && ler(m) != null)
-    .map((m) => ({ v: ler(m) }));
-
-  const Icone = varia == null ? Minus : varia >= 0 ? TrendingUp : TrendingDown;
-  const cor = varia == null ? "text-slate-500" : varia >= 0 ? "text-emerald-400" : "text-red-400";
-
-  return (
-    <div className={`rounded-2xl border p-4 ${destaque ? "border-[#A50101]/40 bg-[#A50101]/[0.07]" : "border-white/10 bg-white/[0.03]"}`}>
-      <p className="text-[11px] uppercase tracking-wide text-slate-500">{r}</p>
-      <p className={`mt-1 font-display text-2xl font-black ${destaque ? "text-[#E23B2E]" : "text-white"}`}>{valor}</p>
-
-      <div className="mt-1 flex items-center justify-between gap-2">
-        <span className={`flex items-center gap-1 text-xs ${cor}`}>
-          <Icone className="h-3 w-3" />
-          {varia == null ? "sem base p/ comparar" : `${varia > 0 ? "+" : ""}${varia.toLocaleString("pt-BR")}% vs mês anterior`}
-        </span>
-        {pontos.length >= 2 && (
-          <div className="h-7 w-20">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={pontos}>
-                <Line isAnimationActive={false} type="monotone" dataKey="v" stroke={VERMELHO_CLARO} strokeWidth={1.5} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
-      {nota && <p className="mt-1 text-[11px] text-amber-300/70">{nota}</p>}
-    </div>
-  );
-}
+/*
+ * ⛔ O `Kpi` LOCAL MORREU AQUI (23/08/2026). Ele virou `CardNumero` em
+ * `components/painel.tsx`, junto com o card de gráfico, o chip e a tabela.
+ *
+ * ⚠️ Ele era a razão de as cinco abas nunca ficarem iguais: estilo aplicado à
+ * mão, tela por tela, é a mesma regra escrita cinco vezes — e diverge exatamente
+ * como diverge regra de negócio duplicada. Quatro tentativas de "aplicar o
+ * padrão" falharam por isso, ⛔ não por gosto.
+ */

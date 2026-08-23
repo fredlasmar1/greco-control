@@ -44,6 +44,17 @@ const ok = (nome, cond, detalhe = "") => {
 
 const painel = ler("client/src/pages/Painel.tsx");
 const preco = ler("client/src/pages/OPreco.tsx");
+/**
+ * ⛔ AS PEÇAS COMPARTILHADAS. Em 23/08 o card de número, o card de gráfico, o
+ * chip e a tabela saíram das telas e viraram `components/painel.tsx` — porque
+ * estilo aplicado à mão em cinco telas é a mesma regra escrita cinco vezes, e
+ * foi por isso que quatro tentativas de "aplicar o padrão" falharam.
+ *
+ * ⚠️ As garantias mudaram de LUGAR, ⛔ não deixaram de existir. Estas asserções
+ * seguiram a garantia — e ficaram MAIS fortes, porque agora exigem também que as
+ * telas USEM a peça em vez de reimplementar por baixo.
+ */
+const pecas = ler("client/src/components/painel.tsx");
 
 /**
  * ⛔ Tira comentário antes de perguntar o que o código FAZ.
@@ -95,7 +106,9 @@ console.log("\n2. ⛔ O MÊS EM CURSO APARECE — E FICA FORA DA COMPARAÇÃO");
     "senão todo dia 2 o painel anuncia um desabamento");
   ok("⛔ o mês em curso tem bloco próprio", /emCurso &&/.test(painelCodigo));
   ok("⛔ e ele é rotulado como parcial", /parcial/.test(painel));
-  ok("⛔ a sparkline ⛔ não usa mês em curso", /!m\.emCurso && ler\(m\) != null/.test(painelCodigo));
+  ok("⛔ a sparkline ⛔ não recebe o mês em curso",
+    /meses\.filter\(\(m\) => !m\.emCurso\)\.map/.test(painelCodigo),
+    "a tela filtra antes de entregar a série ao card");
 }
 
 console.log("\n3. ⛔ O QUE O GRÁFICO ⛔ NÃO PODE INVENTAR");
@@ -104,11 +117,12 @@ console.log("\n3. ⛔ O QUE O GRÁFICO ⛔ NÃO PODE INVENTAR");
     /filter\(\(m\) => !m\.novoInflado\)/.test(painelCodigo),
     "454 novos e 0 recorrentes é o dado começando, não a casa explodindo");
   ok("⛔ a sparkline ⛔ não interpola buraco — só ponto medido",
-    /ler\(m\) != null/.test(painelCodigo),
+    /filter\(\(v\): v is number => v != null\)/.test(pecas),
     "R$/hora só existe desde junho; linha inventada é pior que buraco");
   ok("⛔ variação sem os dois lados devolve null, ⛔ não 0%",
-    /anterior == null \|\| anterior === 0\s*\?\s*null/.test(painelCodigo));
-  ok("   e a tela diz 'sem base' em vez de mostrar zero", /sem base p\/ comparar/.test(painel));
+    /a == null \|\| b == null \|\| b === 0\s*\?\s*null/.test(painelCodigo),
+    "a conta da variação mora num helper único");
+  ok("   e a PEÇA escreve 'sem base' em vez de zero", /sem base p\/ comparar/.test(pecas));
   ok("⛔ a cauda do donut aparece COM contagem", /outros/.test(painelCodigo) && /\{f\.qtd\}/.test(painelCodigo));
   // ⚠️ ESTA ASSERÇÃO ERROU DUAS VEZES, E AS DUAS FORAM O MESMO DESCUIDO:
   //    1. procurou `data\.avisos.*\.map` e ⛔ não casou através do `??` que a
@@ -158,12 +172,39 @@ console.log("\n5. ⛔ AS TELAS ⛔ NÃO CALCULAM — toda conta mora no Metas");
     /pagantesMes\s*\*/.test("const ganho = l.pagantesMes * delta;"));
 }
 
+console.log("\n5b. ⛔ AS TELAS USAM AS PEÇAS — ninguém reimplementa por baixo");
+{
+  ok("o Painel importa o sistema de design",
+    /from "@\/components\/painel"/.test(painelCodigo));
+  ok("⛔ e ⛔ NÃO tem card de número próprio",
+    !/function Kpi\(/.test(painelCodigo) && !/function Campo\(/.test(painelCodigo),
+    "estilo à mão em cinco telas diverge como regra duplicada diverge");
+  ok("⛔ nem card de gráfico próprio", !/function Bloco\(/.test(painelCodigo));
+  ok("⛔ nem tooltip próprio", !/const tooltip = \{/.test(painelCodigo));
+
+  // ⛔ A marca é a marca. Hex solto numa tela é como a paleta começa a divergir.
+  ok("⛔ a paleta vem do sistema, ⛔ não de hex solto",
+    /CORES\.marca/.test(painelCodigo) && !/"#A50101"/.test(painelCodigo));
+  ok("   e a peça guarda a marca da casa", /marca: "#A50101"/.test(pecas));
+
+  // O item das referências que faltava em TODAS as minhas telas.
+  ok("⛔ existe barra de ferramentas no card de gráfico", /ferramentas/.test(pecas));
+  ok("   e o Painel usa pelo menos uma", /<BotaoFerramenta/.test(painelCodigo));
+
+  // ⛔ Sem animação: gráfico que às vezes não pinta é pior que sem animação.
+  ok("⛔ a sparkline da peça ⛔ não depende de animação",
+    /isAnimationActive=\{false\}/.test(pecas));
+}
+
 console.log("\n6. ⛔ PONTE CAÍDA VIRA AVISO, ⛔ NUNCA R$ 0,00");
 {
-  for (const [nome, tela] of [["Painel", painel], ["O Preço", preco]]) {
-    ok(`⛔ o ${nome} tem estado de erro nomeado`, /não abriu/.test(tela));
-    ok(`   e o ${nome} diz que nada foi estimado`, /Nada foi estimado/.test(tela));
-  }
+  // ⛔ A peça `NaoAbriu` é a única forma de mostrar falha de ponte — e ela já
+  //    carrega o "nada foi estimado". Cada tela só precisa usá-la.
+  ok("⛔ a peça de erro existe e diz que nada foi estimado",
+    /export function NaoAbriu/.test(pecas) && /Nada foi estimado/.test(pecas));
+  ok("⛔ e o Painel usa a peça", /<NaoAbriu/.test(painelCodigo));
+  ok("⛔ o Preço tem estado de erro nomeado", /não abriu/.test(preco));
+  ok("   e diz que nada foi estimado", /Nada foi estimado/.test(preco));
 }
 
 console.log(`\n${passou} passaram · ${falhou} falharam\n`);

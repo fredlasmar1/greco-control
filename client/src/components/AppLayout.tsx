@@ -40,7 +40,8 @@ import {
 // 14 eram máquinas de digitar que o dado já responde. O Control não opera nada:
 // ele lê o Metas e opina.
 const navItems = [
-  { path: "/", label: "A mesa", icon: Scale },
+  { path: "/", label: "O painel", icon: LayoutDashboard },
+  { path: "/mesa", label: "A mesa", icon: Scale },
   { path: "/mes", label: "O mês", icon: Calculator },
   { path: "/preco", label: "O preço", icon: Tag },
   { path: "/conselho", label: "O conselho", icon: Users },
@@ -56,7 +57,7 @@ function GrecoLogo({ className = "h-6 w-auto" }: { className?: string }) {
 function getPageTitle(path: string): string {
   // Central mora fora das abas (botão destacado no header), mas ainda dá título.
   const item = navItems.find(n => n.path === path);
-  return item?.label || "A mesa";
+  return item?.label || "O painel";
 }
 
 export function AppLayout({ children }: { children: React.ReactNode }) {

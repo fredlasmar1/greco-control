@@ -18191,6 +18191,12 @@ ${f.adicionais.bonus > 0 ? `<tr><td>(+) Bônus${f.adicionais.bonusRanking > 0 ? 
     app.get("/api/mesa/mes", doMes);
     app.get("/api/mesa/mes/:mes", doMes);
 
+    // O PAINEL — proxy puro. A série inteira vem pronta do Metas.
+    app.get("/api/mesa/serie", async (_req: Request, res: Response) => {
+      try { res.json({ ok: true, ...(await mesa.getSerie()) }); }
+      catch (e) { falha(res, e); }
+    });
+
     // O PREÇO — proxy puro, como as outras. O corpo passa adiante e a conta
     // volta pronta do Metas. ⛔ Nenhuma aritmética de preço mora neste arquivo.
     app.post("/api/mesa/precos", async (req: Request, res: Response) => {

@@ -54,6 +54,16 @@ export const getFechamento = (mes: string) => hub<{ fechamento: any }>(`/fechame
 export const getRegua = (mes: string) => hub<{ regua: any }>(`/regua-precos/${mes}`);
 
 /**
+ * A SÉRIE dos oito meses — o painel executivo.
+ *
+ * ⛔ Vem com `avisos[]` e a tela mostra TODOS. Gráfico é a forma mais eficiente
+ * de mentir com dado verdadeiro: a linha desce e o olho conclui "caiu", sem
+ * perguntar se o último mês tem os mesmos dias.
+ */
+export const getSerie = () =>
+  hub<{ meses: any[]; mix: any; ocupacao: any; avisos: string[]; medidoEm: string }>("/serie");
+
+/**
  * O PREÇO: régua de R$/hora + simulação do reajuste.
  *
  * ⛔ Manda os preços que o dono digitou e recebe a conta PRONTA. O Control não

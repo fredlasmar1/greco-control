@@ -27,6 +27,7 @@ interface AuthState {
   login: (username: string, password: string) => Promise<{ ok: boolean; error?: string; user?: AuthUser }>;
   logout: () => Promise<void>;
   restoreSession: () => Promise<void>;
+  adotarToken: (token: string) => Promise<{ ok: boolean; error?: string }>;
   isAdmin: () => boolean;
   isBarbeiro: () => boolean;
 }
@@ -92,6 +93,30 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({ token, user, loading: false });
     } catch {
       set({ loading: false });
+    }
+  },
+
+  /**
+   * Adota um token que ⛔ NÃO veio de usuário e senha — hoje, o do Google.
+   *
+   * ⛔ Ele confere quem é o dono do token em /api/auth/me ANTES de guardar. Um
+   * token que a tela guarda sem perguntar de quem é seria a tela acreditando na
+   * URL, e a URL veio de fora.
+   */
+  adotarToken: async (token: string) => {
+    localStorage.setItem(TOKEN_KEY, token);
+    try {
+      const res = await fetch(`${API_BASE()}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("token recusado");
+      const user = await res.json();
+      set({ token, user, loading: false, error: null });
+      return { ok: true as const };
+    } catch (e: any) {
+      localStorage.removeItem(TOKEN_KEY);
+      set({ token: null, user: null, loading: false });
+      return { ok: false as const, error: e?.message || "não consegui validar a sessão" };
     }
   },
 

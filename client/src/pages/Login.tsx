@@ -10,11 +10,68 @@ import { Loader2, AlertCircle } from "lucide-react";
 
 export default function Login() {
   const [, setLocation] = useLocation();
-  const { login, user, loading } = useAuth();
+  const { login, user, loading, adotarToken } = useAuth();
+  const [google, setGoogle] = useState(false);
+  const [trocando, setTrocando] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  /**
+   * A VOLTA DO GOOGLE. O callback manda um TICKET na URL — ⛔ nunca o token, que
+   * ficaria no histórico, no log do servidor e no Referer.
+   *
+   * ⛔ E a barra de endereço é limpa no ato, dê certo ou não: ticket usado ⛔ não
+   * pode continuar visível para ser colado em lugar nenhum.
+   */
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.hash.split("?")[1] || "");
+    const ticket = q.get("ticket");
+    const erro = q.get("erro");
+
+    if (erro) {
+      const dito: Record<string, string> = {
+        nao_autorizado: "Essa conta Google não tem acesso a este sistema.",
+        sessao_invalida: "O login expirou antes de terminar. Tente de novo.",
+        google_recusou: "O Google não confirmou o login.",
+        conta_local_ausente: "Não há conta ativa aqui para receber a sessão.",
+        sem_codigo: "O Google voltou sem o código de autorização.",
+      };
+      setError(dito[erro] || "Não consegui entrar pelo Google.");
+      window.location.hash = "#/login";
+      return;
+    }
+
+    if (!ticket) return;
+    window.location.hash = "#/login";
+    setTrocando(true);
+    (async () => {
+      try {
+        const r = await fetch(`${(globalThis as any).__API_BASE__ || ""}/api/auth/google/trocar`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ticket }),
+        });
+        const j = await r.json();
+        if (!j?.ok || !j.token) throw new Error(j?.error || "ticket recusado");
+        const res = await adotarToken(j.token);
+        if (!res.ok) throw new Error(res.error);
+      } catch (e: any) {
+        setError(e?.message || "não consegui concluir o login pelo Google");
+      } finally {
+        setTrocando(false);
+      }
+    })();
+  }, [adotarToken]);
+
+  /** O botão só aparece se o servidor disser que está configurado. */
+  useEffect(() => {
+    fetch(`${(globalThis as any).__API_BASE__ || ""}/api/auth/google/disponivel`)
+      .then((r) => r.json())
+      .then((j) => setGoogle(Boolean(j?.disponivel)))
+      .catch(() => setGoogle(false));
+  }, []);
 
   // Redireciona se já estiver logado
   useEffect(() => {
@@ -58,6 +115,33 @@ export default function Login() {
             <h1 className="font-display text-3xl tracking-wide leading-none">GRECO <span className="text-primary">SPORT BARBER</span></h1>
             <p className="text-xs text-muted-foreground mt-1">Entre com seu usuário e senha</p>
           </div>
+
+          {google && (
+            <div className="mb-5">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                disabled={trocando || submitting}
+                onClick={() => {
+                  window.location.href = `${(globalThis as any).__API_BASE__ || ""}/api/auth/google`;
+                }}
+                data-testid="login-google"
+              >
+                {trocando ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> entrando…</>
+                ) : (
+                  <>Entrar com Google</>
+                )}
+              </Button>
+              {/* ⚠️ A senha CONTINUA valendo, de propósito: se o Google cair, o
+                  dono não fica trancado fora do próprio DRE. */}
+              <div className="mt-4 flex items-center gap-3 text-[11px] text-muted-foreground">
+                <span className="h-px flex-1 bg-border" /> ou com usuário e senha
+                <span className="h-px flex-1 bg-border" />
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

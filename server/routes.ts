@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { log } from "./index";
+import { registrarGoogleAuth } from "./googleAuth";
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
@@ -1717,6 +1718,12 @@ export async function registerRoutes(
   // ════════════════════════════════════════════════════════════════════════
   const ROTAS_ABERTAS: RegExp[] = [
     /^\/auth\/login\/?$/,
+    // ⛔ O caminho de ENTRAR pelo Google. Exigir sessão para entrar é a mesma
+    //    contradição do /auth/login: tranca todo mundo do lado de fora.
+    //    ⚠️ Cada uma tem a própria trava: `state` de uso único no início,
+    //    validação do id_token + lista de permitidos no callback, e ticket de
+    //    uso único com 60s na troca. Aberta ⛔ não é desprotegida.
+    /^\/auth\/google(\/(callback|trocar|disponivel))?\/?$/,
     /^\/trinks\/status\/?$/,
     /^\/telegram\/webhook\//,
   ];
@@ -18258,6 +18265,30 @@ ${f.adicionais.bonus > 0 ? `<tr><td>(+) Bônus${f.adicionais.bonusRanking > 0 ? 
       catch (e) { falha(res, e); }
     });
   }
+
+  /**
+   * ENTRAR COM GOOGLE. A sessão nasce aqui e o token vai por TICKET de uso
+   * único — ⛔ nunca na URL, que entra no histórico, no log e no Referer.
+   *
+   * ⛔ O login do Google só ABRE a sessão de uma conta local que já existe: ele
+   * ⛔ não cria usuário. Conta que nasce sozinha por login externo é como uma
+   * lista de permitidos vira decorativa.
+   */
+  registrarGoogleAuth(app, {
+    abrirSessaoDoDono: async (email, nome) => {
+      const dono = usuarios.find((u) => u.username.toLowerCase() === "admin" && u.ativo);
+      if (!dono) {
+        log(`login Google sem conta local ativa para receber a sessão`, "auth");
+        return null;
+      }
+      const token = generateToken();
+      const expiresAt = Date.now() + SESSION_DURATION_MS;
+      sessoesAtivas.set(token, { userId: dono.id, expiresAt });
+      await sessaoGravar({ token, userId: dono.id, expiresAt }).catch(() => {});
+      log(`sessão aberta pelo Google para ${nome}`, "auth");
+      return token;
+    },
+  });
 
   app.get("/api/conselheiro/dados", async (req: Request, res: Response) => {
     try {

@@ -18256,6 +18256,14 @@ ${f.adicionais.bonus > 0 ? `<tr><td>(+) Bônus${f.adicionais.bonusRanking > 0 ? 
       catch (e) { falha(res, e); }
     });
 
+    // O HISTÓRICO — proxy puro. Sem ele, cada pergunta ao conselho é a primeira,
+    // e o dono recebe respostas ligeiramente diferentes para a mesma dúvida
+    // porque o dado andou, sem saber qual valia.
+    app.get("/api/mesa/conselho/historico", async (_req: Request, res: Response) => {
+      try { res.json({ ok: true, ...(await mesa.getHistoricoConselho()) }); }
+      catch (e) { falha(res, e); }
+    });
+
     app.post("/api/mesa/conselho", async (req: Request, res: Response) => {
       const pergunta = String(req.body?.pergunta || "").trim();
       if (pergunta.length < 10) {

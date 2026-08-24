@@ -46,6 +46,7 @@ const painel = ler("client/src/pages/Painel.tsx");
 const preco = ler("client/src/pages/OPreco.tsx");
 const mes = ler("client/src/pages/OMes.tsx");
 const mesa = ler("client/src/pages/AMesa.tsx");
+const conselho = ler("client/src/pages/OConselho.tsx");
 /**
  * ⛔ AS PEÇAS COMPARTILHADAS. Em 23/08 o card de número, o card de gráfico, o
  * chip e a tabela saíram das telas e viraram `components/painel.tsx` — porque
@@ -76,6 +77,7 @@ const painelCodigo = soCodigo(painel);
 const precoCodigo = soCodigo(preco);
 const mesCodigo = soCodigo(mes);
 const mesaCodigo = soCodigo(mesa);
+const conselhoCodigo = soCodigo(conselho);
 
 // ─────────────────────────────────────────────────────────────────────────────
 console.log("\n1. ⛔ O PAINEL DECLARA A IDADE DO DADO");
@@ -300,6 +302,57 @@ console.log("\n6. ⛔ PONTE CAÍDA VIRA AVISO, ⛔ NUNCA R$ 0,00");
   ok("⛔ e o Painel usa a peça", /<NaoAbriu/.test(painelCodigo));
   ok("⛔ o Preço tem estado de erro nomeado", /não abriu/.test(preco));
   ok("   e diz que nada foi estimado", /Nada foi estimado/.test(preco));
+}
+
+console.log("\n4e. ⛔ A MEMÓRIA DO CONSELHO — parecer velho DIZ que é velho");
+{
+  ok("o histórico é lido", /conselho\/historico/.test(conselhoCodigo));
+
+  // ⛔ A GARANTIA CENTRAL DESTA TELA. Reabrir um parecer de duas semanas atrás
+  //    sem dizer a data é a mesma doença do painel sem carimbo de atualização —
+  //    e aqui é pior, porque parecer TEM cara de conclusão, não de medição.
+  ok("⛔ sessão reaberta se declara GRAVADA",
+    /sessao\?\.gravadaEm &&/.test(conselhoCodigo) && /gravadaEm: h\.criadoEm/.test(conselhoCodigo),
+    "parecer antigo lido como de hoje decide com número de outro dia");
+  ok("⛔ e mostra a data da reunião, ⛔ não a de hoje",
+    /new Date\(sessao\.gravadaEm\)/.test(conselhoCodigo) && !/new Date\(\)\.toLocale/.test(conselhoCodigo));
+  ok("   com o fuso da casa declarado",
+    /timeZone: "America\/Sao_Paulo"/.test(conselhoCodigo),
+    "created_at é UTC; sem fuso, a sessão da noite aparece no dia seguinte");
+
+  // ⛔ Reabrir é LEITURA DE REGISTRO. Se reabrir disparasse a reunião de novo,
+  //    a memória viraria o oposto do que existe para ser: duas respostas para a
+  //    mesma pergunta, com o dado tendo andado no meio.
+  //
+  // ⚠️ AMARRADO AO CORPO DE `reabrir`, ⛔ não a uma janela de N caracteres. A
+  //    primeira versão desta trava varria 400 chars depois de `const reabrir` e
+  //    acusava o `reunir.mutate` da função SEGUINTE — regex sem escopo acusando
+  //    código correto, que é a mesma armadilha que o `soCodigo` acima resolve.
+  const corpoReabrir = (() => {
+    const i = conselhoCodigo.indexOf("const reabrir");
+    return i < 0 ? "" : conselhoCodigo.slice(i, conselhoCodigo.indexOf("\n  };", i));
+  })();
+  ok("⛔ reabrir ⛔ NÃO chama a IA de novo",
+    /setSessao/.test(corpoReabrir) && !/reunir\.mutate|fetch\(/.test(corpoReabrir),
+    "reabrir que reúne de novo devolve resposta diferente para a mesma pergunta");
+
+  // ⛔ Histórico vazio ⛔ não vira caixa vazia prometendo conteúdo.
+  ok("⛔ lista vazia esconde a seção", /historico\.data\?\.length \?\? 0\) > 0/.test(conselhoCodigo));
+
+  // ⛔ A tela ⛔ não resume o parecer: o produto é a DISCORDÂNCIA, e resumo de
+  //    quatro lentes é a pior das quatro.
+  ok("⛔ o placar mostra os três lados", /ap\.aFavor/.test(conselhoCodigo) && /ap\.contra/.test(conselhoCodigo)
+    && /ap\.depende/.test(conselhoCodigo));
+
+  // ⚠️ COMPARAR ⛔ NÃO É CALCULAR. A primeira versão procurava `posicaoDaMesa =`
+  //    e acusava o `posicaoDaMesa === "dividido"` que a tela usa para ESCOLHER O
+  //    RÓTULO — código certo, condenado por um `=` a mais no regex.
+  ok("⛔ e a tela ⛔ não apura nada",
+    !/(posicaoDaMesa|aFavor|contra|depende)\s*=[^=]/.test(conselhoCodigo)
+      && !/filter\([^)]*a_favor/.test(conselhoCodigo),
+    "a apuração vem pronta do Metas — refazê-la aqui daria dois placares");
+
+  ok("usa a peça do sistema", /<Chip/.test(conselhoCodigo));
 }
 
 console.log(`\n${passou} passaram · ${falhou} falharam\n`);

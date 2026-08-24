@@ -16,11 +16,12 @@
  * pergunta já trazia a resposta dentro.
  */
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { AlertTriangle, Loader2, MinusCircle, Scale, ThumbsDown, ThumbsUp, Users } from "lucide-react";
+import { AlertTriangle, History, Loader2, MinusCircle, Scale, ThumbsDown, ThumbsUp, Users } from "lucide-react";
+import { Chip } from "@/components/painel";
 
 const API = (globalThis as any).__API_BASE__ || "";
 
@@ -55,6 +56,25 @@ const SUGESTOES = [
 export default function OConselho() {
   const [pergunta, setPergunta] = useState("");
   const [sessao, setSessao] = useState<any>(null);
+  const qc = useQueryClient();
+
+  /**
+   * O QUE JÁ FOI PERGUNTADO.
+   *
+   * ⚠️ Reabrir uma sessão daqui ⛔ NÃO chama a IA de novo: mostra o que foi
+   * respondido NAQUELE dia, com a data à vista. É o oposto de perguntar de novo
+   * — perguntar de novo devolve uma resposta um pouco diferente porque o dado
+   * andou, e aí existem duas respostas para a mesma dúvida sem saber qual valia.
+   */
+  const historico = useQuery({
+    queryKey: ["conselho-historico"],
+    queryFn: async () => {
+      const r = await fetch(`${API}/api/mesa/conselho/historico`);
+      const j = await r.json();
+      if (!j?.ok) throw new Error(j?.error || "não deu para ler o histórico");
+      return (j.sessoes || []) as any[];
+    },
+  });
 
   const reunir = useMutation({
     mutationFn: async (p: string) => {
@@ -67,8 +87,19 @@ export default function OConselho() {
       if (!j?.ok) throw new Error(j?.error || "o conselho não conseguiu se reunir");
       return j.sessao;
     },
-    onSuccess: setSessao,
+    onSuccess: (s) => {
+      setSessao(s);
+      // A gravação é do lado do Metas; aqui só pedimos a lista de novo.
+      qc.invalidateQueries({ queryKey: ["conselho-historico"] });
+    },
   });
+
+  /** Reabre uma sessão gravada. ⛔ Sem chamar a IA — é leitura de registro. */
+  const reabrir = (h: any) => {
+    setPergunta(h.pergunta);
+    setSessao({ ...h.sessao, gravadaEm: h.criadoEm });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const enviar = (p: string) => {
     const t = p.trim();
@@ -168,6 +199,64 @@ export default function OConselho() {
           </Card>
         ))}
       </div>
+
+      {/*
+        O HISTÓRICO — o que o conselho já respondeu.
+        `[24/08/2026]` até hoje a sessão evaporava ao fechar a aba: quatro
+        chamadas de IA com consulta ao banco, jogadas fora. E o pior ⛔ não era o
+        custo, era o dono perguntar de novo e receber uma resposta diferente
+        porque o dado mudou — duas respostas para a mesma pergunta.
+        ⛔ Lista vazia ⛔ não vira caixa vazia: a seção simplesmente ⛔ não aparece.
+      */}
+      {(historico.data?.length ?? 0) > 0 && (
+        <Card>
+          <CardContent className="space-y-3 p-5">
+            <div className="flex items-center gap-2">
+              <History className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold uppercase tracking-wider">O que já foi perguntado</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Reabrir mostra o parecer <strong>daquele dia</strong>, sem reunir de novo.
+            </p>
+            <div className="divide-y divide-white/10">
+              {historico.data!.map((h: any) => {
+                const ap = h.sessao?.apuracao;
+                return (
+                  <button
+                    key={h.id}
+                    onClick={() => reabrir(h)}
+                    className="flex w-full flex-wrap items-center justify-between gap-2 py-2.5 text-left transition-colors hover:bg-white/5"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm">{h.pergunta}</span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      {ap && (
+                        <Chip tom={ap.posicaoDaMesa === "dividido" ? "atencao" : "neutro"}>
+                          {ap.aFavor}·{ap.contra}·{ap.depende}
+                        </Chip>
+                      )}
+                      {/* ⛔ A data é do dia da REUNIÃO, ⛔ não de hoje: o parecer
+                          envelhece junto com o dado que ele leu. */}
+                      <span className="text-[11px] tabular-nums text-muted-foreground">
+                        {new Date(h.criadoEm).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ⚠️ Sessão reaberta DIZ que é antiga. Parecer velho lido como novo é a
+          mesma doença do painel sem carimbo de atualização. */}
+      {sessao?.gravadaEm && (
+        <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-500">
+          Esta é uma sessão <strong>gravada</strong> em{" "}
+          {new Date(sessao.gravadaEm).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })} — os
+          conselheiros leram os números <strong>daquele dia</strong>. Para o quadro de hoje, reúna o conselho de novo.
+        </p>
+      )}
 
       {reunir.isError && (
         <Card className="border-amber-500/40">

@@ -81,6 +81,16 @@ export const getPrecos = (novos: Record<string, number> = {}) =>
 export const reunirConselho = (pergunta: string, mes?: string) =>
   hub<{ sessao: any }>("/conselho", { method: "POST", body: JSON.stringify({ pergunta, mes }) });
 
+/**
+ * O que o conselho já respondeu antes.
+ *
+ * ⛔ Devolve a SESSÃO INTEIRA de cada vez, ⛔ não um resumo: o produto desta tela
+ * é a DISCORDÂNCIA entre os quatro conselheiros, e é ela que some primeiro
+ * quando se resume.
+ */
+export const getHistoricoConselho = () =>
+  hub<{ sessoes: any[] }>("/conselho/historico");
+
 /** Mês fechado mais recente. O corrente ainda está andando e engana. */
 export function mesDeReferencia(): string {
   const hoje = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));

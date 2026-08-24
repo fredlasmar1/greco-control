@@ -45,6 +45,7 @@ const ok = (nome, cond, detalhe = "") => {
 const painel = ler("client/src/pages/Painel.tsx");
 const preco = ler("client/src/pages/OPreco.tsx");
 const mes = ler("client/src/pages/OMes.tsx");
+const mesa = ler("client/src/pages/AMesa.tsx");
 /**
  * ⛔ AS PEÇAS COMPARTILHADAS. Em 23/08 o card de número, o card de gráfico, o
  * chip e a tabela saíram das telas e viraram `components/painel.tsx` — porque
@@ -74,6 +75,7 @@ const soCodigo = (txt) =>
 const painelCodigo = soCodigo(painel);
 const precoCodigo = soCodigo(preco);
 const mesCodigo = soCodigo(mes);
+const mesaCodigo = soCodigo(mesa);
 
 // ─────────────────────────────────────────────────────────────────────────────
 console.log("\n1. ⛔ O PAINEL DECLARA A IDADE DO DADO");
@@ -215,6 +217,28 @@ console.log("\n4b. ⛔ A CASCATA DO MÊS — montagem, ⛔ nunca cálculo");
   ok("⛔ sem animação, como o resto do sistema",
     (mesCodigo.match(/isAnimationActive=\{false\}/g) || []).length >= 2);
   ok("⛔ e usa as peças do sistema", /from "@\/components\/painel"/.test(mesCodigo));
+}
+
+console.log("\n4c. ⛔ A MESA PROPÕE — e proposta ⛔ NUNCA vira decisão sozinha");
+{
+  ok("as oportunidades aparecem", /oportunidades\.map/.test(mesaCodigo));
+
+  // ⛔ A REGRA QUE A PRÓPRIA TELA ANUNCIA: decisão sem número é intenção, e
+  //    intenção não entra. Foi ela que impediu de registrar o reajuste de 01/12.
+  ok("⛔ a tela diz que proposta ⛔ NÃO é decisão", /⛔ não é decisão/.test(mesa));
+  ok("⛔ e ⛔ NÃO há caminho de criar decisão a partir da proposta",
+    !/criarDecisao|POST.*decisoes|salvarDecisao/i.test(mesaCodigo),
+    "decisão nasce quando o dono decide, nunca por sugestão aceita em um clique");
+
+  // ⛔ Proposta sem premissa é palpite com aparência de apuração.
+  ok("⛔ cada proposta mostra DE ONDE saiu", /o\.fonte/.test(mesaCodigo));
+  ok("⛔ e mostra a PREMISSA", /o\.premissa/.test(mesaCodigo));
+  ok("   e o que falta para virar decisão", /o\.paraVirarDecisao/.test(mesaCodigo));
+
+  // ⛔ Nem toda proposta é aposta de dinheiro — a de catálogo é buraco de dado.
+  ok("⛔ esperado zero ⛔ não vira R$ 0,00", /o\.esperado > 0 &&/.test(mesaCodigo));
+
+  ok("⛔ e a tela ⛔ não calcula o esperado", !/pagantesMes|rsHora\(/.test(mesaCodigo));
 }
 
 console.log("\n5b. ⛔ AS TELAS USAM AS PEÇAS — ninguém reimplementa por baixo");

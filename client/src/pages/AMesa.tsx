@@ -12,7 +12,8 @@
 import { Fragment, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
-import { AlertTriangle, CheckCircle2, Clock, HelpCircle, Loader2, Target } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, HelpCircle, Loader2, Target, Lightbulb } from "lucide-react";
+import { Chip } from "@/components/painel";
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 
 /**
@@ -126,6 +127,7 @@ export default function AMesa() {
   const mesa = data.mesa;
   const linhas: any[] = mesa.linhas ?? [];
   const pendencias: any[] = mesa.pendencias ?? [];
+  const oportunidades: any[] = mesa.oportunidades ?? [];
   const abertas = linhas.filter((l) => l.situacao !== "encerrada");
   const proxima = abertas
     .filter((l) => l.diasAteValer >= 0)
@@ -268,6 +270,69 @@ export default function AMesa() {
                 </li>
               ))}
             </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {/*
+        ⛔ O QUE OS NÚMEROS SUGEREM — e por que fica ACIMA das decisões.
+
+        `[23/08/2026]` A Mesa era a aba mais fraca: quatro decisões esperando
+        data, e ⛔ nada acontecendo. Era um arquivo, ⛔ não uma mesa. O sistema já
+        media tudo que valeria decidir — e ⛔ ninguém era avisado.
+
+        ⛔ E ISTO ⛔ NÃO É DECISÃO. Nada aqui entrou em `decisoes`, e a tela diz
+        isso em letras. Decisão só nasce quando o dono decide, com número
+        esperado e data de conferência — a regra que o cabeçalho anuncia, e que
+        impediu de registrar o reajuste de 01/12, que é INTENÇÃO.
+      */}
+      {oportunidades.length > 0 && (
+        <Card className="border-[#A50101]/25">
+          <CardContent className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h2 className="flex items-center gap-2 text-sm font-semibold">
+                  <Lightbulb className="h-4 w-4 text-[#E23B2E]" />
+                  O que os números sugerem
+                </h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  ⛔ Isto ⛔ não é decisão — é o que a medição aponta. Decisão só entra quando você
+                  definir o esperado e a data de conferência.
+                </p>
+              </div>
+              <Chip tom="marca">{oportunidades.length} medidas</Chip>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {oportunidades.map((o: any) => (
+                <div key={o.id} className="rounded-[12px] border border-white/10 bg-white/[0.02] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <h3 className="font-medium">{o.titulo}</h3>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {o.peso === "alta" && <Chip tom="atencao">prioridade</Chip>}
+                      {/* ⛔ Esperado 0 ⛔ não vira "R$ 0,00": ⛔ nem toda proposta é
+                          aposta de dinheiro — a de catálogo é buraco de dado. */}
+                      {o.esperado > 0 && (
+                        <span className="font-semibold tabular-nums text-[#E23B2E]">
+                          {o.unidade === "R$/mês" ? `${brl(o.esperado)}/mês` : `${o.esperado} ${o.unidade}`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <p className="mt-1.5 text-sm text-muted-foreground">{o.porque}</p>
+
+                  {/* ⛔ FONTE E PREMISSA SEMPRE VISÍVEIS. Proposta sem premissa é
+                      palpite com aparência de apuração — e este painel tem um
+                      operador só, que acredita no que parece pronto. */}
+                  <div className="mt-2.5 space-y-1 border-l-2 border-white/10 pl-3 text-[11px] text-muted-foreground">
+                    <p><b className="text-slate-400">de onde saiu:</b> {o.fonte}</p>
+                    <p className="text-amber-300/80">{o.premissa}</p>
+                    <p><b className="text-slate-400">para virar decisão:</b> {o.paraVirarDecisao}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}

@@ -148,6 +148,35 @@ export default function AOperacao() {
         </section>
       )}
 
+      {/*
+        ⛔ QUEM ATENDE E ⛔ NÃO TEM PAPEL CADASTRADO — e isto é DINHEIRO, ⛔ não
+        cosmético. A apuração de comissão usa a taxa OU zero: sem cadastro, a
+        comissão sai ZERO e ⛔ nada avisa. A produção aparece certa na folha e a
+        comissão, errada — que é o pior formato possível de defeito, porque a
+        linha existe e parece conferida.
+      */}
+      {(d.semPapel?.length ?? 0) > 0 && (
+        <section className="rounded-[18px] border border-red-500/40 bg-red-500/[0.07] p-5">
+          <p className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-red-300">
+            <AlertTriangle className="h-3.5 w-3.5" /> Atende e ⛔ não tem comissão cadastrada
+          </p>
+          <ul className="mt-2 space-y-1 text-sm text-red-100/85">
+            {d.semPapel.map((p: any) => (
+              <li key={p.nome} className="flex flex-wrap justify-between gap-2">
+                <span>{p.nome}</span>
+                <span className="tabular-nums text-red-200/70">
+                  {p.atend} atendimentos · {brl(p.producao)} de produção
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-slate-400">
+            ⛔ Sem cadastro de comissão, a apuração calcula <strong>zero</strong> — e ⛔ não avisa.
+            Cadastrar o papel e a taxa resolve.
+          </p>
+        </section>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <CardNumero
           rotulo="Caixa na agenda (piso)"
@@ -168,7 +197,11 @@ export default function AOperacao() {
           valor={maiorBarbeiro ? `${maiorBarbeiro.pctDaCasa}%` : "—"}
           icone={Crown}
           cor={CORES.ambar}
-          nota={maiorBarbeiro ? `${maiorBarbeiro.nome.split(" ")[0]} — ${brl(maiorBarbeiro.caixa)}` : ""}
+          nota={
+            maiorBarbeiro
+              ? `${maiorBarbeiro.nome.split(" ")[0]} (${maiorBarbeiro.papel ?? "sem cadastro"}) — ${brl(maiorBarbeiro.caixa)}`
+              : ""
+          }
         />
         <CardNumero
           rotulo="Clientes que vieram"
@@ -268,12 +301,14 @@ export default function AOperacao() {
           titulo="Como cada cadeira andou no ano"
           subtitulo={
             "atendimentos e ticket no PRIMEIRO e no ÚLTIMO mês fechado. " +
-            "⛔ Grafias diferentes do mesmo nome já vêm juntas."
+            "⚠️ A lista é de TODO MUNDO QUE ATENDEU — barbeiro, assistente e recepção. " +
+            "⛔ Comparar assistente com barbeiro pelo caixa é comparar papéis diferentes: " +
+            "o papel está na coluna ao lado. Grafias do mesmo nome já vêm juntas."
           }
         >
           <Tabela
             colunas={[
-              { nome: "barbeiro" }, { nome: "atend", alinha: "dir" }, { nome: "caixa (piso)", alinha: "dir" },
+              { nome: "profissional" }, { nome: "papel" }, { nome: "atend", alinha: "dir" }, { nome: "caixa (piso)", alinha: "dir" },
               { nome: "% da casa", alinha: "dir" }, { nome: "atend 1º → últ.", alinha: "dir" },
               { nome: "ticket 1º → últ.", alinha: "dir" },
             ]}
@@ -293,6 +328,18 @@ export default function AOperacao() {
                     {b.nome}
                     {b.grafias > 1 && (
                       <span className="ml-2 text-[10px] text-amber-400/70">{b.grafias} grafias</span>
+                    )}
+                  </td>
+                  {/* ⛔ SEM PAPEL ⛔ NÃO VIRA CÉLULA VAZIA. Vazio lê-se como "ainda
+                      ⛔ não carregou"; o que há é cadastro faltando, e ele custa
+                      a comissão da pessoa. */}
+                  <td className="py-2">
+                    {b.papel ? (
+                      <Chip tom={b.papel === "barbeiro" ? "marca" : "neutro"}>
+                        {b.papel}{b.taxa != null ? ` ${b.taxa}%` : ""}
+                      </Chip>
+                    ) : (
+                      <Chip tom="ruim">sem cadastro</Chip>
                     )}
                   </td>
                   <td className="py-2 text-right tabular-nums text-slate-300">{b.atend}</td>

@@ -405,6 +405,38 @@ console.log("\n4f. ⛔ A OPERAÇÃO — piso é piso, e ausência ⛔ não vira 
   ok("⛔ e ⛔ não reimplementa card por baixo", !/rounded-\[18px\] border border-white\/10 bg-white/.test(operacaoCodigo));
   ok("⛔ gráfico sem animação", /isAnimationActive=\{false\}/.test(operacaoCodigo));
   ok("está no menu", /path: "\/operacao"/.test(ler("client/src/components/AppLayout.tsx")));
+
+  // ═══ O PAPEL — e por que ele é dinheiro, ⛔ não enfeite ═══════════════════
+  //
+  // ⛔ A apuração de comissão faz `rate || 0`: quem ⛔ não tem linha em
+  //    `commission_rates` tem a comissão calculada como ZERO, calado. A produção
+  //    aparece certa na folha e a comissão errada — o pior formato de defeito,
+  //    porque a linha existe e parece conferida.
+  ok("⛔ quem atende sem cadastro de comissão é ACUSADO",
+    /semPapel\?\.length \?\? 0\) > 0/.test(operacaoCodigo) && /d\.semPapel\.map/.test(operacaoCodigo),
+    "sem cadastro a comissão sai zero e nada avisa");
+  ok("   e a acusação mostra a PRODUÇÃO em jogo", /p\.producao/.test(operacaoCodigo));
+
+  // ⛔ Célula vazia lê-se como "ainda ⛔ não carregou". O que há é cadastro
+  //    faltando, e isso tem nome.
+  //
+  // ⚠️ AMARRADA AO CHIP DA CÉLULA, ⛔ não à string solta. A primeira versão
+  //    procurava "sem cadastro" em qualquer lugar do arquivo — e o card do topo
+  //    tem a MESMA string (`papel ?? "sem cadastro"`). Apagando o chip da
+  //    tabela, a trava continuava verde pela string do card: passava por
+  //    ACIDENTE, ⛔ não por estar certa. Provado plantando o defeito.
+  ok("⛔ papel ausente vira 'sem cadastro', ⛔ não célula vazia",
+    /b\.papel \?/.test(operacaoCodigo)
+      && /<Chip tom="ruim">sem cadastro<\/Chip>/.test(operacaoCodigo),
+    "célula vazia lê-se como 'ainda não carregou'; o que há é cadastro faltando");
+
+  // ⚠️ A LISTA ⛔ NÃO É DE BARBEIROS. Chamar assistente e recepção de "barbeiro"
+  //    e ordenar todos pelo caixa compara papéis diferentes com a mesma régua.
+  ok("⚠️ a tela declara que a lista mistura papéis",
+    /barbeiro, assistente e recep/.test(operacao),
+    "ranking que soma papéis diferentes sem dizer compara o incomparável");
+  ok("⛔ e a coluna ⛔ não se chama 'barbeiro'",
+    /\{ nome: "profissional" \}/.test(operacaoCodigo) && !/\{ nome: "barbeiro" \}/.test(operacaoCodigo));
 }
 
 console.log(`\n${passou} passaram · ${falhou} falharam\n`);

@@ -82,6 +82,13 @@ export const reunirConselho = (pergunta: string, mes?: string) =>
   hub<{ sessao: any }>("/conselho", { method: "POST", body: JSON.stringify({ pergunta, mes }) });
 
 /**
+ * O RAIO-X DA OPERAÇÃO — categorias, barbeiros e quem mais gasta, de uma vez.
+ *
+ * ⚠️ Demora: são três medições sobre o ano inteiro de agenda.
+ */
+export const getRaioX = () => hub<{ raioX: any }>("/raio-x");
+
+/**
  * O que o conselho já respondeu antes.
  *
  * ⛔ Devolve a SESSÃO INTEIRA de cada vez, ⛔ não um resumo: o produto desta tela

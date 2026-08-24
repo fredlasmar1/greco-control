@@ -34,6 +34,7 @@ import {
   ShoppingCart,
   Radar,
   Tag,
+  BarChart3,
   LogOut,
 } from "lucide-react";
 
@@ -45,6 +46,7 @@ const navItems = [
   { path: "/mesa", label: "A mesa", icon: Scale },
   { path: "/mes", label: "O mês", icon: Calculator },
   { path: "/preco", label: "O preço", icon: Tag },
+  { path: "/operacao", label: "A operação", icon: BarChart3 },
   { path: "/conselho", label: "O conselho", icon: Users },
 ];
 

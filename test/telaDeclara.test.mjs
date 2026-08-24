@@ -47,6 +47,7 @@ const preco = ler("client/src/pages/OPreco.tsx");
 const mes = ler("client/src/pages/OMes.tsx");
 const mesa = ler("client/src/pages/AMesa.tsx");
 const conselho = ler("client/src/pages/OConselho.tsx");
+const operacao = ler("client/src/pages/AOperacao.tsx");
 /**
  * ⛔ AS PEÇAS COMPARTILHADAS. Em 23/08 o card de número, o card de gráfico, o
  * chip e a tabela saíram das telas e viraram `components/painel.tsx` — porque
@@ -78,6 +79,7 @@ const precoCodigo = soCodigo(preco);
 const mesCodigo = soCodigo(mes);
 const mesaCodigo = soCodigo(mesa);
 const conselhoCodigo = soCodigo(conselho);
+const operacaoCodigo = soCodigo(operacao);
 
 // ─────────────────────────────────────────────────────────────────────────────
 console.log("\n1. ⛔ O PAINEL DECLARA A IDADE DO DADO");
@@ -353,6 +355,56 @@ console.log("\n4e. ⛔ A MEMÓRIA DO CONSELHO — parecer velho DIZ que é velho
     "a apuração vem pronta do Metas — refazê-la aqui daria dois placares");
 
   ok("usa a peça do sistema", /<Chip/.test(conselhoCodigo));
+}
+
+console.log("\n4f. ⛔ A OPERAÇÃO — piso é piso, e ausência ⛔ não vira zero");
+{
+  // ⛔ O CARIMBO VIAJA COM O DADO. Escrito à mão na tela, alguém o apaga sem
+  //    perceber que apagou uma garantia; vindo no retorno, ⛔ não se separa do
+  //    número. É a diferença entre aviso e propriedade do dado.
+  ok("⛔ o aviso de PISO vem do servidor, ⛔ não é digitado na tela",
+    /d\.piso/.test(operacaoCodigo) && !/subconta o faturamento oficial/.test(operacaoCodigo),
+    "aviso digitado na tela some numa refatoração e o número continua parecendo caixa");
+
+  // ⛔ AUSÊNCIA ⛔ NÃO É ZERO. Categoria sem duração medida ⛔ não "rende R$ 0/h" —
+  //    ⛔ não se sabe quanto ela rende, e as duas coisas ⛔ não são a mesma.
+  ok("⛔ valor nulo vira travessão, ⛔ nunca R$ 0",
+    /brlOuTraco/.test(operacaoCodigo) && /n == null \? "—"/.test(operacaoCodigo));
+  ok("⛔ e quem ⛔ não tem hora medida fica FORA da comparação",
+    /rsHora != null/.test(operacaoCodigo),
+    "misturar quem não tem duração puxa a régua de R$/hora para baixo sem ninguém ver");
+
+  // ⛔ A TELA ⛔ NÃO CALCULA. Toda conta mora no Metas — a régua de R$/hora, a
+  //    porcentagem da casa, o ticket. Refazer aqui daria dois números.
+  ok("⛔ a tela ⛔ não divide caixa por hora",
+    !/caixa\s*\/\s*hora|\/\s*60|minutos\s*\//.test(operacaoCodigo));
+  ok("⛔ nem soma o caixa para achar a porcentagem",
+    !/reduce\(\(.*caixa/.test(operacaoCodigo) && /pctDaCasa/.test(operacaoCodigo));
+
+  // ⛔ RECORTE DECLARADO (Armadilha 10): o top 25 diz quantos ficaram fora.
+  ok("⛔ o corte da lista de clientes é declarado",
+    /clientes\?\.fora > 0/.test(operacaoCodigo) && /d\.clientes\.total/.test(operacaoCodigo),
+    "top-N silencioso lê-se como 'só existem 25 clientes'");
+
+  // ⚠️ DADO SUJO APARECE. A régua junta as grafias para o ranking não mentir,
+  //    mas quem corrige a Trinks é o dono — e ele só corrige o que enxerga.
+  ok("⚠️ nome duplicado de profissional é MOSTRADO",
+    /nomesDuplicados\?\.length \?\? 0\) > 0/.test(operacaoCodigo) && /n\.grafias\.join/.test(operacaoCodigo));
+  ok("   e a linha do ranking marca quantas grafias juntou", /b\.grafias > 1/.test(operacaoCodigo));
+
+  // ⛔ Variação só quando HÁ os dois lados — senão quem entrou em março aparece
+  //    com queda de 100% contra um mês em que ⛔ não trabalhava.
+  ok("⛔ subida/queda exige os DOIS meses",
+    /temDois = b\.atendPrimeiroMes > 0 && b\.atendUltimoMes > 0/.test(operacaoCodigo));
+  ok("   e o ticket diz quando ⛔ não tem os dois", /sem os dois meses/.test(operacaoCodigo));
+
+  ok("⛔ ponte caída vira aviso, ⛔ não zero", /<NaoAbriu/.test(operacaoCodigo));
+  ok("usa as peças do sistema",
+    /<CardNumero/.test(operacaoCodigo) && /<CardGrafico/.test(operacaoCodigo)
+      && /<Tabela/.test(operacaoCodigo) && /<Avisos/.test(operacaoCodigo));
+  ok("⛔ e ⛔ não reimplementa card por baixo", !/rounded-\[18px\] border border-white\/10 bg-white/.test(operacaoCodigo));
+  ok("⛔ gráfico sem animação", /isAnimationActive=\{false\}/.test(operacaoCodigo));
+  ok("está no menu", /path: "\/operacao"/.test(ler("client/src/components/AppLayout.tsx")));
 }
 
 console.log(`\n${passou} passaram · ${falhou} falharam\n`);

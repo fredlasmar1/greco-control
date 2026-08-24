@@ -31,6 +31,7 @@ import AMesa from "@/pages/AMesa";
 import OMes from "@/pages/OMes";
 import Painel from "@/pages/Painel";
 import OPreco from "@/pages/OPreco";
+import AOperacao from "@/pages/AOperacao";
 import OConselho from "@/pages/OConselho";
 import Login from "@/pages/Login";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -71,6 +72,7 @@ function Conselho() {
           <Route path="/mesa" component={AMesa} />
           <Route path="/mes" component={OMes} />
           <Route path="/preco" component={OPreco} />
+          <Route path="/operacao" component={AOperacao} />
           <Route path="/conselho" component={OConselho} />
           <Route component={NotFound} />
         </Switch>

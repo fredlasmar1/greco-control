@@ -18256,6 +18256,14 @@ ${f.adicionais.bonus > 0 ? `<tr><td>(+) Bônus${f.adicionais.bonusRanking > 0 ? 
       catch (e) { falha(res, e); }
     });
 
+    // A OPERAÇÃO — proxy puro. As três lentes vêm juntas do Metas, na mesma
+    // janela e com o mesmo filtro de status: é o que impede a tela de mostrar
+    // três totais diferentes para o mesmo ano.
+    app.get("/api/mesa/raio-x", async (_req: Request, res: Response) => {
+      try { res.json({ ok: true, ...(await mesa.getRaioX()) }); }
+      catch (e) { falha(res, e); }
+    });
+
     // O HISTÓRICO — proxy puro. Sem ele, cada pergunta ao conselho é a primeira,
     // e o dono recebe respostas ligeiramente diferentes para a mesma dúvida
     // porque o dado andou, sem saber qual valia.

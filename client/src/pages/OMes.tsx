@@ -15,6 +15,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { AlertTriangle, Loader2, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, LabelList,
+} from "recharts";
+import { CardGrafico, CORES, TOOLTIP, Chip } from "@/components/painel";
 
 const API = (globalThis as any).__API_BASE__ || "";
 const brl = (n: number | null | undefined) =>
@@ -58,6 +62,56 @@ export default function OMes() {
 
   const f = data?.fechamento;
   const g = data?.regua;
+
+  /**
+   * ⛔ A CASCATA É MONTAGEM, ⛔ NÃO CÁLCULO.
+   *
+   * Cada passo usa números que o servidor já apurou; a tela só decide de que
+   * altura cada barra parte. ⚠️ O único acumulado aqui é o "de onde a próxima
+   * começa" — se em vez disso a tela somasse receita menos custos para achar o
+   * resultado, ela viraria a segunda fonte de verdade, e um dia discordaria do
+   * DRE ao lado sem ninguém saber qual está certo. O `resultado` vem pronto.
+   */
+  const cascata = (() => {
+    if (!f) return [] as any[];
+    const passos = [
+      { rotulo: "Receita", curto: "receita", valor: Number(f.receita?.total) || 0, tipo: "entra" },
+      { rotulo: "Comissão paga", curto: "comissão", valor: -(Number(f.custoVariavel?.comissao) || 0), tipo: "sai" },
+      { rotulo: "Insumo e material", curto: "insumo", valor: -(Number(f.custoVariavel?.compras) || 0), tipo: "sai" },
+      { rotulo: "Folha fixa e encargos", curto: "folha", valor: -((Number(f.custoFixo?.folha) || 0) + (Number(f.custoFixo?.compras) || 0)), tipo: "sai" },
+      { rotulo: "Custo do dinheiro", curto: "juros", valor: -(Number(f.custoFixo?.dinheiro) || 0), tipo: "sai" },
+    ];
+    const linhas: any[] = [];
+    let acumulado = 0;
+    for (const p of passos) {
+      const inicio = acumulado;
+      acumulado += p.valor;
+      linhas.push({
+        ...p,
+        base: Math.min(inicio, acumulado),
+        altura: Math.abs(p.valor),
+        rotuloValor: (p.valor < 0 ? "−" : "") + brl(Math.abs(p.valor)),
+      });
+    }
+    // ⛔ O total vem do SERVIDOR (`f.resultado`), ⛔ não da soma daqui.
+    const resultado = Number(f.resultado) || 0;
+    linhas.push({
+      rotulo: "Resultado do mês", curto: "resultado", valor: resultado, tipo: "total",
+      base: Math.min(0, resultado), altura: Math.abs(resultado), rotuloValor: brl(resultado),
+    });
+    return linhas;
+  })();
+
+  /**
+   * ⚠️ O SELO SÓ APARECE QUANDO O PESO É GRANDE. Um chip que aparece sempre ⛔ não
+   * informa — o olho aprende a pular. 25% é o corte: abaixo disso, juros é linha
+   * de custo; acima, é o que decide o mês.
+   */
+  const pesoJuros = (() => {
+    const juros = Number(f?.custoFixo?.dinheiro) || 0;
+    const res = Number(f?.resultado) || 0;
+    return res > 0 && juros > 0 ? Math.round((juros / res) * 100) : null;
+  })();
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-6">
@@ -116,6 +170,49 @@ export default function OMes() {
             </p>
           </CardContent>
         </Card>
+      )}
+
+      {/*
+        ⛔ A CASCATA — o gráfico que todo DRE executivo tem, e que faltava aqui.
+        `[23/08/2026]` o dono disse que as abas eram fracas. O resultado do mês
+        era uma COLUNA DE NÚMEROS: para saber onde o dinheiro sai, ele tinha que
+        somar de cabeça.
+        ⚠️ E havia uma coisa que a coluna escondia: em julho os JUROS comeram
+        R$ 10.378 de um resultado de R$ 12.664 — **82% do que a operação gerou**.
+        Numa linha discreta entre oito, isso passa. Numa cascata, salta.
+      */}
+      {f && cascata.length > 0 && (
+        <CardGrafico
+          titulo="De onde o dinheiro sai"
+          subtitulo="cada barra parte de onde a anterior terminou · vermelho sai, verde fica"
+          ferramentas={
+            pesoJuros != null && pesoJuros >= 25
+              ? <Chip tom="ruim">juros = {pesoJuros}% do resultado</Chip>
+              : undefined
+          }
+        >
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={cascata} margin={{ top: 20, right: 12, left: -8, bottom: 0 }}>
+              <CartesianGrid stroke="#ffffff10" vertical={false} />
+              <XAxis dataKey="curto" tick={{ fill: CORES.cinza, fontSize: 11 }} axisLine={false} tickLine={false}
+                interval={0} />
+              <YAxis tick={{ fill: CORES.cinza, fontSize: 11 }} axisLine={false} tickLine={false}
+                tickFormatter={(v) => `${Math.round(Number(v) / 1000)}k`} />
+              <Tooltip {...TOOLTIP}
+                formatter={(_v: any, _n: any, p: any) => [brl(p.payload.valor), p.payload.rotulo]} />
+              {/* ⛔ A base é INVISÍVEL: é o degrau de onde a barra parte. Sem ela
+                  a cascata vira barras soltas e perde o sentido de "sobrou X". */}
+              <Bar dataKey="base" stackId="a" fill="transparent" isAnimationActive={false} />
+              <Bar dataKey="altura" stackId="a" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                {cascata.map((c, i) => (
+                  <Cell key={i} fill={c.tipo === "sai" ? CORES.marca : c.tipo === "total" ? CORES.verde : CORES.azul} />
+                ))}
+                <LabelList dataKey="rotuloValor" position="top"
+                  style={{ fill: "#9CA3AF", fontSize: 11 }} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </CardGrafico>
       )}
 
       {f && (

@@ -44,6 +44,7 @@ const ok = (nome, cond, detalhe = "") => {
 
 const painel = ler("client/src/pages/Painel.tsx");
 const preco = ler("client/src/pages/OPreco.tsx");
+const mes = ler("client/src/pages/OMes.tsx");
 /**
  * ⛔ AS PEÇAS COMPARTILHADAS. Em 23/08 o card de número, o card de gráfico, o
  * chip e a tabela saíram das telas e viraram `components/painel.tsx` — porque
@@ -72,6 +73,7 @@ const soCodigo = (txt) =>
 
 const painelCodigo = soCodigo(painel);
 const precoCodigo = soCodigo(preco);
+const mesCodigo = soCodigo(mes);
 
 // ─────────────────────────────────────────────────────────────────────────────
 console.log("\n1. ⛔ O PAINEL DECLARA A IDADE DO DADO");
@@ -190,6 +192,29 @@ console.log("\n3b. ⛔ A RÉGUA DA META — projeção ⛔ NUNCA se confunde com
   ok("⛔ o que falta por dia é PONDERADO pelo servidor, ⛔ não dividido na tela",
     /regua\.precisaPorDia/.test(painelCodigo) && !/falta\s*\/\s*dias/.test(painelCodigo),
     "sábado não vale o mesmo que terça");
+}
+
+console.log("\n4b. ⛔ A CASCATA DO MÊS — montagem, ⛔ nunca cálculo");
+{
+  ok("a cascata existe", /const cascata =/.test(mesCodigo));
+  // ⛔ O TOTAL VEM DO SERVIDOR. Se a tela somasse receita menos custos para achar
+  //    o resultado, viraria a segunda fonte de verdade — e um dia discordaria do
+  //    DRE ao lado sem ninguém saber qual está certo.
+  ok("⛔ o resultado vem do servidor, ⛔ ⛔ NÃO da soma da tela",
+    /const resultado = Number\(f\.resultado\)/.test(mesCodigo));
+  ok("⛔ e a tela ⛔ não recalcula margem nem ponto de equilíbrio",
+    !/margemContribuicao\s*=/.test(mesCodigo) && !/pontoEquilibrio\s*=/.test(mesCodigo));
+
+  // ⚠️ A base transparente é o degrau. Sem ela a cascata vira barras soltas.
+  ok("⛔ a base da cascata é invisível", /fill="transparent"/.test(mesCodigo));
+
+  // ⛔ Chip que aparece sempre ⛔ não informa — o olho aprende a pular.
+  ok("⛔ o selo dos juros só aparece com peso alto", /pesoJuros >= 25/.test(mesCodigo));
+  ok("   e o peso é medido contra o resultado", /juros \/ res/.test(mesCodigo));
+
+  ok("⛔ sem animação, como o resto do sistema",
+    (mesCodigo.match(/isAnimationActive=\{false\}/g) || []).length >= 2);
+  ok("⛔ e usa as peças do sistema", /from "@\/components\/painel"/.test(mesCodigo));
 }
 
 console.log("\n5b. ⛔ AS TELAS USAM AS PEÇAS — ninguém reimplementa por baixo");

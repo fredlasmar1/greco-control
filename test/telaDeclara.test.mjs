@@ -104,8 +104,14 @@ console.log("\n2. ⛔ O MÊS EM CURSO APARECE — E FICA FORA DA COMPARAÇÃO");
   ok("a variação compara só meses FECHADOS",
     /filter\(\(m\) => !m\.emCurso\)/.test(painelCodigo),
     "senão todo dia 2 o painel anuncia um desabamento");
-  ok("⛔ o mês em curso tem bloco próprio", /emCurso &&/.test(painelCodigo));
-  ok("⛔ e ele é rotulado como parcial", /parcial/.test(painel));
+  // ⚠️ A guarda mudou de `emCurso &&` para `regua &&` quando a régua da meta
+  //    entrou. A INVARIANTE ⛔ não mudou: o mês em curso tem bloco próprio, é
+  //    rotulado como parcial e ⛔ não ganha variação percentual.
+  ok("⛔ o mês em curso tem bloco próprio", /\{regua && \(/.test(painelCodigo));
+  ok("⛔ e ele é rotulado como parcial", /parcial/.test(painelCodigo));
+  ok("⛔ e ⛔ NÃO recebe variação vs mês anterior",
+    !/regua[\s\S]{0,900}?vs mês anterior/.test(painelCodigo),
+    "agosto com 23 dias contra julho com 31 é uma queda que não existe");
   ok("⛔ a sparkline ⛔ não recebe o mês em curso",
     /meses\.filter\(\(m\) => !m\.emCurso\)\.map/.test(painelCodigo),
     "a tela filtra antes de entregar a série ao card");
@@ -170,6 +176,20 @@ console.log("\n5. ⛔ AS TELAS ⛔ NÃO CALCULAM — toda conta mora no Metas");
   // ⛔ E O DEFEITO REPLANTADO: a trava tem que pegar a conta se ela voltar.
   ok("⛔ e a trava pega o defeito replantado",
     /pagantesMes\s*\*/.test("const ganho = l.pagantesMes * delta;"));
+}
+
+console.log("\n3b. ⛔ A RÉGUA DA META — projeção ⛔ NUNCA se confunde com medição");
+{
+  ok("⛔ a tela mostra a meta ao lado do realizado", /regua\.metaMes/.test(painelCodigo));
+  ok("⛔ e a barra só fica verde quando BATEU", /pctDaMeta >= 100 \? CORES\.verde/.test(painelCodigo));
+  ok("⛔ a projeção é rotulada como projeção", /projeção do mês/.test(painelCodigo));
+  ok("⛔ e vem com a PREMISSA escrita", /regua\.premissa/.test(painelCodigo));
+  ok("⛔ e diz explicitamente que ⛔ não é medição",
+    /Projeção, ⛔ não medição/.test(painelCodigo),
+    "número estimado com cara de apurado é a família de defeito da casa");
+  ok("⛔ o que falta por dia é PONDERADO pelo servidor, ⛔ não dividido na tela",
+    /regua\.precisaPorDia/.test(painelCodigo) && !/falta\s*\/\s*dias/.test(painelCodigo),
+    "sábado não vale o mesmo que terça");
 }
 
 console.log("\n5b. ⛔ AS TELAS USAM AS PEÇAS — ninguém reimplementa por baixo");

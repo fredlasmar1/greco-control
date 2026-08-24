@@ -77,6 +77,10 @@ const brl = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 const brlExato = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 2 });
+/** Número simples, com "—" quando ⛔ não se sabe. ⛔ Nunca 0 por omissão. */
+const nBR = (v: number | null | undefined) =>
+  v == null ? "—" : v.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+
 const num = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
 
@@ -122,6 +126,7 @@ export default function Painel() {
   }, [meses]);
 
   const emCurso = meses.find((m) => m.emCurso) ?? null;
+  const regua = data?.regua ?? null;
 
   /**
    * ⛔ EXPORTA O QUE ESTÁ NA TELA, e nada além. Sem consulta nova, sem recorte
@@ -199,36 +204,88 @@ export default function Painel() {
         )}
 
         {/*
-          ⛔ O MÊS EM CURSO VEM PRIMEIRO, E GRANDE.
+          ⛔ A RÉGUA DA META — o que o Painel ⛔ NÃO respondia.
 
-          Ele estava num rodapé cinza, e o título dizia "último mês fechado:
-          jul". No dia 23 do mês, isso passa a sensação de sistema parado em
-          julho — quando agosto é a informação que o dono mais precisa.
+          `[23/08/2026]` o dono disse que as abas eram fracas. Esta mostrava
+          R$ 59.071 e ⛔ não dizia se era bom. A casa tem meta (R$ 100.000, que ele
+          mesmo baixou de 105.000 em 14/08) e tem peso por dia da semana — as
+          duas em `shared/metaCasa.ts`, canônicas, e o painel ⛔ não as lia.
 
-          ⚠️ Mas ele CONTINUA fora de toda comparação: o cartão diz "parcial" e
-          ⛔ não tem variação percentual. Agosto com 23 dias contra julho com 31
-          é uma queda que ⛔ não existe.
+          ⚠️ E o mês em curso continua FORA de toda comparação com mês fechado. A
+          meta é o alvo do próprio mês, ⛔ não uma comparação com julho.
         */}
-        {emCurso && (
-          <div className="mt-4 rounded-2xl border border-white/15 bg-white/[0.04] p-5">
+        {regua && (
+          <div className="mt-4 rounded-[18px] border border-white/15 bg-white/[0.04] p-5">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-slate-500">
-                  {rotulo(emCurso.mes)} · mês em curso —{" "}
+                  {rotulo(regua.mes)} · mês em curso —{" "}
                   <span className="text-amber-300/90">parcial, ⛔ fora de comparação</span>
                 </p>
                 <p className="mt-1 font-display text-4xl font-black text-white">
-                  {brl(emCurso.oficial?.total)}
+                  {brl(regua.realizado)}
+                  <span className="ml-2 align-middle text-base font-normal text-slate-500">
+                    de {brl(regua.metaMes)}
+                  </span>
                 </p>
-                <p className="mt-0.5 text-xs text-slate-500">faturamento oficial até agora</p>
               </div>
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-400">
-                <span><b className="text-slate-200">{num(emCurso.clientes)}</b> clientes</span>
-                <span><b className="text-slate-200">{num(emCurso.atendimentos)}</b> atendimentos</span>
-                <span>ticket <b className="text-slate-200">{brlExato(emCurso.ticket)}</b></span>
-                <span>R$/h <b className="text-slate-200">{brlExato(emCurso.rsHora)}</b></span>
+                <span><b className="text-slate-200">{num(emCurso?.clientes)}</b> clientes</span>
+                <span><b className="text-slate-200">{num(emCurso?.atendimentos)}</b> atendimentos</span>
+                <span>ticket <b className="text-slate-200">{brlExato(emCurso?.ticket)}</b></span>
+                <span>R$/h <b className="text-slate-200">{brlExato(emCurso?.rsHora)}</b></span>
               </div>
             </div>
+
+            {/* A barra. ⛔ Vermelho quando falta, verde só quando bateu. */}
+            <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${Math.min(100, Math.max(0, regua.pctDaMeta))}%`,
+                  background: regua.pctDaMeta >= 100 ? CORES.verde : CORES.marca,
+                }}
+              />
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-sm">
+              <span className="text-slate-300">
+                <b className="text-white">{nBR(regua.pctDaMeta)}%</b> da meta ·{" "}
+                {regua.falta > 0
+                  ? <>faltam <b className="text-white">{brl(regua.falta)}</b> em <b className="text-white">{regua.diasRestantes}</b> dias abertos</>
+                  : <span className="text-emerald-400">meta batida</span>}
+              </span>
+              {/* ⚠️ PROJEÇÃO EM COR DIFERENTE, e dizendo que é projeção. Número
+                  estimado com cara de apurado é a família de defeito da casa. */}
+              {regua.projecao != null && (
+                <span className="text-amber-300/90">
+                  projeção do mês: <b>{brl(regua.projecao)}</b>
+                  {regua.projecao < regua.metaMes && (
+                    <> · <b>{brl(regua.metaMes - regua.projecao)}</b> abaixo</>
+                  )}
+                </span>
+              )}
+            </div>
+
+            {/* ⛔ PONDERADO, ⛔ não dividido por igual: sábado ⛔ não vale o mesmo
+                que terça, e a média chapada faria a terça parecer fracasso. */}
+            {regua.precisaPorDia?.length > 0 && regua.falta > 0 && (
+              <div className="mt-4">
+                <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                  quanto cada dia que falta precisa fazer
+                </p>
+                <div className="mt-1.5 flex flex-wrap gap-2">
+                  {regua.precisaPorDia.map((d: any) => (
+                    <span key={d.data} className="rounded-[10px] border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs">
+                      <span className="text-slate-500">{d.diaSemana} {d.data.slice(8)}</span>{" "}
+                      <b className="text-slate-200">{brl(d.precisa)}</b>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <p className="mt-3 text-[11px] text-slate-500">⚠️ Projeção, ⛔ não medição — {regua.premissa}.</p>
           </div>
         )}
 

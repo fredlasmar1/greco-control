@@ -29,6 +29,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { AlertTriangle, Loader2, Target, Eraser } from "lucide-react";
+import {
+  ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ReferenceLine, Cell,
+} from "recharts";
+import { CardGrafico, CORES, TOOLTIP, Chip } from "@/components/painel";
 
 const API = (globalThis as any).__API_BASE__ || "";
 
@@ -118,6 +122,25 @@ export default function OPreco() {
       </Card>
     );
   }
+
+  /**
+   * ⛔ MONTAGEM, ⛔ NÃO CÁLCULO. `rsHoraAtual` e `pagantesMes` vêm prontos do
+   * servidor; a tela só decide o eixo de cada bolha e a cor.
+   *
+   * ⚠️ Serviço sem preço ou sem duração ⛔ NÃO entra: ele ⛔ não tem R$/hora, e pôr
+   * no zero do eixo diria que rende nada — que é uma afirmação, e é falsa.
+   */
+  const pontos = linhas
+    .filter((l: any) => l.rsHoraAtual != null && l.pagantesMes > 0)
+    .map((l: any) => ({
+      nome: l.nome,
+      x: l.rsHoraAtual,
+      y: l.pagantesMes,
+      z: l.pagantesMes,
+      preco: l.precoTabela,
+      abaixo: l.acimaDaCasa === false,
+    }));
+  const abaixoDaLinha = pontos.filter((p) => p.abaixo).length;
 
   const alvoEfetivo = alvo ?? Math.round(casa.rsHoraTabela ?? 0);
 
@@ -233,6 +256,54 @@ export default function OPreco() {
               )}
             </div>
           </div>
+
+          {/*
+            ⛔ O QUADRANTE — a decisão de 01/12 numa olhada.
+
+            A tabela abaixo tem 27 linhas. Para achar "muito volume, pouco
+            R$/hora" — que é EXATAMENTE o que se sobe — o dono precisava ler
+            todas e comparar duas colunas de cabeça. Num plano, esse canto salta.
+
+            ⚠️ EIXO X = R$/hora de TABELA, ⛔ nunca o realizado. O realizado
+            carrega as horas do Clube a zero e absolveria todo serviço.
+            ⚠️ EIXO Y = pagantes/mês, ⛔ não atendimentos: assinante ⛔ não responde
+            a reajuste, e incluí-lo faria o volume parecer maior do que o que
+            de fato reage ao preço.
+          */}
+          {pontos.length > 0 && (
+            <div className="mt-4">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  cada bolha é um serviço · quanto mais à ESQUERDA, menos a cadeira rende ·
+                  quanto mais ALTO, mais gente paga por ele
+                </p>
+                <Chip tom="atencao">{abaixoDaLinha} abaixo da linha da casa</Chip>
+              </div>
+              <ResponsiveContainer width="100%" height={300}>
+                <ScatterChart margin={{ top: 10, right: 16, bottom: 4, left: -8 }}>
+                  <CartesianGrid stroke="#ffffff10" />
+                  <XAxis type="number" dataKey="x" name="R$/hora"
+                    tick={{ fill: CORES.cinza, fontSize: 11 }} axisLine={false} tickLine={false}
+                    tickFormatter={(v) => `${v}`} />
+                  <YAxis type="number" dataKey="y" name="pagantes/mês"
+                    tick={{ fill: CORES.cinza, fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <ZAxis type="number" dataKey="z" range={[60, 520]} />
+                  {/* ⛔ A LINHA DA CASA. É contra ela que se decide — sem a
+                      referência, o gráfico vira uma nuvem sem veredito. */}
+                  <ReferenceLine x={casa.rsHoraTabela} stroke={CORES.ambar} strokeDasharray="5 4"
+                    label={{ value: `casa ${Math.round(casa.rsHoraTabela)}`, fill: CORES.ambar, fontSize: 11, position: "top" }} />
+                  <Tooltip {...TOOLTIP}
+                    formatter={(_v: any, _n: any, p: any) =>
+                      [`${brl(p.payload.preco)} · ${p.payload.x} R$/h · ${nBR(p.payload.y)} pagantes/mês`, p.payload.nome]} />
+                  <Scatter data={pontos} isAnimationActive={false}>
+                    {pontos.map((p, i) => (
+                      <Cell key={i} fill={p.abaixo ? CORES.marca : CORES.azul} fillOpacity={0.75} />
+                    ))}
+                  </Scatter>
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[800px] text-sm">

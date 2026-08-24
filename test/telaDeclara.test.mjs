@@ -158,6 +158,32 @@ console.log("\n4. ⛔ O PREÇO DECLARA JANELA, IDADE E RECORTE");
   ok("⛔ preço recusado pelo servidor é mostrado", /data\.recusados/.test(precoCodigo));
 }
 
+console.log("\n4d. ⛔ O QUADRANTE DO PREÇO — a decisão de 01/12 numa olhada");
+{
+  ok("o quadrante existe", /ScatterChart/.test(precoCodigo));
+
+  // ⛔ EIXO X É O R$/HORA DE TABELA. O realizado carrega as horas do Clube a
+  //    zero e absolveria todo serviço — comparar tabela com realizado é a
+  //    mistura de populações que publicou R$ 113,98/h em 22/08.
+  ok("⛔ o eixo X usa o R$/hora que o servidor já calculou",
+    /x: l\.rsHoraAtual/.test(precoCodigo));
+  ok("⛔ e a linha de referência é a da CASA, de tabela",
+    /ReferenceLine x=\{casa\.rsHoraTabela\}/.test(precoCodigo),
+    "sem a referência o gráfico vira nuvem sem veredito");
+
+  // ⛔ EIXO Y É PAGANTE, não atendimento: assinante não responde a reajuste.
+  ok("⛔ o eixo Y é pagantes/mês, ⛔ não atendimentos",
+    /y: l\.pagantesMes/.test(precoCodigo) && !/y: l\.atend/.test(precoCodigo));
+
+  // ⛔ Sem preço não vira zero no eixo — zero afirmaria "rende nada".
+  ok("⛔ serviço sem R$/hora fica FORA do gráfico",
+    /rsHoraAtual != null/.test(precoCodigo));
+
+  ok("⛔ a cor vem do veredito do servidor, ⛔ não de conta na tela",
+    /l\.acimaDaCasa === false/.test(precoCodigo));
+  ok("⛔ e sem animação", /isAnimationActive=\{false\}/.test(precoCodigo));
+}
+
 console.log("\n5. ⛔ AS TELAS ⛔ NÃO CALCULAM — toda conta mora no Metas");
 {
   // ⚠️ A invariante é sobre ARITMÉTICA DE NEGÓCIO, ⛔ não sobre todo operador:

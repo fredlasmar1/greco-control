@@ -13579,6 +13579,101 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
+  /**
+   * SAIU DO CAIXA NO MÊS — a mesma conta da aba Caixa, servida ao Greco Metas.
+   *
+   * Existe porque o Metas tinha uma conta PARALELA: `custosControl.ts` somava
+   * `compras:AAAA-MM` inteiro e chamava aquilo de custo do mes. [medido 29/08]
+   * em agosto isso incluia R$ 40.056 de "Salarios & Equipe" -- que o
+   * `caixaMes.ts` exclui de proposito, porque esse dinheiro ja esta na folha e
+   * no vale -- e R$ 7.094 de transferencia entre contas do proprio dono. O
+   * briefing do CFO e a Reuniao do Mes liam esse numero inflado.
+   *
+   * A regra mora AQUI, onde o dado mora. O Metas consome; nao recalcula.
+   * `excluidos` vai junto de proposito: recorte que nao aparece na tela e
+   * defeito, mesmo quando o recorte esta certo.
+   */
+  app.get("/api/hub/caixa/:mes", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const pedido = String(req.params.mes ?? "");
+      const mes = /^\d{4}-\d{2}$/.test(pedido) ? pedido : ymdHoje().slice(0, 7);
+      const s = await calcularSaidasCaixa(mes);
+
+      /*
+        POR PESSOA -- montado AQUI porque aqui existem os IDS. O bloco de folha
+        traz o nome dentro da descricao ("FULANO -- comissao 2026-07") e o de
+        vale nem isso (traz a nota do lancamento). Deixar o Metas separar nome
+        de texto seria vincular pessoa por string, que e' exatamente o que a
+        casa proibiu: quem paga o PIX nao e' necessariamente quem recebe.
+
+        A leitura e' de CAIXA: o que SAIU no mes. Os descontos (multa, consumo
+        interno, compra no cartao) aparecem porque explicam por que o liquido e'
+        menor que a comissao -- mas ⛔ NAO sao dinheiro saindo, e por isso vao
+        marcados a parte, nunca somados no pago.
+      */
+      const metasEquipe: any = await getAllMetas().catch(() => ({}));
+      const nomeDe = (id: string) => {
+        const m: any = (metasEquipe as any)[id];
+        return String(m?.nome || "").split("-").pop()?.trim() || `prof ${id}`;
+      };
+      const equipe = new Map<string, any>();
+      const linha = (id: string, nome?: string) => {
+        const k = String(id);
+        if (!equipe.has(k)) equipe.set(k, {
+          profissionalId: k, nome: nome || nomeDe(k),
+          fechamento: 0, vale: 0, pagoNoMes: 0,
+          multa: 0, consumoInterno: 0, comprasCartao: 0, ajuste: 0,
+          itens: [] as any[],
+        });
+        const l = equipe.get(k);
+        if (nome && (!l.nome || l.nome.startsWith("prof "))) l.nome = nome;
+        return l;
+      };
+      for (const chave of await kvKeysComPrefixo("folha_pagamentos:")) {
+        const mesRef = chave.split(":")[1] || "?";
+        for (const item of (await getPagamentosFolha(mesRef))) {
+          const data = String(item?.data || "");
+          const valor = Number(item?.valor) || 0;
+          if (valor <= 0 || !data.startsWith(mes)) continue;
+          const l = linha(String(item.profissionalId), String(item.nome || ""));
+          l.fechamento += valor;
+          l.pagoNoMes += valor;
+          l.itens.push({ tipo: "fechamento", data, valor, detalhe: `comissão de ${mesRef}` });
+        }
+      }
+      const pagsMes: any = await getPagamentosDoMes(mes).catch(() => ({}));
+      for (const p of Object.values<any>(pagsMes || {})) {
+        const id = String(p?.profissionalId || "");
+        if (!id) continue;
+        const l = linha(id);
+        const vale = Number(p?.vale) || 0;
+        if (vale > 0) {
+          l.vale += vale; l.pagoNoMes += vale;
+          l.itens.push({ tipo: "vale", data: `${mes}-15`, valor: vale, detalhe: String(p?.valeNota || "vale do mês") });
+        }
+        l.multa += Number(p?.multa) || 0;
+        l.consumoInterno += Number(p?.consumoInterno) || 0;
+        l.comprasCartao += Number(p?.comprasCartao) || 0;
+        l.ajuste += Number(p?.ajuste) || 0;
+      }
+      const equipeLista = Array.from(equipe.values())
+        .filter(l => l.pagoNoMes > 0.005 || l.multa > 0 || l.consumoInterno > 0 || l.comprasCartao > 0)
+        .sort((a, b) => b.pagoNoMes - a.pagoNoMes);
+
+      return res.json({
+        ok: true, sistema: "greco-control", mes,
+        total: s.total,
+        equipe: equipeLista,
+        equipeTotal: Math.round(equipeLista.reduce((a, l) => a + l.pagoNoMes, 0) * 100) / 100,
+        blocos: s.blocos.map(b => ({ chave: b.chave, titulo: b.titulo, total: b.total, count: b.count, itens: b.itens })),
+        excluidos: s.excluidos,
+        totalExcluido: s.totalExcluido,
+        atualizadoEm: new Date().toISOString(),
+      });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   // POST /api/telegram/testar — envia mensagem de teste
   app.post("/api/telegram/testar", async (_req: Request, res: Response) => {
     const agora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });

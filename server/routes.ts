@@ -13674,6 +13674,79 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
+  /** Quem pode receber pagamento — o cadastro que o painel do Metas oferece. */
+  app.get("/api/hub/equipe-cadastro", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const metas = await getAllMetas();
+      const equipe = Object.values(metas).map((m: any) => ({
+        profissionalId: String(m.profissionalId),
+        nome: String(m.nome || "").split("-").pop()!.trim(),
+        papel: String(m.papel || ""),
+      })).sort((a, b) => a.nome.localeCompare(b.nome));
+      return res.json({ ok: true, sistema: "greco-control", total: equipe.length, equipe });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  /**
+   * REGISTRA UM PAGAMENTO A COLABORADOR — o mesmo que o bot faz no Telegram,
+   * agora alcançável pelo painel do Metas.
+   *
+   * `[caso 29/08/2026]` o dono pagou R$ 495 para a Andreia e ⛔ não conseguia
+   * registrar: ela ⛔ não existia no cadastro, então o pagamento ⛔ não virava
+   * vale nem fechamento e ficava em "Outros". Marcar a compra como "Salários &
+   * Equipe" sozinha seria PIOR: o valor SAI do caixa (fica excluído por já
+   * estar na folha) sem ter entrado em folha nenhuma — o gasto sumiria.
+   *
+   * ⛔ POR ISSO OS DOIS LADOS SEMPRE JUNTOS: grava o vale ou o fechamento E
+   * marca a compra. Um sem o outro é gasto perdido ou gasto dobrado.
+   *
+   * `vale` abate do saldo do mês corrente; `fechamento` quita a folha do mês
+   * ANTERIOR. Quem sabe qual é, é o dono — ⛔ o sistema ⛔ não adivinha por data
+   * (dia 5 escorrega para o 6 no fim de semana).
+   */
+  app.post("/api/hub/pagamento-equipe", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const mes = String(req.body?.mes || "");
+      const compraId = String(req.body?.compraId || "");
+      const profissionalId = String(req.body?.profissionalId || "");
+      const tipo = String(req.body?.tipo || "");
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mês inválido" });
+      if (!compraId || !profissionalId) return res.status(400).json({ ok: false, error: "compra e profissional são obrigatórios" });
+      if (tipo !== "vale" && tipo !== "fechamento") return res.status(400).json({ ok: false, error: "tipo deve ser vale ou fechamento" });
+
+      const compra = (await listarCompras(mes)).find((c: any) => String(c.id) === compraId);
+      if (!compra) return res.status(404).json({ ok: false, error: "compra não encontrada neste mês" });
+      const valor = Number((compra as any).valor) || 0;
+      if (valor <= 0) return res.status(400).json({ ok: false, error: "compra sem valor" });
+
+      const metas: any = await getAllMetas();
+      const meta = metas[profissionalId];
+      if (!meta) return res.status(404).json({ ok: false, error: "profissional não está no cadastro" });
+      const nome = String(meta.nome || profissionalId).split("-").pop()!.trim();
+      const data = String((compra as any).data || "");
+
+      if (tipo === "vale") {
+        const atual: any = await getPagamentoMes(mes, profissionalId).catch(() => null);
+        const valeNovo = Math.round(((Number(atual?.vale) || 0) + valor) * 100) / 100;
+        const nota = [String(atual?.valeNota || "").trim(),
+          `${data.split("-").reverse().join("/")} R$ ${fmtBRLc(valor)} (painel)`].filter(Boolean).join(" · ");
+        await upsertPagamentoMes(mes, profissionalId, { vale: valeNovo, valeNota: nota } as any);
+        await atualizarCompra(mes, compraId, { categoria: "Salários & Equipe",
+          descricao: `Vale ${mesLabelBR(mes)} — ${nome}`.slice(0, 180) } as any);
+        return res.json({ ok: true, tipo, nome, valor, valeAcumulado: valeNovo, mes });
+      }
+
+      const mesAnt = mesAnterior(mes);
+      await registrarPagamentoFolha(mesAnt, { profissionalId, nome, valor, data, origem: "painel" });
+      await atualizarCompra(mes, compraId, { categoria: "Salários & Equipe",
+        descricao: `Fechamento ${mesLabelBR(mesAnt)} — ${nome}`.slice(0, 180) } as any);
+      const jaPago = (await getPagamentosFolha(mesAnt)).filter(x => x.profissionalId === profissionalId).reduce((a, x) => a + x.valor, 0);
+      return res.json({ ok: true, tipo, nome, valor, mesReferencia: mesAnt, pagoAcumulado: jaPago });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   // POST /api/telegram/testar — envia mensagem de teste
   app.post("/api/telegram/testar", async (_req: Request, res: Response) => {
     const agora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });

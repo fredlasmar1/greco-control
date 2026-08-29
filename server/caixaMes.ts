@@ -41,6 +41,17 @@ export interface ItemCaixa {
   valor: number;
   descricao: string;
   categoria?: string;
+  /**
+   * ⛔ QUEM E' O LANCAMENTO -- so' para compras e fatura (folha e vale ⛔ nao
+   * sao compras e ⛔ nao se editam por aqui).
+   *
+   * Existe porque o dono pediu para classificar cada compra a partir do painel
+   * de gasto: sem `id` + `mes` (o balde em que a compra mora, que ⛔ NAO e' o
+   * mes em que o dinheiro saiu -- a fatura paga em agosto guarda compra de
+   * julho), a tela mostra o valor e ⛔ nao consegue mexer nele.
+   */
+  id?: string;
+  mes?: string;
 }
 
 export interface BlocoCaixa {
@@ -183,6 +194,8 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
       valor,
       descricao: String(c.loja || c.descricao || "—"),
       categoria: String(c.categoria || "Outros"),
+      id: String((c as any).id || ""),
+      mes,
     });
   }
 
@@ -271,6 +284,11 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
         valor,
         descricao: `${c.loja || c.descricao || "—"}${c.cartao ? ` — ${c.cartao}` : ""} (compra ${c.data})`,
         categoria: String(c.categoria || "Outros"),
+        id: String((c as any).id || ""),
+        /* ⛔ O BALDE EM QUE ELA MORA, ⛔ nao o mes do pagamento: a fatura paga
+           em agosto carrega compra de julho, e editar em `compras:2026-08`
+           ⛔ nao acharia a linha. */
+        mes: String(chave.split(":")[1] || ""),
       });
     }
   }

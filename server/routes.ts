@@ -13642,6 +13642,32 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           l.itens.push({ tipo: "fechamento", data, valor, detalhe: `comissão de ${mesRef}` });
         }
       }
+      /*
+        ⛔ AS TRES PARTES DO PAGAMENTO A PESSOAL (regra do dono, 29/08/2026):
+          1. FECHAMENTO -- o pagamento do mes, referente ao mes ANTERIOR. Ja'
+             quitado: ⛔ NAO desconta nada do proximo.
+          2. VALE -- o do DIA 15, a rotina.
+          3. ADIANTAMENTO -- pagamento fora dessa data.
+        2 e 3 DESCONTAM do fechamento do mes corrente (que sai no mes seguinte).
+
+        ⚠️ A regua e' a DATA, escolha do dono. Ela erra quando o dia 15 cai no
+        fim de semana e o PIX sai dia 14 ou 16 -- por isso a tela mostra o dia
+        de cada um, para o dono corrigir olhando.
+      */
+      const DIA_DO_VALE = 15;
+      const pessoalPorTipo: Record<string, any[]> = { fechamento: [], vale: [], adiantamento: [] };
+      for (const l of Array.from(equipe.values())) {
+        for (const it of (l as any).itens) {
+          const dia = Number(String(it.data || "").slice(8, 10));
+          const tipo = it.tipo === "fechamento" ? "fechamento" : (dia === DIA_DO_VALE ? "vale" : "adiantamento");
+          pessoalPorTipo[tipo].push({
+            profissionalId: (l as any).profissionalId, nome: (l as any).nome,
+            data: it.data, valor: it.valor, detalhe: it.detalhe,
+          });
+        }
+      }
+      const somaTipo = (t: string) => Math.round(pessoalPorTipo[t].reduce((a, x) => a + x.valor, 0) * 100) / 100;
+
       const pagsMes: any = await getPagamentosDoMes(mes).catch(() => ({}));
       for (const p of Object.values<any>(pagsMes || {})) {
         const id = String(p?.profissionalId || "");
@@ -13650,7 +13676,30 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         const vale = Number(p?.vale) || 0;
         if (vale > 0) {
           l.vale += vale; l.pagoNoMes += vale;
-          l.itens.push({ tipo: "vale", data: `${mes}-15`, valor: vale, detalhe: String(p?.valeNota || "vale do mês") });
+          /*
+            ⛔ O VALE E' UM ACUMULADO -- e a DATA de cada pagamento so' existe
+            dentro da nota ("15/08/2026 R$ 650,00"). Empurrar o total com data
+            fixa no dia 15 faria TODO adiantamento parecer vale, que e'
+            exatamente a divisao que o dono pediu para enxergar.
+          */
+          const nota = String(p?.valeNota || "");
+          const re = /(\d{2})\/(\d{2})\/(\d{4})\s+R\$\s*([\d.]+,\d{2})/g;
+          const partes: Array<{ data: string; valor: number }> = [];
+          let mm: RegExpExecArray | null;
+          while ((mm = re.exec(nota))) {
+            const v = Number(mm[4].replace(/\./g, "").replace(",", "."));
+            if (Number.isFinite(v)) partes.push({ data: `${mm[3]}-${mm[2]}-${mm[1]}`, valor: v });
+          }
+          const somaPartes = Math.round(partes.reduce((a, x) => a + x.valor, 0) * 100) / 100;
+          /* ⛔ So' usa as partes quando elas FECHAM com o total: nota incompleta
+             ⛔ nao pode reduzir o que a pessoa recebeu. */
+          if (partes.length && Math.abs(somaPartes - vale) < 0.01) {
+            for (const parte of partes) {
+              l.itens.push({ tipo: "vale", data: parte.data, valor: parte.valor, detalhe: `vale/adiantamento de ${mes}` });
+            }
+          } else {
+            l.itens.push({ tipo: "vale", data: `${mes}-15`, valor: vale, detalhe: nota || "vale do mês (sem detalhe na nota)" });
+          }
         }
         l.multa += Number(p?.multa) || 0;
         l.consumoInterno += Number(p?.consumoInterno) || 0;
@@ -13728,6 +13777,12 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         ok: true, sistema: "greco-control", mes,
         total: s.total,
         equipe: equipeLista,
+        pessoalPorTipo,
+        pessoalTotais: {
+          fechamento: somaTipo("fechamento"),
+          vale: somaTipo("vale"),
+          adiantamento: somaTipo("adiantamento"),
+        },
         pessoalSemDono,
         pessoalSemDonoTotal: Math.round(pessoalSemDono.reduce((a, x) => a + x.valor, 0) * 100) / 100,
         equipeTotal: Math.round(equipeLista.reduce((a, l) => a + l.pagoNoMes, 0) * 100) / 100,

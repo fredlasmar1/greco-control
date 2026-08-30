@@ -13669,9 +13669,37 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         poder perguntar de quem e' -- com id e mes, que e' o que permite
         consertar em um clique.
       */
-      const valoresPagos = new Set<string>();
+      /*
+        ⛔ O VALE E' UM ACUMULADO -- e foi assim que a primeira versao disto
+        acusou TRES pagamentos que estavam pagos. O vale de R$ 1.300 do Lucas
+        sao os dois PIX de R$ 650; comparar pelo total ⛔ nao acha nenhum dos
+        dois. E o falso positivo aqui e' PERIGOSO, ⛔ nao chato: o dono clicaria
+        para "atribuir" e o valor entraria no vale DE NOVO.
+
+        A nota guarda cada pagamento -- "15/08/2026 R$ 650,00 (Telegram)" -- e e'
+        dela que sai a lista do que ja' foi lancado. Casa por DATA + VALOR, que
+        e' o par que o proprio bot escreve.
+      */
+      const pagosChave = new Set<string>();
+      const addPago = (data: string, valor: number) => pagosChave.add(`${data}|${valor.toFixed(2)}`);
       for (const l of Array.from(equipe.values())) {
-        for (const it of (l as any).itens) valoresPagos.add(Number(it.valor).toFixed(2));
+        for (const it of (l as any).itens) {
+          if (it.tipo === "fechamento") addPago(String(it.data), Number(it.valor));
+        }
+      }
+      const pagsParaNota: any = await getPagamentosDoMes(mes).catch(() => ({}));
+      for (const pm of Object.values<any>(pagsParaNota || {})) {
+        const nota = String(pm?.valeNota || "");
+        /* "DD/MM/AAAA R$ 1.234,56" — o formato que o bot grava. */
+        const re = /(\d{2})\/(\d{2})\/(\d{4})\s+R\$\s*([\d.]+,\d{2})/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(nota))) {
+          const iso = `${m[3]}-${m[2]}-${m[1]}`;
+          const valor = Number(m[4].replace(/\./g, "").replace(",", "."));
+          if (Number.isFinite(valor)) addPago(iso, valor);
+        }
+        /* Vale sem nota (lancado a mao): so' resta o total. */
+        if (!nota && Number(pm?.vale) > 0) addPago(`${mes}-15`, Number(pm.vale));
       }
       const pessoalSemDono: any[] = [];
       for (const chave of await kvKeysComPrefixo("compras:")) {
@@ -13683,7 +13711,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           const saiuNesteMes = String(c?.dataPagamentoFatura || c?.data || "").startsWith(mes);
           if (!saiuNesteMes || valor <= 0) continue;
           if (String(c?.categoria) !== "Salários & Equipe") continue;
-          if (valoresPagos.has(valor.toFixed(2))) continue;
+          const dataCompra = String(c?.data || "");
+          if (pagosChave.has(`${dataCompra}|${valor.toFixed(2)}`)) continue;
           pessoalSemDono.push({
             id: String(c?.id || ""), mes: mesBucket, data: String(c?.data || ""),
             valor, descricao: String(c?.loja || c?.descricao || "—"),

@@ -13657,6 +13657,40 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         l.comprasCartao += Number(p?.comprasCartao) || 0;
         l.ajuste += Number(p?.ajuste) || 0;
       }
+      /*
+        ⛔ PAGAMENTO A PESSOAL SEM DONO -- dinheiro que SUMIU da conta.
+        `[caso 29/08/2026]` o dono pagou R$ 495 para a Andreia; a compra ficou
+        marcada "Salarios & Equipe" e o caixa a EXCLUIU por "ja contada na
+        folha/vale" -- so' que ela ⛔ nao estava em folha nenhuma, porque a
+        Andreia nem existia no cadastro. Resultado: R$ 495 fora de todos os
+        baldes e fora do total. Invisivel.
+
+        ⛔ Excluido sem par e' DEFEITO, ⛔ nao recorte. Vai marcado para a tela
+        poder perguntar de quem e' -- com id e mes, que e' o que permite
+        consertar em um clique.
+      */
+      const valoresPagos = new Set<string>();
+      for (const l of Array.from(equipe.values())) {
+        for (const it of (l as any).itens) valoresPagos.add(Number(it.valor).toFixed(2));
+      }
+      const pessoalSemDono: any[] = [];
+      for (const chave of await kvKeysComPrefixo("compras:")) {
+        if (/_bkp_|_bkp$/.test(chave)) continue;
+        const mesBucket = chave.split(":")[1] || "";
+        for (const c of ((await kvGet<any[]>(chave)) || [])) {
+          if (!c) continue;
+          const valor = Number(c?.valor) || 0;
+          const saiuNesteMes = String(c?.dataPagamentoFatura || c?.data || "").startsWith(mes);
+          if (!saiuNesteMes || valor <= 0) continue;
+          if (String(c?.categoria) !== "Salários & Equipe") continue;
+          if (valoresPagos.has(valor.toFixed(2))) continue;
+          pessoalSemDono.push({
+            id: String(c?.id || ""), mes: mesBucket, data: String(c?.data || ""),
+            valor, descricao: String(c?.loja || c?.descricao || "—"),
+          });
+        }
+      }
+
       const equipeLista = Array.from(equipe.values())
         .filter(l => l.pagoNoMes > 0.005 || l.multa > 0 || l.consumoInterno > 0 || l.comprasCartao > 0)
         .sort((a, b) => b.pagoNoMes - a.pagoNoMes);
@@ -13665,6 +13699,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         ok: true, sistema: "greco-control", mes,
         total: s.total,
         equipe: equipeLista,
+        pessoalSemDono,
+        pessoalSemDonoTotal: Math.round(pessoalSemDono.reduce((a, x) => a + x.valor, 0) * 100) / 100,
         equipeTotal: Math.round(equipeLista.reduce((a, l) => a + l.pagoNoMes, 0) * 100) / 100,
         blocos: s.blocos.map(b => ({ chave: b.chave, titulo: b.titulo, total: b.total, count: b.count, itens: b.itens })),
         excluidos: s.excluidos,

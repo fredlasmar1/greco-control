@@ -13693,14 +13693,34 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         de cada um, para o dono corrigir olhando.
       */
       const DIA_DO_VALE = 15;
+      /*
+        ⛔ A DATA E' PALPITE; QUEM DECIDE E' O DONO (29/08/2026).
+        O dia 15 escorrega para o 14 ou 16 quando cai no fim de semana, e ha'
+        adiantamento combinado que sai no proprio dia 15. Por isso o tipo tem
+        DUAS camadas: a regra da data propoe, e a escolha do dono manda.
+        A escolha vive em `pessoal_tipo_override`, chaveada por
+        pessoa|data|valor -- ⛔ nao por indice, que muda quando entra pagamento
+        novo (a mesma licao do `removerPagamentoFolha`).
+      */
+      const overrides: Record<string, string> = (await kvGet<Record<string, string>>("pessoal_tipo_override")) || {};
+      const chaveTipo = (profId: string, data: string, valor: number) => `${profId}|${data}|${Number(valor).toFixed(2)}`;
       const pessoalPorTipo: Record<string, any[]> = { fechamento: [], vale: [], adiantamento: [] };
       for (const l of Array.from(equipe.values())) {
         for (const it of (l as any).itens) {
           const dia = Number(String(it.data || "").slice(8, 10));
-          const tipo = it.tipo === "fechamento" ? "fechamento" : (dia === DIA_DO_VALE ? "vale" : "adiantamento");
+          const pelaData = dia === DIA_DO_VALE ? "vale" : "adiantamento";
+          const chave = chaveTipo((l as any).profissionalId, it.data, it.valor);
+          const escolhido = overrides[chave];
+          /* ⛔ O FECHAMENTO ⛔ NAO E' EDITAVEL: ele ⛔ nao vem do vale, vem do
+             ledger da folha. Deixar mover fecharia o mes errado. */
+          const tipo = it.tipo === "fechamento" ? "fechamento"
+            : (escolhido === "vale" || escolhido === "adiantamento" ? escolhido : pelaData);
           pessoalPorTipo[tipo].push({
             profissionalId: (l as any).profissionalId, nome: (l as any).nome,
             data: it.data, valor: it.valor, detalhe: it.detalhe,
+            chave: it.tipo === "fechamento" ? null : chave,
+            /* ⛔ A tela mostra QUEM decidiu: regra da data ou o dono. */
+            decidido: it.tipo === "fechamento" ? "ledger" : (escolhido ? "dono" : "data"),
           });
         }
       }
@@ -13904,6 +13924,41 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         });
       }
       return res.json({ ok: true, sistema: "greco-control", base, meses: serie.length, serie });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
+  /**
+   * O DONO DIZ SE AQUELE PAGAMENTO E' VALE OU ADIANTAMENTO.
+   *
+   * ⛔ A regra da data (dia 15) continua propondo; isto SOBREPOE. Ela erra por
+   * construcao -- o dia 15 cai no fim de semana e o PIX sai dia 14 -- e ⛔ nao
+   * ha' regra que acerte sempre, porque a diferenca esta' na combinacao, ⛔ nao
+   * no calendario.
+   *
+   * ⛔ Chave por pessoa|data|valor, ⛔ nunca por indice: entra um pagamento novo
+   * e o indice aponta para outra linha.
+   *
+   * ⛔ FECHAMENTO ⛔ NAO ENTRA AQUI: ele vem do ledger da folha, e move-lo
+   * fecharia o mes errado. Quem quiser corrigir um fechamento usa o botao de
+   * desfazer do proprio ledger.
+   */
+  app.post("/api/hub/pessoal-tipo", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const chave = String(req.body?.chave || "");
+      const tipo = String(req.body?.tipo || "");
+      if (!/^[^|]+\|\d{4}-\d{2}-\d{2}\|\d+\.\d{2}$/.test(chave)) {
+        return res.status(400).json({ ok: false, error: "chave inválida (esperado pessoa|data|valor)" });
+      }
+      if (tipo !== "vale" && tipo !== "adiantamento" && tipo !== "auto") {
+        return res.status(400).json({ ok: false, error: "tipo deve ser vale, adiantamento ou auto" });
+      }
+      const atual: Record<string, string> = (await kvGet<Record<string, string>>("pessoal_tipo_override")) || {};
+      /* "auto" APAGA a escolha e devolve a decisao para a regra da data --
+         ⛔ sem isso, um clique errado ficaria para sempre. */
+      if (tipo === "auto") delete atual[chave]; else atual[chave] = tipo;
+      await kvSet("pessoal_tipo_override", atual);
+      return res.json({ ok: true, chave, tipo, escolhas: Object.keys(atual).length });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 

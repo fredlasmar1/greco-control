@@ -13642,32 +13642,6 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           l.itens.push({ tipo: "fechamento", data, valor, detalhe: `comissão de ${mesRef}` });
         }
       }
-      /*
-        ⛔ AS TRES PARTES DO PAGAMENTO A PESSOAL (regra do dono, 29/08/2026):
-          1. FECHAMENTO -- o pagamento do mes, referente ao mes ANTERIOR. Ja'
-             quitado: ⛔ NAO desconta nada do proximo.
-          2. VALE -- o do DIA 15, a rotina.
-          3. ADIANTAMENTO -- pagamento fora dessa data.
-        2 e 3 DESCONTAM do fechamento do mes corrente (que sai no mes seguinte).
-
-        ⚠️ A regua e' a DATA, escolha do dono. Ela erra quando o dia 15 cai no
-        fim de semana e o PIX sai dia 14 ou 16 -- por isso a tela mostra o dia
-        de cada um, para o dono corrigir olhando.
-      */
-      const DIA_DO_VALE = 15;
-      const pessoalPorTipo: Record<string, any[]> = { fechamento: [], vale: [], adiantamento: [] };
-      for (const l of Array.from(equipe.values())) {
-        for (const it of (l as any).itens) {
-          const dia = Number(String(it.data || "").slice(8, 10));
-          const tipo = it.tipo === "fechamento" ? "fechamento" : (dia === DIA_DO_VALE ? "vale" : "adiantamento");
-          pessoalPorTipo[tipo].push({
-            profissionalId: (l as any).profissionalId, nome: (l as any).nome,
-            data: it.data, valor: it.valor, detalhe: it.detalhe,
-          });
-        }
-      }
-      const somaTipo = (t: string) => Math.round(pessoalPorTipo[t].reduce((a, x) => a + x.valor, 0) * 100) / 100;
-
       const pagsMes: any = await getPagamentosDoMes(mes).catch(() => ({}));
       for (const p of Object.values<any>(pagsMes || {})) {
         const id = String(p?.profissionalId || "");
@@ -13706,6 +13680,32 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         l.comprasCartao += Number(p?.comprasCartao) || 0;
         l.ajuste += Number(p?.ajuste) || 0;
       }
+      /*
+        ⛔ AS TRES PARTES DO PAGAMENTO A PESSOAL (regra do dono, 29/08/2026):
+          1. FECHAMENTO -- o pagamento do mes, referente ao mes ANTERIOR. Ja'
+             quitado: ⛔ NAO desconta nada do proximo.
+          2. VALE -- o do DIA 15, a rotina.
+          3. ADIANTAMENTO -- pagamento fora dessa data.
+        2 e 3 DESCONTAM do fechamento do mes corrente (que sai no mes seguinte).
+
+        ⚠️ A regua e' a DATA, escolha do dono. Ela erra quando o dia 15 cai no
+        fim de semana e o PIX sai dia 14 ou 16 -- por isso a tela mostra o dia
+        de cada um, para o dono corrigir olhando.
+      */
+      const DIA_DO_VALE = 15;
+      const pessoalPorTipo: Record<string, any[]> = { fechamento: [], vale: [], adiantamento: [] };
+      for (const l of Array.from(equipe.values())) {
+        for (const it of (l as any).itens) {
+          const dia = Number(String(it.data || "").slice(8, 10));
+          const tipo = it.tipo === "fechamento" ? "fechamento" : (dia === DIA_DO_VALE ? "vale" : "adiantamento");
+          pessoalPorTipo[tipo].push({
+            profissionalId: (l as any).profissionalId, nome: (l as any).nome,
+            data: it.data, valor: it.valor, detalhe: it.detalhe,
+          });
+        }
+      }
+      const somaTipo = (t: string) => Math.round(pessoalPorTipo[t].reduce((a, x) => a + x.valor, 0) * 100) / 100;
+
       /*
         ⛔ PAGAMENTO A PESSOAL SEM DONO -- dinheiro que SUMIU da conta.
         `[caso 29/08/2026]` o dono pagou R$ 495 para a Andreia; a compra ficou

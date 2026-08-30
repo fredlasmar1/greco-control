@@ -13812,6 +13812,46 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });
 
+  /**
+   * A SERIE DOS ULTIMOS MESES — para o painel responder "isso e' caro?".
+   *
+   * Devolve, por mes, o total que saiu e os itens (valor, data, categoria,
+   * descricao) de cada gaveta. ⛔ Os ITENS vao junto de proposito: o balde de
+   * um lancamento depende da categoria E do cadastro de contas fixas, que vive
+   * no Metas -- mandar so' o total por gaveta obrigaria o Metas a inventar uma
+   * segunda regua para o passado, e os numeros deixariam de bater com o mes
+   * corrente.
+   *
+   * ⛔ SEM ID: esta rota e' de LEITURA comparativa; quem edita usa /caixa/:mes.
+   */
+  app.get("/api/hub/caixa-serie/:mes", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const pedido = String(req.params.mes ?? "");
+      const base = /^\d{4}-\d{2}$/.test(pedido) ? pedido : ymdHoje().slice(0, 7);
+      const n = Math.min(12, Math.max(2, Number(req.query.n) || 6));
+      const meses: string[] = [];
+      let cur = base;
+      for (let i = 0; i < n; i++) { meses.push(cur); cur = mesAnterior(cur); }
+      meses.reverse();
+      const serie = [];
+      for (const m of meses) {
+        const s = await calcularSaidasCaixa(m).catch(() => null);
+        if (!s) continue;
+        serie.push({
+          mes: m,
+          total: s.total,
+          blocos: s.blocos.map(b => ({
+            chave: b.chave,
+            total: b.total,
+            itens: b.itens.map(i => ({ data: i.data, valor: i.valor, descricao: i.descricao, categoria: i.categoria })),
+          })),
+        });
+      }
+      return res.json({ ok: true, sistema: "greco-control", base, meses: serie.length, serie });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   // POST /api/telegram/testar — envia mensagem de teste
   app.post("/api/telegram/testar", async (_req: Request, res: Response) => {
     const agora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });

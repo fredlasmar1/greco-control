@@ -271,13 +271,32 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
     erro oposto, e pior, porque esconde dinheiro que saiu.
   */
   const comprasPessoalLivres = itensPessoalDaCompra.slice();
-  const temParNaCompra = (data: string, valor: number): boolean => {
+  const existeCompraPessoal = (data: string, valor: number): boolean =>
+    itensPessoalDaCompra.some(
+      (x) => String(x.data) === String(data) && Math.abs(num(x.valor) - num(valor)) < 0.01
+    );
+
+  /**
+   * ⛔ TRÊS RESPOSTAS, ⛔ NÃO DUAS — e a do meio é o defeito que se procurava.
+   *
+   * `"casou"`  → há compra livre com este valor+data: já contada, ⛔ não conta de novo.
+   * `"dobra"`  → a compra EXISTE mas já foi consumida por outro balde. Ou seja:
+   *              UMA saída de dinheiro e DOIS lançamentos no ledger. ⛔ Não conta,
+   *              e é o que inflava o mês.
+   * `"sozinho"`→ ⛔ não há compra nenhuma: o pagamento ⛔ não passou pelo grupo.
+   *              CONTA — é dinheiro que saiu e só o ledger registrou (3 dos 29
+   *              em agosto).
+   *
+   * ⚠️ Tratar "dobra" como "sozinho" foi o que manteve os R$ 3.631,54 no total
+   * mesmo depois de a compra virar a fonte: a folha casava com a compra da
+   * Larissa e o vale, achando-se sem par, somava de novo.
+   */
+  const parNaCompra = (data: string, valor: number): "casou" | "dobra" | "sozinho" => {
     const i = comprasPessoalLivres.findIndex(
       (x) => String(x.data) === String(data) && Math.abs(num(x.valor) - num(valor)) < 0.01
     );
-    if (i < 0) return false;
-    comprasPessoalLivres.splice(i, 1);
-    return true;
+    if (i >= 0) { comprasPessoalLivres.splice(i, 1); return "casou"; }
+    return existeCompraPessoal(data, valor) ? "dobra" : "sozinho";
   };
 
   // ── 2) FOLHA (regime de caixa) ──────────────────────────────────────────────
@@ -294,9 +313,12 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
       const data = String(item?.data || "");
       if (valor <= 0 || !data.startsWith(mes)) continue;
       /* ⛔ Já contado pela COMPRA (que tem comprovante): ⛔ não conta de novo. */
-      if (temParNaCompra(data, valor)) {
+      const par = parNaCompra(data, valor);
+      if (par !== "sozinho") {
         excluidos.push({
-          motivo: "comissão que já entrou pela compra do grupo — contada uma vez",
+          motivo: par === "dobra"
+            ? "⚠ o mesmo pagamento aparece duas vezes no ledger — contado uma vez, pela compra"
+            : "comissão que já entrou pela compra do grupo — contada uma vez",
           valor,
           descricao: `${data} ${item.nome || "—"}`,
         });
@@ -351,9 +373,12 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
        pode reduzir o que a pessoa recebeu. */
     if (partes.length && Math.abs(somaPartes - vale) < 0.01) {
       for (const parte of partes) {
-        if (temParNaCompra(parte.data, parte.valor)) {
+        const parV = parNaCompra(parte.data, parte.valor);
+        if (parV !== "sozinho") {
           excluidos.push({
-            motivo: "vale que já entrou pela compra do grupo — contado uma vez",
+            motivo: parV === "dobra"
+              ? "⚠ o mesmo pagamento aparece duas vezes no ledger — contado uma vez, pela compra"
+              : "vale que já entrou pela compra do grupo — contado uma vez",
             valor: parte.valor,
             descricao: `${parte.data} prof ${p?.profissionalId}`,
           });

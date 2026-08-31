@@ -14041,6 +14041,81 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
    * fecharia o mes errado. Quem quiser corrigir um fechamento usa o botao de
    * desfazer do proprio ledger.
    */
+  /**
+   * ⛔ CORRIGIR O QUE A PESSOA RECEBEU NO MÊS — vale e/ou fechamento.
+   *
+   * Pedido do dono (31/08/2026): *"essa parte tem que ser editável"*, olhando a
+   * lista de pagamento da equipe.
+   *
+   * ⚠️ E ELE TEM DOIS CASOS CONCRETOS ESPERANDO:
+   *  · LARISSA — "fechamento R$ 3.136,54 · vale R$ 3.136,54": o MESMO PIX de
+   *    07/08 contado nos dois lados, R$ 6.273,08 onde saiu R$ 3.136,54;
+   *  · ANDREIA — vale R$ 990,00 onde existe UMA compra de R$ 495 (o botao do
+   *    painel foi clicado duas vezes, antes da trava de idempotencia).
+   *
+   * ⛔ ISTO E' FOLHA: mexer aqui muda o que uma pessoa recebe. Por isso a
+   * alteracao GUARDA O VALOR ANTERIOR, quem mudou e quando, e ⛔ nao apaga a
+   * nota original -- ela vira o rastro do que foi corrigido. Edicao de folha
+   * sem trilha e' a mesma familia do pagamento sem dono: some e ninguem sabe
+   * explicar depois.
+   */
+  app.post("/api/hub/corrigir-pagamento", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const mes = String(req.body?.mes || "");
+      const profissionalId = String(req.body?.profissionalId || "");
+      const campo = String(req.body?.campo || "");
+      const valorNovo = Number(req.body?.valor);
+      const por = String(req.body?.por || "painel").slice(0, 60);
+      const motivo = String(req.body?.motivo || "").slice(0, 200);
+
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mês inválido" });
+      if (!profissionalId) return res.status(400).json({ ok: false, error: "profissional é obrigatório" });
+      if (campo !== "vale" && campo !== "fechamento") {
+        return res.status(400).json({ ok: false, error: "campo deve ser vale ou fechamento" });
+      }
+      if (!Number.isFinite(valorNovo) || valorNovo < 0) {
+        return res.status(400).json({ ok: false, error: "valor inválido" });
+      }
+
+      const metas: any = await getAllMetas();
+      const nome = String(metas[profissionalId]?.nome || profissionalId).split("-").pop()!.trim();
+      const carimbo = `[corrigido por ${por} em ${new Date().toISOString().slice(0, 10)}${motivo ? `: ${motivo}` : ""}]`;
+
+      if (campo === "vale") {
+        const atual: any = await getPagamentoMes(mes, profissionalId).catch(() => null);
+        const antes = Number(atual?.vale) || 0;
+        const nota = [String(atual?.valeNota || "").trim(), `${carimbo} de ${fmtBRLc(antes)} para ${fmtBRLc(valorNovo)}`]
+          .filter(Boolean).join(" · ");
+        await upsertPagamentoMes(mes, profissionalId, { vale: valorNovo, valeNota: nota } as any);
+        return res.json({ ok: true, campo, nome, antes, agora: valorNovo });
+      }
+
+      /* ⛔ O FECHAMENTO E' UMA LISTA DE PAGAMENTOS, ⛔ nao um numero: ele vive em
+         `folha_pagamentos:mesAnterior` com uma linha por PIX. Sobrescrever com
+         um total apagaria as datas -- e e' pela DATA + VALOR que a conciliacao
+         casa com o extrato. Por isso a correcao remove as linhas do mes e
+         registra UMA com o valor certo, dizendo que foi corrigida. */
+      const mesAnt = mesAnterior(mes);
+      const lista = await getPagamentosFolha(mesAnt);
+      const dele = lista.filter((x: any) => String(x.profissionalId) === profissionalId);
+      const antes = dele.reduce((a: number, x: any) => a + Number(x.valor || 0), 0);
+      for (const x of dele) {
+        await removerPagamentoFolha(mesAnt, profissionalId, Number(x.valor), String(x.data));
+      }
+      if (valorNovo > 0) {
+        await registrarPagamentoFolha(mesAnt, {
+          profissionalId, nome, valor: valorNovo,
+          data: String(dele[0]?.data || `${mes}-05`),
+          origem: "painel" as any,
+        } as any);
+      }
+      return res.json({ ok: true, campo, nome, antes, agora: valorNovo, linhasRemovidas: dele.length });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   app.post("/api/hub/pessoal-tipo", async (req: Request, res: Response) => {
     if (!requireHubKey(req, res)) return;
     try {

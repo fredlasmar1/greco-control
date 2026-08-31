@@ -13740,6 +13740,45 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         e' pior que tick nenhum: ele afirma que alguem conferiu um numero que
         ⛔ nao existe mais.
       */
+      /*
+        ⛔ O MESMO PAGAMENTO NO VALE **E** NA FOLHA — o caixa conta os dois.
+        ═══════════════════════════════════════════════════════════════════════
+        `[medido 31/08/2026]` o dono viu o total "Saiu do caixa R$ 86.159,16" e
+        disse: *"esse card se moveu, mas os R$ 86.159,16 também mudam, logo fica
+        superestimado o valor"*. Ele estava certo sobre o sintoma e a causa e'
+        pior do que mover:
+
+        ⚠️ MOVER ⛔ NAO MUDA O CAIXA — `caixaMes.ts` ⛔ nao le' o override; as
+        sub-abas sao uma LENTE. O que superestima e' o mesmo PIX estar gravado
+        em DOIS lugares:
+          · LARISSA  R$ 3.136,54 -> no vale de agosto E na folha de julho;
+          · ANDREIA  R$ 990,00   -> ledger com o dobro de uma compra de R$ 495.
+        Somados: R$ 3.631,54. E 86.159,16 - 3.631,54 = **R$ 82.527,62**, que e'
+        o caixa real do mes.
+
+        ⛔ Ate' agora isso ⛔ nao aparecia em lugar nenhum: o total saia inflado e
+        so' se descobria conciliando com o extrato. Agora o painel ACUSA.
+      */
+      const dobraNoPessoal: Array<{ profissionalId: string; nome: string; valor: number; data: string; onde: string }> = [];
+      for (const l of Array.from(equipe.values())) {
+        const itens = (l as any).itens as any[];
+        for (const a of itens.filter((x) => x.tipo === "vale")) {
+          const par = itens.find((x) =>
+            x.tipo === "fechamento" &&
+            Math.abs(Number(x.valor) - Number(a.valor)) < 0.01 &&
+            String(x.data) === String(a.data));
+          if (par) {
+            dobraNoPessoal.push({
+              profissionalId: String((l as any).profissionalId),
+              nome: String((l as any).nome),
+              valor: Number(a.valor),
+              data: String(a.data),
+              onde: "o mesmo pagamento está no vale e na comissão",
+            });
+          }
+        }
+      }
+
       const confirmados: Record<string, { por: string; em: string; assinatura: string }> =
         (await kvGet<Record<string, any>>(`equipe_confirmada:${mes}`)) || {};
       for (const l of Array.from(equipe.values())) {
@@ -13892,6 +13931,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           adiantamento: somaTipo("adiantamento"),
         },
         pessoalSemDono,
+        dobraNoPessoal,
+        dobraNoPessoalTotal: Math.round(dobraNoPessoal.reduce((a, x) => a + x.valor, 0) * 100) / 100,
         pessoalSemDonoTotal: Math.round(pessoalSemDono.reduce((a, x) => a + x.valor, 0) * 100) / 100,
         equipeTotal: Math.round(equipeLista.reduce((a, l) => a + l.pagoNoMes, 0) * 100) / 100,
         blocos: s.blocos.map(b => ({ chave: b.chave, titulo: b.titulo, total: b.total, count: b.count, itens: b.itens })),

@@ -13703,6 +13703,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         novo (a mesma licao do `removerPagamentoFolha`).
       */
       const overrides: Record<string, string> = (await kvGet<Record<string, string>>("pessoal_tipo_override")) || {};
+      const trilhaTipo: Record<string, { por: string; em: string; tipo: string }> =
+        (await kvGet<Record<string, any>>("pessoal_tipo_trilha")) || {};
       const chaveTipo = (profId: string, data: string, valor: number) => `${profId}|${data}|${Number(valor).toFixed(2)}`;
       const pessoalPorTipo: Record<string, any[]> = { fechamento: [], vale: [], adiantamento: [] };
       for (const l of Array.from(equipe.values())) {
@@ -13721,6 +13723,8 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
             chave: it.tipo === "fechamento" ? null : chave,
             /* ⛔ A tela mostra QUEM decidiu: regra da data ou o dono. */
             decidido: it.tipo === "fechamento" ? "ledger" : (escolhido ? "dono" : "data"),
+            /* ⛔ E QUANDO, E POR QUEM — o tick que o dono pediu. */
+            movido: it.tipo === "fechamento" ? null : (trilhaTipo[chave] || null),
           });
         }
       }
@@ -13869,16 +13873,80 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
 
       if (tipo === "vale") {
         const atual: any = await getPagamentoMes(mes, profissionalId).catch(() => null);
+        /*
+          ⛔ O MESMO PAGAMENTO ⛔ NAO ENTRA DUAS VEZES.
+
+          ⚠️ `[medido 30/08/2026]` a Andreia tinha UMA compra de R$ 495 e o vale
+          dela estava em **R$ 990**: a nota guardava "29/08/2026 R$ 495,00
+          (painel) · 29/08/2026 R$ 495,00 (painel)". O `+ valor` sempre somava,
+          e clicar duas vezes -- porque a tela ⛔ nao mostrou o efeito do
+          primeiro clique -- dobrou o desconto DELA. O dono viu como "os gastos
+          inflaram"; o estrago de verdade era na folha de uma pessoa.
+
+          ⛔ A marca e' o ID DA COMPRA, ⛔ nao data+valor: dois vales legitimos de
+          R$ 500 no mesmo dia existem, e recusar o segundo seria pior que a
+          dobra -- deixaria de registrar dinheiro que saiu.
+        */
+        const marca = `#${compraId}`;
+        const notaAtual = String(atual?.valeNota || "");
+        /* ⛔ E o contrario tambem: se este PIX ja' foi lancado como FECHAMENTO,
+           lanca-lo como vale conta o mesmo dinheiro duas vezes. */
+        const naFolhaAnt = (await getPagamentosFolha(mesAnterior(mes))).some(
+          (x: any) => x.profissionalId === profissionalId && String(x.data) === data && Number(x.valor) === valor
+        );
+        if (naFolhaAnt) {
+          return res.status(409).json({
+            ok: false,
+            error: `Este pagamento ja' esta' lancado como FECHAMENTO de ${nome}. Um PIX ⛔ nao pode ser vale e fechamento ao mesmo tempo.`,
+            jaLancado: true,
+          });
+        }
+        if (notaAtual.includes(marca)) {
+          return res.status(409).json({
+            ok: false,
+            error: `Este pagamento ja' foi lancado como vale de ${nome} neste mes. O vale dele esta' em R$ ${fmtBRLc(Number(atual?.vale) || 0)}.`,
+            jaLancado: true,
+          });
+        }
         const valeNovo = Math.round(((Number(atual?.vale) || 0) + valor) * 100) / 100;
-        const nota = [String(atual?.valeNota || "").trim(),
-          `${data.split("-").reverse().join("/")} R$ ${fmtBRLc(valor)} (painel)`].filter(Boolean).join(" · ");
+        const nota = [notaAtual.trim(),
+          `${data.split("-").reverse().join("/")} R$ ${fmtBRLc(valor)} (painel ${marca})`].filter(Boolean).join(" · ");
         await upsertPagamentoMes(mes, profissionalId, { vale: valeNovo, valeNota: nota } as any);
         await atualizarCompra(mes, compraId, { categoria: "Salários & Equipe",
           descricao: `Vale ${mesLabelBR(mes)} — ${nome}`.slice(0, 180) } as any);
         return res.json({ ok: true, tipo, nome, valor, valeAcumulado: valeNovo, mes });
       }
 
+      /*
+        ⛔ O MESMO PIX ⛔ NAO E' VALE E FECHAMENTO AO MESMO TEMPO.
+
+        ⚠️ `[medido 30/08/2026]` o pagamento de R$ 3.136,54 da LARISSA (07/08)
+        estava gravado nos DOIS: como vale de agosto e como fechamento de
+        julho. A tela somava os dois e mostrava "fechamento R$ 3.136,54 · vale
+        R$ 3.136,54 = R$ 6.273,08" -- e o card aparecia na sub-aba
+        Adiantamentos com o rotulo "Fechamento julho/2026", contradizendo a si
+        mesmo. Junto com a dobra da Andreia, isso inflava o gasto do mes em
+        R$ 3.631,54.
+      */
+      const jaVale: any = await getPagamentoMes(mes, profissionalId).catch(() => null);
+      if (String(jaVale?.valeNota || "").includes(`#${compraId}`)) {
+        return res.status(409).json({
+          ok: false,
+          error: `Este pagamento ja' esta' lancado como VALE de ${nome} em ${mesLabelBR(mes)}. Um PIX ⛔ nao pode ser vale e fechamento ao mesmo tempo.`,
+          jaLancado: true,
+        });
+      }
       const mesAnt = mesAnterior(mes);
+      const naFolha = (await getPagamentosFolha(mesAnt)).some(
+        (x: any) => x.profissionalId === profissionalId && String(x.data) === data && Number(x.valor) === valor
+      );
+      if (naFolha) {
+        return res.status(409).json({
+          ok: false,
+          error: `Ja' existe um fechamento de ${nome} nesta data e valor em ${mesLabelBR(mesAnt)}.`,
+          jaLancado: true,
+        });
+      }
       await registrarPagamentoFolha(mesAnt, { profissionalId, nome, valor, data, origem: "painel" });
       await atualizarCompra(mes, compraId, { categoria: "Salários & Equipe",
         descricao: `Fechamento ${mesLabelBR(mesAnt)} — ${nome}`.slice(0, 180) } as any);
@@ -13958,6 +14026,21 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
          ⛔ sem isso, um clique errado ficaria para sempre. */
       if (tipo === "auto") delete atual[chave]; else atual[chave] = tipo;
       await kvSet("pessoal_tipo_override", atual);
+
+      /*
+        ⛔ QUEM MOVEU E QUANDO — pedido do dono (31/08/2026): *"quando mover um
+        card ele tem que apagar na outra sub-aba e confirmar com tick que ele
+        foi movido, e quando foi movido e por quem"*.
+
+        ⚠️ O tipo sozinho ⛔ nao deixa ninguem responsavel. Numa casa onde tres
+        pessoas mexem no painel, "esse vale virou adiantamento" sem autor e' uma
+        mudanca que ninguem consegue explicar depois -- e e' dinheiro de folha.
+      */
+      const trilha: Record<string, { por: string; em: string; tipo: string }> =
+        (await kvGet<Record<string, any>>("pessoal_tipo_trilha")) || {};
+      if (tipo === "auto") delete trilha[chave];
+      else trilha[chave] = { por: String(req.body?.por || "painel").slice(0, 60), em: new Date().toISOString(), tipo };
+      await kvSet("pessoal_tipo_trilha", trilha);
       return res.json({ ok: true, chave, tipo, escolhas: Object.keys(atual).length });
     } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
   });

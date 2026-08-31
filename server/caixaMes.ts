@@ -175,6 +175,8 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
   // no lucro do mês, mas SAIU do caixa — quem paga a obra sente no extrato.
   const compras: Compra[] = await listarCompras(mes).catch(() => []);
   const itensCompras: ItemCaixa[] = [];
+  /* ⛔ As compras que SÃO pagamento a pessoal — a fonte com comprovante. */
+  const itensPessoalDaCompra: ItemCaixa[] = [];
   for (const c of compras) {
     const valor = num(c.valor);
     if (valor <= 0) continue;
@@ -193,9 +195,35 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
     // esta compra é contada no bloco "Fatura de cartão", nunca aqui.
     if (c.dataPagamentoFatura) continue;
     if (String(c.categoria) === CATEGORIA_PESSOAL) {
-      // Trava (a): já está na folha ou no vale.
+      /*
+        ⛔ A COMPRA É A FONTE; O LEDGER É CÓPIA (31/08/2026, desenho do dono):
+        *"o correto seria: definimos os valores em Compras, e a parte de vales
+        iria para os Descontos SEM PODER DE EDIÇÃO, somente como organização
+        para somar. Então não deveria superestimar, e sim só REPLICAR em outras
+        abas os valores que preciso."*
+
+        ⚠️ Ele descreveu o defeito e a cura. `[medido 31/08]` as 29 compras de
+        pessoal somam **R$ 40.550,88** e o ledger soma **R$ 44.182,42** — os
+        R$ 3.631,54 de diferença são o mesmo PIX gravado duas vezes (Larissa e
+        Andreia). **26 das 29 compras têm par no ledger.**
+
+        ⛔ A COMPRA GANHA porque ela tem PROVA: veio do grupo com comprovante,
+        CNPJ do recebedor e a data em que o dinheiro saiu. O ledger é digitado.
+        Quando os dois descrevem o mesmo pagamento, contar o ledger é contar a
+        cópia e ignorar o original.
+
+        ⚠️ Mas o ledger ⛔ NÃO some: ele guarda o que ⛔ não passou pelo grupo
+        (3 dos 29 em agosto). Por isso a exclusão aqui deixou de ser cega — ela
+        marca a compra como PAR, e a folha/vale só conta o que ⛔ não tem par.
+      */
+      itensPessoalDaCompra.push({
+        data: String(c.data || ""), valor,
+        descricao: `${c.loja || c.descricao || "—"}`,
+        categoria: CATEGORIA_PESSOAL,
+        id: String((c as any).id || ""), mes,
+      });
       excluidos.push({
-        motivo: "pagamento a pessoal — já contado na folha/vale",
+        motivo: "pagamento a pessoal — contado uma vez, pela compra (tem comprovante)",
         valor,
         descricao: `${c.data} ${c.loja || c.descricao || ""}`.trim(),
       });
@@ -230,6 +258,28 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
     });
   }
 
+  /*
+    ⛔ TEM PAR NA COMPRA? — a régua que impede a dobra.
+
+    ⚠️ Casa por DATA + VALOR ao centavo, ⛔ nao por nome: o histórico da compra
+    é o que o Telegram escreveu ("PIX para LARISSA COSTA PACHECO") e o do ledger
+    é montado ("LARISSA COSTA — comissão 2026-07"). Casar por nome erraria nos
+    dois sentidos; data + valor é o que o banco também usa.
+
+    ⛔ E CADA COMPRA CASA UMA VEZ SÓ. Sem isso, dois vales legítimos de R$ 500
+    no mesmo dia casariam com a MESMA compra e um deles sumiria do caixa — o
+    erro oposto, e pior, porque esconde dinheiro que saiu.
+  */
+  const comprasPessoalLivres = itensPessoalDaCompra.slice();
+  const temParNaCompra = (data: string, valor: number): boolean => {
+    const i = comprasPessoalLivres.findIndex(
+      (x) => String(x.data) === String(data) && Math.abs(num(x.valor) - num(valor)) < 0.01
+    );
+    if (i < 0) return false;
+    comprasPessoalLivres.splice(i, 1);
+    return true;
+  };
+
   // ── 2) FOLHA (regime de caixa) ──────────────────────────────────────────────
   // Varre TODA chave folha_pagamentos:* e pega o que foi PAGO dentro do mês,
   // independente de qual mês a comissão referencia.
@@ -243,6 +293,15 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
       const valor = num(item?.valor);
       const data = String(item?.data || "");
       if (valor <= 0 || !data.startsWith(mes)) continue;
+      /* ⛔ Já contado pela COMPRA (que tem comprovante): ⛔ não conta de novo. */
+      if (temParNaCompra(data, valor)) {
+        excluidos.push({
+          motivo: "comissão que já entrou pela compra do grupo — contada uma vez",
+          valor,
+          descricao: `${data} ${item.nome || "—"}`,
+        });
+        continue;
+      }
       itensFolha.push({
         data,
         valor,
@@ -271,6 +330,44 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
       });
     }
     if (vale <= 0) continue;
+
+    /*
+      ⛔ O VALE É UM ACUMULADO, e a DATA de cada pagamento só existe dentro da
+      nota ("15/08/2026 R$ 650,00 · 17/08/2026 R$ 650,00"). Para saber o que já
+      entrou pela compra, é preciso abrir a nota parte por parte — comparar o
+      TOTAL com uma compra nunca casaria, e foi assim que a dobra passou.
+    */
+    const nota = String(p?.valeNota || "");
+    const re = /(\d{2})\/(\d{2})\/(\d{4})\s+R\$\s*([\d.]+,\d{2})/g;
+    const partes: Array<{ data: string; valor: number }> = [];
+    let mm: RegExpExecArray | null;
+    while ((mm = re.exec(nota))) {
+      const v = Number(mm[4].replace(/\./g, "").replace(",", "."));
+      if (Number.isFinite(v)) partes.push({ data: `${mm[3]}-${mm[2]}-${mm[1]}`, valor: v });
+    }
+    const somaPartes = Math.round(partes.reduce((a, x) => a + x.valor, 0) * 100) / 100;
+
+    /* ⛔ Só usa as partes quando elas FECHAM com o total: nota incompleta ⛔ não
+       pode reduzir o que a pessoa recebeu. */
+    if (partes.length && Math.abs(somaPartes - vale) < 0.01) {
+      for (const parte of partes) {
+        if (temParNaCompra(parte.data, parte.valor)) {
+          excluidos.push({
+            motivo: "vale que já entrou pela compra do grupo — contado uma vez",
+            valor: parte.valor,
+            descricao: `${parte.data} prof ${p?.profissionalId}`,
+          });
+          continue;
+        }
+        itensVales.push({
+          data: parte.data, valor: parte.valor,
+          descricao: String(p?.valeNota || `vale — prof ${p?.profissionalId}`),
+          categoria: CATEGORIA_PESSOAL,
+        });
+      }
+      continue;
+    }
+
     itensVales.push({
       data: `${mes}-15`, // vale é do dia 15; a data exata vive na nota
       valor: vale,
@@ -334,7 +431,15 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
 
   const blocos = [
     bloco("compras", "Compras e contas", itensCompras),
-    bloco("folha", "Folha paga no mês", itensFolha),
+    /*
+      ⛔ A FOLHA SOMA AS COMPRAS DE PESSOAL **MAIS** O QUE ⛔ NÃO TEM PAR.
+      ⚠️ Antes ela somava só o ledger e a compra era excluída — e quando os dois
+      descreviam o mesmo PIX, contava a CÓPIA e ignorava o original. Agora conta
+      o original (que tem comprovante) e o ledger só entra onde ⛔ não há compra.
+      A soma dos dois é a mesma de sempre quando ⛔ não há dobra; onde há, ela
+      cai para o valor certo.
+    */
+    bloco("folha", "Folha paga no mês", [...itensPessoalDaCompra, ...itensFolha]),
     bloco("vales", "Vales do dia 15", itensVales),
     bloco("cartao", "Fatura de cartão paga no mês", itensCartao),
   ];

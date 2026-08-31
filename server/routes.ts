@@ -13645,6 +13645,18 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         if (!equipe.has(k)) equipe.set(k, {
           profissionalId: k, nome: nome || nomeDe(k),
           fechamento: 0, vale: 0, pagoNoMes: 0,
+          /*
+            ⛔ VALE E ADIANTAMENTO SEPARADOS (31/08/2026, pedido do dono):
+            *"se for para voce fazer um card assim, tem que colocar: comissao,
+            vale, adiantamento e descontos. Somente assim da' para concluir o
+            card."*
+
+            ⚠️ `vale` acima continua sendo a SOMA dos dois, porque e' ele que o
+            caixa usa ha' meses e trocar o significado de um campo em uso e'
+            como um numero muda sem ninguem pedir. Os dois novos sao um RECORTE
+            dele: `valeDoDia15 + adiantamento === vale`, sempre.
+          */
+          valeDoDia15: 0, adiantamento: 0,
           multa: 0, consumoInterno: 0, comprasCartao: 0, ajuste: 0,
           itens: [] as any[],
         });
@@ -13692,15 +13704,56 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
           if (partes.length && Math.abs(somaPartes - vale) < 0.01) {
             for (const parte of partes) {
               l.itens.push({ tipo: "vale", data: parte.data, valor: parte.valor, detalhe: `vale/adiantamento de ${mes}` });
+              /* ⛔ A MESMA REGUA do pessoalPorTipo: a data propoe (dia 15 = vale)
+                 e a escolha do dono manda. Classificar aqui de outro jeito faria
+                 o card da pessoa discordar da sub-aba — o mesmo pagamento em
+                 dois baldes conforme a tela. */
+              const ov = (await kvGet<Record<string, string>>("pessoal_tipo_override")) || {};
+              const k = `${id}|${parte.data}|${Number(parte.valor).toFixed(2)}`;
+              const escolhido = ov[k];
+              const ehVale = escolhido ? escolhido === "vale" : Number(parte.data.slice(8, 10)) === 15;
+              if (ehVale) l.valeDoDia15 += parte.valor; else l.adiantamento += parte.valor;
             }
           } else {
             l.itens.push({ tipo: "vale", data: `${mes}-15`, valor: vale, detalhe: nota || "vale do mês (sem detalhe na nota)" });
+            /* ⛔ Sem detalhe na nota ⛔ nao da' para separar: vai inteiro para
+               vale, que e' o que a regra da data diria do dia 15. */
+            l.valeDoDia15 += vale;
           }
         }
         l.multa += Number(p?.multa) || 0;
         l.consumoInterno += Number(p?.consumoInterno) || 0;
         l.comprasCartao += Number(p?.comprasCartao) || 0;
         l.ajuste += Number(p?.ajuste) || 0;
+      }
+
+      /*
+        ⛔ O TICK VERDE DE CONFERIDO (31/08/2026, pedido do dono): *"ele tem que
+        ter um tick verde que esta' confirmados os valores"*.
+
+        ⚠️ Confirmar ⛔ NAO trava a edicao — quem confirmou pode ter errado, e um
+        cadeado obrigaria a "descontarmar para corrigir", que e' o tipo de passo
+        que ninguem faz e vira dado velho confirmado. O tick diz QUEM olhou e
+        QUANDO: e' um carimbo de conferencia, ⛔ nao uma tranca.
+
+        ⛔ E ele MORRE quando o valor muda. Um tick que sobrevive a uma correcao
+        e' pior que tick nenhum: ele afirma que alguem conferiu um numero que
+        ⛔ nao existe mais.
+      */
+      const confirmados: Record<string, { por: string; em: string; assinatura: string }> =
+        (await kvGet<Record<string, any>>(`equipe_confirmada:${mes}`)) || {};
+      for (const l of Array.from(equipe.values())) {
+        const c = confirmados[String((l as any).profissionalId)];
+        /* A assinatura é o próprio conjunto de valores: se qualquer um mudar,
+           ela deixa de bater e o tick some sozinho. */
+        const assinatura = [
+          (l as any).fechamento, (l as any).valeDoDia15, (l as any).adiantamento,
+          (l as any).multa, (l as any).consumoInterno, (l as any).comprasCartao,
+        ].map((n: number) => Number(n || 0).toFixed(2)).join("|");
+        (l as any).confirmado = c && c.assinatura === assinatura
+          ? { por: c.por, em: c.em }
+          : null;
+        (l as any).confirmacaoVencida = Boolean(c && c.assinatura !== assinatura);
       }
       /*
         ⛔ AS TRES PARTES DO PAGAMENTO A PESSOAL (regra do dono, 29/08/2026):
@@ -14059,6 +14112,34 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
    * sem trilha e' a mesma familia do pagamento sem dono: some e ninguem sabe
    * explicar depois.
    */
+  /**
+   * ⛔ CONFIRMA (ou desmarca) OS VALORES DE UMA PESSOA NO MES — o tick verde.
+   *
+   * ⚠️ A assinatura e' o proprio conjunto de valores. Se qualquer um mudar
+   * depois, o tick some sozinho: um carimbo que sobrevive a uma correcao afirma
+   * que alguem conferiu um numero que ⛔ nao existe mais.
+   */
+  app.post("/api/hub/confirmar-equipe", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const mes = String(req.body?.mes || "");
+      const profissionalId = String(req.body?.profissionalId || "");
+      const assinatura = String(req.body?.assinatura || "");
+      const confirmar = req.body?.confirmar !== false;
+      const por = String(req.body?.por || "painel").slice(0, 60);
+      if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ ok: false, error: "mês inválido" });
+      if (!profissionalId) return res.status(400).json({ ok: false, error: "profissional é obrigatório" });
+      if (confirmar && !assinatura) return res.status(400).json({ ok: false, error: "assinatura é obrigatória" });
+
+      const chave = `equipe_confirmada:${mes}`;
+      const atual: Record<string, any> = (await kvGet<Record<string, any>>(chave)) || {};
+      if (confirmar) atual[profissionalId] = { por, em: new Date().toISOString(), assinatura };
+      else delete atual[profissionalId];
+      await kvSet(chave, atual);
+      return res.json({ ok: true, confirmado: confirmar, por });
+    } catch (err: any) { return res.status(500).json({ ok: false, error: err.message }); }
+  });
+
   app.post("/api/hub/corrigir-pagamento", async (req: Request, res: Response) => {
     if (!requireHubKey(req, res)) return;
     try {

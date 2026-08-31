@@ -52,6 +52,27 @@ export interface ItemCaixa {
    */
   id?: string;
   mes?: string;
+  /**
+   * ⛔ O QUE O GRUPO DO TELEGRAM JA' SABE E A TELA ⛔ NAO MOSTRAVA.
+   *
+   * ⚠️ `[31/08/2026]` o dono: *"ja' existe as categorias, a data e imagem do
+   * pagamento. Unica coisa que voce ⛔ nao construiu foi essa conciliacao e fica
+   * inventando dados. Use os dados de la'."* Ele estava certo: o bot registra
+   * comprovante, quem mandou, e o CNPJ do pagador e do recebedor -- e nada
+   * disso atravessava a ponte para o Metas, que exibia so' data e valor.
+   *
+   * ⛔ `docPagador` e `docRecebedor` sao o que permite CONCILIAR com o extrato:
+   * dizem de qual conta saiu e para quem foi. Sem eles, conciliar e' casar
+   * valor com valor -- e dois PIX de R$ 500 no mesmo dia viram um.
+   */
+  origem?: string;
+  quemMandou?: string;
+  temFoto?: boolean;
+  fileId?: string;
+  docPagador?: string;
+  docRecebedor?: string;
+  /** pix · compra · boleto · dinheiro — como o dinheiro saiu. */
+  formaPagamento?: string;
 }
 
 export interface BlocoCaixa {
@@ -196,6 +217,16 @@ export async function calcularSaidasCaixa(mes: string): Promise<SaidasCaixaMes> 
       categoria: String(c.categoria || "Outros"),
       id: String((c as any).id || ""),
       mes,
+      /* ⛔ O QUE VEIO DO GRUPO ATRAVESSA A PONTE. Ate' 31/08 a tela do Metas
+         recebia so' data e valor, e por isso o dono via um card mudo enquanto o
+         Telegram tinha comprovante, autor e os documentos das duas pontas. */
+      origem: String((c as any).origem || ""),
+      quemMandou: (c as any).telegramFrom ? String((c as any).telegramFrom) : undefined,
+      temFoto: (c as any).temFoto === true,
+      fileId: (c as any).telegramFileId ? String((c as any).telegramFileId) : undefined,
+      docPagador: (c as any).docPagador ? String((c as any).docPagador) : undefined,
+      docRecebedor: (c as any).docRecebedor ? String((c as any).docRecebedor) : undefined,
+      formaPagamento: (c as any).tipo ? String((c as any).tipo) : undefined,
     });
   }
 

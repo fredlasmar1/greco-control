@@ -12893,6 +12893,28 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   });
 
   // GET /api/compras/:mes/:id/foto — serve a imagem da nota guardada (item 1).
+  /**
+   * ⛔ O COMPROVANTE, PELA PONTE DO HUB — para o Greco Metas mostrar no card.
+   *
+   * ⚠️ `[31/08/2026]` a foto ja' existia (`/api/compras/:mes/:id/foto`), mas
+   * aquela rota pede SESSAO do Control: aberta pelo Metas, devolve a tela de
+   * login em vez da imagem. O dono via um card mudo e o comprovante estava no
+   * banco o tempo todo.
+   *
+   * ⛔ Mesma chave de hub das outras rotas — ⛔ nao e' publica.
+   */
+  app.get("/api/hub/compra-foto/:id", async (req: Request, res: Response) => {
+    if (!requireHubKey(req, res)) return;
+    try {
+      const foto: any = await kvGet(`compras_foto:${req.params.id}`);
+      if (!foto?.b64) return res.status(404).json({ ok: false, error: "sem comprovante" });
+      const buf = Buffer.from(String(foto.b64), "base64");
+      res.setHeader("Content-Type", foto.mime || "image/jpeg");
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      return res.send(buf);
+    } catch { return res.status(500).json({ ok: false, error: "erro ao ler o comprovante" }); }
+  });
+
   app.get("/api/compras/:mes/:id/foto", async (req: Request, res: Response) => {
     try {
       const foto: any = await kvGet(`compras_foto:${req.params.id}`);
@@ -13706,25 +13728,34 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const trilhaTipo: Record<string, { por: string; em: string; tipo: string }> =
         (await kvGet<Record<string, any>>("pessoal_tipo_trilha")) || {};
       const chaveTipo = (profId: string, data: string, valor: number) => `${profId}|${data}|${Number(valor).toFixed(2)}`;
-      const pessoalPorTipo: Record<string, any[]> = { fechamento: [], vale: [], adiantamento: [] };
+      const pessoalPorTipo: Record<string, any[]> = { fechamento: [], vale: [], adiantamento: [], parcelamento: [] };
       for (const l of Array.from(equipe.values())) {
         for (const it of (l as any).itens) {
           const dia = Number(String(it.data || "").slice(8, 10));
           const pelaData = dia === DIA_DO_VALE ? "vale" : "adiantamento";
           const chave = chaveTipo((l as any).profissionalId, it.data, it.valor);
           const escolhido = overrides[chave];
-          /* ⛔ O FECHAMENTO ⛔ NAO E' EDITAVEL: ele ⛔ nao vem do vale, vem do
-             ledger da folha. Deixar mover fecharia o mes errado. */
-          const tipo = it.tipo === "fechamento" ? "fechamento"
-            : (escolhido === "vale" || escolhido === "adiantamento" ? escolhido : pelaData);
+          /*
+            ⛔ O DONO MANDA, INCLUSIVE SOBRE O FECHAMENTO (31/08/2026).
+            ⚠️ Antes o fechamento era intocavel "porque vem do ledger" — e o PIX
+            de R$ 3.136,54 da LARISSA ficou preso em Adiantamentos exibindo
+            "Fechamento julho/2026", contado nos dois lugares. A regra da data
+            PROPOE; o ledger PROPOE; quem viu o comprovante DECIDE.
+          */
+          const VALIDOS = ["vale", "adiantamento", "fechamento", "parcelamento"];
+          const tipo = VALIDOS.includes(escolhido)
+            ? escolhido
+            : (it.tipo === "fechamento" ? "fechamento" : pelaData);
           pessoalPorTipo[tipo].push({
             profissionalId: (l as any).profissionalId, nome: (l as any).nome,
             data: it.data, valor: it.valor, detalhe: it.detalhe,
-            chave: it.tipo === "fechamento" ? null : chave,
+            /* ⛔ A chave vale para TODOS agora: sem ela o card ⛔ não tem como ser
+               movido, e era por isso que o fechamento ficava preso. */
+            chave,
             /* ⛔ A tela mostra QUEM decidiu: regra da data ou o dono. */
-            decidido: it.tipo === "fechamento" ? "ledger" : (escolhido ? "dono" : "data"),
+            decidido: escolhido ? "dono" : (it.tipo === "fechamento" ? "ledger" : "data"),
             /* ⛔ E QUANDO, E POR QUEM — o tick que o dono pediu. */
-            movido: it.tipo === "fechamento" ? null : (trilhaTipo[chave] || null),
+            movido: trilhaTipo[chave] || null,
           });
         }
       }
@@ -14018,8 +14049,20 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       if (!/^[^|]+\|\d{4}-\d{2}-\d{2}\|\d+\.\d{2}$/.test(chave)) {
         return res.status(400).json({ ok: false, error: "chave inválida (esperado pessoa|data|valor)" });
       }
-      if (tipo !== "vale" && tipo !== "adiantamento" && tipo !== "auto") {
-        return res.status(400).json({ ok: false, error: "tipo deve ser vale, adiantamento ou auto" });
+      /*
+        ⛔ QUATRO DESTINOS, ⛔ nao dois (31/08/2026, ordem do dono): *"vamos criar
+        as abas: salario, com sub-abas dentro: comissao, vales, adiantamento e
+        parcelamento. Dentro dos cards eu posso editar o que e' o que."*
+
+        ⚠️ O "fechamento" era INTOCAVEL aqui, por vir do ledger da folha — e foi
+        assim que o PIX de R$ 3.136,54 da LARISSA ficou preso na sub-aba de
+        adiantamento com o rotulo "Fechamento julho/2026", contando duas vezes.
+        Quem olha o comprovante e' quem sabe o que aquilo foi; travar a edicao
+        ⛔ nao protegeu o numero, so' impediu o conserto.
+      */
+      const TIPOS = ["vale", "adiantamento", "fechamento", "parcelamento", "auto"];
+      if (!TIPOS.includes(tipo)) {
+        return res.status(400).json({ ok: false, error: `tipo deve ser um de: ${TIPOS.join(", ")}` });
       }
       const atual: Record<string, string> = (await kvGet<Record<string, string>>("pessoal_tipo_override")) || {};
       /* "auto" APAGA a escolha e devolve a decisao para a regra da data --

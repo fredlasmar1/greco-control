@@ -12606,6 +12606,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       const nota = [String(atual?.valeNota || "").trim(),
         `${pend.compra.data.split("-").reverse().join("/")} R$ ${fmtBRLc(valor)} (Telegram)`].filter(Boolean).join(" · ");
       await upsertPagamentoMes(mes, arg2, { vale: valeNovo, valeNota: nota } as any);
+      void replicarValesNoMetas(mes, "telegram");
       // A compra provisória já existe: ATUALIZA (criar outra dobraria o gasto).
       // Fica como "Salários & Equipe" — registro histórico do PIX; o cálculo de
       // caixa ignora essa categoria justamente porque o valor já está no vale.
@@ -14037,6 +14038,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         const nota = [notaAtual.trim(),
           `${data.split("-").reverse().join("/")} R$ ${fmtBRLc(valor)} (painel ${marca})`].filter(Boolean).join(" · ");
         await upsertPagamentoMes(mes, profissionalId, { vale: valeNovo, valeNota: nota } as any);
+        void replicarValesNoMetas(mes, "tela");
         await atualizarCompra(mes, compraId, { categoria: "Salários & Equipe",
           descricao: `Vale ${mesLabelBR(mes)} — ${nome}`.slice(0, 180) } as any);
         return res.json({ ok: true, tipo, nome, valor, valeAcumulado: valeNovo, mes });
@@ -14210,6 +14212,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         const nota = [String(atual?.valeNota || "").trim(), `${carimbo} de ${fmtBRLc(antes)} para ${fmtBRLc(valorNovo)}`]
           .filter(Boolean).join(" · ");
         await upsertPagamentoMes(mes, profissionalId, { vale: valorNovo, valeNota: nota } as any);
+        void replicarValesNoMetas(mes, "edição");
         return res.json({ ok: true, campo, nome, antes, agora: valorNovo });
       }
 
@@ -16223,6 +16226,37 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
   // consumo contra R$ 2.348,50 reais, e vale nenhum).
   //
   // Guarda backup do que o Metas apagou ANTES de confiar no resultado.
+  /**
+   * ⛔ VALE LANÇADO AQUI TEM QUE APARECER NO METAS SOZINHO.
+   *
+   * `[caso 15/09/2026]` o dono lançou NOVE vales pelo Telegram (R$ 8.003) e
+   * abriu o grecopro.com.br/descontos no dia seguinte: nada. A replicação era
+   * um botão manual (`POST /api/folha/replicar-metas`) que ninguém apertou —
+   * em agosto foi apertado uma vez (18/08) e em setembro nunca.
+   *
+   * Aqui: depois de QUALQUER gravação de vale (Telegram, tela de pagamento,
+   * reclassificação, edição), os vales do mês são replicados no Metas — só o
+   * tipo "vale", ⛔ nunca o consumo (esse continua com o botão, porque
+   * depende do CSV). Best-effort: falha vira log, ⛔ não derruba o lançamento.
+   */
+  async function replicarValesNoMetas(mes: string, origem: string): Promise<void> {
+    try {
+      const folha = await calcularFolhaMes(mes);
+      const itens: any[] = [];
+      for (const l of folha?.linhas ?? []) {
+        const f = l.formula;
+        if (!f || !(f.descontos?.vales > 0)) continue;
+        const nomeCompleto = String(l.nome || "").split(" - ").pop() || l.nome;
+        itens.push({ trinksId: l.profissionalId, nome: nomeCompleto, tipo: "vale", valor: f.descontos.vales, motivo: `Vale de ${mes} (apurado no Greco Control)` });
+      }
+      // ⛔ substituirTipos ["vale"]: o Metas troca o que tinha de vale no mês pelo total atual — idempotente.
+      const out = await syncMetasDescontos(mes, itens, ["vale"]);
+      log(`[folha] vales de ${mes} replicados no Metas (${origem}): ${out.inseridos} lançamento(s), R$ ${out.total}`, "pagamento");
+    } catch (err: any) {
+      log(`[folha] ⚠️ vales de ${mes} NÃO replicados no Metas (${origem}): ${err?.message ?? err}`, "pagamento");
+    }
+  }
+
   app.post("/api/folha/replicar-metas/:mes", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
     try {
@@ -16365,6 +16399,7 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
       if (comprasCartao !== undefined) patch.comprasCartao = Math.max(0, Number(comprasCartao) || 0);
       if (comprasCartaoNota !== undefined) patch.comprasCartaoNota = String(comprasCartaoNota || "");
       const novo = await upsertPagamentoMes(mes, profId, patch);
+      if (patch && Object.prototype.hasOwnProperty.call(patch, "vale")) void replicarValesNoMetas(mes, "patch");
       return res.json({ ok: true, pagamento: novo });
     } catch (err: any) {
       return res.status(400).json({ ok: false, error: err.message });

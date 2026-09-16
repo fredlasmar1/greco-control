@@ -16249,8 +16249,16 @@ Categoria pela natureza: PIX/pagamento a pessoa da equipe=Salários & Equipe; co
         const nomeCompleto = String(l.nome || "").split(" - ").pop() || l.nome;
         itens.push({ trinksId: l.profissionalId, nome: nomeCompleto, tipo: "vale", valor: f.descontos.vales, motivo: `Vale de ${mes} (apurado no Greco Control)` });
       }
-      // ⛔ substituirTipos ["vale"]: o Metas troca o que tinha de vale no mês pelo total atual — idempotente.
-      const out = await syncMetasDescontos(mes, itens, ["vale"]);
+      /*
+        ⛔ ORIGEM PRÓPRIA E ⛔ NENHUM substituirTipos. O Metas apaga, antes de
+        inserir, tudo que tem `created_by = origem` no mês (mais os tipos de
+        substituirTipos). Com a origem geral "greco-control" isto apagaria o
+        CONSUMO que o botão já mandou; com substituirTipos ["vale"] apagaria
+        vale lançado à mão pela recepção no Metas. Com "greco-control-vales" e
+        lista vazia, só os PRÓPRIOS vales anteriores saem — idempotente e sem
+        tocar no que ⛔ não é dele.
+      */
+      const out = await syncMetasDescontos(mes, itens, [], "greco-control-vales");
       log(`[folha] vales de ${mes} replicados no Metas (${origem}): ${out.inseridos} lançamento(s), R$ ${out.total}`, "pagamento");
     } catch (err: any) {
       log(`[folha] ⚠️ vales de ${mes} NÃO replicados no Metas (${origem}): ${err?.message ?? err}`, "pagamento");

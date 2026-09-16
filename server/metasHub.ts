@@ -252,13 +252,16 @@ export interface MetasSyncResultado {
   puladosDiaFechado: any[];
 }
 export async function syncMetasDescontos(
-  mes: string, itens: MetasSyncItem[], substituirTipos: string[] = [],
+  mes: string, itens: MetasSyncItem[], substituirTipos: string[] = [], origem = "greco-control",
 ): Promise<MetasSyncResultado> {
   if (!KEY) throw new Error("HUB_API_KEY não configurada — não dá pra escrever no Metas.");
+  // ⛔ `origem` é a chave da substituição no Metas: ele apaga `created_by = origem`
+  // (e os `substituirTipos`) antes de inserir. Quem manda SÓ vales tem que usar
+  // origem própria, senão apaga o consumo que a origem geral já tinha mandado.
   const r = await fetch(`${BASE}/api/hub/descontos/sync`, {
     method: "POST",
     headers: { "x-hub-key": KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ mes, itens, substituirTipos, origem: "greco-control" }),
+    body: JSON.stringify({ mes, itens, substituirTipos, origem }),
     signal: AbortSignal.timeout(30000),
   });
   const j = (await r.json()) as any;
